@@ -1,0 +1,374 @@
+# AlphaBrief Development Log
+
+This log records completed development rounds.
+
+## 0001 Repo Scaffold
+
+Status: completed.
+
+Goal: create the initial repository scaffold, project rules, documentation
+shells, reference source isolation, and minimal scaffold tests.
+
+Completed changes:
+
+1. Renamed `Source projects/` to `_reference_sources/`.
+2. Added project rules, agent instructions, README, documentation shells, and
+   development plan records.
+3. Added empty implementation directories with `.gitkeep` files.
+4. Added minimal `pyproject.toml` configuration.
+5. Added scaffold tests for required files, directories, reference-source
+   isolation, and default live-trading lock.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py` passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+
+## 0002 Core Domain Models MVP
+
+Status: completed.
+
+Goal: implement the minimal core domain schemas needed by future AlphaBrief
+modules.
+
+Completed changes:
+
+1. Added `alphabrief_core` package under `packages/alphabrief-core/src`.
+2. Added Pydantic models for `Bar`, `Signal`, `OrderIntent`, `RiskDecision`,
+   and `Order`.
+3. Added validation for timezone-aware datetimes, Decimal financial fields,
+   confidence range, OHLCV consistency, order-intent sizing, limit price rules,
+   and required `risk_decision_id` on orders.
+4. Updated `pyproject.toml` with the Pydantic dependency, package discovery,
+   pytest pythonpath, and mypy file scope.
+5. Added domain model tests and architecture documentation.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py`
+   passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+3. `python3 -m mypy packages/alphabrief-core/src tests` could not run because
+   `mypy` is not installed locally.
+
+## 0003 Core Configuration System MVP
+
+Status: completed.
+
+Goal: implement the minimal configuration entry point for AlphaBrief core
+modules.
+
+Completed changes:
+
+1. Added `alphabrief_core.config` with `AlphaBriefEnv`, `LogLevel`,
+   `AppSettings`, and `load_settings`.
+2. Added explicit `ALPHABRIEF_` environment variable mapping for environment,
+   log level, live-trading lock state, and local paths.
+3. Kept live trading disabled by default and did not add secret fields.
+4. Updated `.env.example` with non-secret local path defaults.
+5. Added configuration tests and architecture documentation.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py tests/test_core_config.py`
+   passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+3. `python3 -m mypy packages/alphabrief-core/src tests` could not run because
+   `mypy` is not installed locally.
+
+## 0004 CSV OHLCV Market Data Loader MVP
+
+Status: completed.
+
+Goal: implement the first local market data loader for single-symbol CSV OHLCV
+files.
+
+Completed changes:
+
+1. Added `alphabrief_data` package under `packages/alphabrief-data/src`.
+2. Added `CsvBarLoader`, `load_ohlcv_csv`, and `MarketDataLoadError`.
+3. Implemented standard-library CSV parsing into `alphabrief_core.Bar` objects.
+4. Added Decimal parsing, timezone handling, required-column checks, row-level
+   error wrapping, and reuse of `Bar` validation.
+5. Updated `pyproject.toml` for `alphabrief-data` package discovery,
+   pytest pythonpath, and mypy scope.
+6. Added CSV loader tests and architecture documentation.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py tests/test_core_config.py tests/test_csv_market_data_loader.py`
+   passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+3. `python3 -m mypy packages/alphabrief-core/src packages/alphabrief-data/src tests`
+   could not run because `mypy` is not installed locally.
+
+## 0005 Market Data Quality Checks MVP
+
+Status: completed.
+
+Goal: implement basic in-memory quality checks for `Bar` sequences.
+
+Completed changes:
+
+1. Added `alphabrief_data.quality` with `DataQualityIssue`,
+   `DataQualityReport`, and `check_bar_quality`.
+2. Added checks for empty datasets, mixed symbols, mixed sources, mixed data
+   versions, duplicate timestamps, non-increasing timestamps, missing expected
+   intervals, and zero-volume bars.
+3. Exported the quality API from `alphabrief_data`.
+4. Added quality tests, including explicit CSV loader output integration.
+5. Updated architecture documentation and development plan records.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py tests/test_core_config.py tests/test_csv_market_data_loader.py tests/test_market_data_quality.py`
+   passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+3. `python3 -m mypy packages/alphabrief-core/src packages/alphabrief-data/src tests`
+   could not run because `mypy` is not installed locally.
+
+## 0006 Basic No-Lookahead Feature Generation MVP
+
+Status: completed.
+
+Goal: implement minimal trailing feature generation for `Bar` sequences without
+future data leakage.
+
+Completed changes:
+
+1. Added `alphabrief_data.features` with `FeatureRow`,
+   `FeatureGenerationError`, and `generate_basic_features`.
+2. Added trailing returns, close SMA, and volume SMA using `Decimal` values.
+3. Blocked feature generation on failed data quality reports while allowing
+   warning-only reports.
+4. Exported the feature API from `alphabrief_data`.
+5. Added tests for insufficient history, no-lookahead behavior, divide-by-zero
+   returns, quality failures, parameter validation, and CSV loader integration.
+6. Updated architecture documentation and development plan records.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py tests/test_core_config.py tests/test_csv_market_data_loader.py tests/test_market_data_quality.py tests/test_feature_generation.py`
+   passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+3. `python3 -m mypy packages/alphabrief-core/src packages/alphabrief-data/src tests`
+   could not run because `mypy` is not installed locally.
+
+## 0007 StrategySpec Schema MVP
+
+Status: completed.
+
+Goal: implement a validated StrategySpec schema for future strategy interfaces
+and backtests.
+
+Completed changes:
+
+1. Added `alphabrief_strategy` package under
+   `packages/alphabrief-strategy/src`.
+2. Added `StrategySpec`, `StrategyUniverse`, `StrategyRule`, `StrategyRisk`,
+   `StrategyCosts`, `StrategyEvaluation`, and `EvaluationPeriod`.
+3. Added validation for identity strings, stable symbol de-duplication,
+   condition text, risk limits, cost values, and train/test period separation.
+4. Updated `pyproject.toml` for `alphabrief-strategy` package discovery,
+   pytest pythonpath, and mypy scope.
+5. Added StrategySpec tests and documentation.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py tests/test_core_config.py tests/test_csv_market_data_loader.py tests/test_market_data_quality.py tests/test_feature_generation.py tests/test_strategy_spec_schema.py`
+   passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+3. `python3 -m mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src tests`
+   could not run because `mypy` is not installed locally.
+
+## 0008 Simple Strategy Interface MVP
+
+Status: completed.
+
+Goal: define the first strategy execution contract without implementing
+strategy logic, backtesting, or order generation.
+
+Completed changes:
+
+1. Added `alphabrief_strategy.interface` with `StrategyInput`,
+   `StrategyOutput`, `StrategyProtocol`, `StrategyExecutionError`, and
+   `run_strategy`.
+2. Added input validation for non-empty bars, feature length, and bar data
+   quality.
+3. Added output validation for signal strategy ID, universe membership, and
+   input bar timestamps.
+4. Exported the interface API from `alphabrief_strategy`.
+5. Added Strategy Interface tests and documentation.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py tests/test_core_config.py tests/test_csv_market_data_loader.py tests/test_market_data_quality.py tests/test_feature_generation.py tests/test_strategy_spec_schema.py tests/test_strategy_interface.py`
+   passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+3. `python3 -m mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src tests`
+   could not run because `mypy` is not installed locally.
+
+## 0009 Vectorized Backtester and Metrics MVP
+
+Status: completed.
+
+Goal: complete the first Phase 1 research loop from imported OHLCV data through
+a moving-average strategy and JSON backtest report.
+
+Completed changes:
+
+1. Added `alphabrief_backtest` with `VectorizedBacktester`,
+   `BacktestReport`, `BacktestMetrics`, `BacktestTrade`, `EquityPoint`, and
+   `write_backtest_report`.
+2. Added `MovingAverageTrendStrategy` as the first built-in long/flat strategy.
+3. Simulated long/flat trades using strategy risk allocation, fees, and
+   slippage.
+4. Added total return, max drawdown, trade count, and win rate.
+5. Updated `pyproject.toml` for `alphabrief-backtest`.
+6. Added backtest tests and documentation.
+
+Validation:
+
+1. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py tests/test_core_config.py tests/test_csv_market_data_loader.py tests/test_market_data_quality.py tests/test_feature_generation.py tests/test_strategy_spec_schema.py tests/test_strategy_interface.py tests/test_vectorized_backtester.py`
+   passed.
+2. `ruff check .` could not run because `ruff` is not installed locally.
+3. `python3 -m mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src tests`
+   could not run because `mypy` is not installed locally.
+
+## 0010 Parquet Market Data Loader MVP
+
+Status: completed.
+
+Goal: complete the Phase 1 local market data loader boundary by adding Parquet
+OHLCV loading alongside CSV.
+
+Completed changes:
+
+1. Added `alphabrief_data.parquet_loader` with `ParquetBarLoader` and
+   `load_ohlcv_parquet`.
+2. Reused `Bar` validation and `MarketDataLoadError` for row-level Parquet
+   loading failures.
+3. Supported ISO timestamp strings and `datetime` objects with explicit
+   timezone handling.
+4. Rejected float values in numeric fields to preserve Decimal-first data
+   handling.
+5. Exported the Parquet loader API from `alphabrief_data`.
+6. Added Parquet loader tests and architecture documentation.
+
+Validation:
+
+1. `python3 -m pytest tests/test_parquet_market_data_loader.py`
+   passed.
+2. `python3 -m pytest tests/test_project_scaffold.py tests/test_core_domain_models.py tests/test_core_config.py tests/test_csv_market_data_loader.py tests/test_parquet_market_data_loader.py tests/test_market_data_quality.py tests/test_feature_generation.py tests/test_strategy_spec_schema.py tests/test_strategy_interface.py tests/test_vectorized_backtester.py`
+   passed.
+3. `ruff check .` could not run because `ruff` is not installed locally.
+4. `python3 -m mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src tests`
+    could not run because `mypy` is not installed locally.
+
+## 0011 ModelGateway Contract and FakeProvider MVP
+
+Status: completed.
+
+Goal: start Phase 2 by implementing the smallest model-call boundary and fake
+provider for tests.
+
+Completed changes:
+
+1. Added `alphabrief_models` package under `packages/alphabrief-models/src`.
+2. Added `ModelRequest`, `ModelResponse`, `ModelCallRecord`, and
+   `ModelGatewayResult` schemas.
+3. Added `ProviderAdapter` protocol and `ModelGateway` capability-based
+   provider selection.
+4. Added `FakeProviderAdapter` with deterministic success and failure modes.
+5. Recorded each gateway invocation with hashes and metadata instead of raw
+   prompt or raw model output.
+6. Updated `pyproject.toml`, ModelGateway documentation, architecture notes, and
+   development plan records.
+
+Validation:
+
+1. `python3 -m pytest tests/test_model_gateway.py` passed.
+2. `python3 -m pytest` passed.
+3. `.venv/bin/ruff check packages/alphabrief-models/src tests/test_model_gateway.py`
+   passed.
+4. `.venv/bin/mypy packages/alphabrief-models/src tests/test_model_gateway.py`
+   passed.
+5. `.venv/bin/ruff check .` failed on existing `_reference_sources/` and prior
+   Phase 1 files outside this round's scope.
+6. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   failed on existing Phase 1 type issues outside this round's scope.
+
+## 0012 Quality Gates and Tooling Cleanup
+
+Status: completed.
+
+Goal: fix project-owned lint and type-check issues before the next feature
+development round.
+
+Completed changes:
+
+1. Configured Ruff to exclude `_reference_sources/`.
+2. Ran Ruff auto-fixes on AlphaBrief-owned packages and tests.
+3. Fixed remaining Ruff issues in project-owned code.
+4. Fixed strict mypy issues in existing packages and tests.
+5. Updated invalid-input tests to use Pydantic `model_validate` where needed so
+   runtime validation remains covered while static typing passes.
+6. Added explicit timezone offset assertions in loader tests.
+7. Added the maintenance development plan record.
+
+Validation:
+
+1. `python3 -m pytest` passed.
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   passed.
+
+## 0013 Model Registry and Provider Config MVP
+
+Status: completed.
+
+Goal: add the minimal provider and model profile configuration boundary for
+Phase 2 model selection.
+
+Completed changes:
+
+1. Added `alphabrief_models.registry`.
+2. Added `ProviderConfig`, `ModelProfile`, and `ModelRegistry`.
+3. Added capability-based profile lookup and deterministic priority selection.
+4. Excluded disabled providers and disabled model profiles from selection.
+5. Kept config secret-safe by storing env var names only and not reading
+   environment values.
+6. Exported registry types from `alphabrief_models`.
+7. Added registry tests and documentation.
+
+Validation:
+
+1. `python3 -m pytest tests/test_model_registry.py` passed.
+2. `python3 -m pytest` passed.
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   passed.
+
+## 0014 Repository Polish and Private GitHub Push
+
+Status: completed.
+
+Goal: prepare the repository for private GitHub hosting with clear English
+README, safe ignore rules, and passing quality gates.
+
+Completed changes:
+
+1. Rewrote `README.md` for GitHub readability.
+2. Documented MVP status, safety boundaries, local setup, quality gates,
+   reference-source policy, and private availability.
+3. Added `_reference_sources/` and generated JSON reports to `.gitignore`.
+4. Updated scaffold tests so local reference-source checkouts are optional and
+   ignored by default.
+5. Added this development plan record.
+
+Validation:
+
+1. `python3 -m pytest` passed.
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   passed.
