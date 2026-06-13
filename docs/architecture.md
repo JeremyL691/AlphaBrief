@@ -203,6 +203,10 @@ Current behavior:
 7. `parse_structured_output` validates `ModelResponse.structured_output` or
    JSON-decoded `output_text` against a Pydantic target model and returns a
    structured result with stable error codes.
+8. Research brief schemas (`MarketBrief`, `SymbolBrief`) provide the
+   structured target types for future brief generators and serve as the
+   integration surface between the structured output parser and the research
+   layer.
 
 The gateway does not implement real provider SDKs, network calls, retries,
 fallback, prompt storage, research briefs, order generation, RiskGate, or
@@ -213,6 +217,11 @@ configuration; it does not read environment variables or store secret values.
 
 The structured output parser is a pure validation utility. It does not call
 providers, does not read environment variables, and does not persist raw output.
+
+Research brief schemas are pure Pydantic validation boundaries. They do not
+call providers, do not read environment variables, and do not generate
+content themselves. They are designed to be the target model for
+``parse_structured_output`` and future research layer generators.
 
 ## Vectorized Backtester
 

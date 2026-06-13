@@ -35,9 +35,10 @@ Progress:
 2. Quality gates (Ruff / mypy): completed.
 3. ModelRegistry and provider config: completed.
 4. Structured output parser: completed.
-5. Research brief schemas: not started.
-6. Prompt template versioning: not started.
-7. Real provider adapter: not started.
+5. Research brief schemas (MarketBrief, SymbolBrief): completed.
+6. DailyAlphaBrief schema and generator: not started.
+7. Prompt template versioning: not started.
+8. Real provider adapter: not started.
 
 ## Phase 3: Risk and Paper Trading
 

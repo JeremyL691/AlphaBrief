@@ -44,6 +44,11 @@ Current objects:
     target model or a structured failure.
 12. `parse_structured_output`: Pydantic-based parser for
     `ModelResponse.structured_output` or JSON-decoded `output_text`.
+13. `MarketBrief`: market-level research brief schema for a single trading day.
+14. `SymbolBrief`: symbol-level research brief schema with a nested
+    `SymbolVerdict`.
+15. `MarketRegime`, `SymbolDirection`, `BriefHorizon`: typed literal aliases
+    for brief field validation.
 
 Current behavior:
 
@@ -63,6 +68,9 @@ Current behavior:
    available and falls back to JSON-decoding `output_text` on request.
 10. Parse failures are reported as stable error codes instead of exceptions
     so future research modules can route or audit them safely.
+11. Research brief schemas (`MarketBrief`, `SymbolBrief`) are pure Pydantic
+    validation boundaries. They do not call providers, do not read
+    environment variables, and do not generate any content themselves.
 
 ## Current Non-Goals
 
@@ -76,3 +84,6 @@ Current behavior:
    execution behavior is implemented.
 6. The structured output parser does not perform retries, side effects, or
    provider calls. It is a pure validation utility.
+7. Research brief schemas do not generate briefs. Brief generation requires
+   future research layer work that calls the gateway and validates the
+   response against these schemas.

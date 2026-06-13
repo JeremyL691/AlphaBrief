@@ -403,3 +403,35 @@ Validation for 0015:
 3. `.venv/bin/ruff check .` passed.
 4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
    passed.
+
+## 0016 MarketBrief and SymbolBrief Schemas MVP
+
+Status: completed.
+
+Goal: add the minimal research brief schemas for Phase 2 so future research
+layer work can produce and validate structured market and symbol briefs
+without defining its own Pydantic types.
+
+Completed changes:
+
+1. Added `alphabrief_models.briefs`.
+2. Added `MarketBrief` with required identity, timezone-aware `generated_at`,
+   `trading_day`, `regime`, `summary`, `confidence`, and `key_factors`.
+3. Added `SymbolVerdict` with `direction`, `confidence`, and `rationale`.
+4. Added `SymbolBrief` with `brief_id`, `symbol`, `generated_at`, `horizon`,
+   `verdict`, `catalysts`, and `risks`.
+5. Added typed literal aliases `MarketRegime`, `SymbolDirection`,
+   `BriefHorizon`.
+6. Exported all brief schemas and literal aliases from `alphabrief_models`.
+7. Added brief schema tests including integration with
+   `parse_structured_output`.
+8. Updated model gateway docs, architecture, roadmap, development plan
+   record, and README.
+
+Validation for 0016:
+
+1. `python3 -m pytest tests/test_brief_schemas.py` passed.
+2. `python3 -m pytest` passed (134 tests).
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   passed.
