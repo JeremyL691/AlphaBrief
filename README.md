@@ -28,16 +28,15 @@ Current implemented kernel:
 6. A long/flat moving-average strategy for MVP validation.
 7. A vectorized backtester with fees, slippage, equity curve, trades, and basic
    metrics.
-8. ModelGateway contracts, fake provider, model call records, and model
-   registry/profile selection.
+8. ModelGateway contracts, fake provider, model call records, model
+   registry/profile selection, and structured output parser.
 9. Passing pytest, Ruff, and strict mypy quality gates.
 
 Not implemented yet:
 
 1. Real model provider adapters.
 2. Research brief generation.
-3. Structured output parser.
-4. RiskGate implementation.
+3. RiskGate implementation.
 5. PaperBroker and paper-trading execution loop.
 6. Dashboard, API, or CLI product surface.
 7. Live trading.
@@ -111,7 +110,7 @@ python3 -m pytest
 Current expected result:
 
 ```text
-pytest: 106 passed
+pytest: 118 passed
 ruff: all checks passed
 mypy: success
 ```
