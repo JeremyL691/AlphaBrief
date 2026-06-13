@@ -15,6 +15,11 @@ from alphabrief_models.gateway import (
     ProviderAdapter,
 )
 from alphabrief_models.registry import ModelProfile, ModelRegistry, ProviderConfig
+from alphabrief_models.structured_output import (
+    StructuredOutputErrorCode,
+    StructuredOutputResult,
+    parse_structured_output,
+)
 
 __all__ = [
     "FakeProviderAdapter",
@@ -32,4 +37,7 @@ __all__ = [
     "ModelTaskType",
     "ProviderAdapter",
     "ProviderConfig",
+    "StructuredOutputErrorCode",
+    "StructuredOutputResult",
+    "parse_structured_output",
 ]
