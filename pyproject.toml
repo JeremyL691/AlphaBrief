@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alphabrief"
+version = "0.0.0"
+description = "Local-first AI quant research and paper-trading workbench."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.10,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = [
+    "packages/alphabrief-backtest/src",
+    "packages/alphabrief-core/src",
+    "packages/alphabrief-data/src",
+    "packages/alphabrief-models/src",
+    "packages/alphabrief-strategy/src",
+]
+
+[tool.setuptools.packages.find]
+where = [
+    "packages/alphabrief-backtest/src",
+    "packages/alphabrief-core/src",
+    "packages/alphabrief-data/src",
+    "packages/alphabrief-models/src",
+    "packages/alphabrief-strategy/src",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = [
+    "_reference_sources",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = [
+    "packages/alphabrief-backtest/src",
+    "packages/alphabrief-core/src",
+    "packages/alphabrief-data/src",
+    "packages/alphabrief-models/src",
+    "packages/alphabrief-strategy/src",
+    "tests",
+]
