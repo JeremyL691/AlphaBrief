@@ -1,5 +1,13 @@
 """Model gateway contracts for AlphaBrief."""
 
+from alphabrief_models.briefs import (
+    BriefHorizon,
+    MarketBrief,
+    MarketRegime,
+    SymbolBrief,
+    SymbolDirection,
+    SymbolVerdict,
+)
 from alphabrief_models.gateway import (
     FakeProviderAdapter,
     ModelCallRecord,
@@ -22,7 +30,10 @@ from alphabrief_models.structured_output import (
 )
 
 __all__ = [
+    "BriefHorizon",
     "FakeProviderAdapter",
+    "MarketBrief",
+    "MarketRegime",
     "ModelCallRecord",
     "ModelCallStatus",
     "ModelCapability",
@@ -39,5 +50,8 @@ __all__ = [
     "ProviderConfig",
     "StructuredOutputErrorCode",
     "StructuredOutputResult",
+    "SymbolBrief",
+    "SymbolDirection",
+    "SymbolVerdict",
     "parse_structured_output",
 ]

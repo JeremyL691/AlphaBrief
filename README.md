@@ -29,17 +29,18 @@ Current implemented kernel:
 7. A vectorized backtester with fees, slippage, equity curve, trades, and basic
    metrics.
 8. ModelGateway contracts, fake provider, model call records, model
-   registry/profile selection, and structured output parser.
+   registry/profile selection, structured output parser, and research brief
+   schemas (MarketBrief and SymbolBrief).
 9. Passing pytest, Ruff, and strict mypy quality gates.
 
 Not implemented yet:
 
 1. Real model provider adapters.
-2. Research brief generation.
+2. DailyAlphaBrief schema and brief generator.
 3. RiskGate implementation.
-5. PaperBroker and paper-trading execution loop.
-6. Dashboard, API, or CLI product surface.
-7. Live trading.
+4. PaperBroker and paper-trading execution loop.
+5. Dashboard, API, or CLI product surface.
+6. Live trading.
 
 ## Safety Boundary
 
@@ -110,7 +111,7 @@ python3 -m pytest
 Current expected result:
 
 ```text
-pytest: 118 passed
+pytest: 134 passed
 ruff: all checks passed
 mypy: success
 ```
