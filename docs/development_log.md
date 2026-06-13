@@ -372,3 +372,34 @@ Validation:
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
    passed.
+
+## 0015 Structured Output Parser MVP
+
+Status: completed.
+
+Goal: add the minimal structured output validation boundary for Phase 2 so
+future research modules can rely on Pydantic-validated model outputs.
+
+Completed changes:
+
+1. Added `alphabrief_models.structured_output`.
+2. Added `StructuredOutputErrorCode` (StrEnum) with stable error code values.
+3. Added `StructuredOutputResult[TargetModel]` to carry either a parsed
+   Pydantic target or a structured failure without raising.
+4. Added `parse_structured_output(response, target)` for Pydantic target
+   models.
+5. Prefers `ModelResponse.structured_output` when available; falls back to
+   JSON-decoded `output_text` on request.
+6. Rejects empty output, invalid JSON, non-mapping JSON, and schema
+   mismatches with explicit error codes.
+7. Exported parser, result, and error code from `alphabrief_models`.
+8. Updated model_gateway docs, architecture, roadmap, development plan
+   record, and README.
+
+Validation for 0015:
+
+1. `python3 -m pytest tests/test_structured_output.py` passed.
+2. `python3 -m pytest` passed (117 tests).
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   passed.

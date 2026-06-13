@@ -39,6 +39,11 @@ Current objects:
 7. `ProviderConfig`: provider metadata and enabled state.
 8. `ModelProfile`: model metadata, capabilities, enabled state, and priority.
 9. `ModelRegistry`: provider/profile validation and capability lookup.
+10. `StructuredOutputErrorCode`: stable error code enum for parse failures.
+11. `StructuredOutputResult`: typed parse result carrying either a parsed
+    target model or a structured failure.
+12. `parse_structured_output`: Pydantic-based parser for
+    `ModelResponse.structured_output` or JSON-decoded `output_text`.
 
 Current behavior:
 
@@ -54,6 +59,10 @@ Current behavior:
    deterministic tie-breaker.
 8. Provider config may store environment variable names for future adapters but
    does not read or store secret values.
+9. The structured output parser prefers `ModelResponse.structured_output` when
+   available and falls back to JSON-decoding `output_text` on request.
+10. Parse failures are reported as stable error codes instead of exceptions
+    so future research modules can route or audit them safely.
 
 ## Current Non-Goals
 
@@ -65,3 +74,5 @@ Current behavior:
    implemented.
 5. No research brief, agent runtime, strategy generation, order generation, or
    execution behavior is implemented.
+6. The structured output parser does not perform retries, side effects, or
+   provider calls. It is a pure validation utility.

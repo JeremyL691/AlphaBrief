@@ -200,13 +200,19 @@ Current behavior:
    output hash, latency, status, and error type.
 6. `ModelRegistry` stores provider configs and model profiles so future modules
    can select enabled models by capability and priority.
+7. `parse_structured_output` validates `ModelResponse.structured_output` or
+   JSON-decoded `output_text` against a Pydantic target model and returns a
+   structured result with stable error codes.
 
 The gateway does not implement real provider SDKs, network calls, retries,
-fallback, prompt storage, structured output parsing, research briefs, order
-generation, RiskGate, or execution behavior.
+fallback, prompt storage, research briefs, order generation, RiskGate, or
+execution behavior.
 
 The registry stores environment variable names only for future provider
 configuration; it does not read environment variables or store secret values.
+
+The structured output parser is a pure validation utility. It does not call
+providers, does not read environment variables, and does not persist raw output.
 
 ## Vectorized Backtester
 

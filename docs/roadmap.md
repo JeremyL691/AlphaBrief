@@ -29,6 +29,16 @@ Planned sequence:
 
 Goal: add model-agnostic research capabilities through a unified gateway.
 
+Progress:
+
+1. ModelGateway contracts and FakeProvider: completed.
+2. Quality gates (Ruff / mypy): completed.
+3. ModelRegistry and provider config: completed.
+4. Structured output parser: completed.
+5. Research brief schemas: not started.
+6. Prompt template versioning: not started.
+7. Real provider adapter: not started.
+
 ## Phase 3: Risk and Paper Trading
 
 Goal: create a safe paper-trading loop where every OrderIntent passes RiskGate.
