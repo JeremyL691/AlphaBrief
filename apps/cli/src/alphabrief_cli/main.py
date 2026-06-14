@@ -1,0 +1,38 @@
+"""AlphaBrief CLI entry point.
+
+This is the top-level Typer application that wires the 9 subcommand groups
+together. Each subcommand group is intentionally a stub for now; the
+underlying logic will be filled in by the owning package in a later round.
+"""
+
+from __future__ import annotations
+
+import typer
+
+from alphabrief_cli.audit_commands import audit_app
+from alphabrief_cli.backtest_commands import backtest_app
+from alphabrief_cli.brief_commands import brief_app
+from alphabrief_cli.data_commands import data_app
+from alphabrief_cli.model_commands import model_app
+from alphabrief_cli.paper_commands import paper_app
+from alphabrief_cli.review_commands import review_app
+from alphabrief_cli.risk_commands import risk_app
+
+app = typer.Typer(
+    name="alphabrief",
+    help="AlphaBrief local-first AI quant research and paper-trading workbench.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+app.add_typer(data_app, name="data")
+app.add_typer(backtest_app, name="backtest")
+app.add_typer(brief_app, name="brief")
+app.add_typer(model_app, name="model")
+app.add_typer(paper_app, name="paper")
+app.add_typer(risk_app, name="risk")
+app.add_typer(audit_app, name="audit")
+app.add_typer(review_app, name="review")
+
+
+__all__ = ["app"]
