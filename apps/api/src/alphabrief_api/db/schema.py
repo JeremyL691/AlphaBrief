@@ -44,12 +44,27 @@ CREATE TABLE IF NOT EXISTS bars (
 """
 
 # ---------------------------------------------------------------------------
+# Table: backtest_reports
+# ---------------------------------------------------------------------------
+
+CREATE_BACKTEST_REPORTS_TABLE = """
+CREATE TABLE IF NOT EXISTS backtest_reports (
+    id              TEXT PRIMARY KEY,
+    symbol          TEXT NOT NULL,
+    strategy_name   TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    report_json     JSON NOT NULL
+)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
 _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_SYMBOLS_TABLE,
     CREATE_BARS_TABLE,
+    CREATE_BACKTEST_REPORTS_TABLE,
 )
 
 # ---------------------------------------------------------------------------
@@ -65,6 +80,7 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS backtest_reports")
     connection.execute("DROP TABLE IF EXISTS bars")
     connection.execute("DROP TABLE IF EXISTS symbols")
 
@@ -72,6 +88,7 @@ def drop_schema(connection: Any) -> None:
 __all__ = [
     "apply_schema",
     "drop_schema",
+    "CREATE_BACKTEST_REPORTS_TABLE",
     "CREATE_BARS_TABLE",
     "CREATE_SYMBOLS_TABLE",
 ]

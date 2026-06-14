@@ -281,3 +281,178 @@ def test_multiple_symbols_independent(store: MarketDataStore) -> None:
     eth_info = store.get_symbol_info("ETH")
     assert eth_info is not None
     assert eth_info["source"] == "s2"
+
+
+# ---------------------------------------------------------------------------
+# BacktestReportStore tests
+# ---------------------------------------------------------------------------
+
+from alphabrief_api.db.backtest_reports import BacktestReportStore  # noqa: E402
+
+
+def _make_report_json(
+    symbol: str = "BTC",
+    strategy_name: str = "MA Trend",
+) -> dict[str, object]:
+    return {
+        "strategy_id": "ma_trend",
+        "strategy_version": "0.0.0",
+        "symbol": symbol,
+        "data_version": "0.0.0",
+        "initial_cash": "10000",
+        "final_value": "10500",
+        "fee_bps": "5",
+        "slippage_bps": "5",
+        "metrics": {
+            "total_return": "0.05",
+            "max_drawdown": "0.02",
+            "trade_count": 3,
+            "win_rate": "0.6666666666666666",
+        },
+        "equity_curve": [],
+        "trades": [],
+    }
+
+
+@pytest.fixture
+def report_store(tmp_path: Path) -> Generator[BacktestReportStore, None, None]:
+    db_path = tmp_path / "test_reports.db"
+    s = BacktestReportStore(db_path=str(db_path))
+    yield s
+    s.close()
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+
+def test_report_store_creates_tables_on_init(
+    report_store: BacktestReportStore,
+) -> None:
+    tables = report_store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).fetchall()
+    table_names = {row[0] for row in tables}
+    assert "backtest_reports" in table_names
+
+
+# ---------------------------------------------------------------------------
+# save_report
+# ---------------------------------------------------------------------------
+
+
+def test_save_report_returns_id(report_store: BacktestReportStore) -> None:
+    report_json = _make_report_json()
+    rid = report_store.save_report(
+        report_json, symbol="BTC", strategy_name="MA Trend"
+    )
+    assert rid.startswith("backtest_")
+    assert len(rid) == 21
+
+
+def test_save_report_stores_multiple(report_store: BacktestReportStore) -> None:
+    rid1 = report_store.save_report(
+        _make_report_json(symbol="BTC"), symbol="BTC", strategy_name="MA Trend"
+    )
+    rid2 = report_store.save_report(
+        _make_report_json(symbol="ETH"), symbol="ETH", strategy_name="MA Cross"
+    )
+    assert rid1 != rid2
+    reports = report_store.list_reports()
+    assert len(reports) == 2
+
+
+# ---------------------------------------------------------------------------
+# get_report
+# ---------------------------------------------------------------------------
+
+
+def test_get_report_returns_stored_report(
+    report_store: BacktestReportStore,
+) -> None:
+    report_json = _make_report_json(symbol="BTC")
+    rid = report_store.save_report(
+        report_json, symbol="BTC", strategy_name="MA Trend"
+    )
+
+    result = report_store.get_report(rid)
+    assert result is not None
+    assert result["id"] == rid
+    assert result["symbol"] == "BTC"
+    assert result["strategy_name"] == "MA Trend"
+    assert "created_at" in result
+    assert isinstance(result["report"], dict)
+    assert result["report"]["symbol"] == "BTC"
+
+
+def test_get_report_nonexistent_returns_none(
+    report_store: BacktestReportStore,
+) -> None:
+    assert report_store.get_report("backtest_nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# list_reports
+# ---------------------------------------------------------------------------
+
+
+def test_list_reports_empty(report_store: BacktestReportStore) -> None:
+    assert report_store.list_reports() == []
+
+
+def test_list_reports_ordered_by_created_at(
+    report_store: BacktestReportStore,
+) -> None:
+    report_store.save_report(
+        _make_report_json(symbol="BTC"), symbol="BTC", strategy_name="First"
+    )
+    import time
+
+    time.sleep(0.1)
+    report_store.save_report(
+        _make_report_json(symbol="ETH"), symbol="ETH", strategy_name="Second"
+    )
+
+    reports = report_store.list_reports()
+    assert len(reports) == 2
+    assert reports[0]["strategy_name"] == "Second"
+    assert reports[1]["strategy_name"] == "First"
+
+
+# ---------------------------------------------------------------------------
+# clear
+# ---------------------------------------------------------------------------
+
+
+def test_report_clear_removes_all_data(
+    report_store: BacktestReportStore,
+) -> None:
+    report_store.save_report(
+        _make_report_json(), symbol="BTC", strategy_name="MA Trend"
+    )
+    assert len(report_store.list_reports()) == 1
+
+    report_store.clear()
+    assert report_store.list_reports() == []
+    assert report_store.get_report("backtest_any") is None
+
+
+# ---------------------------------------------------------------------------
+# close / reopen
+# ---------------------------------------------------------------------------
+
+
+def test_report_close_then_reopen(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "reopen_reports.db")
+    store1 = BacktestReportStore(db_path=db_path)
+    rid = store1.save_report(
+        _make_report_json(symbol="BTC"), symbol="BTC", strategy_name="MA Trend"
+    )
+    store1.close()
+
+    store2 = BacktestReportStore(db_path=db_path)
+    result = store2.get_report(rid)
+    assert result is not None
+    assert result["report"]["symbol"] == "BTC"
+    store2.close()
