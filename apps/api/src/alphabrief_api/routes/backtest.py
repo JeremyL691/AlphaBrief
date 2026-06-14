@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from uuid import uuid4
 
 from alphabrief_backtest import BacktestReport, VectorizedBacktester
 from alphabrief_data import FeatureGenerationError, generate_basic_features
@@ -21,18 +20,31 @@ from alphabrief_strategy import (
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from alphabrief_api.db import BacktestReportStore
 from alphabrief_api.routes.data import _get_stored_bars
 
 # ---------------------------------------------------------------------------
-# In-memory report store
+# Persistent report store (DuckDB-backed)
 # ---------------------------------------------------------------------------
 
-_report_store: dict[str, BacktestReport] = {}
+_report_store: BacktestReportStore | None = None
+"""Module-level singleton for the DuckDB-backed backtest report store."""
 
 
-def _clear_reports() -> None:
-    """Clear the in-memory report store (for test isolation)."""
-    _report_store.clear()
+def _get_report_store() -> BacktestReportStore:
+    """Return the singleton BacktestReportStore, creating it on first access."""
+    global _report_store
+    if _report_store is None:
+        _report_store = BacktestReportStore()
+    return _report_store
+
+
+def _clear_report_store() -> None:
+    """Clear the persistent report store (for test isolation)."""
+    global _report_store
+    if _report_store is not None:
+        _report_store.clear()
+
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +245,11 @@ def run_backtest(body: BacktestRunRequest) -> BacktestReportResponse:
     backtester = VectorizedBacktester(initial_cash=body.initial_cash)
     report = backtester.run(strategy=strategy, spec=spec, bars=bars, features=features)
 
-    report_id = f"backtest_{uuid4().hex[:12]}"
-    _report_store[report_id] = report
+    report_dict = report.model_dump(mode="json")
+    store = _get_report_store()
+    report_id = store.save_report(
+        report_dict, symbol=body.symbol, strategy_name=body.strategy_name
+    )
 
     return _report_to_response(report_id, report)
 
@@ -242,21 +257,33 @@ def run_backtest(body: BacktestRunRequest) -> BacktestReportResponse:
 @router.get("/reports", response_model=BacktestReportsList)
 def list_reports() -> BacktestReportsList:
     """List all historical backtest reports."""
-    summaries = [
-        _report_to_summary(rid, report)
-        for rid, report in _report_store.items()
-    ]
+    store = _get_report_store()
+    rows = store.list_reports()
+    summaries: list[BacktestReportSummary] = []
+    for row in rows:
+        try:
+            report = BacktestReport.model_validate(row["report"])
+        except Exception:
+            continue
+        summaries.append(_report_to_summary(str(row["id"]), report))
     return BacktestReportsList(reports=summaries)
 
 
 @router.get("/report/{report_id}", response_model=BacktestReportResponse)
 def get_report(report_id: str) -> BacktestReportResponse:
     """Retrieve a single complete backtest report by ID."""
-    report = _report_store.get(report_id)
-    if report is None:
+    store = _get_report_store()
+    row = store.get_report(report_id)
+    if row is None:
         raise HTTPException(
             status_code=404, detail=f"report {report_id!r} not found"
         )
+    try:
+        report = BacktestReport.model_validate(row["report"])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"invalid persisted report: {exc}"
+        ) from exc
     return _report_to_response(report_id, report)
 
 
@@ -265,5 +292,6 @@ __all__ = [
     "BacktestReportSummary",
     "BacktestReportsList",
     "BacktestRunRequest",
+    "_clear_report_store",
     "router",
 ]
