@@ -8,49 +8,66 @@ from pathlib import Path
 from typing import Literal
 
 from alphabrief_core.config import AppSettings, load_settings
-from alphabrief_core.domain import Bar
+from alphabrief_core.domain import Bar  # noqa: F401
 from alphabrief_data import MarketDataLoadError, load_ohlcv_csv, load_ohlcv_parquet
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from alphabrief_api.db.market_data import MarketDataStore
+
 # ---------------------------------------------------------------------------
-# In-memory data store
+# Persistent data store (DuckDB-backed)
 # ---------------------------------------------------------------------------
 
-_DataStoreValue = dict[str, object]
+
+_store: MarketDataStore | None = None
+"""Module-level singleton for the DuckDB-backed market data store."""
 
 
-_data_store: dict[str, _DataStoreValue] = {}
-"""Module-level in-memory store for loaded symbols.
-
-Each entry maps symbol → { "bars": list[Bar], "source": str, "data_version": str }
-"""
-
-
-def _store_bars(symbol: str, bars: list[Bar], source: str, data_version: str) -> int:
-    """Store loaded bars for a symbol.  Returns the bar count."""
-    _data_store[symbol] = {
-        "bars": bars,
-        "source": source,
-        "data_version": data_version,
-    }
-    return len(bars)
-
-
-def _get_stored_bars(symbol: str) -> list[Bar]:
-    """Retrieve stored bars for *symbol*, raising 404 when absent."""
-    entry = _data_store.get(symbol)
-    if entry is None:
-        raise HTTPException(
-            status_code=404, detail=f"symbol {symbol!r} not loaded"
-        )
-    bars: list[Bar] = entry["bars"]  # type: ignore[assignment]
-    return bars
+def _get_store() -> MarketDataStore:
+    """Return the singleton MarketDataStore, creating it on first access."""
+    global _store
+    if _store is None:
+        _store = MarketDataStore()
+    return _store
 
 
 def _clear_store() -> None:
-    """Clear the in-memory data store (for test isolation)."""
-    _data_store.clear()
+    """Clear the persistent data store (drop + recreate tables).
+
+    Used for test isolation.  Does not close the connection — callers
+    that want a fresh connection should also call ``_close_store()``.
+    """
+    global _store
+    if _store is not None:
+        _store.clear()
+
+
+def _close_store() -> None:
+    """Close and nullify the singleton store.
+
+    Used alongside ``_clear_store`` in test fixtures that change the
+    database path via ``ALPHABRIEF_DATA_DIR``.
+    """
+    global _store
+    if _store is not None:
+        _store.close()
+        _store = None
+
+
+def _get_stored_bars(symbol: str) -> list[Bar]:
+    """Retrieve stored ``Bar`` objects for *symbol*, raising 404 when absent.
+
+    Used by backtest and other routes that need domain-model objects rather
+    than JSON-serializable dicts.
+    """
+
+    store = _get_store()
+    if not store.symbol_exists(symbol):
+        raise HTTPException(
+            status_code=404, detail=f"symbol {symbol!r} not loaded"
+        )
+    return store.get_bar_models(symbol)
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +215,7 @@ def get_data_status() -> DataStatus:
 def load_market_data(body: DataLoadRequest) -> DataLoadResponse:
     """Load OHLCV market data from a local CSV or Parquet file.
 
-    The loaded bars are stored in memory keyed by symbol.
+    The loaded bars are persisted in DuckDB keyed by symbol.
     Re-loading the same symbol overwrites existing data.
     """
     file_path = Path(body.file_path)
@@ -225,8 +242,9 @@ def load_market_data(body: DataLoadRequest) -> DataLoadResponse:
     except MarketDataLoadError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    bar_count = _store_bars(
-        body.symbol, bars, source=body.source, data_version=body.data_version
+    store = _get_store()
+    bar_count = store.insert_bars(
+        bars, source=body.source, data_version=body.data_version
     )
 
     return DataLoadResponse(
@@ -239,19 +257,19 @@ def load_market_data(body: DataLoadRequest) -> DataLoadResponse:
 
 @router.get("/symbols", response_model=SymbolsResponse)
 def list_symbols() -> SymbolsResponse:
-    """List all symbols currently loaded in the in-memory data store."""
+    """List all symbols currently loaded in the persistent data store."""
 
-    summaries: list[SymbolSummary] = []
-    for symbol, entry in _data_store.items():
-        bars: list[Bar] = entry["bars"]  # type: ignore[assignment]
-        summaries.append(
-            SymbolSummary(
-                symbol=symbol,
-                bar_count=len(bars),
-                source=str(entry["source"]),
-                data_version=str(entry["data_version"]),
-            )
+    store = _get_store()
+    rows = store.get_symbols()
+    summaries: list[SymbolSummary] = [
+        SymbolSummary(
+            symbol=str(row["symbol"]),
+            bar_count=int(str(row["bar_count"])),
+            source=str(row["source"]),
+            data_version=str(row["data_version"]),
         )
+        for row in rows
+    ]
     return SymbolsResponse(symbols=summaries)
 
 
@@ -269,16 +287,20 @@ def get_bars(
     if offset < 0:
         raise HTTPException(status_code=422, detail="offset must be >= 0")
 
-    bars = _get_stored_bars(symbol)
-    total = len(bars)
+    store = _get_store()
+    if not store.symbol_exists(symbol):
+        raise HTTPException(
+            status_code=404, detail=f"symbol {symbol!r} not loaded"
+        )
+
+    total = store.get_bar_count(symbol)
 
     if offset >= total and total > 0:
         raise HTTPException(
             status_code=416, detail="offset exceeds total bar count"
         )
 
-    page = bars[offset : offset + limit]
-    json_bars = [bar.model_dump(mode="json") for bar in page]
+    json_bars = store.get_bars(symbol, limit=limit, offset=offset)
 
     return BarsResponse(
         symbol=symbol,
@@ -291,26 +313,22 @@ def get_bars(
 
 @router.get("/{symbol}/info", response_model=SymbolInfo)
 def get_symbol_info(symbol: str) -> SymbolInfo:
-    """Return metadata for *symbol* loaded in the data store."""
+    """Return metadata for *symbol* loaded in the persistent data store."""
 
-    bars = _get_stored_bars(symbol)
-    entry = _data_store[symbol]
-
-    timestamps = sorted(bar.timestamp for bar in bars)
-
-    time_start: str | None = None
-    time_end: str | None = None
-    if timestamps:
-        time_start = timestamps[0].isoformat()
-        time_end = timestamps[-1].isoformat()
+    store = _get_store()
+    info = store.get_symbol_info(symbol)
+    if info is None:
+        raise HTTPException(
+            status_code=404, detail=f"symbol {symbol!r} not loaded"
+        )
 
     return SymbolInfo(
-        symbol=symbol,
-        bar_count=len(bars),
-        source=str(entry["source"]),
-        data_version=str(entry["data_version"]),
-        time_start=time_start,
-        time_end=time_end,
+        symbol=str(info["symbol"]),
+        bar_count=int(str(info["bar_count"])),
+        source=str(info["source"]),
+        data_version=str(info["data_version"]),
+        time_start=info["time_start"],  # type: ignore[arg-type]
+        time_end=info["time_end"],  # type: ignore[arg-type]
     )
 
 
@@ -322,5 +340,8 @@ __all__ = [
     "SymbolInfo",
     "SymbolSummary",
     "SymbolsResponse",
+    "_clear_store",
+    "_close_store",
+    "_get_stored_bars",
     "router",
 ]
