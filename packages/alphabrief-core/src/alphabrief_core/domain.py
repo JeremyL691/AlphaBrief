@@ -136,6 +136,7 @@ class RiskDecision(AlphaBriefModel):
     max_quantity: Decimal | None = None
     risk_tags: list[str]
     requires_human_review: bool
+    source_module: str = ""
     created_at: datetime
 
     @field_validator("created_at")
