@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from alphabrief_cli.paper_commands import paper_app  # type: ignore[import-not-found]
+from alphabrief_cli.paper_commands import paper_app
 from typer.testing import CliRunner
 
 runner = CliRunner()
