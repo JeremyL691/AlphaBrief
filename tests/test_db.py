@@ -456,3 +456,178 @@ def test_report_close_then_reopen(tmp_path: Path) -> None:
     assert result is not None
     assert result["report"]["symbol"] == "BTC"
     store2.close()
+
+
+# ---------------------------------------------------------------------------
+# BriefStore tests
+# ---------------------------------------------------------------------------
+
+from alphabrief_api.db.briefs import BriefStore  # noqa: E402
+
+
+def _make_brief_data(
+    brief_id: str = "brief_test_001",
+    headline: str = "Market outlook is positive",
+) -> dict[str, object]:
+    return {
+        "brief_id": brief_id,
+        "generated_at": "2026-06-14T09:30:00+00:00",
+        "trading_day": "2026-06-14",
+        "headline": headline,
+        "executive_summary": "Markets show strength across key sectors.",
+        "market_brief": {
+            "brief_id": "mkt_sample",
+            "generated_at": "2026-06-14T09:30:00+00:00",
+            "trading_day": "2026-06-14",
+            "regime": "bullish",
+            "summary": "Bullish momentum continues.",
+            "confidence": 0.85,
+            "key_factors": ["Earnings", "Rate outlook"],
+        },
+        "symbol_briefs": [
+            {
+                "brief_id": "sym_sample",
+                "symbol": "SPY",
+                "generated_at": "2026-06-14T09:30:00+00:00",
+                "horizon": "1d",
+                "verdict": {
+                    "direction": "bullish",
+                    "confidence": 0.8,
+                    "rationale": "Positive momentum.",
+                },
+                "catalysts": ["Earnings beat"],
+                "risks": ["Valuation concern"],
+            }
+        ],
+        "watchlist": ["SPY", "QQQ"],
+        "risk_notes": ["Monitor volatility"],
+    }
+
+
+@pytest.fixture
+def brief_store(tmp_path: Path) -> Generator[BriefStore, None, None]:
+    db_path = tmp_path / "test_briefs.db"
+    s = BriefStore(db_path=str(db_path))
+    yield s
+    s.close()
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+
+def test_brief_store_creates_tables_on_init(brief_store: BriefStore) -> None:
+    tables = brief_store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).fetchall()
+    table_names = {row[0] for row in tables}
+    assert "briefs" in table_names
+
+
+# ---------------------------------------------------------------------------
+# save_brief
+# ---------------------------------------------------------------------------
+
+
+def test_save_brief_returns_id(brief_store: BriefStore) -> None:
+    brief_data = _make_brief_data()
+    bid = brief_store.save_brief(brief_data)
+    assert bid.startswith("brief_")
+    assert len(bid) == 18  # "brief_" (6) + 12 hex chars
+
+
+def test_save_brief_stores_multiple(brief_store: BriefStore) -> None:
+    bid1 = brief_store.save_brief(_make_brief_data(headline="First brief"))
+    bid2 = brief_store.save_brief(_make_brief_data(headline="Second brief"))
+    assert bid1 != bid2
+    briefs = brief_store.list_briefs()
+    assert len(briefs) == 2
+
+
+# ---------------------------------------------------------------------------
+# get_brief
+# ---------------------------------------------------------------------------
+
+
+def test_get_brief_returns_stored_brief(brief_store: BriefStore) -> None:
+    brief_data = _make_brief_data(headline="Test headline")
+    bid = brief_store.save_brief(brief_data)
+
+    result = brief_store.get_brief(bid)
+    assert result is not None
+    assert result["id"] == bid
+    assert "created_at" in result
+    assert isinstance(result["brief"], dict)
+    assert result["brief"]["headline"] == "Test headline"
+    assert result["brief"]["trading_day"] == "2026-06-14"
+
+
+def test_get_brief_nonexistent_returns_none(brief_store: BriefStore) -> None:
+    assert brief_store.get_brief("brief_nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# list_briefs
+# ---------------------------------------------------------------------------
+
+
+def test_list_briefs_empty(brief_store: BriefStore) -> None:
+    assert brief_store.list_briefs() == []
+
+
+def test_list_briefs_ordered_by_created_at(brief_store: BriefStore) -> None:
+    brief_store.save_brief(_make_brief_data(headline="First"))
+    import time
+
+    time.sleep(0.1)
+    brief_store.save_brief(_make_brief_data(headline="Second"))
+
+    briefs = brief_store.list_briefs()
+    assert len(briefs) == 2
+    assert briefs[0]["headline"] == "Second"
+    assert briefs[1]["headline"] == "First"
+
+
+def test_list_briefs_summary_fields(brief_store: BriefStore) -> None:
+    brief_store.save_brief(_make_brief_data(headline="Test summary"))
+
+    briefs = brief_store.list_briefs()
+    assert len(briefs) == 1
+    s = briefs[0]
+    assert s["id"].startswith("brief_")
+    assert "created_at" in s
+    assert s["headline"] == "Test summary"
+    assert s["trading_day"] == "2026-06-14"
+
+
+# ---------------------------------------------------------------------------
+# clear
+# ---------------------------------------------------------------------------
+
+
+def test_brief_clear_removes_all_data(brief_store: BriefStore) -> None:
+    brief_store.save_brief(_make_brief_data())
+    assert len(brief_store.list_briefs()) == 1
+
+    brief_store.clear()
+    assert brief_store.list_briefs() == []
+    assert brief_store.get_brief("brief_any") is None
+
+
+# ---------------------------------------------------------------------------
+# close / reopen
+# ---------------------------------------------------------------------------
+
+
+def test_brief_close_then_reopen(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "reopen_briefs.db")
+    store1 = BriefStore(db_path=db_path)
+    bid = store1.save_brief(_make_brief_data(headline="Persistent"))
+    store1.close()
+
+    store2 = BriefStore(db_path=db_path)
+    result = store2.get_brief(bid)
+    assert result is not None
+    assert result["brief"]["headline"] == "Persistent"
+    store2.close()

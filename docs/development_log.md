@@ -964,3 +964,42 @@ Validation for 0032:
 1. `.venv/bin/python -m pytest` passed (298 tests, up from 289).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy apps/api/src tests` passed.
+
+## 0033 Briefs DuckDB Persistence
+
+Status: completed.
+
+Goal: replace the in-memory brief store with DuckDB-backed persistence.
+
+Completed changes:
+
+1. Added `briefs` table DDL to `db/schema.py` with columns: `id`,
+   `created_at`, `brief_json`.
+2. Created `apps/api/src/alphabrief_api/db/briefs.py` with
+   `BriefStore` class providing `save_brief`, `get_brief`,
+   `list_briefs`, `clear`, and `close` — following the same pattern as
+   `BacktestReportStore`.
+3. Exported `BriefStore` from `db/__init__.py`.
+4. Replaced in-memory `_brief_store` dict in `routes/brief.py` with
+   singleton `BriefStore`. All three brief endpoints
+   (`POST /generate`, `GET /history`, `GET /{brief_id}`) now read from DuckDB.
+5. Wrote `tests/test_db.py` with 10 new tests covering save, get, list,
+   summary fields, clear, and reopen scenarios.
+6. Updated `tests/test_api_server.py` fixture to use `_clear_brief_store`.
+7. Updated `docs/roadmap.md` Phase 7 Round 3 status.
+
+Files changed:
+- `apps/api/src/alphabrief_api/db/briefs.py` — new
+- `apps/api/src/alphabrief_api/db/__init__.py` — export BriefStore
+- `apps/api/src/alphabrief_api/db/schema.py` — briefs DDL
+- `apps/api/src/alphabrief_api/routes/brief.py` — DuckDB integration
+- `tests/test_db.py` — 10 new tests
+- `tests/test_api_server.py` — fixture update
+- `docs/roadmap.md` — progress marker
+- `docs/development_log.md` — this entry
+
+Validation for 0033:
+
+1. `python3 -m pytest` passed (308 tests, up from 298).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests` passed.

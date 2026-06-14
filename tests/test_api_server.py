@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from alphabrief_api.main import app
 from alphabrief_api.routes.backtest import _clear_report_store
-from alphabrief_api.routes.brief import _clear_briefs
+from alphabrief_api.routes.brief import _clear_brief_store
 from alphabrief_api.routes.data import _close_store
 from alphabrief_api.routes.paper import _reset_broker
 from alphabrief_api.routes.risk import _reset_risk_gate
@@ -30,7 +30,7 @@ def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
     os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
     _close_store()
     _clear_report_store()
-    _clear_briefs()
+    _clear_brief_store()
     _reset_broker()
     _reset_risk_gate()
     yield

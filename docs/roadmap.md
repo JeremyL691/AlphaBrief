@@ -148,7 +148,7 @@ Planned sequence:
 1. DuckDB schema definition and data access layer: completed (Round 1).
 2. Market data persistence: completed (Round 1).
 3. Backtest reports persistence: completed (Round 2).
-4. Briefs persistence: pending.
+4. Briefs persistence: completed (Round 3).
 5. Paper portfolio + audit log persistence: pending.
 6. Review snapshots persistence: pending.
 
