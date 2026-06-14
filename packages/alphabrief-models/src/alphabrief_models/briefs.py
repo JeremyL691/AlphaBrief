@@ -9,7 +9,7 @@ do not produce any side effects. They are designed to be the target model for
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 MarketRegime = Literal["bullish", "bearish", "neutral", "uncertain"]
 SymbolDirection = Literal["bullish", "bearish", "neutral"]
@@ -100,4 +100,49 @@ class SymbolBrief(AlphaBriefModel):
     def _factors_must_not_contain_blank(cls, value: list[str]) -> list[str]:
         if any(item.strip() == "" for item in value):
             raise ValueError("catalysts and risks must not contain blank entries")
+        return value
+
+
+class DailyAlphaBrief(AlphaBriefModel):
+    """A daily research brief assembled from validated model output."""
+
+    brief_id: str = Field(min_length=1)
+    generated_at: datetime
+    trading_day: date
+    headline: str = Field(min_length=1)
+    executive_summary: str = Field(min_length=1)
+    market_brief: MarketBrief
+    symbol_briefs: list[SymbolBrief]
+    watchlist: list[str]
+    risk_notes: list[str]
+
+    @field_validator("brief_id", "headline", "executive_summary")
+    @classmethod
+    def _non_blank(cls, value: str) -> str:
+        if value.strip() == "":
+            raise ValueError("string fields must not be blank")
+        return value
+
+    @field_validator("generated_at")
+    @classmethod
+    def _generated_at_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("generated_at must be timezone-aware")
+        return value
+
+    @field_validator("watchlist", "risk_notes")
+    @classmethod
+    def _lists_must_not_contain_blank(cls, value: list[str]) -> list[str]:
+        if any(item.strip() == "" for item in value):
+            raise ValueError("watchlist and risk_notes must not contain blank entries")
+        return value
+
+    @field_validator("market_brief")
+    @classmethod
+    def _market_brief_must_match_trading_day(
+        cls, value: MarketBrief, info: ValidationInfo
+    ) -> MarketBrief:
+        trading_day = info.data.get("trading_day")
+        if trading_day is not None and value.trading_day != trading_day:
+            raise ValueError("market_brief trading_day must match daily trading_day")
         return value
