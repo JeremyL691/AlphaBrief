@@ -17,6 +17,7 @@ from alphabrief_cli.model_commands import model_app
 from alphabrief_cli.paper_commands import paper_app
 from alphabrief_cli.review_commands import review_app
 from alphabrief_cli.risk_commands import risk_app
+from alphabrief_cli.serve_commands import serve_app
 
 app = typer.Typer(
     name="alphabrief",
@@ -33,6 +34,7 @@ app.add_typer(paper_app, name="paper")
 app.add_typer(risk_app, name="risk")
 app.add_typer(audit_app, name="audit")
 app.add_typer(review_app, name="review")
+app.add_typer(serve_app, name="serve")
 
 
 __all__ = ["app"]
