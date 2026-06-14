@@ -305,6 +305,24 @@ Current behavior:
 The Review Center is read-only. It does not call models, run backtests, submit
 orders, change portfolio state, bypass RiskGate, or implement a Web Dashboard.
 
+## API Layer
+
+`apps/api` starts the Product Layer with a FastAPI web server.
+
+Current behavior:
+
+1. Health check endpoint returns service status and API version.
+2. Project status endpoint returns version, environment, live-trading lock state,
+   configured data/report directories, and loaded AlphaBrief package surfaces.
+3. Data status endpoint reports whether the configured data directory exists,
+   whether it has files, and a CSV/Parquet file summary.
+
+The API server is read-only. It is exposed through the CLI with
+`alphabrief serve` and runs the FastAPI app via Uvicorn.
+
+It does not call models, access brokers, bypass RiskGate, or enable live
+trading.
+
 ## Vectorized Backtester
 
 `alphabrief_backtest` provides the first long/flat backtesting loop.

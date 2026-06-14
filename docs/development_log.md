@@ -630,3 +630,34 @@ Validation for 0023:
 3. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src packages/alphabrief-risk/src packages/alphabrief-execution/src packages/alphabrief-gym/src packages/alphabrief-review/src tests`
    passed.
 4. `alphabrief --help` shows all 8 subcommands.
+
+## 0024 FastAPI Web API Surface Round 1
+
+Status: completed.
+
+Goal: implement the first FastAPI application scaffold with health, project
+status, and data status endpoints, plus CLI integration through
+`alphabrief serve`.
+
+Completed changes:
+
+1. Added `apps/api/src/alphabrief_api` with a FastAPI app factory and exported
+   `app` object.
+2. Added read-only health, project status, and data status route modules.
+3. Added Pydantic response schemas for every API endpoint.
+4. Added `alphabrief_cli.serve_commands` and registered the `serve` CLI group.
+5. Added FastAPI and Uvicorn dependencies plus API source paths for pytest,
+   setuptools package discovery, and mypy.
+6. Added API endpoint tests and serve command registration tests.
+7. Updated architecture documentation with the API Layer boundary.
+
+Validation for 0024:
+
+1. `python3 -m pytest tests/test_api_server.py tests/test_serve_command.py`
+   passed.
+2. `.venv/bin/ruff check apps/api/ apps/cli/src/alphabrief_cli/serve_commands.py apps/cli/src/alphabrief_cli/main.py tests/test_api_server.py tests/test_serve_command.py`
+   passed.
+3. `.venv/bin/mypy apps/api/src apps/cli/src/alphabrief_cli/main.py apps/cli/src/alphabrief_cli/serve_commands.py tests/test_api_server.py tests/test_serve_command.py`
+   passed.
+4. `python3 -m pytest` passed.
+5. `.venv/bin/ruff check .` passed.
