@@ -36,19 +36,32 @@ Current objects:
 5. `ModelGateway`: capability-based provider selector and call recorder.
 6. `FakeProviderAdapter`: deterministic test adapter with success and failure
    modes.
-7. `ProviderConfig`: provider metadata and enabled state.
-8. `ModelProfile`: model metadata, capabilities, enabled state, and priority.
-9. `ModelRegistry`: provider/profile validation and capability lookup.
-10. `StructuredOutputErrorCode`: stable error code enum for parse failures.
-11. `StructuredOutputResult`: typed parse result carrying either a parsed
+7. `OllamaProviderAdapter`: local HTTP adapter for a real Ollama server.
+8. `ProviderConfig`: provider metadata and enabled state.
+9. `ModelProfile`: model metadata, capabilities, enabled state, and priority.
+10. `ModelRegistry`: provider/profile validation and capability lookup.
+11. `StructuredOutputErrorCode`: stable error code enum for parse failures.
+12. `StructuredOutputResult`: typed parse result carrying either a parsed
     target model or a structured failure.
-12. `parse_structured_output`: Pydantic-based parser for
+13. `parse_structured_output`: Pydantic-based parser for
     `ModelResponse.structured_output` or JSON-decoded `output_text`.
-13. `MarketBrief`: market-level research brief schema for a single trading day.
-14. `SymbolBrief`: symbol-level research brief schema with a nested
+14. `MarketBrief`: market-level research brief schema for a single trading day.
+15. `SymbolBrief`: symbol-level research brief schema with a nested
     `SymbolVerdict`.
-15. `MarketRegime`, `SymbolDirection`, `BriefHorizon`: typed literal aliases
+16. `MarketRegime`, `SymbolDirection`, `BriefHorizon`: typed literal aliases
     for brief field validation.
+17. `DailyAlphaBrief`: daily research brief schema combining a market brief,
+    symbol briefs, a watchlist, and risk notes.
+18. `generate_daily_alpha_brief`: generator function that invokes
+    `ModelGateway` and validates the response as `DailyAlphaBrief`.
+19. `DailyBriefGenerationResult`: structured success or failure result for
+    daily brief generation.
+20. `PromptTemplate`: versioned prompt template with explicit required
+    variables.
+21. `PromptTemplateRegistry`: in-memory prompt template registry for selecting
+    and rendering a specific template version.
+22. `RenderedPrompt`: rendered input text plus stable prompt version metadata
+    for `ModelRequest`.
 
 Current behavior:
 
@@ -71,19 +84,30 @@ Current behavior:
 11. Research brief schemas (`MarketBrief`, `SymbolBrief`) are pure Pydantic
     validation boundaries. They do not call providers, do not read
     environment variables, and do not generate any content themselves.
+12. The daily brief generator does not store raw prompt text, raw output text,
+    provider secrets, or API keys; audit details remain in `ModelCallRecord`.
+13. Provider rejection, provider failure, and structured-output validation
+    failure are returned as structured generation errors.
+14. Prompt templates render only explicit string variables and reject missing,
+    extra, blank, duplicate, or invalid variables.
+15. `OllamaProviderAdapter` posts to `/api/generate`, requests non-streaming
+    responses, and maps provider failures to `ModelProviderError`.
 
 ## Current Non-Goals
 
-1. No real provider SDK or network integration is implemented.
+1. No cloud provider SDK integration is implemented.
 2. No API key or secret fields are added.
-3. No retry, fallback, rate limiting, usage pricing, or prompt template storage
-   is implemented.
-4. No environment variable loading or real provider adapter instantiation is
+3. No retry, fallback, rate limiting, usage pricing, or persistent prompt
+   template storage is implemented.
+4. No environment variable loading or automatic provider adapter instantiation is
    implemented.
-5. No research brief, agent runtime, strategy generation, order generation, or
+5. No agent runtime, strategy generation, order generation, or
    execution behavior is implemented.
 6. The structured output parser does not perform retries, side effects, or
    provider calls. It is a pure validation utility.
-7. Research brief schemas do not generate briefs. Brief generation requires
-   future research layer work that calls the gateway and validates the
-   response against these schemas.
+7. DailyAlphaBrief generation does not implement multi-model debate, retries,
+   or persistence.
+8. Prompt template versioning does not load from disk or read environment
+   variables.
+9. The Ollama adapter assumes a user-managed local Ollama server when used
+   outside tests.

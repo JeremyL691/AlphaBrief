@@ -29,18 +29,22 @@ Current implemented kernel:
 7. A vectorized backtester with fees, slippage, equity curve, trades, and basic
    metrics.
 8. ModelGateway contracts, fake provider, model call records, model
-   registry/profile selection, structured output parser, and research brief
-   schemas (MarketBrief and SymbolBrief).
-9. Passing pytest, Ruff, and strict mypy quality gates.
+   registry/profile selection, structured output parser, research brief
+   schemas, DailyAlphaBrief generation, prompt template versioning, and a
+   local Ollama provider adapter.
+9. RiskGate, KillSwitch, PaperBroker, OrderRouter, FillSimulator,
+   PortfolioState, and ExecutionAuditLog for a safe paper-trading loop.
+10. A Gymnasium-style trading environment with rewards, costs, random policy,
+   buy-and-hold baseline, and strategy comparison report.
+11. Review Center snapshots, text viewers, paper/risk/audit summaries, and
+   daily/weekly review journal generation.
+12. Passing pytest, Ruff, and strict mypy quality gates.
 
 Not implemented yet:
 
-1. Real model provider adapters.
-2. DailyAlphaBrief schema and brief generator.
-3. RiskGate implementation.
-4. PaperBroker and paper-trading execution loop.
-5. Dashboard, API, or CLI product surface.
-6. Live trading.
+1. External cloud model provider adapters.
+2. Full Web Dashboard or FastAPI product surface.
+3. Live trading.
 
 ## Safety Boundary
 
@@ -54,7 +58,7 @@ Hard rules:
 3. Models cannot place orders or override risk controls.
 4. Research outputs may produce structured reports, hypotheses, StrategySpec
    drafts, or OrderIntent drafts only.
-5. Every future OrderIntent must pass RiskGate before execution.
+5. Every OrderIntent must pass RiskGate before paper execution.
 6. Live trading is disabled by default and out of scope for the MVP.
 7. API keys and broker keys must never be committed, logged, or embedded in
    prompts.
@@ -79,6 +83,10 @@ Runtime packages currently live under `packages/*/src`:
 3. `alphabrief_strategy`
 4. `alphabrief_backtest`
 5. `alphabrief_models`
+6. `alphabrief_risk`
+7. `alphabrief_execution`
+8. `alphabrief_gym`
+9. `alphabrief_review`
 
 ## Local Setup
 

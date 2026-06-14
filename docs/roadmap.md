@@ -29,6 +29,11 @@ Planned sequence:
 
 Goal: add model-agnostic research capabilities through a unified gateway.
 
+Status: completed for the MVP research layer. The current implementation has
+ModelGateway contracts, fake and local Ollama provider adapters, model
+registry/profile selection, prompt template versioning, structured output
+parsing, MarketBrief/SymbolBrief schemas, and DailyAlphaBrief generation.
+
 Progress:
 
 1. ModelGateway contracts and FakeProvider: completed.
@@ -36,19 +41,67 @@ Progress:
 3. ModelRegistry and provider config: completed.
 4. Structured output parser: completed.
 5. Research brief schemas (MarketBrief, SymbolBrief): completed.
-6. DailyAlphaBrief schema and generator: not started.
-7. Prompt template versioning: not started.
-8. Real provider adapter: not started.
+6. DailyAlphaBrief schema and generator: completed.
+7. Prompt template versioning: completed.
+8. Real provider adapter: completed with local Ollama adapter.
 
 ## Phase 3: Risk and Paper Trading
 
 Goal: create a safe paper-trading loop where every OrderIntent passes RiskGate.
 
+Status: completed for the MVP paper-trading loop. The current implementation
+has RiskGate, KillSwitch, PaperBroker, OrderRouter, FillSimulator,
+PortfolioState, and ExecutionAuditLog. Live trading remains unavailable.
+
+Progress:
+
+1. OrderIntent schema: completed in `alphabrief_core`.
+2. RiskDecision schema: completed in `alphabrief_core`.
+3. RiskGate MVP: completed.
+4. KillSwitch: completed.
+5. OrderRouter: completed.
+6. FillSimulator: completed.
+7. PortfolioState: completed.
+8. ExecutionAuditLog: completed.
+9. PaperBroker MVP: completed.
+
 ## Phase 4: Trading Environment
 
 Goal: add a Gymnasium-style simulation environment for strategy comparison.
+
+Status: completed for the MVP simulation layer. The current implementation has
+a reset/step trading environment, action and observation schemas, transition
+rewards, transaction costs, slippage, episode metrics, random policy
+evaluation, buy-and-hold baseline, and strategy comparison report.
+
+Progress:
+
+1. AlphaBriefTradingEnv: completed.
+2. Action / observation space: completed.
+3. Reward functions: completed.
+4. Transaction cost: completed.
+5. Slippage: completed.
+6. Random policy evaluation: completed.
+7. Buy-and-hold baseline: completed.
+8. Strategy comparison report: completed.
 
 ## Phase 5: Dashboard and Review
 
 Goal: expose reports, risk logs, paper portfolio, and review history through a
 daily-use interface.
+
+Status: completed for the MVP review layer. The current implementation has a
+Review Center snapshot, local JSON persistence, text viewers for all Phase 5
+surfaces, paper/risk/audit summaries, and daily/weekly review journal
+generation.
+
+Progress:
+
+1. Strategy list: completed.
+2. Backtest report viewer: completed.
+3. Daily AlphaBrief viewer: completed.
+4. Model call history: completed.
+5. Paper portfolio: completed.
+6. Order audit log: completed.
+7. Risk dashboard: completed.
+8. Review journal: completed.

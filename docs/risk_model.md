@@ -36,5 +36,25 @@ The blueprint defines these eventual checks:
 10. data quality status
 11. human review requirements
 
-The first implementation round does not implement RiskGate; it only records
-the required boundary.
+## Current MVP Implementation
+
+`alphabrief_risk` implements the deterministic paper-trading risk boundary:
+
+1. `RiskGate` evaluates every `OrderIntent` before paper execution.
+2. `RiskLimitConfig` controls trading enabled status, live-trading lock,
+   strategy allowlist, symbol allowlist, max quantity, max order value, data
+   quality requirement, and human-review flag.
+3. `KillSwitch` blocks every order while active.
+4. Every evaluation returns a complete `RiskDecision`, approved or rejected.
+
+`alphabrief_execution` implements the paper execution boundary:
+
+1. `OrderRouter` refuses to create an `Order` without a matching approved
+   `RiskDecision`.
+2. `PaperBroker` simulates paper orders and fills only through the router.
+3. `FillSimulator` applies deterministic fee and slippage assumptions.
+4. `PortfolioState` updates cash, positions, and realized PnL from fills.
+5. `ExecutionAuditLog` records risk decisions, order creation/rejection, fills,
+   and portfolio updates.
+
+No live broker adapter or live trading path is implemented.

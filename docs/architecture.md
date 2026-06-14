@@ -196,21 +196,27 @@ Current behavior:
    capabilities.
 4. `FakeProviderAdapter` provides deterministic local success and failure paths
    for tests.
-5. `ModelCallRecord` records provider, model, task, prompt version, input hash,
+5. `OllamaProviderAdapter` provides the first real provider adapter through
+   Ollama's local HTTP API.
+6. `ModelCallRecord` records provider, model, task, prompt version, input hash,
    output hash, latency, status, and error type.
-6. `ModelRegistry` stores provider configs and model profiles so future modules
+7. `ModelRegistry` stores provider configs and model profiles so future modules
    can select enabled models by capability and priority.
-7. `parse_structured_output` validates `ModelResponse.structured_output` or
+8. `parse_structured_output` validates `ModelResponse.structured_output` or
    JSON-decoded `output_text` against a Pydantic target model and returns a
    structured result with stable error codes.
-8. Research brief schemas (`MarketBrief`, `SymbolBrief`) provide the
-   structured target types for future brief generators and serve as the
+9. Research brief schemas (`MarketBrief`, `SymbolBrief`, `DailyAlphaBrief`)
+   provide structured target types for brief generation and serve as the
    integration surface between the structured output parser and the research
    layer.
+10. `generate_daily_alpha_brief` calls `ModelGateway`, validates the model
+   response as `DailyAlphaBrief`, and returns structured success or failure
+   results.
+11. Prompt templates are versioned with `PromptTemplate` and rendered into
+   explicit `prompt_version` plus `input_text` values for `ModelRequest`.
 
-The gateway does not implement real provider SDKs, network calls, retries,
-fallback, prompt storage, research briefs, order generation, RiskGate, or
-execution behavior.
+The gateway does not implement cloud provider SDKs, retries, fallback,
+persistent prompt storage, order generation, RiskGate, or execution behavior.
 
 The registry stores environment variable names only for future provider
 configuration; it does not read environment variables or store secret values.
@@ -222,6 +228,82 @@ Research brief schemas are pure Pydantic validation boundaries. They do not
 call providers, do not read environment variables, and do not generate
 content themselves. They are designed to be the target model for
 ``parse_structured_output`` and future research layer generators.
+
+The DailyAlphaBrief generator is a thin orchestration boundary. It does not
+build prompt templates, instantiate providers, retry failed calls, or persist
+briefs; callers provide the input text and prompt version explicitly.
+
+Prompt template versioning is local and in-memory in the MVP. It does not load
+templates from disk, allow secret variables, or call providers.
+
+The Ollama adapter performs a real local HTTP request when used at runtime, but
+tests inject the HTTP boundary. It does not store API keys or provider secrets.
+
+## Risk and Paper Trading
+
+`alphabrief_risk` and `alphabrief_execution` implement the Phase 3 paper
+trading safety loop.
+
+Current behavior:
+
+1. `RiskGate` evaluates `OrderIntent` objects and always returns a
+   `RiskDecision`.
+2. `RiskLimitConfig` supports trading enabled status, live trading lock,
+   enabled strategies, symbol allowlist, max order quantity, max order value,
+   data quality requirement, and human-review flag.
+3. `KillSwitch` can block all orders.
+4. `OrderRouter` creates `Order` objects only when a matching approved
+   `RiskDecision` is present.
+5. `FillSimulator` creates deterministic paper fills with fee and slippage.
+6. `PortfolioState` updates cash, positions, and realized PnL from fills.
+7. `PaperBroker` coordinates routing, fill simulation, portfolio updates, and
+   audit entries.
+8. `ExecutionAuditLog` records risk decisions, order rejections, orders, fills,
+   and portfolio updates.
+
+This layer is paper-only. It does not implement live broker adapters, live
+order routing, margin, leverage, partial fills, or external persistence.
+
+## Trading Environment
+
+`alphabrief_gym` implements the Phase 4 Gymnasium-style simulation boundary.
+
+Current behavior:
+
+1. `AlphaBriefTradingEnv` exposes `reset()` and `step(action)` methods.
+2. Actions are `hold`, `buy`, and `sell`.
+3. Observations include current bar identity, close price, cash, position
+   quantity, portfolio value, and step index.
+4. Rewards are computed from the portfolio value transition from the current
+   bar to the next bar after applying the current action.
+5. Transaction costs and slippage are explicit basis-point inputs.
+6. Episode metrics include initial value, final value, total return, max
+   drawdown, step count, and trade count.
+7. Random policy and buy-and-hold baselines can be evaluated.
+8. `StrategyComparisonReport` ranks evaluated policies by total return.
+
+The environment is single-asset and long/flat in the MVP. It does not depend
+on Gymnasium, implement vectorized spaces, train agents, short assets, use
+leverage, or persist evaluation reports.
+
+## Review Center
+
+`alphabrief_review` implements the Phase 5 daily-use review boundary.
+
+Current behavior:
+
+1. `ReviewCenterSnapshot` aggregates strategies, backtest reports, daily
+   AlphaBrief summaries, model calls, paper portfolio state, order audit log,
+   risk dashboard data, and review journal entries.
+2. Snapshot JSON can be written and loaded locally.
+3. Plain-text viewers expose research reports, backtest summaries, model call
+   history, paper portfolio, order audit log, risk dashboard, strategy list,
+   and review journal entries.
+4. Daily and weekly review journal entries can be generated deterministically
+   from a snapshot.
+
+The Review Center is read-only. It does not call models, run backtests, submit
+orders, change portfolio state, bypass RiskGate, or implement a Web Dashboard.
 
 ## Vectorized Backtester
 

@@ -435,3 +435,198 @@ Validation for 0016:
 3. `.venv/bin/ruff check .` passed.
 4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
    passed.
+
+## 0017 DailyAlphaBrief Schema and Generator MVP
+
+Status: completed.
+
+Goal: add the minimal daily research brief generation boundary for Phase 2.
+
+Completed changes:
+
+1. Added `DailyAlphaBrief` to `alphabrief_models.briefs`.
+2. Added `alphabrief_models.daily` with `DailyBriefGenerationErrorCode`,
+   `DailyBriefGenerationResult`, and `generate_daily_alpha_brief`.
+3. Routed generation through `ModelGateway` with `task_type="daily_brief"`.
+4. Validated provider output via `parse_structured_output`.
+5. Returned structured failures for provider rejection, provider failure, and
+   invalid structured output.
+6. Exported the DailyAlphaBrief public API.
+7. Added daily brief generator tests and documentation.
+
+Validation for 0017:
+
+1. `python3 -m pytest tests/test_daily_alpha_brief.py` passed.
+2. `python3 -m pytest` passed (145 tests).
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   passed.
+
+## 0018 Prompt Template Versioning MVP
+
+Status: completed.
+
+Goal: add a local versioned prompt template boundary for Phase 2 model
+requests.
+
+Completed changes:
+
+1. Added `alphabrief_models.prompts`.
+2. Added `PromptTemplate`, `RenderedPrompt`, `PromptTemplateRegistry`, and
+   `PromptTemplateError`.
+3. Rendered explicit `{{ variable }}` placeholders into `input_text`.
+4. Produced stable prompt versions in `template_id:version` form.
+5. Rejected missing, extra, blank, duplicate, and invalid variables.
+6. Exported prompt template APIs from `alphabrief_models`.
+7. Added prompt template tests and documentation.
+
+Validation for 0018:
+
+1. `python3 -m pytest tests/test_prompt_templates.py` passed.
+2. `python3 -m pytest` passed (163 tests).
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   passed.
+
+## 0019 Ollama Provider Adapter MVP
+
+Status: completed.
+
+Goal: satisfy the Phase 2 real provider adapter requirement with a local
+Ollama HTTP adapter.
+
+Completed changes:
+
+1. Added `alphabrief_models.adapters`.
+2. Added `OllamaProviderAdapter` implementing the existing ProviderAdapter
+   protocol.
+3. Posted non-streaming generation requests to `/api/generate`.
+4. Requested JSON format for structured-output calls.
+5. Parsed Ollama responses into `ModelResponse`.
+6. Wrapped HTTP, connection, JSON, and invalid response failures as
+   `ModelProviderError`.
+7. Exported the adapter from `alphabrief_models`.
+8. Added Ollama adapter tests and documentation.
+
+Validation for 0019:
+
+1. `python3 -m pytest tests/test_ollama_provider_adapter.py` passed.
+2. `python3 -m pytest` passed (163 tests).
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests`
+   passed.
+
+## 0020 Risk and Paper Trading MVP
+
+Status: completed.
+
+Goal: complete the Phase 3 safe paper-trading loop where every `OrderIntent`
+must pass `RiskGate` before paper execution.
+
+Completed changes:
+
+1. Added `alphabrief_risk` with `RiskLimitConfig`, `RiskGate`, and
+   `KillSwitch`.
+2. Added `alphabrief_execution` with `OrderRouter`, `FillSimulator`,
+   `PortfolioState`, `PaperBroker`, and `ExecutionAuditLog`.
+3. Required matching approved `RiskDecision` objects before creating orders.
+4. Simulated deterministic fills with fee and slippage support.
+5. Updated paper portfolio cash, positions, and realized PnL from fills.
+6. Recorded risk decisions, order rejections, orders, fills, and portfolio
+   updates in an audit log.
+7. Kept live trading unavailable.
+8. Added Phase 3 tests and documentation.
+
+Validation for 0020:
+
+1. `python3 -m pytest tests/test_risk_gate.py tests/test_paper_execution.py`
+   passed.
+2. `python3 -m pytest` passed (177 tests).
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src packages/alphabrief-risk/src packages/alphabrief-execution/src tests`
+   passed.
+
+## 0021 Trading Environment MVP
+
+Status: completed.
+
+Goal: complete Phase 4 with a Gymnasium-style simulation environment for
+strategy comparison.
+
+Completed changes:
+
+1. Added `alphabrief_gym`.
+2. Added `AlphaBriefTradingEnv` with `reset()` and `step(action)`.
+3. Added `TradingObservation`, `StepResult`, and `EpisodeMetrics`.
+4. Added hold/buy/sell actions.
+5. Computed rewards from portfolio value transitions without exposing future
+   bars in observations.
+6. Added transaction cost and slippage support.
+7. Added seeded random policy evaluation.
+8. Added buy-and-hold baseline evaluation.
+9. Added `StrategyComparisonReport`.
+10. Added Phase 4 tests and documentation.
+
+Validation for 0021:
+
+1. `python3 -m pytest tests/test_trading_env.py` passed.
+2. `python3 -m pytest` passed (187 tests).
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src packages/alphabrief-risk/src packages/alphabrief-execution/src packages/alphabrief-gym/src tests`
+   passed.
+
+## 0022 Review Center MVP
+
+Status: completed.
+
+Goal: complete Phase 5 with a read-only Review Center for research, backtest,
+paper trading, risk, audit, and journal review.
+
+Completed changes:
+
+1. Added `alphabrief_review`.
+2. Added `ReviewCenterSnapshot` and summary schemas for strategies, backtests,
+   daily briefs, model calls, paper portfolio, order audit log, risk dashboard,
+   and review journal entries.
+3. Added local JSON snapshot read/write helpers.
+4. Added plain-text viewers for every Phase 5 surface.
+5. Added daily and weekly review journal generation.
+6. Added Phase 5 tests and documentation.
+
+Validation for 0022:
+
+1. `python3 -m pytest tests/test_review_center.py` passed.
+2. `python3 -m pytest` passed (196 tests).
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src packages/alphabrief-risk/src packages/alphabrief-execution/src packages/alphabrief-gym/src packages/alphabrief-review/src tests`
+   passed.
+
+## 0023 CLI + OpenAI Provider Adapter MVP
+
+Status: completed.
+
+Goal: implement typer CLI entry point with 9 subcommands covering all 5 MVP
+phases, plus an OpenAI cloud provider adapter.
+
+Completed changes:
+
+1. Added `apps/cli/` directory with `alphabrief_cli` typer CLI package (10
+   files).
+2. Added 8 CLI subcommand groups: data (import/check), backtest (run), brief
+   (daily), model (test), paper (run/status), risk (check), audit (list), review
+   (daily).
+3. Configured pyproject.toml with typer dependency and [project.scripts] entry
+   point.
+4. Added `OpenAIProviderAdapter` to `alphabrief_models` using urllib (no SDK
+   deps).
+5. Added 3 OpenAI adapter tests + 8 paper command integration tests.
+6. Added per-file-ignore for ruff B008 (typer.Option pattern) on CLI files.
+7. Updated .env.example (no changes needed for MVP - API key read at runtime).
+
+Validation for 0023:
+
+1. `python3 -m pytest` passed (216 tests, up from 208).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src packages/alphabrief-risk/src packages/alphabrief-execution/src packages/alphabrief-gym/src packages/alphabrief-review/src tests`
+   passed.
+4. `alphabrief --help` shows all 8 subcommands.
