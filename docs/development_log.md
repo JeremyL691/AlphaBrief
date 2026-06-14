@@ -699,3 +699,175 @@ Validation for 0025:
 1. `python3 -m pytest` passed (239 tests, up from 216+).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy apps/api/src tests/test_api_server.py` passed.
+
+## 0026 FastAPI Web API Surface Round 3 — Backtest
+
+Status: completed.
+
+Goal: expose backtest functionality through FastAPI v1 endpoints.
+
+Completed changes:
+
+1. Added `apps/api/src/alphabrief_api/routes/backtest.py` with in-memory
+   report store and 3 endpoints.
+2. Added `POST /api/v1/backtest/run` — accepts strategy params + symbol,
+   runs `VectorizedBacktester` with `MovingAverageTrendStrategy`, returns
+   full report with metrics, trades, and equity curve.
+3. Added `GET /api/v1/backtest/reports` — lists backtest report summaries.
+4. Added `GET /api/v1/backtest/report/{id}` — retrieves single full report.
+5. Registered backtest router in `main.py`.
+6. Added 8 API endpoint tests covering successful run, custom params,
+   missing symbol, insufficient bars, empty list, multiple reports,
+   full report retrieval, and 404.
+
+Files changed:
+- `apps/api/src/alphabrief_api/routes/backtest.py` — new
+- `apps/api/src/alphabrief_api/main.py` — register router
+- `tests/test_api_server.py` — 8 new tests + store isolation
+- `docs/roadmap.md` — progress marker
+- `docs/development_log.md` — this entry
+
+Validation for 0026:
+
+1. `python3 -m pytest` passed (247 tests, up from 239).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests/test_api_server.py` passed.
+
+## 0027 FastAPI Web API Surface Round 4 — Research Briefs
+
+Status: completed.
+
+Goal: expose DailyAlphaBrief generation through FastAPI v1 endpoints.
+
+Completed changes:
+
+1. Added `apps/api/src/alphabrief_api/routes/brief.py` with in-memory
+   brief store and 3 endpoints.
+2. Added `POST /api/v1/brief/generate` — calls `ModelGateway` with
+   `FakeProviderAdapter` to generate and validate a `DailyAlphaBrief`.
+3. Added `GET /api/v1/brief/history` — lists brief summaries.
+4. Added `GET /api/v1/brief/{id}` — retrieves single full brief.
+5. Registered brief router in `main.py`.
+6. Added 6 API endpoint tests covering generation, defaults, empty history,
+   multiple briefs, full brief retrieval, and 404.
+
+Files changed:
+- `apps/api/src/alphabrief_api/routes/brief.py` — new
+- `apps/api/src/alphabrief_api/main.py` — register router
+- `tests/test_api_server.py` — 6 new tests + store isolation
+- `docs/roadmap.md` — progress marker
+- `docs/development_log.md` — this entry
+
+Validation for 0027:
+
+1. `python3 -m pytest` passed (253 tests, up from 247).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests/test_api_server.py` passed.
+
+## 0028 FastAPI Web API Surface Round 5 — Paper Portfolio & Risk
+
+Status: completed.
+
+Goal: expose paper trading portfolio and risk gate data through FastAPI
+v1 endpoints.
+
+Completed changes:
+
+1. Added `apps/api/src/alphabrief_api/routes/paper.py` with module-level
+   `PaperBroker` and `PortfolioState` defaulting to 100k cash.
+2. Added `GET /api/v1/paper/portfolio` — returns cash, positions, realized PnL.
+3. Added `GET /api/v1/paper/orders` — returns audit log entries with
+   optional `?status=` filter.
+4. Added `GET /api/v1/paper/audit` — returns complete execution audit log.
+5. Added `apps/api/src/alphabrief_api/routes/risk.py` with module-level
+   `RiskGate` and `RiskLimitConfig`.
+6. Added `GET /api/v1/risk/config` — returns current risk limit configuration.
+7. Added `GET /api/v1/risk/dashboard` — returns risk overview with kill
+   switch state.
+8. Registered paper and risk routers in `main.py`.
+9. Added 7 API endpoint tests covering portfolio, positions, orders,
+   status filter, audit, risk config, and risk dashboard.
+
+Files changed:
+- `apps/api/src/alphabrief_api/routes/paper.py` — new
+- `apps/api/src/alphabrief_api/routes/risk.py` — new
+- `apps/api/src/alphabrief_api/main.py` — register routers
+- `tests/test_api_server.py` — 7 new tests + reset helpers
+- `docs/roadmap.md` — progress marker
+- `docs/development_log.md` — this entry
+
+Validation for 0028:
+
+1. `python3 -m pytest` passed (260 tests, up from 253).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests/test_api_server.py` passed.
+
+## 0029 FastAPI Web API Surface Round 6 — Review Center
+
+Status: completed.
+
+Goal: expose review center snapshot and journal generation through FastAPI
+v1 endpoints.
+
+Completed changes:
+
+1. Added `apps/api/src/alphabrief_api/routes/review.py` with a default
+   `ReviewCenterSnapshot` containing sample strategies, backtests, briefs,
+   model calls, portfolio, audit, and risk data.
+2. Added `GET /api/v1/review/snapshot` — returns complete snapshot as JSON.
+3. Added `GET /api/v1/review/journal` — lists journal entries from snapshot.
+4. Added `GET /api/v1/review/journal/daily` — generates daily journal entry
+   with optional `?trading_day=` query param.
+5. Added `GET /api/v1/review/journal/weekly` — generates weekly journal entry
+   with optional `?week_start=` query param.
+6. Registered review router in `main.py`.
+7. Added 7 API endpoint tests covering snapshot, journal list, daily/weekly
+   generation, and invalid date error handling.
+
+Files changed:
+- `apps/api/src/alphabrief_api/routes/review.py` — new
+- `apps/api/src/alphabrief_api/main.py` — register router
+- `tests/test_api_server.py` — 7 new tests
+- `docs/roadmap.md` — progress marker
+- `docs/development_log.md` — this entry
+
+Validation for 0029:
+
+1. `python3 -m pytest` passed (266 tests, up from 260).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests/test_api_server.py` passed.
+
+## 0030 FastAPI Web API Surface Round 7 — Dashboard
+
+Status: completed.
+
+Goal: implement a simple HTML web dashboard and finalize API documentation.
+
+Completed changes:
+
+1. Added `apps/api/src/alphabrief_api/routes/dashboard.py` with a
+   self-contained HTML dashboard served at `/dashboard`.
+2. Dashboard uses vanilla JavaScript `fetch()` to pull data from backend
+   API endpoints and renders project status, data symbols count, last
+   backtest, last brief, paper portfolio, and risk status cards.
+3. FastAPI auto-generated `/docs` (Swagger) and `/redoc` (ReDoc) remain
+   accessible without blocking.
+4. Added per-file-ignore for E501 (line length) on the dashboard file
+   since inline HTML cannot be practically broken.
+5. Added 3 smoke tests verifying /dashboard returns 200 with expected
+   HTML content, and /docs + /redoc are accessible.
+6. Marked Phase 6 complete in `docs/roadmap.md`.
+
+Files changed:
+- `apps/api/src/alphabrief_api/routes/dashboard.py` — new
+- `apps/api/src/alphabrief_api/main.py` — register router
+- `pyproject.toml` — per-file-ignore E501 for dashboard
+- `tests/test_api_server.py` — 3 new smoke tests
+- `docs/roadmap.md` — Phase 6 complete
+- `docs/development_log.md` — this entry
+
+Validation for 0030:
+
+1. `python3 -m pytest` passed (269 tests, up from 266).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests/test_api_server.py` passed.

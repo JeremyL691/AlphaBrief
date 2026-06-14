@@ -111,9 +111,8 @@ Progress:
 Goal: expose AlphaBrief research, backtest, paper trading, and review data
 through a FastAPI web server.
 
-Status: in progress. Round 1 delivers the FastAPI application scaffold with
-health check, data loading status, and project status endpoints, plus CLI
-integration via `alphabrief serve`.
+Status: completed. All planned API endpoints implemented with tests, plus
+basic web dashboard and API docs integration.
 
 Planned sequence:
 
@@ -131,3 +130,8 @@ Progress:
 1. FastAPI scaffold + health + status + data endpoints: completed.
 2. CLI `alphabrief serve` integration: completed.
 3. Market data API endpoints (symbols, bars, info, load): completed.
+4. Backtest API endpoints (run, reports, report/{id}): completed.
+5. Research/Brief API endpoints (generate, history, {id}): completed.
+6. Paper portfolio and risk API endpoints (portfolio, orders, audit, config, dashboard): completed.
+7. Review center API endpoints (snapshot, journal, journal/daily, journal/weekly): completed.
+8. Basic web dashboard (/dashboard) and API docs (/docs, /redoc): completed.
