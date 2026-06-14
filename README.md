@@ -40,11 +40,16 @@ Current implemented kernel:
    daily/weekly review journal generation.
 12. Passing pytest, Ruff, and strict mypy quality gates.
 
+In progress:
+
+1. FastAPI web API surface (Phase 6 Round 1 complete — health, status, data
+   endpoints with CLI `alphabrief serve`).
+
 Not implemented yet:
 
-1. External cloud model provider adapters.
-2. Full Web Dashboard or FastAPI product surface.
-3. Live trading.
+1. Full web dashboard.
+2. Live trading.
+3. Additional cloud model provider adapters.
 
 ## Safety Boundary
 

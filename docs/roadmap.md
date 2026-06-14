@@ -105,3 +105,28 @@ Progress:
 6. Order audit log: completed.
 7. Risk dashboard: completed.
 8. Review journal: completed.
+
+## Phase 6: Web API Surface
+
+Goal: expose AlphaBrief research, backtest, paper trading, and review data
+through a FastAPI web server.
+
+Status: in progress. Round 1 delivers the FastAPI application scaffold with
+health check, data loading status, and project status endpoints, plus CLI
+integration via `alphabrief serve`.
+
+Planned sequence:
+
+1. FastAPI application scaffold with health check
+2. Market data API endpoints
+3. Backtest API endpoints
+4. Research/Brief API endpoints
+5. Paper portfolio and risk API endpoints
+6. Review center API endpoints
+7. CLI integration (start/stop server from CLI)
+8. Basic web dashboard (HTML/JS) or API docs
+
+Progress:
+
+1. FastAPI scaffold + health + status + data endpoints: completed.
+2. CLI `alphabrief serve` integration: completed.
