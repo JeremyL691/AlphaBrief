@@ -15,8 +15,8 @@ from pydantic import ValidationError
 from alphabrief_data.csv_loader import (
     REQUIRED_OHLCV_COLUMNS,
     MarketDataLoadError,
-    _load_timezone,
-    _parse_timestamp,
+    load_timezone,
+    parse_timestamp,
 )
 
 
@@ -36,7 +36,7 @@ class ParquetBarLoader:
         data_version: str,
     ) -> list[Bar]:
         path = Path(path)
-        timezone = _load_timezone(self.timezone)
+        timezone = load_timezone(self.timezone)
         columns, rows = self._read_rows(path)
         _validate_columns(columns, self.timestamp_column, path)
 
@@ -190,6 +190,6 @@ def _parse_timestamp_value(value: object, *, timezone: ZoneInfo) -> datetime:
         return value
 
     if isinstance(value, str):
-        return _parse_timestamp(value.strip(), timezone=timezone)
+        return parse_timestamp(value.strip(), timezone=timezone)
 
     raise ValueError(f"invalid timestamp value {value!r}")

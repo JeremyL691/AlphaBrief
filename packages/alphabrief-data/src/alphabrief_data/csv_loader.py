@@ -34,7 +34,7 @@ class CsvBarLoader:
         data_version: str,
     ) -> list[Bar]:
         path = Path(path)
-        timezone = _load_timezone(self.timezone)
+        timezone = load_timezone(self.timezone)
 
         try:
             with path.open(newline="", encoding="utf-8") as handle:
@@ -65,7 +65,7 @@ class CsvBarLoader:
         timezone: ZoneInfo,
     ) -> Bar:
         try:
-            timestamp = _parse_timestamp(
+            timestamp = parse_timestamp(
                 _required_cell(row, self.timestamp_column, row_number),
                 timezone=timezone,
             )
@@ -141,7 +141,7 @@ def _parse_decimal(value: str, column: str) -> Decimal:
         ) from exc
 
 
-def _parse_timestamp(value: str, *, timezone: ZoneInfo) -> datetime:
+def parse_timestamp(value: str, *, timezone: ZoneInfo) -> datetime:
     normalized = value
     if value.endswith("Z"):
         normalized = f"{value[:-1]}+00:00"
@@ -156,7 +156,7 @@ def _parse_timestamp(value: str, *, timezone: ZoneInfo) -> datetime:
     return timestamp
 
 
-def _load_timezone(timezone: str) -> ZoneInfo:
+def load_timezone(timezone: str) -> ZoneInfo:
     try:
         return ZoneInfo(timezone)
     except ZoneInfoNotFoundError as exc:
