@@ -98,10 +98,10 @@ class VectorizedBacktester:
         entry_slippage = Decimal("0")
         trades: list[BacktestTrade] = []
         equity_curve: list[EquityPoint] = []
+        pending_signal: Signal | None = None
 
         for bar in bars:
-            signal = signals_by_timestamp.get(bar.timestamp)
-            if signal is not None:
+            if pending_signal is not None:
                 (
                     cash,
                     position_quantity,
@@ -111,7 +111,7 @@ class VectorizedBacktester:
                     entry_slippage,
                     maybe_trade,
                 ) = self._apply_signal(
-                    signal,
+                    pending_signal,
                     bar,
                     spec,
                     cash,
@@ -123,6 +123,7 @@ class VectorizedBacktester:
                 )
                 if maybe_trade is not None:
                     trades.append(maybe_trade)
+                pending_signal = None
 
             equity_curve.append(
                 _equity_point(
@@ -130,6 +131,36 @@ class VectorizedBacktester:
                     cash=cash,
                     position_quantity=position_quantity,
                 )
+            )
+
+            pending_signal = signals_by_timestamp.get(bar.timestamp)
+
+        if pending_signal is not None:
+            (
+                cash,
+                position_quantity,
+                entry_timestamp,
+                entry_price,
+                entry_fee,
+                entry_slippage,
+                maybe_trade,
+            ) = self._apply_signal(
+                pending_signal,
+                bars[-1],
+                spec,
+                cash,
+                position_quantity,
+                entry_timestamp,
+                entry_price,
+                entry_fee,
+                entry_slippage,
+            )
+            if maybe_trade is not None:
+                trades.append(maybe_trade)
+            equity_curve[-1] = _equity_point(
+                bar=bars[-1],
+                cash=cash,
+                position_quantity=position_quantity,
             )
 
         if position_quantity > 0:

@@ -131,3 +131,26 @@ def test_transaction_costs_reduce_final_value(tmp_path: Path) -> None:
 def test_backtester_rejects_non_positive_initial_cash() -> None:
     with pytest.raises(ValueError, match="initial_cash"):
         VectorizedBacktester(initial_cash=Decimal("0"))
+
+
+def test_backtester_executes_signal_at_next_bar_not_same_bar(tmp_path: Path) -> None:
+    """A long signal at bar[i] must execute at bar[i+1], not bar[i]."""
+    bars = load_ohlcv_csv(
+        _write_price_csv(tmp_path / "bars.csv"),
+        symbol="BTC-USD",
+        source="unit-test",
+        data_version="fixture-v1",
+    )
+    features = generate_basic_features(bars, sma_windows=(3,))
+    report = VectorizedBacktester(initial_cash=Decimal("10000")).run(
+        MovingAverageTrendStrategy(sma_window=3),
+        spec=_spec(),
+        bars=bars,
+        features=features,
+    )
+
+    assert len(report.trades) >= 1
+
+    for trade in report.trades:
+        if trade.exit_reason == "signal_exit":
+            assert trade.entry_timestamp != trade.exit_timestamp
