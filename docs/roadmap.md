@@ -130,3 +130,4 @@ Progress:
 
 1. FastAPI scaffold + health + status + data endpoints: completed.
 2. CLI `alphabrief serve` integration: completed.
+3. Market data API endpoints (symbols, bars, info, load): completed.

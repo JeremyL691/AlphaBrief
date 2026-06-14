@@ -661,3 +661,41 @@ Validation for 0024:
    passed.
 4. `python3 -m pytest` passed.
 5. `.venv/bin/ruff check .` passed.
+
+## 0025 FastAPI Web API Surface Round 2 — Market Data
+
+Status: completed.
+
+Goal: expose market data loading and querying through FastAPI v1 endpoints,
+leveraging the existing `alphabrief_data` CSV and Parquet loaders.
+
+Completed changes:
+
+1. Added in-memory data store in `apps/api/src/alphabrief_api/routes/data.py`
+   keyed by symbol with source and data-version metadata.
+2. Added `POST /api/v1/data/load` — accepts file path, symbol, source,
+   data_version, and file_type (csv/parquet); loads via existing
+   `load_ohlcv_csv` / `load_ohlcv_parquet`; stores bars in memory.
+3. Added `GET /api/v1/data/symbols` — lists all loaded symbols with bar count,
+   source, and data version.
+4. Added `GET /api/v1/data/{symbol}/bars` — returns OHLCV bars with
+   `?limit=N&offset=N` pagination.
+5. Added `GET /api/v1/data/{symbol}/info` — returns symbol metadata including
+   time range and bar count.
+6. Updated existing `/api/data/status` to `/api/v1/data/status` prefix to match
+   the v1 API surface.
+7. Added 16 new API endpoint tests covering CSV/Parquet load, symbols list,
+   bars pagination, symbol info, and error cases.
+8. Updated `docs/roadmap.md` Phase 6 progress and this development log.
+
+Files changed:
+- `apps/api/src/alphabrief_api/routes/data.py` — new endpoints + store
+- `tests/test_api_server.py` — prefix update + 16 new tests
+- `docs/roadmap.md` — progress marker
+- `docs/development_log.md` — this entry
+
+Validation for 0025:
+
+1. `python3 -m pytest` passed (239 tests, up from 216+).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests/test_api_server.py` passed.
