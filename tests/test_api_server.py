@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 from alphabrief_api.main import app
 from alphabrief_api.routes.backtest import _clear_reports
 from alphabrief_api.routes.brief import _clear_briefs
-from alphabrief_api.routes.data import _clear_store
+from alphabrief_api.routes.data import _close_store
 from alphabrief_api.routes.paper import _reset_broker
 from alphabrief_api.routes.risk import _reset_risk_gate
 from alphabrief_data import ParquetBarLoader
@@ -18,13 +20,21 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def _isolate_stores() -> None:
-    """Clear the in-memory data and report stores before every test."""
-    _clear_store()
+def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
+    """Isolate all module-level stores before every test.
+
+    Sets a temporary DuckDB data directory so tests never write to the
+    user's home directory.  Closes the store after the test to allow
+    ``tmp_path`` cleanup.
+    """
+    os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
+    _close_store()
     _clear_reports()
     _clear_briefs()
     _reset_broker()
     _reset_risk_gate()
+    yield
+    _close_store()
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +322,7 @@ def test_bars_returns_ohlcv_data(tmp_path: Path) -> None:
 
     bar = body["bars"][0]
     assert bar["symbol"] == "BTC-USD"
-    assert bar["close"] == "105.0"
+    assert bar["close"] == "105"
 
 
 def test_bars_pagination_offset(tmp_path: Path) -> None:

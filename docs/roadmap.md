@@ -135,3 +135,25 @@ Progress:
 6. Paper portfolio and risk API endpoints (portfolio, orders, audit, config, dashboard): completed.
 7. Review center API endpoints (snapshot, journal, journal/daily, journal/weekly): completed.
 8. Basic web dashboard (/dashboard) and API docs (/docs, /redoc): completed.
+
+## Phase 7: Persistent Storage Layer
+
+Goal: replace all API in-memory data with DuckDB persistent storage so data
+survives application restarts.
+
+Status: in progress. Round 1 (schema + market data) complete.
+
+Planned sequence:
+
+1. DuckDB schema definition and data access layer: completed (Round 1).
+2. Market data persistence: completed (Round 1).
+3. Backtest reports persistence: pending.
+4. Briefs persistence: pending.
+5. Paper portfolio + audit log persistence: pending.
+6. Review snapshots persistence: pending.
+
+Progress:
+
+1. DuckDB schema (symbols, bars tables) and MarketDataStore: completed.
+2. POST /api/v1/data/load and GET data endpoints read from DuckDB: completed.
+3. Test suite updated with 20 new MarketDataStore unit tests: completed.

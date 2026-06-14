@@ -871,3 +871,60 @@ Validation for 0030:
 1. `python3 -m pytest` passed (269 tests, up from 266).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy apps/api/src tests/test_api_server.py` passed.
+
+## 0031 Phase 7 Round 1 — DuckDB Schema + Market Data Persistence
+
+Status: completed.
+
+Goal: add DuckDB persistent storage layer and migrate market data endpoints
+from in-memory storage to DuckDB.
+
+Completed changes:
+
+1. Added `duckdb>=1.0` dependency to `pyproject.toml`.
+2. Created `apps/api/src/alphabrief_api/db/` package:
+   - `db/__init__.py` — exports `MarketDataStore`.
+   - `db/schema.py` — `symbols` and `bars` table DDL with `apply_schema`
+     and `drop_schema` helpers.
+   - `db/market_data.py` — `MarketDataStore` class providing `insert_bars`,
+     `get_symbols`, `get_bars`, `get_symbol_info`, `get_bar_models`,
+     `get_bar_count`, `symbol_exists`, `clear`, and `close`.
+3. Data directory defaults to `~/.alphabrief/data/`, overridable via
+   `ALPHABRIEF_DATA_DIR`.
+4. Replaced in-memory `_data_store` dict in `routes/data.py` with
+   singleton `MarketDataStore`. All four market-data endpoints
+   (`POST /load`, `GET /symbols`, `GET /{symbol}/bars`,
+   `GET /{symbol}/info`) now read from DuckDB.
+5. Retained `_get_stored_bars` helper for backtest route compatibility
+   via new `MarketDataStore.get_bar_models()`.
+6. Wrote `tests/test_db.py` with 20 unit tests covering schema creation,
+   insert, query, pagination, ordering, symbol metadata, clear, close/reopen,
+   and multi-symbol isolation.
+7. Updated `tests/test_api_server.py` fixture to set `ALPHABRIEF_DATA_DIR`
+   to a temp directory and close the store after each test, ensuring
+   complete isolation without writing to the user's home directory.
+8. All timestamps normalized to UTC before serialization.
+9. Decimal values compacted (trailing zeros stripped) for clean API output.
+10. Added Storage Layer chapter to `docs/architecture.md`.
+11. Added Phase 7 definition and Round 1 progress to `docs/roadmap.md`.
+12. Updated `README.md` "In progress" and "Not implemented yet" lists.
+
+Files changed:
+- `pyproject.toml` — duckdb dependency
+- `apps/api/src/alphabrief_api/db/__init__.py` — new
+- `apps/api/src/alphabrief_api/db/schema.py` — new
+- `apps/api/src/alphabrief_api/db/market_data.py` — new
+- `apps/api/src/alphabrief_api/routes/data.py` — replaced in-memory store
+- `tests/test_db.py` — new (20 tests)
+- `tests/test_api_server.py` — updated fixture for tmpdir isolation
+- `docs/architecture.md` — Storage Layer chapter
+- `docs/roadmap.md` — Phase 7 + progress
+- `README.md` — updated status lists
+- `docs/development_log.md` — this entry
+
+Validation for 0031:
+
+1. `python3 -m pytest` passed (289 tests, up from 269).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests/test_db.py tests/test_api_server.py`
+   passed.

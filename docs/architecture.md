@@ -339,3 +339,36 @@ Current behavior:
 
 The backtester does not route orders, touch brokers, model margin, shorting,
 leverage, liquidity, or portfolio-level allocation.
+
+## Storage Layer
+
+`apps/api/src/alphabrief_api/db` starts the Data Layer persistent storage
+boundary with DuckDB-backed data access.
+
+Current behavior:
+
+1. `db/schema.py` defines the `symbols` and `bars` tables with
+   ``CREATE TABLE IF NOT EXISTS`` DDL, plus ``apply_schema`` and
+   ``drop_schema`` helpers.
+2. `db/market_data.py` provides ``MarketDataStore`` — a DuckDB-backed
+   persistent store for OHLCV bars and symbol metadata.
+3. ``MarketDataStore.insert_bars(bars, source, data_version)`` batch-inserts
+   bars and upserts symbol metadata in a single transaction.
+4. ``MarketDataStore.get_symbols()`` returns all loaded symbols with bar
+   counts.
+5. ``MarketDataStore.get_bars(symbol, limit, offset)`` returns paginated
+   OHLCV rows as JSON-safe dicts.
+6. ``MarketDataStore.get_symbol_info(symbol)`` returns symbol metadata
+   including time range.
+7. ``MarketDataStore.get_bar_models(symbol)`` returns ``Bar`` domain objects
+   for backtesting and feature generation.
+8. ``MarketDataStore.clear()`` drops and recreates tables for test isolation.
+9. Data directory defaults to ``~/.alphabrief/data/``, overridable via
+   ``ALPHABRIEF_DATA_DIR`` environment variable.
+
+The storage layer is currently used by the market data API routes.
+Backtest reports, briefs, paper portfolio, audit logs, and review
+snapshots remain in-memory pending future Phase 7 rounds.
+
+This layer does not implement connection pooling, migrations, backup,
+or multi-process locking.
