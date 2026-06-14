@@ -9,8 +9,10 @@ description = "Local-first AI quant research and paper-trading workbench."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.100,<1",
     "pydantic>=2.10,<3",
     "typer>=0.12,<1",
+    "uvicorn[standard]>=0.20,<1",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +29,7 @@ alphabrief = "alphabrief_cli.main:app"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = [
+    "apps/api/src",
     "apps/cli/src",
     "packages/alphabrief-backtest/src",
     "packages/alphabrief-core/src",
@@ -41,6 +44,7 @@ pythonpath = [
 
 [tool.setuptools.packages.find]
 where = [
+    "apps/api/src",
     "apps/cli/src",
     "packages/alphabrief-backtest/src",
     "packages/alphabrief-core/src",
@@ -69,7 +73,21 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+mypy_path = [
+    "apps/api/src",
+    "apps/cli/src",
+    "packages/alphabrief-backtest/src",
+    "packages/alphabrief-core/src",
+    "packages/alphabrief-data/src",
+    "packages/alphabrief-execution/src",
+    "packages/alphabrief-gym/src",
+    "packages/alphabrief-models/src",
+    "packages/alphabrief-review/src",
+    "packages/alphabrief-risk/src",
+    "packages/alphabrief-strategy/src",
+]
 files = [
+    "apps/api/src",
     "packages/alphabrief-backtest/src",
     "packages/alphabrief-core/src",
     "packages/alphabrief-data/src",
