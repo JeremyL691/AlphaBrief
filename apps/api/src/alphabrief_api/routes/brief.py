@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from alphabrief_models import (
-    DailyAlphaBrief,
     FakeProviderAdapter,
     ModelGateway,
     generate_daily_alpha_brief,
@@ -14,16 +13,28 @@ from alphabrief_models import (
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from alphabrief_api.db import BriefStore
+
 # ---------------------------------------------------------------------------
-# In-memory brief store
+# Persistent brief store (DuckDB-backed)
 # ---------------------------------------------------------------------------
 
-_brief_store: dict[str, DailyAlphaBrief] = {}
+_brief_store: BriefStore | None = None
 
 
-def _clear_briefs() -> None:
-    """Clear the in-memory brief store (for test isolation)."""
-    _brief_store.clear()
+def _get_brief_store() -> BriefStore:
+    """Return the singleton BriefStore, creating it on first access."""
+    global _brief_store
+    if _brief_store is None:
+        _brief_store = BriefStore()
+    return _brief_store
+
+
+def _clear_brief_store() -> None:
+    """Clear the persistent brief store (for test isolation)."""
+    global _brief_store
+    if _brief_store is not None:
+        _brief_store.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -157,21 +168,24 @@ def generate_brief(body: BriefGenerateRequest) -> dict[str, object]:
         brief_id = f"brief_{uuid4().hex[:12]}"
         brief = brief.model_copy(update={"brief_id": brief_id})
 
-    _brief_store[brief_id] = brief
-    return brief.model_dump(mode="json")
+    store = _get_brief_store()
+    brief_dict = brief.model_dump(mode="json")
+    store.save_brief(brief_dict, brief_id=brief_id)
+    return brief_dict
 
 
 @router.get("/history", response_model=BriefHistoryResponse)
 def list_brief_history() -> BriefHistoryResponse:
     """List all generated daily brief summaries."""
+    store = _get_brief_store()
     summaries = [
         BriefSummary(
-            brief_id=b.brief_id,
-            trading_day=b.trading_day.isoformat(),
-            generated_at=b.generated_at.isoformat(),
-            headline=b.headline,
+            brief_id=b["id"],
+            trading_day=b["trading_day"],
+            generated_at=b["created_at"],
+            headline=b["headline"],
         )
-        for b in _brief_store.values()
+        for b in store.list_briefs()
     ]
     return BriefHistoryResponse(briefs=summaries)
 
@@ -179,17 +193,19 @@ def list_brief_history() -> BriefHistoryResponse:
 @router.get("/{brief_id}")
 def get_brief(brief_id: str) -> dict[str, object]:
     """Retrieve a single complete brief by ID."""
-    brief = _brief_store.get(brief_id)
-    if brief is None:
+    store = _get_brief_store()
+    result = store.get_brief(brief_id)
+    if result is None:
         raise HTTPException(
             status_code=404, detail=f"brief {brief_id!r} not found"
         )
-    return brief.model_dump(mode="json")
+    return result["brief"]  # type: ignore[no-any-return]
 
 
 __all__ = [
     "BriefGenerateRequest",
     "BriefHistoryResponse",
     "BriefSummary",
+    "_clear_brief_store",
     "router",
 ]
