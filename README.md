@@ -42,14 +42,16 @@ Current implemented kernel:
 
 In progress:
 
-1. FastAPI web API surface (Phase 6 Round 1 complete — health, status, data
-   endpoints with CLI `alphabrief serve`).
+1. Phase 7 persistent storage layer (Round 1 complete — DuckDB schema and
+   market data persistence).
 
 Not implemented yet:
 
 1. Full web dashboard.
 2. Live trading.
 3. Additional cloud model provider adapters.
+4. Persistent storage for backtest reports, briefs, paper portfolio,
+   audit logs, and review snapshots (Phase 7 future rounds).
 
 ## Safety Boundary
 
