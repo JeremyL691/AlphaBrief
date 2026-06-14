@@ -928,3 +928,39 @@ Validation for 0031:
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy apps/api/src tests/test_db.py tests/test_api_server.py`
    passed.
+
+## 0032 Backtest Reports DuckDB Persistence
+
+Status: completed.
+
+Goal: replace the in-memory backtest report store with DuckDB-backed persistence.
+
+Completed changes:
+
+1. Added `backtest_reports` table DDL to `db/schema.py` with columns: `id`,
+   `symbol`, `strategy_name`, `created_at`, `report_json`.
+2. Created `apps/api/src/alphabrief_api/db/backtest_reports.py` with
+   `BacktestReportStore` class providing `save_report`, `get_report`,
+   `list_reports`, `clear`, and `close` — following the same pattern as
+   `MarketDataStore`.
+3. Exported `BacktestReportStore` from `db/__init__.py`.
+4. Replaced in-memory `_report_store` dict in `routes/backtest.py` with
+   singleton `BacktestReportStore`. All three backtest endpoints
+   (`POST /run`, `GET /reports`, `GET /report/{id}`) now read from DuckDB.
+5. Wrote `tests/test_db.py` with 9 new tests covering save, get, list,
+   clear, and reopen scenarios.
+6. Updated `tests/test_api_server.py` fixture to use `_clear_report_store`.
+
+Files changed:
+- `apps/api/src/alphabrief_api/db/backtest_reports.py` — new
+- `apps/api/src/alphabrief_api/db/__init__.py` — export BacktestReportStore
+- `apps/api/src/alphabrief_api/db/schema.py` — backtest_reports DDL
+- `apps/api/src/alphabrief_api/routes/backtest.py` — DuckDB integration
+- `tests/test_db.py` — 9 new tests
+- `tests/test_api_server.py` — fixture update
+
+Validation for 0032:
+
+1. `.venv/bin/python -m pytest` passed (298 tests, up from 289).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests` passed.

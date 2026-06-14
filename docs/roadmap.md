@@ -141,13 +141,13 @@ Progress:
 Goal: replace all API in-memory data with DuckDB persistent storage so data
 survives application restarts.
 
-Status: in progress. Round 1 (schema + market data) complete.
+Status: in progress. Round 1 (schema + market data) and Round 2 (backtest reports persistence) complete.
 
 Planned sequence:
 
 1. DuckDB schema definition and data access layer: completed (Round 1).
 2. Market data persistence: completed (Round 1).
-3. Backtest reports persistence: pending.
+3. Backtest reports persistence: completed (Round 2).
 4. Briefs persistence: pending.
 5. Paper portfolio + audit log persistence: pending.
 6. Review snapshots persistence: pending.

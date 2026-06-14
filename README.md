@@ -42,15 +42,14 @@ Current implemented kernel:
 
 In progress:
 
-1. Phase 7 persistent storage layer (Round 1 complete — DuckDB schema and
-   market data persistence).
+1. Phase 7 persistent storage layer (Rounds 1-2 complete — DuckDB schema, market data persistence, backtest reports persistence).
 
 Not implemented yet:
 
 1. Full web dashboard.
 2. Live trading.
 3. Additional cloud model provider adapters.
-4. Persistent storage for backtest reports, briefs, paper portfolio,
+4. Persistent storage for briefs, paper portfolio, audit logs, and review snapshots (Phase 7 future rounds).
    audit logs, and review snapshots (Phase 7 future rounds).
 
 ## Safety Boundary
@@ -120,13 +119,13 @@ Run all checks before committing:
 ```bash
 python3 -m pytest
 .venv/bin/ruff check .
-.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src tests
+.venv/bin/mypy packages/alphabrief-core/src packages/alphabrief-data/src packages/alphabrief-strategy/src packages/alphabrief-backtest/src packages/alphabrief-models/src packages/alphabrief-risk/src packages/alphabrief-execution/src packages/alphabrief-gym/src packages/alphabrief-review/src tests
 ```
 
 Current expected result:
 
 ```text
-pytest: 134 passed
+pytest: 298 passed
 ruff: all checks passed
 mypy: success
 ```
