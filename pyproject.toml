@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.10,<3",
+    "typer>=0.12,<1",
 ]
 
 [project.optional-dependencies]
@@ -19,23 +20,36 @@ dev = [
     "ruff>=0.5",
 ]
 
+[project.scripts]
+alphabrief = "alphabrief_cli.main:app"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = [
+    "apps/cli/src",
     "packages/alphabrief-backtest/src",
     "packages/alphabrief-core/src",
     "packages/alphabrief-data/src",
+    "packages/alphabrief-execution/src",
+    "packages/alphabrief-gym/src",
     "packages/alphabrief-models/src",
+    "packages/alphabrief-review/src",
+    "packages/alphabrief-risk/src",
     "packages/alphabrief-strategy/src",
 ]
 
 [tool.setuptools.packages.find]
 where = [
+    "apps/cli/src",
     "packages/alphabrief-backtest/src",
     "packages/alphabrief-core/src",
     "packages/alphabrief-data/src",
+    "packages/alphabrief-execution/src",
+    "packages/alphabrief-gym/src",
     "packages/alphabrief-models/src",
+    "packages/alphabrief-review/src",
+    "packages/alphabrief-risk/src",
     "packages/alphabrief-strategy/src",
 ]
 
@@ -45,6 +59,9 @@ target-version = "py312"
 extend-exclude = [
     "_reference_sources",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"apps/cli/**/*.py" = ["B008"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -56,7 +73,11 @@ files = [
     "packages/alphabrief-backtest/src",
     "packages/alphabrief-core/src",
     "packages/alphabrief-data/src",
+    "packages/alphabrief-execution/src",
+    "packages/alphabrief-gym/src",
     "packages/alphabrief-models/src",
+    "packages/alphabrief-review/src",
+    "packages/alphabrief-risk/src",
     "packages/alphabrief-strategy/src",
     "tests",
 ]
