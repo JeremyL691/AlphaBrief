@@ -70,6 +70,47 @@ CREATE TABLE IF NOT EXISTS briefs (
 """
 
 # ---------------------------------------------------------------------------
+# Table: audit_events
+# ---------------------------------------------------------------------------
+
+CREATE_AUDIT_EVENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS audit_events (
+    id              TEXT PRIMARY KEY,
+    event_type      TEXT NOT NULL,
+    symbol          TEXT,
+    details_json    JSON,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+# ---------------------------------------------------------------------------
+# Table: portfolio_snapshot
+# ---------------------------------------------------------------------------
+
+CREATE_PORTFOLIO_SNAPSHOT_TABLE = """
+CREATE TABLE IF NOT EXISTS portfolio_snapshot (
+    id              TEXT PRIMARY KEY,
+    cash            TEXT NOT NULL,
+    realized_pnl    TEXT NOT NULL,
+    total_value     TEXT NOT NULL,
+    positions_json  JSON NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+# ---------------------------------------------------------------------------
+# Table: review_snapshots
+# ---------------------------------------------------------------------------
+
+CREATE_REVIEW_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS review_snapshots (
+    id              TEXT PRIMARY KEY,
+    snapshot_json   JSON NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -78,6 +119,9 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_BARS_TABLE,
     CREATE_BACKTEST_REPORTS_TABLE,
     CREATE_BRIEFS_TABLE,
+    CREATE_AUDIT_EVENTS_TABLE,
+    CREATE_PORTFOLIO_SNAPSHOT_TABLE,
+    CREATE_REVIEW_SNAPSHOTS_TABLE,
 )
 
 # ---------------------------------------------------------------------------
@@ -93,6 +137,9 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS review_snapshots")
+    connection.execute("DROP TABLE IF EXISTS portfolio_snapshot")
+    connection.execute("DROP TABLE IF EXISTS audit_events")
     connection.execute("DROP TABLE IF EXISTS briefs")
     connection.execute("DROP TABLE IF EXISTS backtest_reports")
     connection.execute("DROP TABLE IF EXISTS bars")
@@ -102,8 +149,11 @@ def drop_schema(connection: Any) -> None:
 __all__ = [
     "apply_schema",
     "drop_schema",
+    "CREATE_AUDIT_EVENTS_TABLE",
     "CREATE_BACKTEST_REPORTS_TABLE",
     "CREATE_BARS_TABLE",
     "CREATE_BRIEFS_TABLE",
+    "CREATE_PORTFOLIO_SNAPSHOT_TABLE",
+    "CREATE_REVIEW_SNAPSHOTS_TABLE",
     "CREATE_SYMBOLS_TABLE",
 ]

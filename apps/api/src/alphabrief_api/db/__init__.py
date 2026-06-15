@@ -10,5 +10,13 @@ from __future__ import annotations
 from alphabrief_api.db.backtest_reports import BacktestReportStore
 from alphabrief_api.db.briefs import BriefStore
 from alphabrief_api.db.market_data import MarketDataStore
+from alphabrief_api.db.paper import PaperStore
+from alphabrief_api.db.review import ReviewStore
 
-__all__ = ["BacktestReportStore", "BriefStore", "MarketDataStore"]
+__all__ = [
+    "BacktestReportStore",
+    "BriefStore",
+    "MarketDataStore",
+    "PaperStore",
+    "ReviewStore",
+]

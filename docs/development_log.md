@@ -998,8 +998,60 @@ Files changed:
 - `docs/roadmap.md` — progress marker
 - `docs/development_log.md` — this entry
 
-Validation for 0033:
-
 1. `python3 -m pytest` passed (308 tests, up from 298).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests` passed.
+
+## 0034 PaperStore + ReviewStore DuckDB Persistence
+
+Status: completed.
+
+Goal: complete Phase 7 by adding DuckDB-persisted paper trading and review
+snapshot stores, replacing the remaining in-memory state.
+
+Completed changes:
+
+1. Added three new tables to `db/schema.py`: `audit_events`, `portfolio_snapshot`,
+   and `review_snapshots` — following the same DDL pattern as prior Phase 7 tables.
+2. Created `apps/api/src/alphabrief_api/db/paper.py` with `PaperStore` class
+   providing `save_audit_event`, `get_audit_events` (with optional `event_type`
+   filter), `save_portfolio_snapshot`, `get_latest_portfolio_snapshot`,
+   `list_portfolio_snapshots`, `save_order`, `get_orders` (with optional
+   `status` filter), `clear`, and `close`.
+3. Created `apps/api/src/alphabrief_api/db/review.py` with `ReviewStore` class
+   providing `save_snapshot`, `get_snapshot`, `get_latest_snapshot`,
+   `list_snapshots`, `clear`, and `close`.
+4. Exported `PaperStore` and `ReviewStore` from `db/__init__.py`.
+5. Replaced in-memory broker/audit state in `routes/paper.py` with singleton
+   `PaperStore`. Added `POST /api/v1/paper/orders` endpoint for creating broker
+   orders with audit event recording. All paper endpoints (`portfolio`, `orders`,
+   `audit`) now read from DuckDB.
+6. Replaced in-memory snapshot state in `routes/review.py` with singleton
+   `ReviewStore`. All review endpoints (`snapshot`, `journal`, `journal/daily`,
+   `journal/weekly`) now read from DuckDB.
+7. Exported `_get_risk_gate` and `_reset_risk_gate` helpers from
+   `routes/risk.py` for test fixture use with the paper route.
+8. Added 27 new tests across `tests/test_db.py` (17 PaperStore + ReviewStore
+   unit tests) and `tests/test_api_server.py` (10 paper/review endpoint
+   integration tests).
+9. Marked Phase 7 complete in `docs/roadmap.md`.
+
+Files changed:
+- `apps/api/src/alphabrief_api/db/paper.py` — new (250 lines)
+- `apps/api/src/alphabrief_api/db/review.py` — new (174 lines)
+- `apps/api/src/alphabrief_api/db/__init__.py` — export PaperStore, ReviewStore
+- `apps/api/src/alphabrief_api/db/schema.py` — 3 new tables
+- `apps/api/src/alphabrief_api/db/briefs.py` — minor doc cleanup
+- `apps/api/src/alphabrief_api/routes/paper.py` — DuckDB integration + POST orders
+- `apps/api/src/alphabrief_api/routes/review.py` — DuckDB integration
+- `apps/api/src/alphabrief_api/routes/risk.py` — export helpers
+- `tests/test_db.py` — 17 new tests (411 lines)
+- `tests/test_api_server.py` — 10 new tests + fixture isolation
+- `docs/roadmap.md` — Phase 7 complete
+- `docs/development_log.md` — this entry
+
+Validation for 0034:
+
+1. `python3 -m pytest` passed (335 tests, up from 308).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy apps/api/src tests` passed.
