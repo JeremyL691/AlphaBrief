@@ -1,7 +1,8 @@
-"""DuckDB-backed brief store for AlphaBrief.
+"""DuckDB-backed review store for AlphaBrief.
 
-``BriefStore`` provides persistent storage for DailyAlphaBriefs,
-replacing the in-memory dictionary that was used before Phase 7 Round 3.
+``ReviewStore`` provides persistent storage for review snapshots,
+replacing the in-memory default snapshot that was used before Phase 7
+Round 4.
 """
 
 from __future__ import annotations
@@ -38,20 +39,21 @@ def _db_path() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# BriefStore
+# ReviewStore
 # ---------------------------------------------------------------------------
 
 
-class BriefStore:
-    """DuckDB-backed persistent store for DailyAlphaBriefs.
+class ReviewStore:
+    """DuckDB-backed persistent store for review snapshots.
 
     Usage::
 
-        store = BriefStore()
-        bid = store.save_brief(brief_data)
-        store.get_brief(bid)   # -> dict | None
-        store.list_briefs()    # -> list[dict]
-        store.clear()          # drop + recreate tables
+        store = ReviewStore()
+        sid = store.save_snapshot(snapshot_data)
+        store.get_snapshot(sid)         # -> dict | None
+        store.get_latest_snapshot()     # -> dict | None
+        store.list_snapshots()          # -> list[dict]
+        store.clear()                   # drop + recreate tables
         store.close()
     """
 
@@ -66,65 +68,88 @@ class BriefStore:
     # Write
     # ------------------------------------------------------------------
 
-    def save_brief(
-        self, brief_data: dict[str, Any], brief_id: str | None = None
+    def save_snapshot(
+        self,
+        snapshot_data: dict[str, Any],
+        snapshot_id: str | None = None,
     ) -> str:
-        """Persist a DailyAlphaBrief and return the brief ID."""
-        if brief_id is None:
-            brief_id = f"brief_{uuid4().hex[:12]}"
-        # Ensure the stored JSON has the matching ID
-        brief_data = {**brief_data, "brief_id": brief_id}
+        """Persist a review snapshot and return the snapshot ID."""
+        if snapshot_id is None:
+            snapshot_id = f"snapshot_{uuid4().hex[:12]}"
+        snapshot_data = {**snapshot_data, "snapshot_id": snapshot_id}
         self._conn.execute(
             """
-            INSERT INTO briefs (id, brief_json)
+            INSERT INTO review_snapshots (id, snapshot_json)
             VALUES (?, ?::JSON)
             """,
-            [brief_id, json.dumps(brief_data)],
+            [snapshot_id, json.dumps(snapshot_data)],
         )
-        return brief_id
+        return snapshot_id
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
-    def get_brief(self, brief_id: str) -> dict[str, Any] | None:
-        """Return the full brief for *brief_id*, or ``None``."""
+    def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        """Return the full snapshot for *snapshot_id*, or ``None``."""
         row = self._conn.execute(
-            """SELECT id, created_at, brief_json
-               FROM briefs WHERE id = ?""",
-            [brief_id],
+            """SELECT id, created_at, snapshot_json
+               FROM review_snapshots WHERE id = ?""",
+            [snapshot_id],
         ).fetchone()
         if row is None:
             return None
 
-        brief: dict[str, Any] = (
+        snapshot: dict[str, Any] = (
             row[2] if isinstance(row[2], dict) else json.loads(str(row[2]))
         )
         return {
             "id": row[0],
             "created_at": str(row[1]),
-            "brief": brief,
+            "snapshot": snapshot,
         }
 
-    def list_briefs(self) -> list[dict[str, Any]]:
-        """Return brief summaries ordered by creation time (newest first)."""
+    def get_latest_snapshot(self) -> dict[str, Any] | None:
+        """Return the most recent snapshot, or ``None``."""
+        row = self._conn.execute(
+            """SELECT id, created_at, snapshot_json
+               FROM review_snapshots
+               ORDER BY created_at DESC
+               LIMIT 1"""
+        ).fetchone()
+        if row is None:
+            return None
+
+        snapshot: dict[str, Any] = (
+            row[2] if isinstance(row[2], dict) else json.loads(str(row[2]))
+        )
+        return {
+            "id": row[0],
+            "created_at": str(row[1]),
+            "snapshot": snapshot,
+        }
+
+    def list_snapshots(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return snapshots ordered by creation time (newest first)."""
         rows = self._conn.execute(
-            """SELECT id, created_at, brief_json
-               FROM briefs
-               ORDER BY created_at DESC"""
+            """SELECT id, created_at, snapshot_json
+               FROM review_snapshots
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            [limit],
         ).fetchall()
 
         results: list[dict[str, Any]] = []
         for row in rows:
-            brief: dict[str, Any] = (
+            snapshot: dict[str, Any] = (
                 row[2] if isinstance(row[2], dict) else json.loads(str(row[2]))
             )
             results.append(
                 {
                     "id": row[0],
                     "created_at": str(row[1]),
-                    "headline": brief.get("headline", ""),
-                    "trading_day": brief.get("trading_day", ""),
+                    "headline": snapshot.get("headline", ""),
+                    "snapshot_id": snapshot.get("snapshot_id", ""),
                 }
             )
         return results
@@ -146,4 +171,4 @@ class BriefStore:
             pass  # already closed
 
 
-__all__ = ["BriefStore"]
+__all__ = ["ReviewStore"]
