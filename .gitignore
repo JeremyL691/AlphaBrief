@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .coverage
+.coverage.*
 htmlcov/
 .venv/
 venv/
@@ -20,3 +21,22 @@ reports/*.json
 data/local/
 *.log
 _reference_sources/
+
+# Local agent / dev-tool state (not part of the project)
+.hermes/
+.omo/
+
+# Per-round development plans (kept local only, never committed)
+docs/development_plans/
+
+# Editor and IDE artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+*.bak
+*~
+*.tmp
+*.orig
+*.rej
+.DS_Store?
