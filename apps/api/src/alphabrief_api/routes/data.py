@@ -1,15 +1,24 @@
 """Market data routes for the AlphaBrief API — data directory status,
-data loading, and bar querying.
+data loading, bar querying, and provider-driven fetching.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 from alphabrief_core.config import AppSettings, load_settings
 from alphabrief_core.domain import Bar  # noqa: F401
-from alphabrief_data import MarketDataLoadError, load_ohlcv_csv, load_ohlcv_parquet
+from alphabrief_data import (
+    BinanceProvider,
+    MarketDataLoadError,
+    MarketDataProvider,
+    MarketDataProviderError,
+    YahooFinanceProvider,
+    load_ohlcv_csv,
+    load_ohlcv_parquet,
+)
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -153,6 +162,35 @@ class BarsResponse(BaseModel):
     bars: list[dict[str, object]]
 
 
+class DataFetchRequest(BaseModel):
+    """Request body for POST /api/v1/data/fetch."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source: Literal["yahoo", "binance"]
+    symbol: str = Field(min_length=1)
+    start: str = Field(min_length=1, description="ISO-8601 date or datetime")
+    end: str = Field(min_length=1, description="ISO-8601 date or datetime")
+    interval: Literal[
+        "1m", "3m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo", "1w", "1M"
+    ] = "1d"
+    data_version: str = Field(default="fetch-v1", min_length=1)
+
+
+class DataFetchResponse(BaseModel):
+    """Response body for POST /api/v1/data/fetch."""
+
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str
+    source: str
+    interval: str
+    data_version: str
+    bar_count: int
+    time_start: str | None
+    time_end: str | None
+
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
@@ -192,6 +230,12 @@ def _data_status_from_settings(settings: AppSettings) -> DataStatus:
         data_dir_has_files=data_dir_has_files,
         files_summary=files_summary,
     )
+
+
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -327,13 +371,101 @@ def get_symbol_info(symbol: str) -> SymbolInfo:
         bar_count=int(str(info["bar_count"])),
         source=str(info["source"]),
         data_version=str(info["data_version"]),
-        time_start=info["time_start"],  # type: ignore[arg-type]
-        time_end=info["time_end"],  # type: ignore[arg-type]
+        time_start=_optional_string(info["time_start"]),
+        time_end=_optional_string(info["time_end"]),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: provider-driven fetch endpoint
+# ---------------------------------------------------------------------------
+
+
+def _build_provider(source: str) -> MarketDataProvider:
+    """Build a market data provider for the given *source* name."""
+    if source == "yahoo":
+        return YahooFinanceProvider()
+    if source == "binance":
+        return BinanceProvider()
+    raise MarketDataProviderError(
+        f"data fetch: unknown source {source!r}; "
+        "expected 'yahoo' or 'binance'",
+        code="invalid_source",
+    )
+
+
+def _parse_iso_to_utc(value: str, *, field_name: str) -> datetime:
+    """Parse an ISO-8601 string into a UTC datetime.
+
+    Naive inputs are anchored to UTC; aware inputs are converted to UTC.
+    Raises :class:`MarketDataProviderError` on parse failure.
+    """
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise MarketDataProviderError(
+            f"data fetch: invalid {field_name} {value!r}: {exc}",
+            code="invalid_date_range",
+        ) from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+@router.post("/fetch", response_model=DataFetchResponse, status_code=201)
+def fetch_market_data(body: DataFetchRequest) -> DataFetchResponse:
+    """Download OHLCV bars from a free public provider and persist them.
+
+    The provider is selected by *body.source*. Bars are written to
+    the AlphaBrief DuckDB store; re-fetching the same symbol replaces
+    the existing ``(symbol, timestamp)`` rows in place.
+    """
+    try:
+        provider = _build_provider(body.source)
+        start_dt = _parse_iso_to_utc(body.start, field_name="start")
+        end_dt = _parse_iso_to_utc(body.end, field_name="end")
+        bars = provider.fetch_ohlcv(
+            symbol=body.symbol,
+            start=start_dt,
+            end=end_dt,
+            interval=body.interval,
+        )
+    except MarketDataProviderError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if not bars:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"provider {body.source!r} returned 0 bars for "
+                f"{body.symbol!r} in [{body.start}, {body.end}) at "
+                f"interval {body.interval!r}"
+            ),
+        )
+
+    store = _get_store()
+    bar_count = store.insert_bars(
+        bars, source=body.source, data_version=body.data_version
+    )
+
+    time_start = bars[0].timestamp.isoformat()
+    time_end = bars[-1].timestamp.isoformat()
+
+    return DataFetchResponse(
+        symbol=body.symbol,
+        source=body.source,
+        interval=body.interval,
+        data_version=body.data_version,
+        bar_count=bar_count,
+        time_start=time_start,
+        time_end=time_end,
     )
 
 
 __all__ = [
     "BarsResponse",
+    "DataFetchRequest",
+    "DataFetchResponse",
     "DataLoadRequest",
     "DataLoadResponse",
     "DataStatus",
