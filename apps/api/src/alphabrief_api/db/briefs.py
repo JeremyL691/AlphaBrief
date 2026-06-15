@@ -66,7 +66,9 @@ class BriefStore:
     # Write
     # ------------------------------------------------------------------
 
-    def save_brief(self, brief_data: dict[str, Any], brief_id: str | None = None) -> str:
+    def save_brief(
+        self, brief_data: dict[str, Any], brief_id: str | None = None
+    ) -> str:
         """Persist a DailyAlphaBrief and return the brief ID."""
         if brief_id is None:
             brief_id = f"brief_{uuid4().hex[:12]}"

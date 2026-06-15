@@ -1,4 +1,9 @@
-"""Risk routes — config and dashboard."""
+"""Risk routes — config and dashboard.
+
+Phase 7 Round 4: Risk decisions are now audit-trailed to the persistent
+``audit_events`` table.  The risk gate configuration remains module-level
+since it is runtime config, not history.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +14,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
 # ---------------------------------------------------------------------------
-# Module-level risk gate
+# Module-level risk gate (runtime config — stays in-memory)
 # ---------------------------------------------------------------------------
 
 _default_limits = RiskLimitConfig(
@@ -117,5 +122,7 @@ def get_risk_dashboard() -> RiskDashboardResponse:
 __all__ = [
     "RiskConfigResponse",
     "RiskDashboardResponse",
+    "_get_risk_gate",
+    "_reset_risk_gate",
     "router",
 ]
