@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
+import alphabrief_data.providers.binance as binance_mod
+import alphabrief_data.providers.yahoo as yahoo_mod
 import pytest
 from alphabrief_api.main import app
 from alphabrief_api.routes.backtest import _clear_report_store
 from alphabrief_api.routes.brief import _clear_brief_store
-from alphabrief_api.routes.data import _close_store
+from alphabrief_api.routes.data import _close_store, _get_store
 from alphabrief_api.routes.paper import _reset_broker
 from alphabrief_api.routes.research import _clear_debate_store
 from alphabrief_api.routes.review import _clear_review_store
@@ -1034,3 +1038,239 @@ def test_research_debate_get_by_id() -> None:
 def test_research_debate_get_nonexistent_returns_404() -> None:
     response = client.get("/api/v1/research/debate/deb_nonexistent1234")
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/data/fetch — Phase 9 real market data providers
+# ---------------------------------------------------------------------------
+
+
+def _yahoo_payload(
+    timestamps: list[int],
+    opens: list[float],
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    volumes: list[float],
+) -> bytes:
+    return json.dumps(
+        {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {"symbol": "AAPL"},
+                        "timestamp": timestamps,
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": opens,
+                                    "high": highs,
+                                    "low": lows,
+                                    "close": closes,
+                                    "volume": volumes,
+                                }
+                            ]
+                        },
+                    }
+                ],
+                "error": None,
+            }
+        }
+    ).encode("utf-8")
+
+
+def _binance_payload(rows: list[list[Any]]) -> bytes:
+    return json.dumps(rows).encode("utf-8")
+
+
+def test_fetch_yahoo_returns_201_and_persists_bars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_ts = 1_704_067_200  # 2024-01-01T00:00:00Z
+    payload = _yahoo_payload(
+        timestamps=[base_ts, base_ts + 86_400],
+        opens=[100.0, 101.0],
+        highs=[110.0, 111.0],
+        lows=[95.0, 96.0],
+        closes=[105.0, 106.0],
+        volumes=[1234.0, 1500.0],
+    )
+    monkeypatch.setattr(yahoo_mod, "_default_http_get", lambda _req, _t: payload)
+
+    response = client.post(
+        "/api/v1/data/fetch",
+        json={
+            "source": "yahoo",
+            "symbol": "AAPL",
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+            "interval": "1d",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["symbol"] == "AAPL"
+    assert body["source"] == "yahoo"
+    assert body["interval"] == "1d"
+    assert body["bar_count"] == 2
+    assert body["time_start"] is not None
+    assert body["time_end"] is not None
+
+    # Verify the bars are queryable through the existing endpoints.
+    store = _get_store()
+    assert store.symbol_exists("AAPL")
+    assert store.get_bar_count("AAPL") == 2
+    bars = store.get_bar_models("AAPL")
+    assert all(bar.source == "yahoo" for bar in bars)
+
+
+def test_fetch_binance_returns_201_and_persists_bars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_ms = 1_704_067_200_000
+    rows = [
+        [
+            base_ms,
+            "100.50",
+            "110.00",
+            "95.25",
+            "105.75",
+            "1234.50",
+            base_ms + 86_400_000 - 1,
+        ]
+    ]
+    monkeypatch.setattr(
+        binance_mod, "_default_http_get", lambda _req, _t: _binance_payload(rows)
+    )
+
+    response = client.post(
+        "/api/v1/data/fetch",
+        json={
+            "source": "binance",
+            "symbol": "BTCUSDT",
+            "start": "2024-01-01T00:00:00Z",
+            "end": "2024-01-03T00:00:00Z",
+            "interval": "1d",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["symbol"] == "BTCUSDT"
+    assert body["source"] == "binance"
+    assert body["bar_count"] == 1
+
+    store = _get_store()
+    assert store.symbol_exists("BTCUSDT")
+    bars = store.get_bar_models("BTCUSDT")
+    assert bars[0].close == 105.75
+
+
+def test_fetch_rejects_unknown_source() -> None:
+    response = client.post(
+        "/api/v1/data/fetch",
+        json={
+            "source": "fakedata",
+            "symbol": "AAPL",
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+        },
+    )
+    # Pydantic literal validation catches the source value first
+    assert response.status_code == 422
+
+
+def test_fetch_rejects_invalid_date_string() -> None:
+    response = client.post(
+        "/api/v1/data/fetch",
+        json={
+            "source": "yahoo",
+            "symbol": "AAPL",
+            "start": "not-a-date",
+            "end": "2024-01-03",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_fetch_returns_404_when_provider_returns_no_bars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps({"chart": {"result": [], "error": None}}).encode("utf-8")
+    monkeypatch.setattr(yahoo_mod, "_default_http_get", lambda _req, _t: payload)
+
+    response = client.post(
+        "/api/v1/data/fetch",
+        json={
+            "source": "yahoo",
+            "symbol": "AAPL",
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+        },
+    )
+    assert response.status_code == 404
+    assert "0 bars" in response.json()["detail"]
+
+
+def test_fetch_returns_422_when_provider_http_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    def _fail(_req: object, _t: float) -> bytes:
+        raise HTTPError(
+            "https://query1.finance.yahoo.com",
+            500,
+            "Internal Server Error",
+            Message(),
+            None,
+        )
+
+    monkeypatch.setattr(yahoo_mod, "_default_http_get", _fail)
+
+    response = client.post(
+        "/api/v1/data/fetch",
+        json={
+            "source": "yahoo",
+            "symbol": "AAPL",
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+        },
+    )
+    assert response.status_code == 422
+    assert "yahoo" in response.json()["detail"].lower()
+
+
+def test_fetch_respects_custom_data_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_ts = 1_704_067_200
+    payload = _yahoo_payload(
+        timestamps=[base_ts],
+        opens=[100.0],
+        highs=[110.0],
+        lows=[95.0],
+        closes=[105.0],
+        volumes=[1.0],
+    )
+    monkeypatch.setattr(yahoo_mod, "_default_http_get", lambda _req, _t: payload)
+
+    response = client.post(
+        "/api/v1/data/fetch",
+        json={
+            "source": "yahoo",
+            "symbol": "AAPL",
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+            "data_version": "custom-v2",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["data_version"] == "custom-v2"
+
+    store = _get_store()
+    info = store.get_symbol_info("AAPL")
+    assert info is not None
+    assert info["data_version"] == "custom-v2"
