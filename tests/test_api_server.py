@@ -12,6 +12,7 @@ from alphabrief_api.routes.backtest import _clear_report_store
 from alphabrief_api.routes.brief import _clear_brief_store
 from alphabrief_api.routes.data import _close_store
 from alphabrief_api.routes.paper import _reset_broker
+from alphabrief_api.routes.review import _clear_review_store
 from alphabrief_api.routes.risk import _reset_risk_gate
 from alphabrief_data import ParquetBarLoader
 from fastapi.testclient import TestClient
@@ -31,6 +32,7 @@ def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
     _close_store()
     _clear_report_store()
     _clear_brief_store()
+    _clear_review_store()
     _reset_broker()
     _reset_risk_gate()
     yield
@@ -725,6 +727,74 @@ def test_paper_orders_with_status_filter() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["entries"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/paper/orders
+# ---------------------------------------------------------------------------
+
+
+def test_paper_submit_order_returns_201() -> None:
+    response = client.post(
+        "/api/v1/paper/orders",
+        json={
+            "symbol": "BTC-USD",
+            "side": "buy",
+            "order_type": "market",
+            "quantity": "1",
+            "rationale": "Test order",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "order_id" in body
+    assert "fill_id" in body
+    assert body["symbol"] == "BTC-USD"
+    assert body["side"] == "buy"
+    assert body["status"] == "filled"
+
+
+def test_paper_submit_order_persists_audit_events() -> None:
+    client.post(
+        "/api/v1/paper/orders",
+        json={
+            "symbol": "BTC-USD",
+            "side": "buy",
+            "quantity": "1",
+            "rationale": "Audit test",
+        },
+    )
+
+    # Audit events should be persisted
+    response = client.get("/api/v1/paper/audit")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["entries"]) > 0
+    # Should include risk_decision_recorded and order_created at minimum
+    event_types = {e["event_type"] for e in body["entries"]}
+    assert "risk_decision_recorded" in event_types
+    assert "order_created" in event_types
+
+
+def test_paper_submit_order_creates_portfolio_snapshot() -> None:
+    client.post(
+        "/api/v1/paper/orders",
+        json={
+            "symbol": "BTC-USD",
+            "side": "buy",
+            "quantity": "1",
+            "rationale": "Portfolio snapshot test",
+        },
+    )
+
+    # Verify portfolio is updated
+    response = client.get("/api/v1/paper/portfolio")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cash"] != "100000"  # Should have been reduced by the buy
+    assert len(body["positions"]) > 0
+    assert body["positions"][0]["symbol"] == "BTC-USD"
 
 
 # ---------------------------------------------------------------------------

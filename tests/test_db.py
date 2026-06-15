@@ -616,14 +616,422 @@ def test_brief_clear_removes_all_data(brief_store: BriefStore) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PaperStore tests
+# ---------------------------------------------------------------------------
+
+from alphabrief_api.db.paper import PaperStore  # noqa: E402
+
+
+@pytest.fixture
+def paper_store(tmp_path: Path) -> Generator[PaperStore, None, None]:
+    db_path = tmp_path / "test_paper.db"
+    s = PaperStore(db_path=str(db_path))
+    yield s
+    s.close()
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+
+def test_paper_store_creates_tables_on_init(paper_store: PaperStore) -> None:
+    tables = paper_store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).fetchall()
+    table_names = {row[0] for row in tables}
+    assert "audit_events" in table_names
+    assert "portfolio_snapshot" in table_names
+
+
+# ---------------------------------------------------------------------------
+# save_audit_event / get_audit_events
+# ---------------------------------------------------------------------------
+
+
+def test_save_audit_event_returns_id(paper_store: PaperStore) -> None:
+    eid = paper_store.save_audit_event(
+        event_type="order_created",
+        symbol="BTC-USD",
+        details={"order_id": "order_001"},
+    )
+    assert eid.startswith("audit_")
+    assert len(eid) == 18
+
+
+def test_get_audit_events_empty(paper_store: PaperStore) -> None:
+    assert paper_store.get_audit_events() == []
+
+
+def test_save_and_get_audit_events(paper_store: PaperStore) -> None:
+    eid1 = paper_store.save_audit_event(
+        event_type="order_created",
+        symbol="BTC-USD",
+        details={"order_id": "order_001", "message": "Order created"},
+    )
+    eid2 = paper_store.save_audit_event(
+        event_type="fill_created",
+        symbol="BTC-USD",
+        details={"fill_id": "fill_001", "order_id": "order_001"},
+    )
+    events = paper_store.get_audit_events()
+    assert len(events) == 2
+    assert events[0]["id"] == eid2  # newest first
+    assert events[1]["id"] == eid1
+    assert events[0]["event_type"] == "fill_created"
+    assert events[1]["details"]["order_id"] == "order_001"
+
+
+def test_get_audit_events_filtered(paper_store: PaperStore) -> None:
+    paper_store.save_audit_event(event_type="order_created", symbol="BTC")
+    paper_store.save_audit_event(event_type="fill_created", symbol="BTC")
+    paper_store.save_audit_event(event_type="order_created", symbol="ETH")
+
+    orders = paper_store.get_audit_events(event_type="order_created")
+    assert len(orders) == 2
+    for e in orders:
+        assert e["event_type"] == "order_created"
+
+
+# ---------------------------------------------------------------------------
+# save_portfolio_snapshot / get_latest_portfolio_snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_save_portfolio_snapshot_returns_id(paper_store: PaperStore) -> None:
+    sid = paper_store.save_portfolio_snapshot(
+        cash="100000",
+        realized_pnl="0",
+        total_value="100000",
+        positions={},
+    )
+    assert sid.startswith("psnap_")
+    assert len(sid) == 18
+
+
+def test_get_latest_portfolio_snapshot_none_when_empty(
+    paper_store: PaperStore,
+) -> None:
+    assert paper_store.get_latest_portfolio_snapshot() is None
+
+
+def test_save_and_get_latest_portfolio_snapshot(
+    paper_store: PaperStore,
+) -> None:
+    positions = {
+        "BTC-USD": {"symbol": "BTC-USD", "quantity": "1", "average_price": "50000"}
+    }
+    paper_store.save_portfolio_snapshot(
+        cash="50000", realized_pnl="1000", total_value="100000", positions=positions
+    )
+
+    snap = paper_store.get_latest_portfolio_snapshot()
+    assert snap is not None
+    assert snap["cash"] == "50000"
+    assert snap["realized_pnl"] == "1000"
+    assert snap["total_value"] == "100000"
+    assert "BTC-USD" in snap["positions"]
+    assert snap["positions"]["BTC-USD"]["quantity"] == "1"
+
+
+def test_list_portfolio_snapshots_ordered(paper_store: PaperStore) -> None:
+    paper_store.save_portfolio_snapshot(
+        cash="100000", realized_pnl="0", total_value="100000", positions={}
+    )
+    import time
+
+    time.sleep(0.1)
+    paper_store.save_portfolio_snapshot(
+        cash="90000", realized_pnl="500", total_value="95000", positions={}
+    )
+
+    snaps = paper_store.list_portfolio_snapshots(limit=5)
+    assert len(snaps) == 2
+    assert snaps[0]["cash"] == "90000"
+    assert snaps[1]["cash"] == "100000"
+
+
+# ---------------------------------------------------------------------------
+# save_order / get_orders
+# ---------------------------------------------------------------------------
+
+
+def test_save_order_stores_as_audit_event(paper_store: PaperStore) -> None:
+    oid = paper_store.save_order(
+        {"symbol": "BTC-USD", "order_id": "order_001", "status": "created"}
+    )
+    assert oid.startswith("audit_")
+
+    orders = paper_store.get_orders()
+    assert len(orders) == 1
+    assert orders[0]["event_type"] == "order_created"
+
+
+def test_get_orders_filtered_by_status(paper_store: PaperStore) -> None:
+    paper_store.save_order(
+        {"symbol": "BTC", "order_id": "o1", "status": "created"}
+    )
+    paper_store.save_order(
+        {"symbol": "ETH", "order_id": "o2", "status": "filled"}
+    )
+
+    created = paper_store.get_orders(status="created")
+    assert len(created) == 1
+    assert created[0]["details"]["order_id"] == "o1"
+
+
+# ---------------------------------------------------------------------------
+# clear
+# ---------------------------------------------------------------------------
+
+
+def test_paper_clear_removes_all_data(paper_store: PaperStore) -> None:
+    paper_store.save_audit_event(event_type="test", symbol="BTC")
+    paper_store.save_portfolio_snapshot(
+        cash="100", realized_pnl="0", total_value="100", positions={}
+    )
+    assert len(paper_store.get_audit_events()) == 1
+    assert paper_store.get_latest_portfolio_snapshot() is not None
+
+    paper_store.clear()
+    assert paper_store.get_audit_events() == []
+    assert paper_store.get_latest_portfolio_snapshot() is None
+
+
+# ---------------------------------------------------------------------------
 # close / reopen
 # ---------------------------------------------------------------------------
 
 
+def test_paper_close_then_reopen(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "reopen_paper.db")
+    store1 = PaperStore(db_path=db_path)
+    eid = store1.save_audit_event(event_type="order_created", symbol="BTC")
+    store1.close()
+
+    store2 = PaperStore(db_path=db_path)
+    events = store2.get_audit_events()
+    assert len(events) == 1
+    assert events[0]["id"] == eid
+    assert events[0]["symbol"] == "BTC"
+    store2.close()
+
+
+# ---------------------------------------------------------------------------
+# ReviewStore tests
+# ---------------------------------------------------------------------------
+
+from alphabrief_api.db.review import ReviewStore  # noqa: E402
+
+
+def _make_snapshot_data(
+    snapshot_id: str = "snapshot_test_001",
+    headline: str = "Review snapshot headline",
+) -> dict[str, object]:
+    return {
+        "snapshot_id": snapshot_id,
+        "generated_at": "2026-06-15T09:30:00+00:00",
+        "headline": headline,
+        "strategies": [],
+        "backtests": [],
+        "daily_briefs": [],
+        "model_calls": [],
+        "paper_portfolio": {
+            "cash": "100000",
+            "total_value": "100000",
+            "realized_pnl": "0",
+            "open_positions": {},
+            "updated_at": "2026-06-15T09:30:00+00:00",
+        },
+        "order_audit_log": [],
+        "risk_dashboard": {
+            "total_decisions": 0,
+            "approved_decisions": 0,
+            "rejected_decisions": 0,
+            "kill_switch_active": False,
+            "latest_risk_tags": [],
+            "updated_at": "2026-06-15T09:30:00+00:00",
+        },
+        "review_journal": [],
+    }
+
+
+@pytest.fixture
+def review_store(tmp_path: Path) -> Generator[ReviewStore, None, None]:
+    db_path = tmp_path / "test_review.db"
+    s = ReviewStore(db_path=str(db_path))
+    yield s
+    s.close()
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+
+def test_review_store_creates_tables_on_init(
+    review_store: ReviewStore,
+) -> None:
+    tables = review_store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).fetchall()
+    table_names = {row[0] for row in tables}
+    assert "review_snapshots" in table_names
+
+
+# ---------------------------------------------------------------------------
+# save_snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_review_save_snapshot_returns_id(review_store: ReviewStore) -> None:
+    data = _make_snapshot_data()
+    sid = review_store.save_snapshot(data)
+    assert sid.startswith("snapshot_")
+    assert len(sid) == 21
+
+
+def test_review_save_snapshot_stores_multiple(
+    review_store: ReviewStore,
+) -> None:
+    sid1 = review_store.save_snapshot(
+        _make_snapshot_data(headline="First snapshot")
+    )
+    sid2 = review_store.save_snapshot(
+        _make_snapshot_data(headline="Second snapshot")
+    )
+    assert sid1 != sid2
+    snapshots = review_store.list_snapshots()
+    assert len(snapshots) == 2
+
+
+# ---------------------------------------------------------------------------
+# get_snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_review_get_snapshot_returns_stored(
+    review_store: ReviewStore,
+) -> None:
+    data = _make_snapshot_data(headline="Test headline")
+    sid = review_store.save_snapshot(data)
+
+    result = review_store.get_snapshot(sid)
+    assert result is not None
+    assert result["id"] == sid
+    assert "created_at" in result
+    assert isinstance(result["snapshot"], dict)
+    assert result["snapshot"]["headline"] == "Test headline"
+
+
+def test_review_get_snapshot_nonexistent_returns_none(
+    review_store: ReviewStore,
+) -> None:
+    assert review_store.get_snapshot("snapshot_nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# get_latest_snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_review_get_latest_snapshot_none_when_empty(
+    review_store: ReviewStore,
+) -> None:
+    assert review_store.get_latest_snapshot() is None
+
+
+def test_review_get_latest_snapshot_returns_most_recent(
+    review_store: ReviewStore,
+) -> None:
+    review_store.save_snapshot(_make_snapshot_data(headline="First"))
+    import time
+
+    time.sleep(0.1)
+    review_store.save_snapshot(_make_snapshot_data(headline="Second"))
+
+    latest = review_store.get_latest_snapshot()
+    assert latest is not None
+    assert latest["snapshot"]["headline"] == "Second"
+
+
+# ---------------------------------------------------------------------------
+# list_snapshots
+# ---------------------------------------------------------------------------
+
+
+def test_review_list_snapshots_empty(review_store: ReviewStore) -> None:
+    assert review_store.list_snapshots() == []
+
+
+def test_review_list_snapshots_ordered(
+    review_store: ReviewStore,
+) -> None:
+    review_store.save_snapshot(_make_snapshot_data(headline="First"))
+    import time
+
+    time.sleep(0.1)
+    review_store.save_snapshot(_make_snapshot_data(headline="Second"))
+
+    snapshots = review_store.list_snapshots()
+    assert len(snapshots) == 2
+    assert snapshots[0]["headline"] == "Second"
+    assert snapshots[1]["headline"] == "First"
+
+
+# ---------------------------------------------------------------------------
+# clear
+# ---------------------------------------------------------------------------
+
+
+def test_review_clear_removes_all_data(review_store: ReviewStore) -> None:
+    review_store.save_snapshot(_make_snapshot_data())
+    assert len(review_store.list_snapshots()) == 1
+
+    review_store.clear()
+    assert review_store.list_snapshots() == []
+    assert review_store.get_snapshot("snapshot_any") is None
+
+
+# ---------------------------------------------------------------------------
+# close / reopen
+# ---------------------------------------------------------------------------
+
+
+def test_review_close_then_reopen(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "reopen_review.db")
+    store1 = ReviewStore(db_path=db_path)
+    sid = store1.save_snapshot(
+        _make_snapshot_data(headline="Persistent review")
+    )
+    store1.close()
+
+    store2 = ReviewStore(db_path=db_path)
+    result = store2.get_snapshot(sid)
+    assert result is not None
+    assert result["snapshot"]["headline"] == "Persistent review"
+    store2.close()
+
+
+# ---------------------------------------------------------------------------
+# brief close / reopen (preserved from earlier round)
+# ---------------------------------------------------------------------------
+
+
 def test_brief_close_then_reopen(tmp_path: Path) -> None:
+    from alphabrief_api.db.briefs import BriefStore
+
     db_path = str(tmp_path / "reopen_briefs.db")
     store1 = BriefStore(db_path=db_path)
-    bid = store1.save_brief(_make_brief_data(headline="Persistent"))
+    bid = store1.save_brief(
+        {
+            "brief_id": "brief_test_001",
+            "generated_at": "2026-06-14T09:30:00+00:00",
+            "trading_day": "2026-06-14",
+            "headline": "Persistent",
+            "executive_summary": "Test",
+        }
+    )
     store1.close()
 
     store2 = BriefStore(db_path=db_path)
@@ -631,3 +1039,4 @@ def test_brief_close_then_reopen(tmp_path: Path) -> None:
     assert result is not None
     assert result["brief"]["headline"] == "Persistent"
     store2.close()
+

@@ -1,4 +1,9 @@
-"""Review Center routes — snapshot and journal generation."""
+"""Review Center routes — snapshot and journal generation.
+
+Phase 7 Round 4: Review snapshots are now persisted in DuckDB via
+``ReviewStore``, replacing the module-level default snapshot that
+contained hardcoded sample data.
+"""
 
 from __future__ import annotations
 
@@ -21,16 +26,60 @@ from alphabrief_review import (
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 
+from alphabrief_api.db import ReviewStore
+
 # ---------------------------------------------------------------------------
-# Module-level default snapshot
+# Persistent store (DuckDB-backed)
 # ---------------------------------------------------------------------------
 
-_now = datetime.now(UTC)
-_today = _now.date()
-_snapshot_id = f"snapshot_{uuid4().hex[:12]}"
+_review_store: ReviewStore | None = None
 
 
-def _default_snapshot() -> ReviewCenterSnapshot:
+def _get_review_store() -> ReviewStore:
+    """Return the singleton ReviewStore, creating it on first access."""
+    global _review_store
+    if _review_store is None:
+        _review_store = ReviewStore()
+    return _review_store
+
+
+def _clear_review_store() -> None:
+    """Clear the persistent review store (for test isolation)."""
+    global _review_store
+    if _review_store is not None:
+        _review_store.clear()
+
+
+# ---------------------------------------------------------------------------
+# Response model
+# ---------------------------------------------------------------------------
+
+
+class JournalEntriesResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    entries: list[dict[str, object]]
+
+
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
+
+router = APIRouter(prefix="/api/v1/review", tags=["review"])
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_default_snapshot() -> ReviewCenterSnapshot:
+    """Build a default ReviewCenterSnapshot with sample data.
+
+    Used when no snapshot has been persisted yet.
+    """
+    _now = datetime.now(UTC)
+    _today = _now.date()
+    _snapshot_id = f"snapshot_{uuid4().hex[:12]}"
     return ReviewCenterSnapshot(
         snapshot_id=_snapshot_id,
         generated_at=_now,
@@ -107,21 +156,18 @@ def _default_snapshot() -> ReviewCenterSnapshot:
     )
 
 
-# ---------------------------------------------------------------------------
-# Response model
-# ---------------------------------------------------------------------------
-
-
-class JournalEntriesResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    entries: list[dict[str, object]]
-
-
-# ---------------------------------------------------------------------------
-# Router
-# ---------------------------------------------------------------------------
-
-router = APIRouter(prefix="/api/v1/review", tags=["review"])
+def _get_or_create_snapshot() -> ReviewCenterSnapshot:
+    """Return the latest snapshot from the DB, or create a default one."""
+    store = _get_review_store()
+    latest = store.get_latest_snapshot()
+    if latest is not None:
+        try:
+            return ReviewCenterSnapshot.model_validate(latest["snapshot"])
+        except Exception:
+            pass
+    # Fall back to default snapshot
+    snapshot = _build_default_snapshot()
+    return snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -132,13 +178,13 @@ router = APIRouter(prefix="/api/v1/review", tags=["review"])
 @router.get("/snapshot")
 def get_snapshot() -> dict[str, object]:
     """Return the current complete ReviewCenterSnapshot."""
-    return _default_snapshot().model_dump(mode="json")
+    return _get_or_create_snapshot().model_dump(mode="json")
 
 
 @router.get("/journal", response_model=JournalEntriesResponse)
 def list_journal() -> JournalEntriesResponse:
     """Return the review journal entries from the snapshot."""
-    snapshot = _default_snapshot()
+    snapshot = _get_or_create_snapshot()
     entries = [e.model_dump(mode="json") for e in snapshot.review_journal]
     return JournalEntriesResponse(entries=entries)
 
@@ -150,7 +196,7 @@ def get_daily_journal(
     ),
 ) -> dict[str, object]:
     """Generate a daily review journal entry."""
-    snapshot = _default_snapshot()
+    snapshot = _get_or_create_snapshot()
     if trading_day is not None:
         try:
             day = date.fromisoformat(trading_day)
@@ -160,7 +206,7 @@ def get_daily_journal(
                 detail=f"Invalid date format: {trading_day!r}. Use YYYY-MM-DD.",
             ) from exc
     else:
-        day = _today
+        day = datetime.now(UTC).date()
 
     entry = generate_daily_review(snapshot, trading_day=day)
     return entry.model_dump(mode="json")
@@ -173,7 +219,7 @@ def get_weekly_journal(
     ),
 ) -> dict[str, object]:
     """Generate a weekly review journal entry."""
-    snapshot = _default_snapshot()
+    snapshot = _get_or_create_snapshot()
     if week_start is not None:
         try:
             start = date.fromisoformat(week_start)
@@ -185,7 +231,7 @@ def get_weekly_journal(
                 ),
             ) from exc
     else:
-        start = _today
+        start = datetime.now(UTC).date()
 
     entry = generate_weekly_review(snapshot, week_start=start)
     return entry.model_dump(mode="json")
@@ -193,5 +239,6 @@ def get_weekly_journal(
 
 __all__ = [
     "JournalEntriesResponse",
+    "_clear_review_store",
     "router",
 ]
