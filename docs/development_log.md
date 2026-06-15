@@ -1055,3 +1055,53 @@ Validation for 0034:
 1. `python3 -m pytest` passed (335 tests, up from 308).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy apps/api/src tests` passed.
+
+## 0035 Multi-Model Research Committee (Phase 8)
+
+Status: completed.
+
+Goal: implement the Multi-Model Research Committee — multiple AI models
+with different analytical perspectives independently analyze a research
+question and produce structured responses with an aggregated consensus.
+
+Completed changes:
+
+1. Created `packages/alphabrief-research/` with debate schemas
+   (`DebateQuestion`, `ModelDebateResponse`, `DebateConsensus`,
+   `DebateRecord`) and `DebateOrchestrator` that routes questions to
+   model perspectives via `ModelGateway`, validates structured output,
+   and generates consensus from all responses.
+
+2. Added `debate_records` table to `db/schema.py` with `DebateStore` class
+   for DuckDB persistence (save, get, list, clear lifecycle).
+
+3. Created research API routes (`POST /api/v1/research/debate`,
+   `GET /api/v1/research/debate`, `GET /api/v1/research/debate/{debate_id}`)
+   and `alphabrief research debate` CLI command.
+
+4. Added 32 new tests: 9 DebateStore unit tests, 4 API endpoint tests,
+   19 schema/orchestrator/consensus tests.
+
+5. Updated `pyproject.toml` (pythonpath, packages.find.where, mypy_path).
+
+Files changed:
+- `packages/alphabrief-research/` — 3 new files
+- `apps/api/src/alphabrief_api/db/debates.py` — new
+- `apps/api/src/alphabrief_api/db/schema.py` — debate_records DDL
+- `apps/api/src/alphabrief_api/db/__init__.py` — export DebateStore
+- `apps/api/src/alphabrief_api/routes/research.py` — new
+- `apps/api/src/alphabrief_api/main.py` — register research router
+- `apps/cli/src/alphabrief_cli/research_commands.py` — new
+- `apps/cli/src/alphabrief_cli/main.py` — register research app
+- `tests/test_db.py` — 9 new tests
+- `tests/test_api_server.py` — 4 new tests + fixture
+- `tests/test_research.py` — new (19 tests)
+- `docs/roadmap.md` — Phase 8 status
+- `docs/development_log.md` — this entry
+- `pyproject.toml` — 3 path entries
+
+Validation for 0035:
+
+1. `python3 -m pytest` passed (367 tests, up from 335).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests` passed.

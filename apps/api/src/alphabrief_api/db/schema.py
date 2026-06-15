@@ -111,6 +111,20 @@ CREATE TABLE IF NOT EXISTS review_snapshots (
 """
 
 # ---------------------------------------------------------------------------
+# Table: debate_records
+# ---------------------------------------------------------------------------
+
+CREATE_DEBATE_RECORDS_TABLE = """
+CREATE TABLE IF NOT EXISTS debate_records (
+    id              TEXT PRIMARY KEY,
+    question_json   JSON NOT NULL,
+    responses_json  JSON NOT NULL,
+    consensus_json  JSON NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -122,6 +136,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AUDIT_EVENTS_TABLE,
     CREATE_PORTFOLIO_SNAPSHOT_TABLE,
     CREATE_REVIEW_SNAPSHOTS_TABLE,
+    CREATE_DEBATE_RECORDS_TABLE,
 )
 
 # ---------------------------------------------------------------------------
@@ -137,6 +152,7 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS debate_records")
     connection.execute("DROP TABLE IF EXISTS review_snapshots")
     connection.execute("DROP TABLE IF EXISTS portfolio_snapshot")
     connection.execute("DROP TABLE IF EXISTS audit_events")
@@ -153,6 +169,7 @@ __all__ = [
     "CREATE_BACKTEST_REPORTS_TABLE",
     "CREATE_BARS_TABLE",
     "CREATE_BRIEFS_TABLE",
+    "CREATE_DEBATE_RECORDS_TABLE",
     "CREATE_PORTFOLIO_SNAPSHOT_TABLE",
     "CREATE_REVIEW_SNAPSHOTS_TABLE",
     "CREATE_SYMBOLS_TABLE",

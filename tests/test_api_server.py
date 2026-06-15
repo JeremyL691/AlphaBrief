@@ -12,6 +12,7 @@ from alphabrief_api.routes.backtest import _clear_report_store
 from alphabrief_api.routes.brief import _clear_brief_store
 from alphabrief_api.routes.data import _close_store
 from alphabrief_api.routes.paper import _reset_broker
+from alphabrief_api.routes.research import _clear_debate_store
 from alphabrief_api.routes.review import _clear_review_store
 from alphabrief_api.routes.risk import _reset_risk_gate
 from alphabrief_data import ParquetBarLoader
@@ -33,6 +34,7 @@ def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
     _clear_report_store()
     _clear_brief_store()
     _clear_review_store()
+    _clear_debate_store()
     _reset_broker()
     _reset_risk_gate()
     yield
@@ -950,3 +952,85 @@ def test_redoc_accessible() -> None:
     response = client.get("/redoc")
 
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/research/debate
+# ---------------------------------------------------------------------------
+
+
+def test_research_debate_returns_201() -> None:
+    response = client.post(
+        "/api/v1/research/debate",
+        json={
+            "question": "How will NVDA perform next week?",
+            "symbol": "NVDA",
+            "time_horizon": "5 trading days",
+            "perspectives": ["technical", "fundamental"],
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "debate_id" in body
+    assert "question" in body
+    assert "responses" in body
+    assert "consensus" in body
+    assert len(body["responses"]) > 0
+
+
+def test_research_debate_without_symbol() -> None:
+    response = client.post(
+        "/api/v1/research/debate",
+        json={"question": "General market outlook for Q3?"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "debate_id" in body
+    assert body["question"]["question"] == "General market outlook for Q3?"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/research/debate
+# ---------------------------------------------------------------------------
+
+
+def test_research_debate_list_after_create() -> None:
+    # Create a debate first
+    client.post(
+        "/api/v1/research/debate",
+        json={"question": "Test debate for list"},
+    )
+
+    response = client.get("/api/v1/research/debate")
+    assert response.status_code == 200
+    body = response.json()
+    assert "debates" in body
+    assert len(body["debates"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/research/debate/{debate_id}
+# ---------------------------------------------------------------------------
+
+
+def test_research_debate_get_by_id() -> None:
+    # Create a debate
+    create_resp = client.post(
+        "/api/v1/research/debate",
+        json={"question": "Find me by ID"},
+    )
+    assert create_resp.status_code == 201
+    debate_id = create_resp.json()["debate_id"]
+
+    # Get by ID
+    response = client.get(f"/api/v1/research/debate/{debate_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == debate_id
+
+
+def test_research_debate_get_nonexistent_returns_404() -> None:
+    response = client.get("/api/v1/research/debate/deb_nonexistent1234")
+    assert response.status_code == 404

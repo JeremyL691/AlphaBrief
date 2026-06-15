@@ -1018,6 +1018,145 @@ def test_review_close_then_reopen(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# DebateStore tests
+# ---------------------------------------------------------------------------
+
+from alphabrief_api.db.debates import DebateStore  # noqa: E402
+
+
+@pytest.fixture
+def debate_store(tmp_path: Path) -> Generator[DebateStore, None, None]:
+    db_path = str(tmp_path / "test_debates.db")
+    s = DebateStore(db_path=db_path)
+    yield s
+    s.close()
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+
+def test_debate_store_creates_tables_on_init(debate_store: DebateStore) -> None:
+    tables = debate_store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).fetchall()
+    table_names = {row[0] for row in tables}
+    assert "debate_records" in table_names
+
+
+# ---------------------------------------------------------------------------
+# save_debate_record / get_debate_record
+# ---------------------------------------------------------------------------
+
+
+def test_save_debate_record_returns_id(debate_store: DebateStore) -> None:
+    did = debate_store.save_debate_record(
+        question={"question": "Test question"},
+        responses=[{"analysis": "test", "view": "neutral", "confidence": 0.5,
+            "suggested_action": "watch", "needs_human_review": False,
+        }],
+        consensus={"num_models": 1, "agreement_level": "high", "avg_confidence": 0.5},
+    )
+    assert did.startswith("deb_")
+    assert len(did) == 16  # "deb_" + 12 hex chars
+
+
+def test_list_debate_records_empty(debate_store: DebateStore) -> None:
+    assert debate_store.list_debate_records() == []
+
+
+def test_save_and_get_debate_record(debate_store: DebateStore) -> None:
+    question = {"question": "Market outlook?", "symbol": "BTC-USD"}
+    responses = [
+        {
+                "analysis": "Bullish", "view": "bullish", "confidence": 0.8,
+                "suggested_action": "buy", "needs_human_review": False,
+            },
+        {
+                "analysis": "Bearish", "view": "bearish", "confidence": 0.6,
+                "suggested_action": "sell", "needs_human_review": False,
+            },
+    ]
+    consensus = {
+        "num_models": 2,
+        "agreement_level": "mixed",
+        "consensus_view": None,
+        "avg_confidence": 0.7,
+        "view_distribution": {"bullish": 1, "bearish": 1},
+    }
+
+    did = debate_store.save_debate_record(
+        question=question,
+        responses=responses,
+        consensus=consensus,
+    )
+
+    record = debate_store.get_debate_record(did)
+    assert record is not None
+    assert record["id"] == did
+    assert record["question"]["question"] == "Market outlook?"
+    assert len(record["responses"]) == 2
+    assert record["consensus"]["num_models"] == 2
+
+
+def test_get_debate_record_nonexistent(debate_store: DebateStore) -> None:
+    assert debate_store.get_debate_record("deb_nonexistent") is None
+
+
+def test_list_debate_records_ordered(debate_store: DebateStore) -> None:
+    debate_store.save_debate_record(
+        question={"question": "First"},
+        responses=[],
+        consensus={"num_models": 0, "agreement_level": "mixed", "avg_confidence": 0.0},
+    )
+    debate_store.save_debate_record(
+        question={"question": "Second"},
+        responses=[],
+        consensus={"num_models": 0, "agreement_level": "mixed", "avg_confidence": 0.0},
+    )
+
+    records = debate_store.list_debate_records()
+    assert len(records) == 2
+    # Second should be first (newest)
+    assert records[0]["question"]["question"] == "Second"
+
+
+def test_debate_clear_removes_all_data(debate_store: DebateStore) -> None:
+    debate_store.save_debate_record(
+        question={"question": "Test"},
+        responses=[],
+        consensus={"num_models": 0, "agreement_level": "mixed", "avg_confidence": 0.0},
+    )
+    debate_store.clear()
+    assert debate_store.list_debate_records() == []
+
+
+def test_debate_close_then_reopen(tmp_path: Path) -> None:
+    from alphabrief_api.db.debates import DebateStore
+
+    db_path = str(tmp_path / "reopen_debates.db")
+    store1 = DebateStore(db_path=db_path)
+    did = store1.save_debate_record(
+        question={"question": "Persistent test"},
+        responses=[],
+        consensus={"num_models": 0, "agreement_level": "mixed", "avg_confidence": 0.0},
+    )
+    store1.close()
+
+    store2 = DebateStore(db_path=db_path)
+    record = store2.get_debate_record(did)
+    assert record is not None
+    assert record["question"]["question"] == "Persistent test"
+    store2.close()
+
+
+# ---------------------------------------------------------------------------
+# brief close / reopen (preserved from earlier round)
+# ---------------------------------------------------------------------------
+
+
 def test_brief_close_then_reopen(tmp_path: Path) -> None:
     from alphabrief_api.db.briefs import BriefStore
 

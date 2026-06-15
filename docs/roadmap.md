@@ -157,3 +157,24 @@ Progress:
 1. DuckDB schema (symbols, bars tables) and MarketDataStore: completed.
 2. POST /api/v1/data/load and GET data endpoints read from DuckDB: completed.
 3. Test suite updated with 20 new MarketDataStore unit tests: completed.
+
+## Phase 8: Multi-Model Research Committee
+
+Goal: enable multi-model research debates where users submit a question and
+multiple AI models with different analytical perspectives independently
+analyze it, producing structured responses and an aggregated consensus.
+
+Status: completed.
+
+Completed:
+
+1. Debate schemas (`DebateQuestion`, `ModelDebateResponse`,
+   `DebateConsensus`, `DebateRecord`) in new `alphabrief-research` package.
+2. `DebateOrchestrator` that routes questions to multiple model perspectives
+   via `ModelGateway`, validates structured output, and generates consensus.
+3. DuckDB persistence via `DebateStore` (`debate_records` table).
+4. `POST /api/v1/research/debate`, `GET /api/v1/research/debate`,
+   `GET /api/v1/research/debate/{debate_id}` API endpoints.
+5. `alphabrief research debate` CLI command.
+6. 32 new tests across schemas, orchestrator, DB store, and API routes.
+7. Test suite: 367 passed, ruff and mypy clean.
