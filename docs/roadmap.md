@@ -178,3 +178,86 @@ Completed:
 5. `alphabrief research debate` CLI command.
 6. 32 new tests across schemas, orchestrator, DB store, and API routes.
 7. Test suite: 367 passed, ruff and mypy clean.
+
+## Phase 9: Real Market Data Providers
+
+Goal: replace manual CSV/Parquet data import as the only way to load
+market data by adding free, key-less HTTP data providers that download
+OHLCV bars directly into the existing DuckDB `bars` table.
+
+Status: completed.
+
+Planned sequence:
+
+1. `alphabrief_data.providers` subpackage with `MarketDataProvider`
+   protocol, `MarketDataProviderError` structured error, and
+   `MarketDataProviderErrorCode` enum.
+2. `YahooFinanceProvider` — daily and hourly OHLCV bars from
+   `query1.finance.yahoo.com` using `urllib` only (no `yfinance`).
+3. `BinanceProvider` — daily and hourly OHLCV klines from
+   `api.binance.com/api/v3/klines` using `urllib` only (no
+   `python-binance`).
+4. `alphabrief data fetch` CLI subcommand that downloads bars and
+   persists them through `MarketDataStore`.
+5. `POST /api/v1/data/fetch` API endpoint with the same body
+   schema as the CLI.
+6. 41 new tests across the providers, the CLI command, and the API
+   endpoint — all with fully mocked HTTP.
+7. Updated `docs/architecture.md` Market Data Providers chapter.
+
+Progress:
+
+1. Provider base types, Yahoo provider, Binance provider, exports:
+   completed.
+2. CLI `data fetch` subcommand with Typer options, error
+   reporting, and DuckDB persistence: completed.
+3. `POST /api/v1/data/fetch` API endpoint with request/response
+   models, validation, and persistence: completed.
+4. 25 provider unit tests (HTTP mocking, error codes, payload
+   parsing): completed.
+5. 7 API integration tests (happy path, empty result, HTTP error,
+   invalid input, custom data version): completed.
+6. 9 CLI integration tests (Yahoo/Binance success, unknown source,
+   invalid date, empty response, lowercase symbol rejection):
+   completed.
+7. Test suite: 408 passed (up from 367), ruff and strict mypy
+   clean.
+
+### Phase 9 Round 2: retry policy + interval expansion
+
+Goal: harden the providers against transient HTTP failures and
+broaden the supported interval set so users can fetch minute, weekly,
+and monthly bars without re-validating everything by hand.
+
+Status: completed.
+
+1. Added `RetryPolicy` dataclass with max-retries, exponential
+   backoff, hard cap, and uniform jitter — frozen and validated in
+   `__post_init__`.
+2. Added `is_retryable_exception()` (HTTP 429/418/5xx and transient
+   network errors are retryable; non-rate-limit 4xx is not),
+   `compute_backoff_delay()` (deterministic given a fixed random
+   source), and `call_with_retry()` (sleep / random / on_retry /
+   is_retryable test seams).
+3. Wrapped the Yahoo and Binance HTTP layers with
+   `call_with_retry` so transient failures recover automatically
+   before any structured `MarketDataProviderError` is raised.
+4. Expanded Yahoo's `_SUPPORTED_INTERVALS` to
+   `1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo` and Binance's to
+   `1m, 3m, 5m, 15m, 30m, 1h, 1d, 1w, 1M`. Added Binance's
+   `_interval_to_seconds()` mapping for the new `1w` (604 800 s) and
+   `1M` (2 592 000 s) intervals so the pagination cursor advances
+   correctly.
+5. Updated the API `DataFetchRequest.interval` Literal and the CLI
+   `--interval` help text to reflect the expanded set.
+6. 23 new tests in `tests/test_market_data_providers.py` covering
+   retry classification, backoff math, retry success / exhaustion /
+   4xx-no-retry, end-to-end provider retry on 5xx, no-retry on 4xx,
+   every new Yahoo interval, Yahoo `1wk` / `1mo` data-version
+   mapping, every new Binance interval, and Binance `1w` / `1M`
+   data-version mapping.
+7. Updated `docs/architecture.md` Market Data Providers chapter
+   to reflect the retry policy and the expanded interval sets, and
+   to remove the now-incorrect "no retries" claim.
+8. Test suite: 431 passed (up from 408), ruff and strict mypy
+   clean.

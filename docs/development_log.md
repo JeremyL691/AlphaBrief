@@ -1105,3 +1105,177 @@ Validation for 0035:
 1. `python3 -m pytest` passed (367 tests, up from 335).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy apps/api/src tests` passed.
+
+## 0036 Real Market Data Providers (Phase 9)
+
+Status: completed.
+
+Goal: complete Phase 9 by adding free, key-less market data
+providers (Yahoo Finance and Binance) that download OHLCV bars into
+the existing DuckDB `bars` table through `MarketDataStore`. Add a
+new CLI subcommand and API endpoint that drive the providers.
+
+Completed changes:
+
+1. Added `packages/alphabrief-data/src/alphabrief_data/providers/`
+   with `__init__.py`, `base.py`, `yahoo.py`, and `binance.py`:
+   - `base.py` defines the `MarketDataProvider` runtime-checkable
+     Protocol, the `MarketDataProviderError` structured exception
+     (carrying a stable `code` attribute), and the
+     `MarketDataProviderErrorCode` enum.
+   - `yahoo.py` implements `YahooFinanceProvider` against
+     `query1.finance.yahoo.com/v8/finance/chart/{symbol}` using
+     `urllib` only. Returns `list[Bar]` with timezone-aware UTC
+     timestamps. Supports `1d` and `1h` intervals. Handles HTTP
+     429/503 as rate-limit, generic HTTP errors, network errors,
+     and JSON parse errors with stable error codes. Has an
+     injectable `http_get` callable for tests.
+   - `binance.py` implements `BinanceProvider` against
+     `api.binance.com/api/v3/klines` using `urllib` only. Returns
+     `list[Bar]` with timezone-aware UTC timestamps parsed from
+     millisecond UNIX timestamps and string prices parsed as
+     `Decimal`. Supports `1d` and `1h` intervals. Handles HTTP
+     418/429 as rate-limit. Has an injectable `http_get` callable.
+   - `__init__.py` exports the two providers and the base types.
+2. Exported the new symbols from
+   `packages/alphabrief-data/src/alphabrief_data/__init__.py` so
+   callers can `from alphabrief_data import YahooFinanceProvider,
+   BinanceProvider, MarketDataProvider,
+   MarketDataProviderError, MarketDataProviderErrorCode`.
+3. Added the `alphabrief data fetch` CLI subcommand in
+   `apps/cli/src/alphabrief_cli/data_commands.py`. The command
+   accepts `--source`, `--symbol`, `--start`, `--end`,
+   `--interval` (default `1d`), and `--data-version` (default
+   `fetch-v1`). It builds the right provider, calls
+   `fetch_ohlcv`, and persists the result through the shared
+   `MarketDataStore`. Empty result sets and provider errors
+   produce clear stderr messages and a non-zero exit code.
+4. Added `POST /api/v1/data/fetch` to
+   `apps/api/src/alphabrief_api/routes/data.py` with a strict
+   Pydantic `DataFetchRequest` model (Literal source/interval,
+   non-empty symbol, validated ISO-8601 dates) and a
+   `DataFetchResponse` model that returns `bar_count`,
+   `time_start`, and `time_end`. Empty provider results return
+   404, validation errors return 422, structured provider errors
+   return 422 with the error message.
+5. Added 41 new tests across three new / updated files:
+   - `tests/test_market_data_providers.py` — 25 tests covering
+     both providers' payload parsing, protocol compliance, error
+     handling (invalid config / symbol / interval / range, HTTP
+     error, rate limit, network error, parse error, API error
+     payload, invalid kline row, non-list response), null-row
+     skipping, empty result handling, and HTTP request shape.
+   - `tests/test_api_server.py` — 7 new integration tests for
+     `POST /api/v1/data/fetch` (Yahoo success, Binance success,
+     unknown source rejection, invalid date rejection, empty
+     result 404, HTTP failure 422, custom data version).
+   - `tests/test_data_commands.py` — new file with 9 CLI
+     integration tests for `data fetch` and regression tests
+     for the existing `data import` and `data check` commands.
+6. Updated `docs/architecture.md` with a new Market Data
+   Providers chapter documenting the protocol, the two shipped
+   providers, the HTTP layer, and the explicit non-goals
+   (no SDKs, no API keys, no minute bars, no retries).
+7. Updated `docs/roadmap.md` with the Phase 9 status block.
+
+Files changed:
+- `packages/alphabrief-data/src/alphabrief_data/providers/__init__.py` — new
+- `packages/alphabrief-data/src/alphabrief_data/providers/base.py` — new
+- `packages/alphabrief-data/src/alphabrief_data/providers/yahoo.py` — new
+- `packages/alphabrief-data/src/alphabrief_data/providers/binance.py` — new
+- `packages/alphabrief-data/src/alphabrief_data/__init__.py` — export new providers
+- `apps/cli/src/alphabrief_cli/data_commands.py` — add `fetch` subcommand
+- `apps/api/src/alphabrief_api/routes/data.py` — add `POST /fetch` endpoint
+- `tests/test_market_data_providers.py` — new (25 tests)
+- `tests/test_api_server.py` — 7 new tests + import additions
+- `tests/test_data_commands.py` — new (9 tests)
+- `docs/development_plans/0023-phase-9-real-market-data-providers.md` — new
+- `docs/architecture.md` — Market Data Providers chapter
+- `docs/roadmap.md` — Phase 9 status block
+- `docs/development_log.md` — this entry
+
+Validation for 0036:
+
+1. `python3 -m pytest` passed (408 tests, up from 367).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages/alphabrief-data/src apps/api/src apps/cli/src tests` passed.
+
+## 0037 Provider Retries and Interval Expansion (Phase 9 R2)
+
+Status: completed.
+
+Goal: harden the Phase 9 real market data providers against transient
+HTTP failures and broaden the supported interval set so users can
+fetch minute, weekly, and monthly bars without re-validating
+everything by hand.
+
+Completed changes:
+
+1. Added `RetryPolicy` frozen dataclass to
+   `packages/alphabrief-data/src/alphabrief_data/providers/base.py`
+   with `max_retries`, `initial_backoff_seconds`, `backoff_factor`,
+   `max_backoff_seconds`, and `jitter_factor`. `__post_init__`
+   validates every field and raises `MarketDataProviderError` with
+   `INVALID_CONFIG` on bad input.
+2. Added `is_retryable_exception()` (HTTP 429, 418, 5xx and
+   `URLError`/`OSError`/`TimeoutError`/`ConnectionError` are
+   retryable; non-rate-limit 4xx is not), `compute_backoff_delay()`
+   (deterministic given a fixed random source, capped at
+   `max_backoff_seconds`, with symmetric uniform jitter), and
+   `call_with_retry()` (configurable `sleep`, `random_fn`,
+   `is_retryable`, and `on_retry` test seams, re-raises the **last**
+   exception after the retry budget is exhausted).
+3. Wrapped the Yahoo and Binance HTTP layers with
+   `call_with_retry` so transient 429/418/5xx and network failures
+   recover automatically before any structured
+   `MarketDataProviderError` is raised. Both providers' structured
+   error mapping (RATE_LIMITED vs HTTP_ERROR vs NETWORK_ERROR)
+   remains unchanged for the post-retry failure case.
+4. Expanded Yahoo's `_SUPPORTED_INTERVALS` to
+   `1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo` and Binance's to
+   `1m, 3m, 5m, 15m, 30m, 1h, 1d, 1w, 1M`. Added Binance's
+   `_interval_to_seconds()` mapping for the new `1w` (604 800 s) and
+   `1M` (2 592 000 s, 30-day month approximation) intervals so the
+   pagination cursor advances correctly across the 1 000-row page
+   boundary.
+5. Updated the API `DataFetchRequest.interval` Literal and the CLI
+   `--interval` help text to reflect the expanded set; the new
+   intervals are accepted end-to-end through the API and the CLI.
+6. Added 23 new tests to `tests/test_market_data_providers.py`:
+   - 5 `is_retryable_*` tests covering 429, 418, 5xx, 4xx, and
+     transient network vs unrelated exceptions.
+   - 2 `RetryPolicy` validation tests (negative `max_retries`,
+     out-of-range `jitter_factor`).
+   - 2 `compute_backoff_delay` tests (deterministic value with zero
+     jitter; cap at `max_backoff_seconds`).
+   - 4 `call_with_retry` tests (succeed-on-first-try, recover after
+     recoverable failures, re-raise after budget exhaustion,
+     no-retry on 4xx).
+   - 4 end-to-end provider tests (Yahoo and Binance each retry
+     5xx-then-succeed, and each do not retry on 4xx).
+   - 6 provider interval tests (Yahoo and Binance each accept every
+     new interval; Yahoo `1wk` and `1mo` map to the correct
+     `data_version`; Binance `1w` and `1M` map to the correct
+     `data_version`).
+7. Updated two pre-existing tests to use intervals that remain
+   unsupported after R2: `test_yahoo_provider_raises_on_unsupported_interval`
+   now uses `"2h"` and `test_binance_provider_raises_on_unsupported_interval`
+   now uses `"1wk"`. Provider code is unchanged.
+8. Updated `docs/architecture.md` Market Data Providers chapter to
+   reflect the retry policy, the expanded Yahoo and Binance
+   interval sets, and to remove the now-incorrect "no retries"
+   claim from the non-goals list.
+
+Files changed:
+- `tests/test_market_data_providers.py` — 23 new tests + 2
+  pre-existing interval updates
+- `docs/roadmap.md` — Phase 9 R2 progress block
+- `docs/development_log.md` — this entry
+- `docs/architecture.md` — Market Data Providers chapter updated
+  (retry policy, interval lists, non-goals cleanup)
+
+Validation for 0037:
+
+1. `python3 -m pytest` passed (431 tests, up from 408).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy apps/api/src tests` passed.

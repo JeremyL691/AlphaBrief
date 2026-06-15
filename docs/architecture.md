@@ -372,3 +372,71 @@ snapshots remain in-memory pending future Phase 7 rounds.
 
 This layer does not implement connection pooling, migrations, backup,
 or multi-process locking.
+
+## Market Data Providers
+
+`alphabrief_data.providers` adds the first external market data
+provider boundary to the Data Layer. The package is intentionally
+small and ships with two free, key-less HTTP adapters that store
+their bars through the existing ``MarketDataStore``.
+
+Current behavior:
+
+1. ``MarketDataProvider`` is a runtime-checkable ``Protocol`` that
+   every external provider must satisfy. It declares a single
+   ``fetch_ohlcv`` method returning ``list[Bar]`` for a half-open
+   ``[start, end)`` range at a given interval.
+2. ``MarketDataProviderError`` is the single error class used by all
+   providers. It carries a stable ``code`` attribute (drawn from
+   ``MarketDataProviderErrorCode``) so CLI and API layers can
+   branch on the failure mode without parsing free-form messages.
+3. ``YahooFinanceProvider`` downloads OHLCV bars from Yahoo
+   Finance's unofficial chart endpoint
+   (``query1.finance.yahoo.com``). It uses ``urllib`` only — no
+   ``yfinance`` SDK is imported. Timestamps are converted from
+   UNIX seconds to timezone-aware UTC ``datetime`` objects.
+   Supported intervals are ``1m``, ``5m``, ``15m``, ``30m``, ``1h``,
+   ``1d``, ``1wk``, and ``1mo``; the ``data_version`` of every bar
+   embeds the interval so the same symbol can be re-fetched at
+   different granularities without collision.
+4. ``BinanceProvider`` downloads OHLCV klines from Binance's
+   public klines endpoint (``api.binance.com/api/v3/klines``). It
+   uses ``urllib`` only — no ``python-binance`` SDK is imported.
+   Timestamps are converted from UNIX milliseconds to
+   timezone-aware UTC ``datetime`` objects and prices are parsed as
+   ``Decimal`` from strings. Supported intervals are ``1m``,
+   ``3m``, ``5m``, ``15m``, ``30m``, ``1h``, ``1d``, ``1w``, and
+   ``1M`` (the capital-M monthly interval is Binance-specific and
+   is mapped to a 30-day month for pagination). Multi-day ranges
+   are fetched in 1 000-row pages using the
+   ``_interval_to_seconds()`` cursor.
+5. Both providers expose an injectable ``http_get`` callable so
+   tests can inject deterministic responses without monkeypatching
+   ``urllib``. The default callable performs a real HTTP request.
+6. Both providers wrap their HTTP call with ``call_with_retry``
+   using a shared ``RetryPolicy`` (exponential backoff with
+   uniform jitter, hard cap at ``max_backoff_seconds``). Only
+   recoverable failures are retried: HTTP 429/418/5xx and
+   ``URLError``/``OSError``/``TimeoutError``/``ConnectionError``.
+   Non-rate-limit 4xx errors are re-raised immediately so the
+   caller learns about caller-side mistakes without delay. After
+   the retry budget is exhausted the **last** exception is
+   surfaced.
+7. The CLI exposes ``alphabrief data fetch`` and the API exposes
+   ``POST /api/v1/data/fetch``. Both accept ``source``
+   (``yahoo`` or ``binance``), ``symbol``, ``start``, ``end``,
+   ``interval`` (any of the supported values above), and an
+   optional ``data_version`` tag, and persist the resulting bars
+   to the DuckDB ``bars`` table.
+8. Rate-limited (HTTP 429/418/5xx) and generic HTTP / network
+   failures are surfaced as structured ``MarketDataProviderError``
+   instances, never as raw ``urllib`` exceptions.
+9. The package never logs, stores, or transmits API keys. Both
+   providers are key-less by design.
+
+The provider package does not implement tick data, options,
+futures, fundamentals, news, or social sentiment. It does not
+implement cross-provider fallbacks or persistent rate-limit
+queues — callers can disable retries by setting
+``retry_policy.max_retries=0`` if they need strict at-most-once
+semantics.
