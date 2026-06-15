@@ -26,8 +26,10 @@ _reference_sources/
 .hermes/
 .omo/
 
-# Per-round development plans (kept local only, never committed)
-docs/development_plans/
+# Per-round development plans stay local, except the scaffold record
+# required by repository scaffold tests.
+docs/development_plans/*
+!docs/development_plans/0001-repo-scaffold.md
 
 # Editor and IDE artifacts
 .idea/
