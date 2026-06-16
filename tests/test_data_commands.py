@@ -318,3 +318,174 @@ def test_data_fetch_lowercase_binance_symbol_fails(
     )
     assert result.exit_code != 0
     assert "uppercase" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# `news` CLI
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _isolated_news_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Generator[None, None, None]:
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path / "alphabrief_db"))
+    yield
+
+
+def test_news_fetch_mock_success(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.news_commands import news_app
+
+    result = runner.invoke(
+        news_app,
+        [
+            "fetch",
+            "--source", "mock",
+            "--symbol", "AAPL",
+            "--start", "2024-06-01T00:00:00",
+            "--end", "2024-06-02T00:00:00",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Fetched 1 headlines" in result.output
+
+
+def test_news_fetch_lowercase_symbol_fails(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.news_commands import news_app
+
+    result = runner.invoke(
+        news_app,
+        [
+            "fetch",
+            "--source", "mock",
+            "--symbol", "aapl",
+            "--start", "2024-06-01T00:00:00",
+            "--end", "2024-06-02T00:00:00",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "uppercase" in result.output.lower()
+
+
+def test_news_fetch_invalid_date_fails(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.news_commands import news_app
+
+    result = runner.invoke(
+        news_app,
+        [
+            "fetch",
+            "--source", "mock",
+            "--symbol", "AAPL",
+            "--start", "not-a-date",
+            "--end", "2024-06-02T00:00:00",
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_news_list_after_fetch(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.news_commands import news_app
+
+    runner.invoke(
+        news_app,
+        [
+            "fetch",
+            "--source", "mock",
+            "--symbol", "AAPL",
+            "--start", "2024-06-01T00:00:00",
+            "--end", "2024-06-02T00:00:00",
+        ],
+    )
+    result = runner.invoke(news_app, ["list"])
+    assert result.exit_code == 0
+    assert "AAPL" in result.output
+
+
+def test_news_fetch_empty_window_fails(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.news_commands import news_app
+
+    result = runner.invoke(
+        news_app,
+        [
+            "fetch",
+            "--source", "mock",
+            "--symbol", "AAPL",
+            "--start", "2023-01-01T00:00:00",
+            "--end", "2023-01-02T00:00:00",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "No headlines" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `macro` CLI
+# ---------------------------------------------------------------------------
+
+
+def test_macro_fetch_mock_success(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.macro_commands import macro_app
+
+    result = runner.invoke(
+        macro_app,
+        [
+            "fetch",
+            "--source", "mock",
+            "--indicator", "CPIAUCSL",
+            "--start", "2024-06-01T00:00:00",
+            "--end", "2024-06-30T00:00:00",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Fetched 1 indicator" in result.output
+
+
+def test_macro_fetch_fred_fails_with_no_api_key(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.macro_commands import macro_app
+
+    result = runner.invoke(
+        macro_app,
+        [
+            "fetch",
+            "--source", "fred",
+            "--indicator", "CPIAUCSL",
+            "--start", "2024-06-01T00:00:00",
+            "--end", "2024-06-30T00:00:00",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "no_api_key" in result.output
+
+
+def test_macro_fetch_invalid_date_fails(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.macro_commands import macro_app
+
+    result = runner.invoke(
+        macro_app,
+        [
+            "fetch",
+            "--source", "mock",
+            "--indicator", "CPIAUCSL",
+            "--start", "2024-06-01T00:00:00",
+            "--end", "bad-date",
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_macro_list_after_fetch(_isolated_news_dir: None) -> None:
+    from alphabrief_cli.macro_commands import macro_app
+
+    runner.invoke(
+        macro_app,
+        [
+            "fetch",
+            "--source", "mock",
+            "--indicator", "CPIAUCSL",
+            "--start", "2024-06-01T00:00:00",
+            "--end", "2024-06-30T00:00:00",
+        ],
+    )
+    result = runner.invoke(macro_app, ["list"])
+    assert result.exit_code == 0
+    assert "CPIAUCSL" in result.output

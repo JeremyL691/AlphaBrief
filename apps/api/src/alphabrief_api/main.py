@@ -9,6 +9,8 @@ from alphabrief_api.routes.brief import router as brief_router
 from alphabrief_api.routes.dashboard import router as dashboard_router
 from alphabrief_api.routes.data import router as data_router
 from alphabrief_api.routes.health import router as health_router
+from alphabrief_api.routes.macro import router as macro_router
+from alphabrief_api.routes.news import router as news_router
 from alphabrief_api.routes.paper import router as paper_router
 from alphabrief_api.routes.research import router as research_router
 from alphabrief_api.routes.review import router as review_router
@@ -36,6 +38,8 @@ def create_app() -> FastAPI:
     api_app.include_router(research_router)
     api_app.include_router(risk_router)
     api_app.include_router(review_router)
+    api_app.include_router(news_router)
+    api_app.include_router(macro_router)
     api_app.include_router(dashboard_router)
     return api_app
 

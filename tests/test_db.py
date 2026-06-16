@@ -1179,3 +1179,190 @@ def test_brief_close_then_reopen(tmp_path: Path) -> None:
     assert result["brief"]["headline"] == "Persistent"
     store2.close()
 
+
+
+# ---------------------------------------------------------------------------
+# NewsStore + MacroStore
+# ---------------------------------------------------------------------------
+
+
+def _make_headline(headline_id: str = "h1", symbol: str = "AAPL"):
+    from alphabrief_news.types import NewsHeadline
+    return NewsHeadline(
+        headline_id=headline_id,
+        published_at=datetime(2026, 6, 12, 9, 30, tzinfo=UTC),
+        symbols=[symbol],
+        category="earnings",
+        source="test",
+        title=f"{symbol} news",
+    )
+
+
+def _make_indicator(indicator_id: str = "CPI", name: str = "CPI"):
+    from decimal import Decimal
+
+    from alphabrief_news.types import MacroIndicator
+    return MacroIndicator(
+        indicator_id=indicator_id,
+        name=name,
+        country="US",
+        released_at=datetime(2026, 6, 12, 8, 30, tzinfo=UTC),
+        period="2026-05",
+        value=Decimal("300.0"),
+        unit="index",
+        source="test",
+    )
+
+
+def test_news_store_inserts_and_gets(tmp_path: Path) -> None:
+    from alphabrief_api.db.news import NewsStore
+
+    db_path = str(tmp_path / "news.db")
+    store = NewsStore(db_path=db_path)
+    headline = _make_headline()
+    store.insert_headlines([headline])
+
+    fetched = store.get_headline("h1")
+    assert fetched is not None
+    assert fetched.title == "AAPL news"
+    assert fetched.symbols == ["AAPL"]
+    store.close()
+
+
+def test_news_store_lists_by_symbol(tmp_path: Path) -> None:
+    from alphabrief_api.db.news import NewsStore
+
+    store = NewsStore(db_path=str(tmp_path / "news2.db"))
+    store.insert_headlines([
+        _make_headline(headline_id="h1", symbol="AAPL"),
+        _make_headline(headline_id="h2", symbol="TSLA"),
+    ])
+
+    results = store.list_headlines(symbol="AAPL")
+    assert len(results) == 1
+    assert results[0].headline_id == "h1"
+    store.close()
+
+
+def test_news_store_filters_by_time_window(tmp_path: Path) -> None:
+    from alphabrief_api.db.news import NewsStore
+    from alphabrief_news.types import NewsHeadline
+
+    store = NewsStore(db_path=str(tmp_path / "news3.db"))
+    early = NewsHeadline(
+        headline_id="early",
+        published_at=datetime(2026, 6, 10, 9, 30, tzinfo=UTC),
+        symbols=["AAPL"],
+        category="earnings",
+        source="test",
+        title="early",
+    )
+    late = NewsHeadline(
+        headline_id="late",
+        published_at=datetime(2026, 6, 12, 9, 30, tzinfo=UTC),
+        symbols=["AAPL"],
+        category="earnings",
+        source="test",
+        title="late",
+    )
+    store.insert_headlines([early, late])
+
+    results = store.list_headlines(
+        start=datetime(2026, 6, 11, tzinfo=UTC),
+        end=datetime(2026, 6, 13, tzinfo=UTC),
+    )
+    assert len(results) == 1
+    assert results[0].headline_id == "late"
+    store.close()
+
+
+def test_news_store_clear(tmp_path: Path) -> None:
+    from alphabrief_api.db.news import NewsStore
+
+    store = NewsStore(db_path=str(tmp_path / "news4.db"))
+    store.insert_headlines([_make_headline()])
+    store.clear()
+    assert store.get_headline("h1") is None
+    store.close()
+
+
+def test_macro_store_inserts_and_gets(tmp_path: Path) -> None:
+    from alphabrief_api.db.macro import MacroStore
+
+    store = MacroStore(db_path=str(tmp_path / "macro.db"))
+    indicator = _make_indicator()
+    store.insert_indicators([indicator])
+
+    fetched = store.get_indicator("CPI")
+    assert fetched is not None
+    assert fetched.value == Decimal("300.0")
+    store.close()
+
+
+def test_macro_store_lists_by_indicator_id(tmp_path: Path) -> None:
+    from alphabrief_api.db.macro import MacroStore
+
+    store = MacroStore(db_path=str(tmp_path / "macro2.db"))
+    store.insert_indicators([
+        _make_indicator(indicator_id="CPI", name="CPI"),
+        _make_indicator(indicator_id="UNRATE", name="Unemployment"),
+    ])
+
+    results = store.list_indicators(indicator_id="CPI")
+    assert len(results) == 1
+    assert results[0].indicator_id == "CPI"
+    store.close()
+
+
+def test_macro_store_filters_by_time_window(tmp_path: Path) -> None:
+    from alphabrief_api.db.macro import MacroStore
+    from alphabrief_news.types import MacroIndicator
+
+    store = MacroStore(db_path=str(tmp_path / "macro3.db"))
+    early = MacroIndicator(
+        indicator_id="CPI",
+        name="CPI",
+        released_at=datetime(2026, 6, 10, 8, 30, tzinfo=UTC),
+        value=Decimal("290.0"),
+        source="test",
+    )
+    late = MacroIndicator(
+        indicator_id="CPI",
+        name="CPI",
+        released_at=datetime(2026, 6, 12, 8, 30, tzinfo=UTC),
+        value=Decimal("300.0"),
+        source="test",
+    )
+    store.insert_indicators([early, late])
+
+    results = store.list_indicators(
+        indicator_id="CPI",
+        start=datetime(2026, 6, 11, tzinfo=UTC),
+        end=datetime(2026, 6, 13, tzinfo=UTC),
+    )
+    assert len(results) == 1
+    assert results[0].value == Decimal("300.0")
+    store.close()
+
+
+def test_macro_store_clear(tmp_path: Path) -> None:
+    from alphabrief_api.db.macro import MacroStore
+
+    store = MacroStore(db_path=str(tmp_path / "macro4.db"))
+    store.insert_indicators([_make_indicator()])
+    store.clear()
+    assert store.get_indicator("CPI") is None
+    store.close()
+
+
+def test_news_and_macro_tables_exist_after_schema(tmp_path: Path) -> None:
+    from alphabrief_api.db.news import NewsStore
+
+    store = NewsStore(db_path=str(tmp_path / "schema.db"))
+    tables = store._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).fetchall()
+    names = {row[0] for row in tables}
+    assert "news_headlines" in names
+    assert "macro_indicators" in names
+    store.close()
