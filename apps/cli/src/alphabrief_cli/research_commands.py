@@ -3,13 +3,61 @@
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime, timedelta
 
 import typer
 from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_research import ResearchContextBuilder
 from alphabrief_research.orchestrator import DebateOrchestrator
 from alphabrief_research.schemas import DebateQuestion
 
 research_app = typer.Typer(help="Run and inspect AI research debates.")
+
+
+def _build_cli_research_context_builder() -> ResearchContextBuilder:
+    """Build a ResearchContextBuilder wired to DB stores."""
+    from alphabrief_api.db import MacroStore, NewsStore
+    from alphabrief_news import MacroIndicator, NewsHeadline
+
+    news_store = NewsStore()
+    macro_store = MacroStore()
+
+    def news_loader(
+        symbols: list[str], start: datetime, end: datetime, limit: int,
+    ) -> list[NewsHeadline]:
+        try:
+            rows = news_store.list_headlines(
+                symbol=symbols[0] if symbols else None,
+                start=start,
+                end=end,
+                limit=limit,
+            )
+            return list(rows)
+        except Exception:
+            return []
+
+    def macro_loader(
+        indicators: list[str], start: datetime, end: datetime,
+    ) -> list[MacroIndicator]:
+        if not indicators:
+            return []
+        try:
+            all_rows: list[MacroIndicator] = []
+            for ind_id in indicators:
+                rows = macro_store.list_indicators(
+                    indicator_id=ind_id,
+                    start=start,
+                    end=end,
+                    limit=20,
+                )
+                all_rows.extend(rows)
+            return all_rows
+        except Exception:
+            return []
+
+    return ResearchContextBuilder(
+        news_loader=news_loader, macro_loader=macro_loader
+    )
 
 
 @research_app.command("debate")
@@ -37,6 +85,26 @@ def debate_cmd(
         None,
         "--context",
         help="Additional context for the analysis.",
+    ),
+    include_news: bool = typer.Option(
+        False,
+        "--include-news",
+        help="Include news context in the debate prompt.",
+    ),
+    include_macro: bool = typer.Option(
+        False,
+        "--include-macro",
+        help="Include macro context in the debate prompt.",
+    ),
+    news_symbol: list[str] = typer.Option(
+        [],
+        "--news-symbol",
+        help="Symbols to filter news for (repeatable).",
+    ),
+    macro_indicator: list[str] = typer.Option(
+        [],
+        "--macro-indicator",
+        help="Macro indicator series to include (repeatable).",
     ),
 ) -> None:
     """Run a multi-model research debate via DebateOrchestrator.
@@ -69,12 +137,32 @@ def debate_cmd(
         if not parsed_perspectives:
             parsed_perspectives = ["technical", "fundamental", "risk", "judge"]
 
+        news_context: str | None = None
+        macro_context: str | None = None
+        if include_news or include_macro:
+            builder = _build_cli_research_context_builder()
+            end = datetime.now(UTC)
+            start = end - timedelta(days=7)
+            if include_news:
+                syms = list(news_symbol) or ([symbol] if symbol else [])
+                news_context = builder.build_news_context(
+                    syms, start, end, limit=20
+                )
+            if include_macro:
+                indicators = list(macro_indicator)
+                if indicators:
+                    macro_context = builder.build_macro_context(
+                        indicators, start, end
+                    )
+
         debate_question = DebateQuestion(
             question=question,
             symbol=symbol,
             time_horizon=time_horizon,
             perspectives=parsed_perspectives,
             context=context,
+            news_context=news_context,
+            macro_context=macro_context,
         )
         orchestrator = DebateOrchestrator(gateway)
         result = orchestrator.debate(debate_question)

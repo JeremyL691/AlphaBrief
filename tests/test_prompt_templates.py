@@ -141,3 +141,152 @@ def test_prompt_template_registry_rejects_unknown_version() -> None:
 
     with pytest.raises(PromptTemplateError, match="unknown"):
         registry.get("daily_alpha_brief", "v2")
+
+
+def test_phase11_templates_define_v2_versions() -> None:
+    from alphabrief_models import PHASE11_PROMPT_TEMPLATES
+
+    template_ids = {(t.template_id, t.version) for t in PHASE11_PROMPT_TEMPLATES}
+    assert ("daily_alpha_brief", "v2") in template_ids
+    assert ("market_brief", "v2") in template_ids
+    assert ("symbol_brief", "v2") in template_ids
+    assert ("debate_context", "v1") in template_ids
+
+
+def test_default_registry_renders_daily_brief_v2() -> None:
+    from alphabrief_models import build_default_prompt_registry
+
+    registry = build_default_prompt_registry()
+    rendered = registry.render(
+        "daily_alpha_brief",
+        "v2",
+        {
+            "trading_day": "2026-06-14",
+            "market_data_context": "SPY up 0.4%",
+            "news_context": "Tech earnings beat",
+            "macro_context": "CPI 3.1%",
+            "sentiment_summary": "Positive on tech",
+        },
+    )
+
+    assert rendered.prompt_version == "daily_alpha_brief:v2"
+    assert "2026-06-14" in rendered.input_text
+    assert "Tech earnings beat" in rendered.input_text
+    assert "CPI 3.1%" in rendered.input_text
+    assert "{{" not in rendered.input_text
+
+
+def test_default_registry_renders_symbol_brief_v2() -> None:
+    from alphabrief_models import build_default_prompt_registry
+
+    registry = build_default_prompt_registry()
+    rendered = registry.render(
+        "symbol_brief",
+        "v2",
+        {
+            "symbol": "NVDA",
+            "horizon": "1w",
+            "market_data_context": "NVDA up 2%",
+            "news_context": "Strong data center demand",
+            "macro_context": "Rate cut expectations",
+        },
+    )
+
+    assert rendered.prompt_version == "symbol_brief:v2"
+    assert "NVDA" in rendered.input_text
+    assert "1w" in rendered.input_text
+
+
+def test_default_registry_renders_market_brief_v2() -> None:
+    from alphabrief_models import build_default_prompt_registry
+
+    registry = build_default_prompt_registry()
+    rendered = registry.render(
+        "market_brief",
+        "v2",
+        {
+            "trading_day": "2026-06-14",
+            "market_data_context": "SPY flat",
+            "news_context": "Mixed earnings",
+            "macro_context": "Fed pause",
+        },
+    )
+
+    assert rendered.prompt_version == "market_brief:v2"
+    assert "Fed pause" in rendered.input_text
+
+
+def test_default_registry_renders_debate_context_v1() -> None:
+    from alphabrief_models import build_default_prompt_registry
+
+    registry = build_default_prompt_registry()
+    rendered = registry.render(
+        "debate_context",
+        "v1",
+        {
+            "question": "How will AAPL trade next week?",
+            "symbol": "AAPL",
+            "time_horizon": "5 trading days",
+            "context": "Earnings season",
+            "news_context": "iPhone sales strong",
+            "macro_context": "Rates stable",
+            "perspective": "technical",
+        },
+    )
+
+    assert rendered.prompt_version == "debate_context:v1"
+    assert "AAPL" in rendered.input_text
+    assert "iPhone sales strong" in rendered.input_text
+    assert "technical" in rendered.input_text
+
+
+def test_render_brief_prompt_v2_helper() -> None:
+    from alphabrief_models import render_brief_prompt_v2
+
+    rendered = render_brief_prompt_v2(
+        "daily_alpha_brief",
+        "v2",
+        {
+            "trading_day": "2026-06-14",
+            "market_data_context": "data",
+            "news_context": "news",
+            "macro_context": "macro",
+            "sentiment_summary": "sentiment",
+        },
+    )
+
+    assert rendered.prompt_version == "daily_alpha_brief:v2"
+
+
+def test_render_brief_prompt_v2_rejects_missing_variables() -> None:
+    from alphabrief_models import render_brief_prompt_v2
+
+    with pytest.raises(PromptTemplateError, match="missing"):
+        render_brief_prompt_v2(
+            "daily_alpha_brief",
+            "v2",
+            {
+                "trading_day": "2026-06-14",
+                "market_data_context": "data",
+                "news_context": "news",
+                "macro_context": "macro",
+            },
+        )
+
+
+def test_v2_templates_reject_blank_variables() -> None:
+    from alphabrief_models import build_default_prompt_registry
+
+    registry = build_default_prompt_registry()
+    with pytest.raises(PromptTemplateError, match="blank"):
+        registry.render(
+            "daily_alpha_brief",
+            "v2",
+            {
+                "trading_day": " ",
+                "market_data_context": "data",
+                "news_context": "news",
+                "macro_context": "macro",
+                "sentiment_summary": "sentiment",
+            },
+        )

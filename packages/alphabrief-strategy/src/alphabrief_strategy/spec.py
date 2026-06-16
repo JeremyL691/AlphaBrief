@@ -112,6 +112,67 @@ class StrategyEvaluation(AlphaBriefStrategyModel):
         return self
 
 
+class ExternalEvidenceConfig(AlphaBriefStrategyModel):
+    """Optional declaration of external data the strategy intends to use.
+
+    This is **declarative intent only** — it does not load data, call
+    providers, or wire to RiskGate. The actual evidence is attached
+    per-signal via :class:`SignalEvidence`. All fields are optional
+    with safe defaults to keep the schema backward compatible.
+
+    Fields
+    ------
+    enabled
+        Whether the strategy expects to consume external evidence at
+        signal time. Defaults to ``False`` (legacy behaviour).
+    source
+        Logical source name (e.g. ``"news_alpha"``,
+        ``"macro_fred"``). Free-form; only used for audit logs.
+    data_version
+        Version tag of the upstream data feed the strategy was
+        designed for. Used for staleness / compatibility checks.
+    require_human_review_on_negative
+        When ``True`` (default), emitted signals whose attached
+        ``SignalEvidence.sentiment_score`` is below
+        ``negative_sentiment_threshold`` should be flagged for human
+        review by downstream risk consumers. May only *tighten* risk.
+    negative_sentiment_threshold
+        Threshold in ``[-1.0, 1.0]``. When the attached
+        sentiment_score falls below this value, downstream risk
+        consumers may flag the signal for human review. ``None`` means
+        no auto-flag from this config.
+    macro_indicators
+        Optional list of macro indicator IDs the strategy expects
+        (e.g. ``["fred:CPIAUCSL"]``). Used for audit only.
+    """
+
+    enabled: bool = False
+    source: str | None = None
+    data_version: str | None = None
+    require_human_review_on_negative: bool = True
+    negative_sentiment_threshold: float | None = Field(default=None, ge=-1.0, le=1.0)
+    macro_indicators: list[str] = Field(default_factory=list)
+
+    @field_validator("source", "data_version")
+    @classmethod
+    def optional_string_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value.strip() == "":
+            raise ValueError(
+                "external evidence strings must not be blank when provided"
+            )
+        return value
+
+    @field_validator("macro_indicators")
+    @classmethod
+    def macro_indicators_must_not_contain_blanks(cls, value: list[str]) -> list[str]:
+        for item in value:
+            if not isinstance(item, str) or item.strip() == "":
+                raise ValueError("macro_indicators must be non-empty strings")
+        return value
+
+
 class StrategySpec(AlphaBriefStrategyModel):
     strategy_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
@@ -123,6 +184,7 @@ class StrategySpec(AlphaBriefStrategyModel):
     risk: StrategyRisk
     costs: StrategyCosts
     evaluation: StrategyEvaluation
+    external_evidence: ExternalEvidenceConfig | None = None
 
     @field_validator("strategy_id", "name", "version", "timeframe")
     @classmethod

@@ -10,6 +10,7 @@ from typing import Literal
 import typer
 from alphabrief_core import Bar
 from alphabrief_data import (
+    AlphaVantageProvider,
     BinanceProvider,
     MarketDataLoadError,
     MarketDataProvider,
@@ -22,7 +23,7 @@ from alphabrief_data import (
 
 data_app = typer.Typer(help="Manage market data ingestion and quality checks.")
 
-ProviderSource = Literal["yahoo", "binance"]
+ProviderSource = Literal["yahoo", "binance", "alphavantage"]
 
 
 def _load_bars(
@@ -55,8 +56,11 @@ def _build_provider(source: str) -> MarketDataProvider:
         return YahooFinanceProvider()
     if source == "binance":
         return BinanceProvider()
+    if source == "alphavantage":
+        return AlphaVantageProvider()
     raise MarketDataProviderError(
-        f"data fetch: unknown source {source!r}; expected 'yahoo' or 'binance'",
+        f"data fetch: unknown source {source!r}; expected 'yahoo', "
+        "'binance', or 'alphavantage'",
         code="invalid_source",
     )
 
@@ -135,7 +139,7 @@ def fetch_cmd(
     source: str = typer.Option(
         ...,
         "--source",
-        help="Market data source: 'yahoo' or 'binance'.",
+        help="Market data source: 'yahoo', 'binance', or 'alphavantage'.",
     ),
     symbol: str = typer.Option(..., "--symbol", help="Market symbol identifier."),
     start: str = typer.Option(

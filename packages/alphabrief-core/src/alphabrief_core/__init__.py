@@ -16,6 +16,7 @@ from alphabrief_core.domain import (
     RiskDecision,
     Signal,
     SignalDirection,
+    SignalEvidence,
 )
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "RiskDecision",
     "Signal",
     "SignalDirection",
+    "SignalEvidence",
     "load_settings",
 ]

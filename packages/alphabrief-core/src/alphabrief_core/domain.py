@@ -69,6 +69,51 @@ class Bar(AlphaBriefModel):
         return self
 
 
+class SignalEvidence(AlphaBriefModel):
+    """Optional external-evidence metadata attached to a :class:`Signal`.
+
+    Fields are all optional and default-empty so existing signal
+    construction stays backward compatible. The metadata is **audit
+    context only** — it must not be used to bypass risk rules or
+    order routing. Sentiment scores use the convention of
+    ``[-1.0, 1.0]`` (negative to positive); ``None`` means unknown.
+    """
+
+    news_headline_ids: list[str] = Field(default_factory=list)
+    macro_indicator_ids: list[str] = Field(default_factory=list)
+    sentiment_score: float | None = Field(default=None, ge=-1.0, le=1.0)
+    source: str | None = None
+    data_version: str | None = None
+    external_context_version: str | None = None
+    generated_at: datetime | None = None
+
+    @field_validator("generated_at")
+    @classmethod
+    def generated_at_must_be_timezone_aware(
+        cls, value: datetime | None,
+    ) -> datetime | None:
+        if value is None:
+            return None
+        return _validate_timezone_aware(value)
+
+    @field_validator("news_headline_ids", "macro_indicator_ids")
+    @classmethod
+    def ids_must_not_contain_blanks(cls, value: list[str]) -> list[str]:
+        for item in value:
+            if not isinstance(item, str) or item.strip() == "":
+                raise ValueError("evidence ids must be non-empty strings")
+        return value
+
+    @field_validator("source", "data_version", "external_context_version")
+    @classmethod
+    def optional_string_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value.strip() == "":
+            raise ValueError("evidence string fields must not be blank when provided")
+        return value
+
+
 class Signal(AlphaBriefModel):
     signal_id: str = Field(min_length=1)
     strategy_id: str = Field(min_length=1)
@@ -78,6 +123,7 @@ class Signal(AlphaBriefModel):
     confidence: float = Field(ge=0, le=1)
     horizon: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
+    evidence: SignalEvidence | None = None
 
     @field_validator("timestamp")
     @classmethod

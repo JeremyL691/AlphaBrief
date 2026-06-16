@@ -16,6 +16,7 @@ All providers in this subpackage:
 5. Never log, store, or transmit secrets.
 """
 
+from alphabrief_data.providers.alphavantage import AlphaVantageProvider
 from alphabrief_data.providers.base import (
     MarketDataProvider,
     MarketDataProviderError,
@@ -29,6 +30,7 @@ from alphabrief_data.providers.binance import BinanceProvider
 from alphabrief_data.providers.yahoo import YahooFinanceProvider
 
 __all__ = [
+    "AlphaVantageProvider",
     "BinanceProvider",
     "MarketDataProvider",
     "MarketDataProviderError",

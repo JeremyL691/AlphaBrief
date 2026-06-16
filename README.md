@@ -11,8 +11,7 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-All nine planned phases are complete. 431 tests pass. Ruff and strict
-mypy are clean.
+Phases 1–12 complete. 659 tests pass. Ruff and strict mypy are clean.
 
 - **Phase 1 — Core.** Domain models, CSV/Parquet OHLCV loaders, in-memory
   data quality checks, no-lookahead features, StrategySpec schema, and a
@@ -51,6 +50,21 @@ mypy are clean.
   interval set, plus the `alphabrief data fetch` CLI command and
   `POST /api/v1/data/fetch` endpoint that persist bars to the existing
   DuckDB store.
+- **Phase 10 — News & Macro Data Layer.** Structured news headline
+  and macro-economic indicator schemas, provider protocols, mock
+  providers, RSS/Atom reader with free feed allowlist, DuckDB
+  persistence, and full CLI/API surface. 58 new tests.
+- **Phase 11 — Research integration, more data sources, trading
+  env V2, multi-page dashboard.** News/macro context injection into
+  research briefs and debate prompts, FRED/SEC/Sentiment/AlphaVantage
+  providers, multi-asset continuous-action trading environment with
+  short/leverage/liquidity/market-impact support, and five-page
+  vanilla HTML dashboard. 108 new tests.
+- **Phase 12 — External evidence + risk context.** Deterministic
+  news/macro → risk tightening layer, strategy external evidence
+  declaration and per-signal `SignalEvidence`, structured research
+  context summary, and gymnasium EnvV2 episode reports with cost
+  breakdowns. 62 new tests.
 
 ## Safety Boundary
 
@@ -116,7 +130,7 @@ Run all checks before committing:
 .venv/bin/mypy
 ```
 
-Current result: 431 tests pass, ruff clean, strict mypy clean.
+Current result: 659 tests pass, ruff clean, strict mypy clean.
 
 ## Reference Source Policy
 

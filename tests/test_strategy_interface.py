@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from alphabrief_core import Bar, Signal
+from alphabrief_core import Bar, Signal, SignalEvidence
 from alphabrief_data import FeatureRow, generate_basic_features
 from alphabrief_strategy import (
     StrategyExecutionError,
@@ -31,30 +31,34 @@ def _bar(*, minutes: int, symbol: str = "BTC-USD") -> Bar:
     )
 
 
-def _spec(symbols: list[str] | None = None) -> StrategySpec:
-    return StrategySpec.model_validate(
-        {
-            "strategy_id": "strategy_1",
-            "name": "Test Strategy",
-            "version": "1.0.0",
-            "universe": {"symbols": symbols or ["BTC-USD"]},
-            "timeframe": "1m",
-            "entry": {"condition": "close > close_sma_3"},
-            "exit": {"condition": "close < close_sma_3"},
-            "risk": {"max_position_pct": Decimal("0.2")},
-            "costs": {"fee_bps": Decimal("1"), "slippage_bps": Decimal("2")},
-            "evaluation": {
-                "train_period": {
-                    "start": date(2020, 1, 1),
-                    "end": date(2023, 12, 31),
-                },
-                "test_period": {
-                    "start": date(2024, 1, 1),
-                    "end": date(2025, 12, 31),
-                },
+def _spec(
+    symbols: list[str] | None = None,
+    external_evidence: dict[str, Any] | None = None,
+) -> StrategySpec:
+    data: dict[str, Any] = {
+        "strategy_id": "strategy_1",
+        "name": "Test Strategy",
+        "version": "1.0.0",
+        "universe": {"symbols": symbols or ["BTC-USD"]},
+        "timeframe": "1m",
+        "entry": {"condition": "close > close_sma_3"},
+        "exit": {"condition": "close < close_sma_3"},
+        "risk": {"max_position_pct": Decimal("0.2")},
+        "costs": {"fee_bps": Decimal("1"), "slippage_bps": Decimal("2")},
+        "evaluation": {
+            "train_period": {
+                "start": date(2020, 1, 1),
+                "end": date(2023, 12, 31),
             },
-        }
-    )
+            "test_period": {
+                "start": date(2024, 1, 1),
+                "end": date(2025, 12, 31),
+            },
+        },
+    }
+    if external_evidence is not None:
+        data["external_evidence"] = external_evidence
+    return StrategySpec.model_validate(data)
 
 
 def _strategy_input(
@@ -79,6 +83,7 @@ def _signal(
     strategy_id: str = "strategy_1",
     symbol: str = "BTC-USD",
     timestamp: datetime = BASE_TIME,
+    evidence: SignalEvidence | None = None,
 ) -> Signal:
     return Signal(
         signal_id="signal_1",
@@ -89,6 +94,7 @@ def _signal(
         confidence=0.8,
         horizon="1m",
         rationale="fake strategy signal",
+        evidence=evidence,
     )
 
 
@@ -181,3 +187,96 @@ def test_run_strategy_wraps_invalid_output_shape() -> None:
 
     with pytest.raises(StrategyExecutionError, match="strategy output"):
         run_strategy(InvalidOutputStrategy(), _strategy_input())
+
+
+def test_run_strategy_allows_signals_without_evidence() -> None:
+    output = run_strategy(FakeStrategy(), _strategy_input())
+
+    assert all(signal.evidence is None for signal in output.signals)
+
+
+def test_run_strategy_accepts_evidence_when_config_enabled() -> None:
+    evidence = SignalEvidence(
+        news_headline_ids=["h1", "h2"],
+        sentiment_score=-0.1,
+        source="news_alpha",
+        data_version="v1",
+        external_context_version="ctx-2024-01",
+    )
+    spec = _spec(
+        external_evidence={
+            "enabled": True,
+            "source": "news_alpha",
+            "data_version": "v1",
+            "require_human_review_on_negative": True,
+        },
+    )
+    output = StrategyOutput(signals=[_signal(evidence=evidence)])
+
+    result = run_strategy(FakeStrategy(output), _strategy_input(spec=spec))
+
+    assert result.signals[0].evidence == evidence
+
+
+def test_run_strategy_rejects_evidence_without_spec_config() -> None:
+    evidence = SignalEvidence(news_headline_ids=["h1"])
+    output = StrategyOutput(signals=[_signal(evidence=evidence)])
+
+    with pytest.raises(StrategyExecutionError, match="external_evidence config"):
+        run_strategy(FakeStrategy(output), _strategy_input())
+
+
+def test_run_strategy_rejects_undeclared_macro_indicator_in_evidence() -> None:
+    evidence = SignalEvidence(macro_indicator_ids=["fred:UNRATE"])
+    spec = _spec(
+        external_evidence={
+            "enabled": True,
+            "macro_indicators": ["fred:CPIAUCSL"],
+        },
+    )
+    output = StrategyOutput(signals=[_signal(evidence=evidence)])
+
+    with pytest.raises(StrategyExecutionError, match="macro_indicator_id"):
+        run_strategy(FakeStrategy(output), _strategy_input(spec=spec))
+
+
+def test_run_strategy_accepts_declared_macro_indicator() -> None:
+    evidence = SignalEvidence(macro_indicator_ids=["fred:CPIAUCSL"])
+    spec = _spec(
+        external_evidence={
+            "enabled": True,
+            "macro_indicators": ["fred:CPIAUCSL", "fred:UNRATE"],
+        },
+    )
+    output = StrategyOutput(signals=[_signal(evidence=evidence)])
+
+    result = run_strategy(FakeStrategy(output), _strategy_input(spec=spec))
+
+    assert result.signals[0].evidence == evidence
+
+
+def test_run_strategy_accepts_empty_evidence_object() -> None:
+    spec = _spec(external_evidence={"enabled": True})
+    output = StrategyOutput(signals=[_signal(evidence=SignalEvidence())])
+
+    result = run_strategy(FakeStrategy(output), _strategy_input(spec=spec))
+
+    assert result.signals[0].evidence == SignalEvidence()
+
+
+def test_external_evidence_config_can_be_disabled_with_default_review() -> None:
+    spec = _spec(external_evidence={"enabled": False})
+
+    assert spec.external_evidence is not None
+    assert spec.external_evidence.enabled is False
+    assert spec.external_evidence.require_human_review_on_negative is True
+    evidence = SignalEvidence(
+        news_headline_ids=["h1"],
+        sentiment_score=0.5,
+        source="news_alpha",
+    )
+    output = StrategyOutput(signals=[_signal(evidence=evidence)])
+
+    result = run_strategy(FakeStrategy(output), _strategy_input(spec=spec))
+
+    assert result.signals[0].evidence == evidence
