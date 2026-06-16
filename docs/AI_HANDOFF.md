@@ -1,19 +1,20 @@
 # AlphaBrief Phase 12 — AI Handoff
 
 > 生成时间: 2026-06-16
-> 最后 Commit: `26031ce` — `phase-12-risk-context: add news/macro risk context decision layer`
-> 工作区包含: R12.5–R12.6 未提交改动
+> 生成时间: 2026-06-16
+> 最后 Commit: `e649775` — `phase-12-backtest-schema: add report_engine column and EnvV2 report persistence`
+> 工作区包含: R12.8 待提交改动（含文档更新）
 
 ## 当前状态
 
-- **工作区**: 有未提交更改（10 个文件 + 1 个新测试文件）
-- **测试**: 659 passed（从 Phase 11 的 597 +62）
+- **工作区**: 有未提交更改（5 个 .py 文件 + 1 个新测试文件 + 文档更新）
+- **测试**: 668 passed（最终 Phase 12 数字）
 - **mypy**: ✅ 0 errors（strict 模式）
 - **ruff**: ✅ clean
 
-## Phase 12 完成内容（2 个 Commit，6 个 Round）
+## Phase 12 完成内容（4 个 Commit，8 个 Round）
 
-### 已提交 (R12.1–R12.4) — 2 commits
+### 已提交 — 3 commits
 
 | Round | 内容 | 状态 |
 |-------|------|:----:|
@@ -21,17 +22,20 @@
 | 12.2 | `ResearchContextSummary` 扩展（aggregate_sentiment, macro IDs）| ✅ |
 | 12.3 | `alphabrief_risk.context` — deterministic tighten-only risk layer | ✅ |
 | 12.4 | Strategy interface: `ExternalEvidenceConfig` + `SignalEvidence` on signals | ✅ |
+| 12.5 | Risk API/CLI 暴露 risk-context endpoint + `alphabrief risk context` 命令 | ✅ |
+| 12.6 | Gymnasium EnvV2 episode reports (EnvV2Report, cost breakdown) | ✅ |
+| 12.7 | BacktestReport schema v2 compatible extension (`report_engine`, `save_env_v2_report`) | ✅ |
 
 提交记录:
+- `e649775` — `phase-12-backtest-schema: add report_engine column and EnvV2 report persistence`
 - `26031ce` — `phase-12-risk-context: add news/macro risk context decision layer`
 - `11db8f0` — `phase-12-risk-context: add strategy external evidence + research structured summary`
 
-### 工作区 (R12.5–R12.6) — 未提交
+### 工作区 / 待提交 (R12.8)
 
 | Round | 内容 | 状态 |
 |-------|------|:----:|
-| 12.5 | Risk API/CLI 暴露 risk-context endpoint + `alphabrief risk context` 命令 | ✅ |
-| 12.6 | Gymnasium EnvV2 episode reports (EnvV2Report, cost breakdown) | ✅ |
+| 12.8 | CLI/API `engine="env_v2"` option for multi-asset EnvV2 backtest | ✅ |
 
 ### 核心新增模块
 
@@ -44,6 +48,11 @@
 | `EnvV2CostBreakdown` | `alphabrief_gym/schemas.py` | 成本分解（slippage, impact, borrow）|
 | `SignalEvidence` | `alphabrief_core/domain.py` | 每信号附加的外部证据 |
 | `ExternalEvidenceConfig` | `alphabrief_strategy/spec.py` | StrategySpec 声明的外部证据配置 |
+| `get_bar_models_for_symbols()` | `alphabrief_api/db/market_data.py` | 多 symbol bars 批量读取 |
+| `evaluate_equal_weight_buy_and_hold_v2()` | `alphabrief_gym/policies.py` | 多资产等权买入持有策略 |
+| `run_policy_episode_v2()` | `alphabrief_gym/policies.py` | EnvV2 policy 执行辅助函数 |
+| `PolicyEvaluationV2` | `alphabrief_gym/policies.py` | EnvV2 policy 评估结果 |
+| `EnvV2BacktestReportResponse` | `alphabrief_api/routes/backtest.py` | API EnvV2 回测报告响应模型 |
 
 ### 设计原则
 
@@ -62,12 +71,14 @@
 | 无新增 SDK 依赖（仅 urllib） | ✅ |
 | 无 live trading 默认启用 | ✅ |
 | 已有测试断言未改 | ✅ |
+| 不改 VectorizedBacktester / BacktestReport 定义 | ✅ |
+| 不改 EnvV2Report / build_env_v2_report 定义 | ✅ |
 
 ## 已知问题 / 待办
 
-- R12.5–R12.6 代码未提交（见工作区改动列表）
 - `FredMacroProvider` 和 `AlphaVantageProvider` 需用户自行配置环境变量
 - `SocialSentimentNewsProvider` 为 stub，真实数据源待接入
+- Phase 12 已完成（R12.1–R12.8），下一阶段为 Phase 13
 
 ## 下一轮建议方向
 

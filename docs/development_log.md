@@ -1552,3 +1552,74 @@ Validation for 0041:
 1. `.venv/bin/python -m pytest tests/test_db.py tests/test_backtest_reports.py -x -q --tb=short` passed (87 tests).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy` passed (129 source files).
+
+---
+
+## 0042 — CLI/API EnvV2 Backtest Engine Option (Round 12.8)
+
+Date: 2026-06-16
+
+Goal: Allow users to explicitly select the `AlphaBriefTradingEnvV2`
+multi-asset backtest engine through both the API and CLI, while keeping
+the legacy single-asset `VectorizedBacktester` as the default.
+
+Changes:
+
+1. Extended `apps/api/src/alphabrief_api/db/market_data.py`:
+   - Added `get_bar_models_for_symbols(symbols)` that loads `Bar`
+     domain objects for multiple symbols via the existing per-symbol
+     helper. Missing symbols map to an empty list; callers validate.
+
+2. Extended `apps/api/src/alphabrief_api/routes/backtest.py`:
+   - `BacktestRunRequest` gained `engine` (`"legacy"` or `"env_v2"`,
+     default `"legacy"`), `symbols`, `env_v2_max_leverage`,
+     `env_v2_allow_short`, `env_v2_fee_bps`, `env_v2_slippage_bps`.
+   - `run_backtest` dispatches by `engine` to `_run_legacy_backtest`
+     (unchanged path) or `_run_env_v2_backtest` (new multi-asset path).
+   - EnvV2 path validates symbol existence, minimum bar count (>=2),
+     and equal bar lengths across assets; returns 422 on failures.
+   - Added `EnvV2BacktestReportResponse`, `EnvV2CostBreakdownResponse`,
+     `EnvV2AssetMetricsResponse` response models.
+   - Runs a deterministic equal-weight buy-and-hold episode, persists
+     the report via `BacktestReportStore.save_env_v2_report()`.
+   - `list_reports` now branches by `report_engine` to correctly
+     extract env_v2 report summaries.
+
+3. Extended `apps/cli/src/alphabrief_cli/backtest_commands.py`:
+   - Added `--engine`, `--symbols`, `--max-leverage`, `--allow-short`,
+     `--fee-bps`, `--slippage-bps` options to the `run` subcommand.
+   - Env-v2 branch reads multi-asset bars from DuckDB `MarketDataStore`,
+     validates data completeness, runs equal-weight buy-and-hold via
+     `evaluate_equal_weight_buy_and_hold_v2()`, and prints report
+     summary. Supports optional `--output` JSON export.
+   - Legacy branch is unchanged; `--data` and `--spec` remain required.
+
+4. Extended `packages/alphabrief-gym/src/alphabrief_gym/policies.py`:
+   - Added `PolicyV2` type alias, `PolicyEvaluationV2`, `run_policy_episode_v2()`,
+     and `evaluate_equal_weight_buy_and_hold_v2()` for deterministic
+     multi-asset policy execution.
+
+5. Updated `packages/alphabrief-gym/src/alphabrief_gym/__init__.py`:
+   - Exported `PolicyEvaluationV2`, `run_policy_episode_v2`,
+     `evaluate_equal_weight_buy_and_hold_v2`.
+
+6. Added `tests/test_backtest_commands.py` with 2 tests:
+   - `test_cli_backtest_run_env_v2_missing_symbols` — validates that
+     `--engine env-v2` without `--symbols` exits with an error.
+   - `test_cli_backtest_run_legacy_still_works` — confirms the default
+     legacy engine with `--data` and `--spec` continues to work.
+
+Files changed:
+- `apps/api/src/alphabrief_api/db/market_data.py` — multi-symbol loader
+- `apps/api/src/alphabrief_api/routes/backtest.py` — engine branch + EnvV2 path
+- `apps/cli/src/alphabrief_cli/backtest_commands.py` — CLI options + env-v2 path
+- `packages/alphabrief-gym/src/alphabrief_gym/policies.py` — V2 policies
+- `packages/alphabrief-gym/src/alphabrief_gym/__init__.py` — exports
+- `tests/test_backtest_commands.py` — new (2 tests)
+- `docs/development_log.md` — this entry
+
+Validation for 0042:
+
+1. `.venv/bin/python -m pytest -q --tb=line` passed (668 tests, up from 659).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy` passed (130 source files).

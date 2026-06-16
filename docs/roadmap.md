@@ -371,7 +371,7 @@ pipeline so that deterministic, audit-friendly risk tightening can
 respond to market sentiment and macro conditions — without modifying
 RiskGate core semantics.
 
-Status: in progress. Rounds 12.1–12.6 complete, 659 tests pass.
+Status: completed. Rounds 12.1–12.8 complete.
 
 Planned sequence:
 
@@ -386,6 +386,10 @@ Planned sequence:
 5. Risk API and CLI expose risk-context evaluation: completed (R12.5).
 6. Gymnasium EnvV2 episode reports with cost-breakdown schemas:
    completed (R12.6).
+7. BacktestReportSchema v2 compatible extension (`report_engine`
+   column, `save_env_v2_report` helper): completed (R12.7).
+8. CLI/API `engine="env_v2"` option for multi-asset
+   `AlphaBriefTradingEnvV2` backtest: completed (R12.8).
 
 This phase is additive and tighten-only: risk can never be relaxed
 by external evidence. All new fields are optional with safe defaults
