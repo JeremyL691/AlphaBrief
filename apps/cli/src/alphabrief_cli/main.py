@@ -1,6 +1,6 @@
 """AlphaBrief CLI entry point.
 
-This is the top-level Typer application that wires the 10 subcommand groups
+This is the top-level Typer application that wires the subcommand groups
 together. Each subcommand group is intentionally a stub for now; the
 underlying logic will be filled in by the owning package in a later round.
 """
@@ -13,7 +13,9 @@ from alphabrief_cli.audit_commands import audit_app
 from alphabrief_cli.backtest_commands import backtest_app
 from alphabrief_cli.brief_commands import brief_app
 from alphabrief_cli.data_commands import data_app
+from alphabrief_cli.macro_commands import macro_app
 from alphabrief_cli.model_commands import model_app
+from alphabrief_cli.news_commands import news_app
 from alphabrief_cli.paper_commands import paper_app
 from alphabrief_cli.research_commands import research_app
 from alphabrief_cli.review_commands import review_app
@@ -28,6 +30,8 @@ app = typer.Typer(
 )
 
 app.add_typer(data_app, name="data")
+app.add_typer(news_app, name="news")
+app.add_typer(macro_app, name="macro")
 app.add_typer(backtest_app, name="backtest")
 app.add_typer(brief_app, name="brief")
 app.add_typer(model_app, name="model")
