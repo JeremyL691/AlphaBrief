@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from alphabrief_backtest import BacktestReport, VectorizedBacktester
+from alphabrief_core import Bar
 from alphabrief_data import FeatureGenerationError, generate_basic_features
+from alphabrief_gym import (
+    AlphaBriefTradingEnvConfig,
+    AlphaBriefTradingEnvV2,
+    EnvV2Report,
+    build_env_v2_report,
+    env_v2_report_to_dict,
+)
 from alphabrief_strategy import (
     EvaluationPeriod,
     MovingAverageTrendStrategy,
@@ -21,7 +30,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphabrief_api.db import BacktestReportStore
-from alphabrief_api.routes.data import _get_stored_bars
+from alphabrief_api.routes.data import _get_store, _get_stored_bars
 
 # ---------------------------------------------------------------------------
 # Persistent report store (DuckDB-backed)
@@ -73,6 +82,12 @@ class BacktestRunRequest(BaseModel):
     train_end: date = Field(default_factory=lambda: date(2023, 12, 31))
     test_start: date = Field(default_factory=lambda: date(2024, 1, 1))
     test_end: date = Field(default_factory=lambda: date(2026, 12, 31))
+    engine: Literal["legacy", "env_v2"] = "legacy"
+    symbols: list[str] = Field(default_factory=list)
+    env_v2_max_leverage: Decimal = Field(default=Decimal("1"))
+    env_v2_allow_short: bool = False
+    env_v2_fee_bps: Decimal = Field(default=Decimal("5"))
+    env_v2_slippage_bps: Decimal = Field(default=Decimal("5"))
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +119,7 @@ class BacktestReportSummary(BaseModel):
     final_value: float
     trade_count: int
     total_return: float
+    engine: str = "legacy"
 
 
 class BacktestReportResponse(BaseModel):
@@ -131,6 +147,47 @@ class BacktestReportsList(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     reports: list[BacktestReportSummary]
+
+
+class EnvV2CostBreakdownResponse(BaseModel):
+    """Cost breakdown for an EnvV2 backtest report response."""
+
+    model_config = ConfigDict(frozen=True)
+
+    slippage_cost: float
+    market_impact_cost: float
+    borrow_cost: float
+    total_cost: float
+
+
+class EnvV2AssetMetricsResponse(BaseModel):
+    """Per-asset metrics for an EnvV2 backtest report response."""
+
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str
+    final_position: float
+    realized_pnl: float
+    trade_count: int
+
+
+class EnvV2BacktestReportResponse(BaseModel):
+    """Response body for the EnvV2 engine branch of POST /api/v1/backtest/run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    report_id: str
+    environment: str
+    steps: int
+    initial_value: float
+    final_value: float
+    total_return: float
+    max_drawdown: float
+    trade_count: int
+    final_leverage: float
+    costs: EnvV2CostBreakdownResponse
+    assets: list[EnvV2AssetMetricsResponse]
+    generated_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -211,17 +268,110 @@ def _report_to_response(
     )
 
 
+def _list_all_bar_lists(bars_by_symbol: dict[str, list[Bar]]) -> list[Bar]:
+    flat: list[Bar] = []
+    for symbol in sorted(bars_by_symbol.keys()):
+        flat.extend(bars_by_symbol[symbol])
+    return flat
+
+
+def _build_env_v2_config(req: BacktestRunRequest) -> AlphaBriefTradingEnvConfig:
+    return AlphaBriefTradingEnvConfig(
+        initial_cash=req.initial_cash,
+        max_leverage=req.env_v2_max_leverage,
+        allow_short=req.env_v2_allow_short,
+        fee_bps=req.env_v2_fee_bps,
+        slippage_bps=req.env_v2_slippage_bps,
+    )
+
+
+def _run_equal_weight_buy_and_hold(env: AlphaBriefTradingEnvV2) -> None:
+    """Run a deterministic equal-weight buy-and-hold episode.
+
+    At step 0 the portfolio is rebalanced to equal weights across all
+    assets. On subsequent steps the current portfolio weights are
+    passed through as targets so that no further trades occur.
+    """
+    assets = env.assets
+    n_assets = len(assets)
+    if n_assets == 0:
+        return
+    equal_weight = Decimal("1") / Decimal(n_assets)
+    action = {asset: equal_weight for asset in assets}
+    result = env.step(action)
+    while not result.terminated:
+        portfolio_value = result.observation.portfolio.portfolio_value
+        if portfolio_value == 0:
+            hold_action = {asset: Decimal("0") for asset in assets}
+        else:
+            hold_action = {}
+            for asset in assets:
+                observation = result.observation.assets[asset]
+                position_value = observation.position_quantity * observation.close
+                hold_action[asset] = position_value / portfolio_value
+        result = env.step(hold_action)
+
+
+def _env_v2_report_to_response(
+    report_id: str,
+    report: EnvV2Report,
+) -> EnvV2BacktestReportResponse:
+    return EnvV2BacktestReportResponse(
+        report_id=report_id,
+        environment=report.environment,
+        steps=report.steps,
+        initial_value=float(report.initial_value),
+        final_value=float(report.final_value),
+        total_return=float(report.total_return),
+        max_drawdown=float(report.max_drawdown),
+        trade_count=report.trade_count,
+        final_leverage=float(report.final_leverage),
+        costs=EnvV2CostBreakdownResponse(
+            slippage_cost=float(report.costs.slippage_cost),
+            market_impact_cost=float(report.costs.market_impact_cost),
+            borrow_cost=float(report.costs.borrow_cost),
+            total_cost=float(report.costs.total_cost),
+        ),
+        assets=[
+            EnvV2AssetMetricsResponse(
+                symbol=asset.symbol,
+                final_position=float(asset.final_position),
+                realized_pnl=float(asset.realized_pnl),
+                trade_count=asset.trade_count,
+            )
+            for asset in report.assets
+        ],
+        generated_at=report.generated_at.isoformat(),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
 
-@router.post("/run", response_model=BacktestReportResponse, status_code=201)
-def run_backtest(body: BacktestRunRequest) -> BacktestReportResponse:
-    """Run a vectorized backtest and return the report.
+@router.post(
+    "/run",
+    response_model=BacktestReportResponse | EnvV2BacktestReportResponse,
+    status_code=201,
+)
+def run_backtest(
+    body: BacktestRunRequest,
+) -> BacktestReportResponse | EnvV2BacktestReportResponse:
+    """Run a backtest and return the report.
 
-    Requires *symbol* to be loaded via POST /api/v1/data/load first.
+    The *engine* field selects the backtest implementation. The default
+    ``legacy`` engine runs the single-asset vectorized backtester. The
+    ``env_v2`` engine runs the multi-asset ``AlphaBriefTradingEnvV2``
+    with a deterministic equal-weight buy-and-hold policy.
     """
+    if body.engine == "legacy":
+        return _run_legacy_backtest(body)
+    return _run_env_v2_backtest(body)
+
+
+def _run_legacy_backtest(body: BacktestRunRequest) -> BacktestReportResponse:
+    """Run the legacy single-asset vectorized backtester."""
     bars = _get_stored_bars(body.symbol)
     if len(bars) < body.sma_window:
         raise HTTPException(
@@ -254,6 +404,62 @@ def run_backtest(body: BacktestRunRequest) -> BacktestReportResponse:
     return _report_to_response(report_id, report)
 
 
+def _run_env_v2_backtest(
+    body: BacktestRunRequest,
+) -> EnvV2BacktestReportResponse:
+    """Run the multi-asset EnvV2 backtest engine."""
+    symbols = body.symbols or body.symbol_universe or [body.symbol]
+    symbols = list(dict.fromkeys(symbols))
+    if not symbols:
+        raise HTTPException(status_code=422, detail="no symbols provided")
+    if any(not s for s in symbols):
+        raise HTTPException(
+            status_code=422, detail="symbol list contains empty symbols"
+        )
+
+    store = _get_store()
+    bars_by_symbol = store.get_bar_models_for_symbols(symbols)
+
+    missing = [s for s in symbols if len(bars_by_symbol.get(s, [])) == 0]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"missing or empty bars for symbols: {sorted(missing)}",
+        )
+
+    insufficient = [
+        s for s in symbols if len(bars_by_symbol.get(s, [])) < 2
+    ]
+    if insufficient:
+        raise HTTPException(
+            status_code=422,
+            detail=f"insufficient bars (need >= 2) for symbols: {sorted(insufficient)}",
+        )
+
+    bar_counts = {s: len(bars_by_symbol[s]) for s in symbols}
+    if len(set(bar_counts.values())) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail=f"mismatched bar counts across symbols: {bar_counts}",
+        )
+
+    config = _build_env_v2_config(body)
+    flat_bars = _list_all_bar_lists(bars_by_symbol)
+    env = AlphaBriefTradingEnvV2(flat_bars, config=config)
+    _run_equal_weight_buy_and_hold(env)
+
+    report = build_env_v2_report(env)
+    report_dict = env_v2_report_to_dict(report)
+    joined_symbols = ",".join(symbols)
+    report_store = _get_report_store()
+    report_id = report_store.save_env_v2_report(
+        report_dict, symbol=joined_symbols, strategy_name=body.strategy_name
+    )
+
+    response = _env_v2_report_to_response(report_id, report)
+    return response
+
+
 @router.get("/reports", response_model=BacktestReportsList)
 def list_reports() -> BacktestReportsList:
     """List all historical backtest reports."""
@@ -261,11 +467,31 @@ def list_reports() -> BacktestReportsList:
     rows = store.list_reports()
     summaries: list[BacktestReportSummary] = []
     for row in rows:
-        try:
-            report = BacktestReport.model_validate(row["report"])
-        except Exception:
-            continue
-        summaries.append(_report_to_summary(str(row["id"]), report))
+        engine = row.get("report_engine", "legacy")
+        if engine == "env_v2":
+            report = row["report"]
+            try:
+                summaries.append(
+                    BacktestReportSummary(
+                        report_id=str(row["id"]),
+                        strategy_id=str(report.get("environment", "env_v2")),
+                        strategy_version="0.0.0",
+                        symbol=str(row["symbol"]),
+                        data_version="env_v2",
+                        final_value=float(report["final_value"]),
+                        trade_count=int(report["trade_count"]),
+                        total_return=float(report["total_return"]),
+                        engine="env_v2",
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        else:
+            try:
+                report = BacktestReport.model_validate(row["report"])
+            except Exception:
+                continue
+            summaries.append(_report_to_summary(str(row["id"]), report))
     return BacktestReportsList(reports=summaries)
 
 
@@ -292,6 +518,9 @@ __all__ = [
     "BacktestReportSummary",
     "BacktestReportsList",
     "BacktestRunRequest",
+    "EnvV2AssetMetricsResponse",
+    "EnvV2BacktestReportResponse",
+    "EnvV2CostBreakdownResponse",
     "_clear_report_store",
     "router",
 ]

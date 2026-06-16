@@ -20,8 +20,11 @@ from alphabrief_gym.market_impact import (
 )
 from alphabrief_gym.policies import (
     PolicyEvaluation,
+    PolicyEvaluationV2,
     evaluate_buy_and_hold,
+    evaluate_equal_weight_buy_and_hold_v2,
     evaluate_random_policy,
+    run_policy_episode_v2,
 )
 from alphabrief_gym.report import (
     StrategyComparisonReport,
@@ -69,6 +72,7 @@ __all__ = [
     "NoImpact",
     "PnLReward",
     "PolicyEvaluation",
+    "PolicyEvaluationV2",
     "PortfolioSnapshot",
     "RegimeScaledReward",
     "ReturnReward",
@@ -87,5 +91,7 @@ __all__ = [
     "compare_strategies",
     "env_v2_report_to_dict",
     "evaluate_buy_and_hold",
+    "evaluate_equal_weight_buy_and_hold_v2",
     "evaluate_random_policy",
+    "run_policy_episode_v2",
 ]

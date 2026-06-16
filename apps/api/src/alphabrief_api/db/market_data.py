@@ -257,6 +257,23 @@ class MarketDataStore:
             for row in rows
         ]
 
+    def get_bar_models_for_symbols(
+        self,
+        symbols: list[str],
+    ) -> dict[str, list[Bar]]:
+        """Return ``Bar`` domain objects for each requested symbol.
+
+        Each unique symbol in *symbols* is loaded via the existing
+        :meth:`get_bar_models` helper. Symbols that are not loaded or
+        have no stored bars map to an empty list; callers are responsible
+        for validating the result.
+        """
+        result: dict[str, list[Bar]] = {}
+        for symbol in symbols:
+            if symbol not in result:
+                result[symbol] = self.get_bar_models(symbol)
+        return result
+
     def clear(self) -> None:
         """Drop and recreate all tables (for test isolation)."""
         drop_schema(self._conn)
