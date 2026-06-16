@@ -1503,3 +1503,52 @@ Validation for 0040:
 1. `python3 -m pytest` passed (659 tests, up from 597).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy packages apps tests` passed.
+
+---
+
+## 0041 — BacktestReport Schema v2 Compatible Extension (Round 12.7)
+
+Date: 2026-06-16
+
+Goal: Allow `BacktestReportStore` to persist and read `EnvV2Report`
+objects while remaining fully backward compatible with legacy
+`BacktestReport` rows.
+
+Changes:
+
+1. Extended `apps/api/src/alphabrief_api/db/schema.py`:
+   - Added `report_engine TEXT DEFAULT 'legacy'` to the
+     `backtest_reports` table.
+   - Added an idempotent migration (`ALTER TABLE ... ADD COLUMN IF NOT
+     EXISTS`) plus an `UPDATE` fallback so existing rows are tagged
+     `'legacy'`.
+
+2. Extended `apps/api/src/alphabrief_api/db/backtest_reports.py`:
+   - `save_report()` now accepts optional `report_engine` (`'legacy'` by
+     default) and `engine_payload` arguments. Old callers are unchanged.
+   - Added `save_env_v2_report(report_dict, symbol, strategy_name)`
+     helper that stores the report with `report_engine='env_v2'`.
+   - Added `list_reports_by_engine(engine)` filter.
+   - `get_report()` and `list_reports()` now include `report_engine` in
+     the returned dict.
+
+3. Added `tests/test_backtest_reports.py` with 7 new tests covering:
+   - Legacy report round-trip.
+   - EnvV2 report round-trip using `env_v2_report_to_dict()`.
+   - Mixed legacy / env_v2 storage.
+   - `list_reports_by_engine` filtering (including unknown engine → []).
+   - Empty store behavior.
+   - `clear()` removes all reports.
+   - Default engine is `legacy` when omitted.
+
+Files changed:
+- `apps/api/src/alphabrief_api/db/schema.py` — schema + migration
+- `apps/api/src/alphabrief_api/db/backtest_reports.py` — store API
+- `tests/test_backtest_reports.py` — new test file
+- `docs/development_log.md` — this entry
+
+Validation for 0041:
+
+1. `.venv/bin/python -m pytest tests/test_db.py tests/test_backtest_reports.py -x -q --tb=short` passed (87 tests).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy` passed (129 source files).
