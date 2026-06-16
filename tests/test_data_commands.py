@@ -489,3 +489,30 @@ def test_macro_list_after_fetch(_isolated_news_dir: None) -> None:
     result = runner.invoke(macro_app, ["list"])
     assert result.exit_code == 0
     assert "CPIAUCSL" in result.output
+
+
+def test_data_fetch_alphavantage_missing_api_key() -> None:
+    import os
+
+    previous = os.environ.pop("ALPHAVANTAGE_API_KEY", None)
+    try:
+        result = runner.invoke(
+            data_app,
+            [
+                "fetch",
+                "--source",
+                "alphavantage",
+                "--symbol",
+                "AAPL",
+                "--start",
+                "2024-01-01",
+                "--end",
+                "2024-01-05",
+                "--interval",
+                "1d",
+            ],
+        )
+        assert result.exit_code != 0
+    finally:
+        if previous is not None:
+            os.environ["ALPHAVANTAGE_API_KEY"] = previous

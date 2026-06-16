@@ -255,8 +255,14 @@ def _detect_and_parse(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
 class RssNewsProvider:
     """Provider that reads a hard-coded allowlist of RSS/Atom feeds."""
 
-    def __init__(self, http_get: HttpGet | None = None) -> None:
+    def __init__(
+        self,
+        http_get: HttpGet | None = None,
+        *,
+        auto_sentiment: bool = True,
+    ) -> None:
         self._http_get = http_get or _default_http_get
+        self._auto_sentiment = auto_sentiment
 
     def fetch_headlines(self, query: NewsFetchQuery) -> list[NewsHeadline]:
         """Fetch and parse allowed RSS feeds, filtering by query window."""
@@ -283,6 +289,11 @@ class RssNewsProvider:
             )
 
         headlines = _detect_and_parse(body, feed_key)
+
+        if self._auto_sentiment:
+            from alphabrief_news.sentiment import RuleBasedSentimentAnalyzer
+            analyzer = RuleBasedSentimentAnalyzer()
+            headlines = [analyzer.annotate(h) for h in headlines]
 
         results = [
             headline

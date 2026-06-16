@@ -58,6 +58,8 @@ class DebateQuestion(MultiModelSchema):
         min_length=1,
     )
     context: str | None = None
+    news_context: str | None = None
+    macro_context: str | None = None
 
     @field_validator("question")
     @classmethod

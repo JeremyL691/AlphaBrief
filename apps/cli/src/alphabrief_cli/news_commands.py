@@ -11,13 +11,15 @@ from alphabrief_news.providers import (
     MockNewsProvider,
     NewsProviderError,
     RssNewsProvider,
+    SecEdgarNewsProvider,
+    SocialSentimentNewsProvider,
     build_default_mock_news,
 )
 from alphabrief_news.types import NewsFetchQuery
 
 news_app = typer.Typer(help="Fetch and inspect news headlines.")
 
-NewsSource = Literal["mock", "rss"]
+NewsSource = Literal["mock", "rss", "sec", "sentiment"]
 
 
 def _parse_iso_date(value: str) -> datetime:
@@ -33,12 +35,21 @@ def _parse_iso_date(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 def _build_provider(
-    source: NewsSource, symbols: list[str]
-) -> MockNewsProvider | RssNewsProvider:
+    source: NewsSource, symbols: list[str],
+) -> (
+    MockNewsProvider
+    | RssNewsProvider
+    | SecEdgarNewsProvider
+    | SocialSentimentNewsProvider
+):
     if source == "mock":
         return MockNewsProvider(seed_headlines=build_default_mock_news(symbols))
     if source == "rss":
         return RssNewsProvider()
+    if source == "sec":
+        return SecEdgarNewsProvider()
+    if source == "sentiment":
+        return SocialSentimentNewsProvider()
     raise typer.BadParameter(f"unknown news source: {source}")
 
 
@@ -60,6 +71,16 @@ def fetch_cmd(
         if sym != sym.upper():
             raise typer.BadParameter(
                 f"symbol must be uppercase: {sym}"
+            )
+    if source == "rss":
+        from alphabrief_news.providers.rss import _ALLOWED_FEEDS
+
+        invalid = [sym for sym in symbol if sym not in _ALLOWED_FEEDS]
+        if invalid:
+            allowed = ", ".join(sorted(_ALLOWED_FEEDS))
+            raise typer.BadParameter(
+                f"rss source requires a known feed name: {invalid}; "
+                f"allowed: {allowed}"
             )
 
     start_dt = _parse_iso_date(start)
