@@ -23,7 +23,12 @@ from alphabrief_gym.policies import (
     evaluate_buy_and_hold,
     evaluate_random_policy,
 )
-from alphabrief_gym.report import StrategyComparisonReport, compare_strategies
+from alphabrief_gym.report import (
+    StrategyComparisonReport,
+    build_env_v2_report,
+    compare_strategies,
+    env_v2_report_to_dict,
+)
 from alphabrief_gym.rewards import (
     PnLReward,
     RegimeScaledReward,
@@ -36,6 +41,9 @@ from alphabrief_gym.schemas import (
     AssetObservation,
     ContinuousActionSpace,
     DiscreteActionSpace,
+    EnvV2AssetMetrics,
+    EnvV2CostBreakdown,
+    EnvV2Report,
     EpisodeMetricsV2,
     MultiAssetObservation,
     PortfolioSnapshot,
@@ -50,6 +58,9 @@ __all__ = [
     "AssetObservation",
     "ContinuousActionSpace",
     "DiscreteActionSpace",
+    "EnvV2AssetMetrics",
+    "EnvV2CostBreakdown",
+    "EnvV2Report",
     "EpisodeMetrics",
     "EpisodeMetricsV2",
     "LinearImpact",
@@ -72,7 +83,9 @@ __all__ = [
     "TradingEnvError",
     "TradingObservation",
     "bars_by_symbol",
+    "build_env_v2_report",
     "compare_strategies",
+    "env_v2_report_to_dict",
     "evaluate_buy_and_hold",
     "evaluate_random_policy",
 ]

@@ -363,3 +363,31 @@ Progress:
     dependencies.
 13. Test suite: 597 passed (up from 489), ruff clean, strict
     mypy errors unchanged from Phase 10 baseline.
+
+## Phase 12: External Evidence and Risk Context
+
+Goal: wire news/macro external evidence through the strategy and risk
+pipeline so that deterministic, audit-friendly risk tightening can
+respond to market sentiment and macro conditions — without modifying
+RiskGate core semantics.
+
+Status: in progress. Rounds 12.1–12.6 complete, 659 tests pass.
+
+Planned sequence:
+
+1. `SignalEvidence` domain model and `ExternalEvidenceConfig` on
+   `StrategySpec`: completed (R12.1).
+2. Structured `ResearchContextSummary` with sentiment/macro fields:
+   completed (R12.2).
+3. News/Macro risk-context decision layer
+   (`NewsMacroRiskContext` → `RiskContextDecision`): completed (R12.3).
+4. Strategy interface extended to carry `SignalEvidence` on every
+   signal: completed (R12.4).
+5. Risk API and CLI expose risk-context evaluation: completed (R12.5).
+6. Gymnasium EnvV2 episode reports with cost-breakdown schemas:
+   completed (R12.6).
+
+This phase is additive and tighten-only: risk can never be relaxed
+by external evidence. All new fields are optional with safe defaults
+so existing tests and fake-provider paths continue to pass
+unchanged.

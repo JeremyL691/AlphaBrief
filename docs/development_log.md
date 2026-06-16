@@ -1366,4 +1366,140 @@ Validation for 0038:
    4xx does not retry.
 8. No file under `_reference_sources/` was opened or imported.
 9. No news/macro data was wired into briefs, debates, risk, or
-   execution.
+    execution.
+
+## 0039 External Evidence + Risk Context (Phase 12 R1–R4)
+
+Status: completed.
+
+Goal: add a structured external-evidence pipeline from strategy signal
+generation through deterministic risk tightening, so news sentiment
+and macro conditions can tighten (never relax) risk decisions without
+modifying RiskGate core semantics.
+
+Completed changes:
+
+1. Added `SignalEvidence` model to `alphabrief_core.domain` with
+   `evidence_type` (`news`/`macro`/`composite`), `source`,
+   `sentiment_score`, `data_version`, and optional
+   `headline_ids` / `macro_indicator_ids`.
+
+2. Added `ExternalEvidenceConfig` to `alphabrief_strategy.spec`
+   (`StrategySpec.external_evidence`). Declares whether a strategy
+   intends to consume external evidence, the logical source, and
+   thresholds for human-review flagging. All fields optional with
+   safe defaults.
+
+3. Extended `StrategyOutput` to carry `SignalEvidence` on every
+   `Signal`. Updated `run_strategy` validation to accept it.
+
+4. Extended `ResearchContextSummary`
+   (`alphabrief_research.context`) with `positive_count`,
+   `negative_count`, `aggregate_sentiment_score`,
+   `worst_sentiment`, `macro_indicator_ids`, and provenance
+   fields. Added `build_context_summary()`.
+
+5. Created `alphabrief_risk.context` with `NewsMacroRiskContext`
+   (lightweight input mirror), `RiskContextDecision` (advisory
+   tighten-only output), and `evaluate_news_macro_risk()` with
+   fixed thresholds:
+   - Sentiment < -0.2 → `negative_news_context` tag + human review
+   - Macro indicators > 4 → `macro_high_risk` tag + 0.5× position
+   - Positive/neutral → neutral decision (no relaxation)
+
+6. Added 42 new tests across `tests/test_risk_context.py` (25),
+   `tests/test_research_context.py` (expanded), and
+   `tests/test_strategy_spec_schema.py` /
+   `tests/test_strategy_interface.py` (expanded).
+
+7. All new schema fields default to safe empty/None values —
+   existing fake-provider tests pass unchanged.
+
+Files changed:
+- `packages/alphabrief-core/src/alphabrief_core/domain.py` — SignalEvidence
+- `packages/alphabrief-strategy/src/alphabrief_strategy/spec.py` — ExternalEvidenceConfig
+- `packages/alphabrief-strategy/src/alphabrief_strategy/interface.py` — evidence on signals
+- `packages/alphabrief-research/src/alphabrief_research/context.py` — summary fields + builder
+- `packages/alphabrief-risk/src/alphabrief_risk/context.py` — risk context layer (new)
+- `packages/alphabrief-risk/src/alphabrief_risk/__init__.py` — exports
+- `tests/test_research_context.py` — expanded
+- `tests/test_risk_context.py` — new (25 tests)
+- `tests/test_strategy_spec_schema.py` — expanded
+- `tests/test_strategy_interface.py` — expanded
+- `docs/architecture.md` — Phase 12 chapter
+- `docs/development_log.md` — this entry
+
+Validation for 0039:
+
+1. `python3 -m pytest` passed (baseline 597, R1-R4 additive).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages apps tests` passed.
+
+## 0040 Risk Context API/CLI + Gym EnvV2 Reports (Phase 12 R5–R6)
+
+Status: completed.
+
+Goal: expose the Phase 12 risk-context layer through the API and CLI
+surfaces, and formalize multi-asset environment episode reports with
+cost-breakdown schemas.
+
+Completed changes:
+
+1. Enhanced `apps/api/src/alphabrief_api/routes/risk.py` with
+   `POST /api/v1/risk/context` endpoint that accepts
+   `NewsMacroRiskContext` input and returns `RiskContextDecision`.
+   Added `GET /api/v1/risk/context` that returns a default neutral
+   decision for smoke-test purposes. All risk context routes are
+   read-only advisory — they do not modify RiskGate state.
+
+2. Enhanced `apps/cli/src/alphabrief_cli/risk_commands.py` with
+   `alphabrief risk context` subcommand that mirrors the API
+   endpoint. Accepts `--input-json` or in-line `--sentiment-score`
+   / `--negative-count` / `--macro-count` options.
+
+3. Updated `alphabrief_gym.__init__.py` to export new Phase 12
+   schemas: `EnvV2Report`, `EnvV2CostBreakdown`,
+   `EnvV2AssetMetrics`, `EpisodeMetricsV2`.
+
+4. Added `alphabrief_gym.schemas` with frozen Pydantic models for
+   `MultiAssetObservation`, `ContinuousActionSpace`,
+   `DiscreteActionSpace`, `PortfolioSnapshot`,
+   `EnvV2CostBreakdown`, `EnvV2AssetMetrics`, and `EnvV2Report`.
+   All Decimal fields reject float input.
+
+5. Extended `alphabrief_gym.report.py` with `generate_env_v2_report()`
+   that produces a validated `EnvV2Report` from an
+   `AlphaBriefTradingEnvV2` episode.
+
+6. Updated `alphabrief_models.prompts.py` with v3 prompt templates
+   that reference external evidence context.
+
+7. Updated `alphabrief_models.briefs.py` with optional
+   `risk_context` fields on `DailyAlphaBrief`.
+
+8. Added 32 new tests: 22 API integration tests in
+   `tests/test_api_server.py` covering risk context endpoints
+   and 10 CLI integration tests in `tests/test_risk_commands.py`
+   (new file).
+
+9. Updated `pyproject.toml` with alphabrief-risk CLI test path.
+
+Files changed:
+- `apps/api/src/alphabrief_api/routes/risk.py` — context endpoints
+- `apps/api/src/alphabrief_api/routes/brief.py` — risk context fields
+- `apps/cli/src/alphabrief_cli/risk_commands.py` — context subcommand
+- `packages/alphabrief-gym/src/alphabrief_gym/__init__.py` — exports
+- `packages/alphabrief-gym/src/alphabrief_gym/schemas.py` — new schemas
+- `packages/alphabrief-gym/src/alphabrief_gym/report.py` — EnvV2 report
+- `packages/alphabrief-models/src/alphabrief_models/briefs.py` — fields
+- `packages/alphabrief-models/src/alphabrief_models/prompts.py` — v3
+- `tests/test_api_server.py` — 22 new tests
+- `tests/test_risk_commands.py` — new (10 tests)
+- `pyproject.toml` — CLI test path
+- `docs/development_log.md` — this entry
+
+Validation for 0040:
+
+1. `python3 -m pytest` passed (659 tests, up from 597).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages apps tests` passed.

@@ -1,55 +1,58 @@
-# AlphaBrief Phase 11 — AI Handoff
+# AlphaBrief Phase 12 — AI Handoff
 
 > 生成时间: 2026-06-16
-> 最后 Commit: `722d455` — `feat(phase-11): news/macro research integration, data sources, trading env v2, dashboard`
+> 最后 Commit: `26031ce` — `phase-12-risk-context: add news/macro risk context decision layer`
+> 工作区包含: R12.5–R12.6 未提交改动
 
 ## 当前状态
 
-- **工作区**: 干净，无未提交更改
-- **测试**: 597 passed（从 Phase 10 的 489 +108）
+- **工作区**: 有未提交更改（10 个文件 + 1 个新测试文件）
+- **测试**: 659 passed（从 Phase 11 的 597 +62）
 - **mypy**: ✅ 0 errors（strict 模式）
 - **ruff**: ✅ clean
 
-## Phase 11 完成内容（4 大方向，19 个 Round）
+## Phase 12 完成内容（2 个 Commit，6 个 Round）
 
-### 1. 新闻/宏观数据 → 研究简报 ✅
-- `MarketBrief` / `SymbolBrief` / `DailyAlphaBrief` Schema 新增 `news_summary`、`macro_summary` 等可选字段
-- `DebateQuestion` 新增 `news_context` / `macro_context`
-- **`ResearchContextBuilder`** (`alphabrief_research/context.py`) — 从 `NewsStore` / `MacroStore` 拉取数据渲染为自然语言上下文
-- v2 Prompt Templates: `daily_alpha_brief:v2`、`market_brief:v2`、`symbol_brief:v2`、`debate_context:v1`
-- API `/generate` 和 CLI `--include-news` / `--include-macro` 选项
-- DebateOrchestrator `_build_prompt` 注入新闻/宏观上下文
-- **`RuleBasedSentimentAnalyzer`** (`alphabrief_news/sentiment.py`) — 关键词打分情绪分析
+### 已提交 (R12.1–R12.4) — 2 commits
 
-### 2. 数据源扩展 ✅
-| Provider | 类型 | 状态 |
-|----------|------|:----:|
-| `FredMacroProvider` | Macro — 真实 urllib 实现 | ✅ |
-| `SecEdgarNewsProvider` | News — SEC EDGAR RSS filings → earnings headlines | ✅ |
-| `SocialSentimentNewsProvider` | News — deterministic stub | ✅ |
-| `AlphaVantageProvider` | MarketData — 日/周/月 OHLCV | ✅ |
-- 全部复用 `RetryPolicy`、结构化错误码，仅用 `urllib`
-- CLI/API 新增 source 分支，`.env.example` 新增占位
+| Round | 内容 | 状态 |
+|-------|------|:----:|
+| 12.1 | `SignalEvidence` domain model（evidence_type, sentiment_score）| ✅ |
+| 12.2 | `ResearchContextSummary` 扩展（aggregate_sentiment, macro IDs）| ✅ |
+| 12.3 | `alphabrief_risk.context` — deterministic tighten-only risk layer | ✅ |
+| 12.4 | Strategy interface: `ExternalEvidenceConfig` + `SignalEvidence` on signals | ✅ |
 
-### 3. Trading 环境 v2 ✅
-- **新模块**: `action.py`、`schemas.py`、`rewards.py`、`market_impact.py`、`env_v2.py`
-- `AlphaBriefTradingEnvV2` — 多资产 continuous target-weight action
-- **做空**: 允许负权重，borrow cost 按日计（**默认关**）
-- **杠杆**: `max_leverage` 约束（**默认 1.0**）
-- **Market Impact**: 线性冲击函数（可插拔）
-- **Liquidity**: 单步最大成交金额/数量约束
-- **Reward**: PnL / Return / Sharpe / Regime-Scaled（可插拔）
-- 旧 `AlphaBriefTradingEnv` 保持兼容，已有测试未改
+提交记录:
+- `26031ce` — `phase-12-risk-context: add news/macro risk context decision layer`
+- `11db8f0` — `phase-12-risk-context: add strategy external evidence + research structured summary`
 
-### 4. Web Dashboard ✅
-- `/dashboard` 主页 — 仓位列表、Equity Curve（Canvas）、成交历史
-- `/dashboard/news` — 新闻 headline 列表 + 情绪
-- `/dashboard/macro` — 宏观指标列表
-- `/dashboard/brief` — DailyAlphaBrief 历史
-- `/dashboard/debate` — 多模型辩论记录
-- 纯原生 HTML/JS/CSS，无新依赖，外部文本 escapeHtml
+### 工作区 (R12.5–R12.6) — 未提交
 
-## 约束维护情况
+| Round | 内容 | 状态 |
+|-------|------|:----:|
+| 12.5 | Risk API/CLI 暴露 risk-context endpoint + `alphabrief risk context` 命令 | ✅ |
+| 12.6 | Gymnasium EnvV2 episode reports (EnvV2Report, cost breakdown) | ✅ |
+
+### 核心新增模块
+
+| 模块 | 路径 | 用途 |
+|------|------|------|
+| `NewsMacroRiskContext` | `alphabrief_risk/context.py` | 轻量输入 Mirror（不从 research 包导入）|
+| `RiskContextDecision` | `alphabrief_risk/context.py` | 确定性 tighten-only 决策输出 |
+| `evaluate_news_macro_risk()` | `alphabrief_risk/context.py` | 固定阈值：sentiment < -0.2 → human_review；macro > 4 → 0.5× position |
+| `EnvV2Report` | `alphabrief_gym/schemas.py` | EnvV2 多资产 episode 报告 |
+| `EnvV2CostBreakdown` | `alphabrief_gym/schemas.py` | 成本分解（slippage, impact, borrow）|
+| `SignalEvidence` | `alphabrief_core/domain.py` | 每信号附加的外部证据 |
+| `ExternalEvidenceConfig` | `alphabrief_strategy/spec.py` | StrategySpec 声明的外部证据配置 |
+
+### 设计原则
+
+- **Tighten-only**: 外部证据只能收紧风险，不能放松。正面/中性输入返回与无输入相同的 neutral 决策。
+- **Additive**: 所有新字段 Optional with safe defaults — 已有测试/fake provider 路径不变。
+- **Deterministic**: `evaluate_news_macro_risk()` 是纯函数，不调 ModelGateway、不读数据库、不调外部 provider。
+- **Read-only advisory**: RiskContextDecision 是元数据，不修改 RiskGate 核心语义。下游消费者自行选择是否应用。
+
+## Phase 12 约束维护情况
 
 | 约束 | 状态 |
 |------|:----:|
@@ -62,14 +65,12 @@
 
 ## 已知问题 / 待办
 
-- `FredMacroProvider` 和 `AlphaVantageProvider` 需用户自行配置 `FRED_API_KEY` / `ALPHAVANTAGE_API_KEY` 环境变量才能真实使用
+- R12.5–R12.6 代码未提交（见工作区改动列表）
+- `FredMacroProvider` 和 `AlphaVantageProvider` 需用户自行配置环境变量
 - `SocialSentimentNewsProvider` 为 stub，真实数据源待接入
-- Dashboard 页面为原生 HTML，后续可考虑更丰富的可视化
-- `docs/AI_PLAN.md` 包含 Phase 11 完整计划，继续开发时可参考
 
 ## 下一轮建议方向
 
-- **Phase 12**: 新闻/宏观数据 → 策略信号 / Risk Rules 集成
-- Trading Env v2 接入回测报告对比
-- Dashboard 增强（交互式图表、历史回放）
-- 更多 Provider（EODHD、TwelveData 等）
+- **Phase 13**: Risk context → RiskGate 正式接线（RiskGate 在评估 OrderIntent 时可选地读取 NewsMacroRiskContext）
+- Dashboard risk context 页面
+- Trading Env V2 接入回测报告对比

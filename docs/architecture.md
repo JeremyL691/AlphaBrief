@@ -607,3 +607,98 @@ Current behavior:
 
 No new frontend dependency was added. The dashboard uses vanilla
 HTML, JavaScript, and CSS only.
+
+## Phase 12 — External Evidence Infrastructure
+
+The strategy and risk layers now carry a structured external-evidence
+pathway so that news sentiment and macro conditions can tighten (never
+relax) risk decisions deterministically.
+
+### Strategy External Evidence
+
+`SignalEvidence` (in `alphabrief_core.domain`) is a frozen Pydantic
+model attached to every `Signal`. It carries an `evidence_type`
+(`"news"`, `"macro"`, or `"composite"`), `source`, `sentiment_score`,
+`data_version`, and optional `headline_ids` / `macro_indicator_ids`.
+
+`ExternalEvidenceConfig` (in `alphabrief_strategy.spec`) is an
+optional field on `StrategySpec` that declares whether a strategy
+intends to consume external evidence and how it should be treated by
+downstream risk consumers (e.g. flag for human review on negative
+sentiment). It is declarative only — it does not load data or wire
+to providers.
+
+Current behavior:
+
+1. Every `Signal` may carry a `SignalEvidence` payload. When absent
+   (legacy signal), downstream consumers treat it as a no-evidence
+   signal and skip risk tightening.
+2. `ExternalEvidenceConfig.require_human_review_on_negative` (default
+   `True`) tells risk consumers to flag signals with sentiment below
+   `negative_sentiment_threshold`.
+3. All new fields are `Optional` with safe defaults — existing
+   call sites and fake-provider tests pass unchanged.
+
+### Research Structured Summary
+
+`ResearchContextSummary` (in `alphabrief_research.context`) provides
+a deterministic, frozen aggregate of news headlines and macro
+indicators. It computes `positive_count`, `negative_count`,
+`neutral_count`, `aggregate_sentiment_score`, `worst_sentiment`,
+and `macro_indicator_ids`.
+
+Current behavior:
+
+1. `build_context_summary()` accepts lists of `NewsHeadline` and
+   `MacroIndicator` and returns a `ResearchContextSummary`.
+2. Every output carries `untrusted=True` — the summary is flagged
+   as external data that must not override risk controls.
+3. All fields default to safe empty values so the schema can be
+   populated incrementally.
+
+### Risk Context Decision Layer
+
+`alphabrief_risk.context` provides a deterministic, tighten-only
+adapter from `ResearchContextSummary` (or `NewsMacroRiskContext`)
+into a `RiskContextDecision`.
+
+Current behavior:
+
+1. `NewsMacroRiskContext` is a lighter input mirror that consumers
+   can construct without importing the research package directly.
+2. `evaluate_news_macro_risk()` applies fixed thresholds:
+   - `aggregate_sentiment_score < -0.2` → `negative_news_context`
+     tag + `requires_human_review=True`
+   - `macro_indicator_count > 4` → `macro_high_risk` tag +
+     `suggested_position_reduction` (0.5× multiplier)
+3. The decision is **advisory metadata only**. It never relaxes
+   existing `RiskGate` limits — it can only add risk tags, flip
+   `requires_human_review`, or suggest a position multiplier that
+   downstream consumers may optionally apply.
+4. Positive or neutral inputs return a neutral decision identical
+   to the no-input default.
+
+This layer does not call `ModelGateway`, read from a database, or
+invoke external providers. It is a pure function from structured
+input to deterministic risk metadata.
+
+### Gymnasium EnvV2 Episode Reports
+
+`alphabrief_gym.schemas` defines `EnvV2Report`, `EnvV2CostBreakdown`,
+and `EnvV2AssetMetrics` — frozen Pydantic models for the multi-asset
+environment's episode-level output.
+
+Current behavior:
+
+1. `EnvV2CostBreakdown` itemizes `slippage_cost`,
+   `market_impact_cost`, `borrow_cost`, and `total_cost`.
+2. `EnvV2AssetMetrics` captures per-asset `final_position`,
+   `realized_pnl`, and `trade_count`.
+3. `EnvV2Report` aggregates episode-level metrics (steps,
+   initial/final value, total return, max drawdown, final
+   leverage), per-asset metrics, and a cost breakdown.
+4. All Decimal fields reject float input — Decimal-first
+   throughout.
+
+The report schemas are pure validation boundaries. They do not
+call the environment, compute metrics, or persist reports.
