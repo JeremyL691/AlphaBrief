@@ -148,6 +148,67 @@ class EpisodeMetricsV2(AlphaBriefEnvModel):
         return _reject_float(value)
 
 
+class EnvV2CostBreakdown(AlphaBriefEnvModel):
+    """Cost breakdown for an EnvV2 episode report."""
+
+    slippage_cost: Decimal = Decimal("0")
+    market_impact_cost: Decimal = Decimal("0")
+    borrow_cost: Decimal = Decimal("0")
+    total_cost: Decimal = Decimal("0")
+
+    @field_validator(
+        "slippage_cost", "market_impact_cost", "borrow_cost", "total_cost",
+        mode="before",
+    )
+    @classmethod
+    def _decimal_fields_must_not_be_float(cls, value: Any) -> Any:
+        return _reject_float(value)
+
+
+class EnvV2AssetMetrics(AlphaBriefEnvModel):
+    """Per-asset metrics for an EnvV2 episode report."""
+
+    symbol: str = Field(min_length=1)
+    final_position: Decimal
+    realized_pnl: Decimal
+    trade_count: int = Field(ge=0)
+
+    @field_validator("final_position", "realized_pnl", mode="before")
+    @classmethod
+    def _decimal_fields_must_not_be_float(cls, value: Any) -> Any:
+        return _reject_float(value)
+
+
+class EnvV2Report(AlphaBriefEnvModel):
+    """Phase 12.6 episode report for the multi-asset environment."""
+
+    report_id: str = Field(min_length=1)
+    environment: str = Field(default="alphabrief_gym_v2", min_length=1)
+    steps: int = Field(ge=0)
+    initial_value: Decimal
+    final_value: Decimal
+    total_return: Decimal
+    max_drawdown: Decimal
+    trade_count: int = Field(ge=0)
+    final_leverage: Decimal
+    costs: EnvV2CostBreakdown
+    assets: list[EnvV2AssetMetrics] = Field(default_factory=list)
+    generated_at: datetime
+
+    @field_validator(
+        "initial_value", "final_value", "total_return", "max_drawdown",
+        "final_leverage", mode="before",
+    )
+    @classmethod
+    def _decimal_fields_must_not_be_float(cls, value: Any) -> Any:
+        return _reject_float(value)
+
+    @field_validator("generated_at")
+    @classmethod
+    def _timestamp_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        return _require_timezone_aware(value)
+
+
 def bars_by_symbol(bars: list[Bar]) -> dict[str, list[Bar]]:
     """Group a flat bar list by symbol, preserving sort order."""
     grouped: dict[str, list[Bar]] = {}
