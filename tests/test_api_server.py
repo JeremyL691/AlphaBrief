@@ -15,6 +15,8 @@ from alphabrief_api.main import app
 from alphabrief_api.routes.backtest import _clear_report_store
 from alphabrief_api.routes.brief import _clear_brief_store
 from alphabrief_api.routes.data import _close_store, _get_store
+from alphabrief_api.routes.macro import _clear_store as _clear_macro_store
+from alphabrief_api.routes.news import _clear_store as _clear_news_store
 from alphabrief_api.routes.paper import _reset_broker
 from alphabrief_api.routes.research import _clear_debate_store
 from alphabrief_api.routes.review import _clear_review_store
@@ -39,11 +41,12 @@ def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
     _clear_brief_store()
     _clear_review_store()
     _clear_debate_store()
+    _clear_news_store()
+    _clear_macro_store()
     _reset_broker()
     _reset_risk_gate()
     yield
     _close_store()
-
 
 # ---------------------------------------------------------------------------
 # Helper factories
@@ -1274,3 +1277,221 @@ def test_fetch_respects_custom_data_version(
     info = store.get_symbol_info("AAPL")
     assert info is not None
     assert info["data_version"] == "custom-v2"
+
+
+# ---------------------------------------------------------------------------
+# News routes
+# ---------------------------------------------------------------------------
+
+
+def test_news_fetch_mock() -> None:
+    response = client.post(
+        "/api/v1/news/fetch",
+        json={
+            "source": "mock",
+            "symbols": ["AAPL"],
+            "start": "2024-06-01T00:00:00",
+            "end": "2024-06-02T00:00:00",
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["headline_count"] == 1
+    assert data["time_start"] is not None
+    assert data["time_end"] is not None
+
+
+def test_news_fetch_rss_with_injected_feed(monkeypatch: pytest.MonkeyPatch) -> None:
+    xml = b"""<?xml version="1.0"?>
+<rss version="2.0">
+  <channel><title>Injected</title>
+    <item>
+      <title>Injected headline</title>
+      <description>desc</description>
+      <pubDate>Mon, 03 Jun 2024 12:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+
+    def fake_get(request, timeout):
+        return xml
+
+    import alphabrief_news.providers.rss as rss_mod
+    monkeypatch.setattr(rss_mod, "_default_http_get", fake_get)
+
+    response = client.post(
+        "/api/v1/news/fetch",
+        json={
+            "source": "rss",
+            "symbols": ["marketwatch-rss"],
+            "start": "2024-06-01T00:00:00",
+            "end": "2024-06-05T00:00:00",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["headline_count"] == 1
+
+
+def test_news_fetch_unknown_source() -> None:
+    response = client.post(
+        "/api/v1/news/fetch",
+        json={
+            "source": "unknown",
+            "symbols": ["AAPL"],
+            "start": "2024-06-01T00:00:00",
+            "end": "2024-06-02T00:00:00",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_news_fetch_invalid_date() -> None:
+    response = client.post(
+        "/api/v1/news/fetch",
+        json={
+            "source": "mock",
+            "symbols": ["AAPL"],
+            "start": "not-a-date",
+            "end": "2024-06-02T00:00:00",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_news_fetch_empty_result() -> None:
+    response = client.post(
+        "/api/v1/news/fetch",
+        json={
+            "source": "mock",
+            "symbols": ["AAPL"],
+            "start": "2023-01-01T00:00:00",
+            "end": "2023-01-02T00:00:00",
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_news_fetch_custom_data_version() -> None:
+    response = client.post(
+        "/api/v1/news/fetch",
+        json={
+            "source": "mock",
+            "symbols": ["AAPL"],
+            "start": "2024-06-01T00:00:00",
+            "end": "2024-06-02T00:00:00",
+            "data_version": "custom-v1",
+        },
+    )
+    assert response.status_code == 201
+
+
+def test_news_list_and_get_headline() -> None:
+    client.post(
+        "/api/v1/news/fetch",
+        json={
+            "source": "mock",
+            "symbols": ["AAPL"],
+            "start": "2024-06-01T00:00:00",
+            "end": "2024-06-02T00:00:00",
+        },
+    )
+    list_response = client.get("/api/v1/news/headlines")
+    assert list_response.status_code == 200
+    headlines = list_response.json()["headlines"]
+    assert len(headlines) == 1
+
+    hid = headlines[0]["headline_id"]
+    get_response = client.get(f"/api/v1/news/headlines/{hid}")
+    assert get_response.status_code == 200
+    assert get_response.json()["headline"]["title"] == "AAPL earnings preview"
+
+
+def test_news_get_headline_not_found() -> None:
+    response = client.get("/api/v1/news/headlines/does-not-exist")
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Macro routes
+# ---------------------------------------------------------------------------
+
+
+def test_macro_fetch_mock() -> None:
+    response = client.post(
+        "/api/v1/macro/fetch",
+        json={
+            "source": "mock",
+            "indicators": ["CPIAUCSL"],
+            "start": "2024-06-01T00:00:00",
+            "end": "2024-06-30T00:00:00",
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["indicator_count"] == 1
+
+
+def test_macro_fetch_fred_returns_no_api_key() -> None:
+    response = client.post(
+        "/api/v1/macro/fetch",
+        json={
+            "source": "fred",
+            "indicators": ["CPIAUCSL"],
+            "start": "2024-06-01T00:00:00",
+            "end": "2024-06-30T00:00:00",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "no_api_key"
+
+
+def test_macro_fetch_invalid_date() -> None:
+    response = client.post(
+        "/api/v1/macro/fetch",
+        json={
+            "source": "mock",
+            "indicators": ["CPIAUCSL"],
+            "start": "2024-06-01T00:00:00",
+            "end": "not-a-date",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_macro_fetch_empty_result() -> None:
+    response = client.post(
+        "/api/v1/macro/fetch",
+        json={
+            "source": "mock",
+            "indicators": ["CPIAUCSL"],
+            "start": "2023-01-01T00:00:00",
+            "end": "2023-01-02T00:00:00",
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_macro_list_and_get_indicator() -> None:
+    client.post(
+        "/api/v1/macro/fetch",
+        json={
+            "source": "mock",
+            "indicators": ["CPIAUCSL"],
+            "start": "2024-06-01T00:00:00",
+            "end": "2024-06-30T00:00:00",
+        },
+    )
+    list_response = client.get("/api/v1/macro/indicators")
+    assert list_response.status_code == 200
+    indicators = list_response.json()["indicators"]
+    assert len(indicators) == 1
+
+    get_response = client.get("/api/v1/macro/indicators/CPIAUCSL")
+    assert get_response.status_code == 200
+    assert get_response.json()["indicator"]["indicator_id"] == "CPIAUCSL"
+
+
+def test_macro_get_indicator_not_found() -> None:
+    response = client.get("/api/v1/macro/indicators/NOSUCH")
+    assert response.status_code == 404
