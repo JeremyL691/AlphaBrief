@@ -72,17 +72,44 @@ class BacktestReportStore:
         *,
         symbol: str,
         strategy_name: str,
+        report_engine: str = "legacy",
+        engine_payload: dict[str, Any] | None = None,
     ) -> str:
         """Persist a backtest report and return its generated ID."""
         report_id = f"backtest_{uuid4().hex[:12]}"
+        stored_report = dict(report_json)
+        if engine_payload is not None:
+            stored_report["engine_payload"] = engine_payload
         self._conn.execute(
             """
-            INSERT INTO backtest_reports (id, symbol, strategy_name, report_json)
-            VALUES (?, ?, ?, ?::JSON)
+            INSERT INTO backtest_reports (
+                id, symbol, strategy_name, report_engine, report_json
+            )
+            VALUES (?, ?, ?, ?, ?::JSON)
             """,
-            [report_id, symbol, strategy_name, json.dumps(report_json)],
+            [
+                report_id,
+                symbol,
+                strategy_name,
+                report_engine,
+                json.dumps(stored_report),
+            ],
         )
         return report_id
+
+    def save_env_v2_report(
+        self,
+        report_dict: dict[str, Any],
+        *,
+        symbol: str,
+        strategy_name: str,
+    ) -> str:
+        return self.save_report(
+            report_dict,
+            symbol=symbol,
+            strategy_name=strategy_name,
+            report_engine="env_v2",
+        )
 
     # ------------------------------------------------------------------
     # Read
@@ -92,7 +119,7 @@ class BacktestReportStore:
         """Return the full backtest report for *report_id*, or ``None``."""
         row = self._conn.execute(
             """SELECT id, symbol, strategy_name,
-                      created_at, report_json
+                      created_at, report_engine, report_json
                FROM backtest_reports WHERE id = ?""",
             [report_id],
         ).fetchone()
@@ -100,13 +127,14 @@ class BacktestReportStore:
             return None
 
         report: dict[str, Any] = (
-            row[4] if isinstance(row[4], dict) else json.loads(str(row[4]))
+            row[5] if isinstance(row[5], dict) else json.loads(str(row[5]))
         )
         return {
             "id": row[0],
             "symbol": row[1],
             "strategy_name": row[2],
             "created_at": str(row[3]),
+            "report_engine": row[4],
             "report": report,
         }
 
@@ -114,15 +142,30 @@ class BacktestReportStore:
         """Return all backtest reports ordered by creation time (newest first)."""
         rows = self._conn.execute(
             """SELECT id, symbol, strategy_name,
-                      created_at, report_json
+                      created_at, report_engine, report_json
                FROM backtest_reports
                ORDER BY created_at DESC"""
         ).fetchall()
 
+        return self._rows_to_report_dicts(rows)
+
+    def list_reports_by_engine(self, engine: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """SELECT id, symbol, strategy_name,
+                      created_at, report_engine, report_json
+               FROM backtest_reports
+               WHERE report_engine = ?
+               ORDER BY created_at DESC""",
+            [engine],
+        ).fetchall()
+
+        return self._rows_to_report_dicts(rows)
+
+    def _rows_to_report_dicts(self, rows: list[Any]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for row in rows:
             report: dict[str, Any] = (
-                row[4] if isinstance(row[4], dict) else json.loads(str(row[4]))
+                row[5] if isinstance(row[5], dict) else json.loads(str(row[5]))
             )
             results.append(
                 {
@@ -130,6 +173,7 @@ class BacktestReportStore:
                     "symbol": row[1],
                     "strategy_name": row[2],
                     "created_at": str(row[3]),
+                    "report_engine": row[4],
                     "report": report,
                 }
             )

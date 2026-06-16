@@ -53,8 +53,18 @@ CREATE TABLE IF NOT EXISTS backtest_reports (
     symbol          TEXT NOT NULL,
     strategy_name   TEXT NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    report_engine   TEXT DEFAULT 'legacy',
     report_json     JSON NOT NULL
 )
+"""
+
+ALTER_BACKTEST_REPORTS_ADD_REPORT_ENGINE = """
+ALTER TABLE backtest_reports
+ADD COLUMN IF NOT EXISTS report_engine TEXT DEFAULT 'legacy'
+"""
+
+UPDATE_BACKTEST_REPORTS_REPORT_ENGINE_DEFAULT = """
+UPDATE backtest_reports SET report_engine = 'legacy' WHERE report_engine IS NULL
 """
 
 # ---------------------------------------------------------------------------
@@ -169,6 +179,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_SYMBOLS_TABLE,
     CREATE_BARS_TABLE,
     CREATE_BACKTEST_REPORTS_TABLE,
+    ALTER_BACKTEST_REPORTS_ADD_REPORT_ENGINE,
+    UPDATE_BACKTEST_REPORTS_REPORT_ENGINE_DEFAULT,
     CREATE_BRIEFS_TABLE,
     CREATE_AUDIT_EVENTS_TABLE,
     CREATE_PORTFOLIO_SNAPSHOT_TABLE,
