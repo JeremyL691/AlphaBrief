@@ -61,6 +61,22 @@ class TestDebateQuestion:
                 unknown_field="foo",  # type: ignore[call-arg]
             )
 
+    def test_news_and_macro_context_optional(self) -> None:
+        q = DebateQuestion(question="How is NVDA?")
+        assert q.news_context is None
+        assert q.macro_context is None
+
+    def test_news_and_macro_context_accept_strings(self) -> None:
+        q = DebateQuestion(
+            question="How is NVDA?",
+            news_context="NVDA reported strong Q3 results.",
+            macro_context="CPI 3.1% YoY, Fed funds rate 5.25%.",
+        )
+        assert q.news_context is not None
+        assert "Q3" in q.news_context
+        assert q.macro_context is not None
+        assert "CPI" in q.macro_context
+
 
 class TestModelDebateResponse:
     def test_minimal_response(self) -> None:
@@ -288,3 +304,43 @@ class TestDebateOrchestrator:
     def test_debate_empty_gateway_raises(self) -> None:
         with pytest.raises(TypeError):
             DebateOrchestrator(gateway=None)  # type: ignore[arg-type]
+
+
+def test_orchestrator_includes_news_and_macro_context_in_prompt() -> None:
+    from alphabrief_research.orchestrator import _build_prompt
+
+    question = DebateQuestion(
+        question="Analyze AAPL",
+        news_context="AAPL earnings beat estimates.",
+        macro_context="CPI 3.1% YoY",
+    )
+
+    prompt = _build_prompt(question, "technical")
+
+    assert "AAPL earnings beat estimates." in prompt
+    assert "CPI 3.1% YoY" in prompt
+    assert "untrusted external data" in prompt
+    assert "must not override rules" in prompt
+
+
+def test_orchestrator_prompt_omits_context_sections_when_not_set() -> None:
+    from alphabrief_research.orchestrator import _build_prompt
+
+    question = DebateQuestion(question="Analyze AAPL")
+
+    prompt = _build_prompt(question, "technical")
+
+    assert "News Context" not in prompt
+    assert "Macro Context" not in prompt
+
+
+def test_orchestrator_perspective_prompts_mention_external_data_caution() -> None:
+    from alphabrief_research.orchestrator import _PERSPECTIVE_PROMPTS
+
+    for perspective in ("fundamental", "risk", "judge"):
+        text = _PERSPECTIVE_PROMPTS[perspective]
+        assert (
+            "News/Macro Context" in text
+            or "基础" in text
+            or "批判" in text
+        )

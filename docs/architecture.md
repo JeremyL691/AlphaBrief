@@ -266,7 +266,8 @@ order routing, margin, leverage, partial fills, or external persistence.
 
 ## Trading Environment
 
-`alphabrief_gym` implements the Phase 4 Gymnasium-style simulation boundary.
+`alphabrief_gym` implements the Phase 4 Gymnasium-style simulation boundary
+plus the Phase 11 multi-asset, continuous-action extension.
 
 Current behavior:
 
@@ -281,10 +282,20 @@ Current behavior:
    drawdown, step count, and trade count.
 7. Random policy and buy-and-hold baselines can be evaluated.
 8. `StrategyComparisonReport` ranks evaluated policies by total return.
+9. `AlphaBriefTradingEnvV2` adds multi-asset continuous target-weight
+   actions, optional short, configurable `max_leverage`, daily borrow
+   cost accrual, per-step liquidity limits, pluggable market-impact
+   models, and pluggable reward functions (PnL, return,
+   Sharpe-style, regime-scaled).
+10. `EpisodeMetricsV2` includes `slippage_cost`, `market_impact_cost`,
+    and `borrow_cost` per episode.
 
-The environment is single-asset and long/flat in the MVP. It does not depend
-on Gymnasium, implement vectorized spaces, train agents, short assets, use
-leverage, or persist evaluation reports.
+The original environment is single-asset and long/flat in the MVP. The
+Phase 11 `AlphaBriefTradingEnvV2` adds multi-asset support while the
+legacy env remains available for backward compatibility. Both envs do
+not depend on Gymnasium, do not implement vectorized spaces, do not
+train agents, and do not persist evaluation reports. Short positions
+and leverage are **off by default** and require explicit configuration.
 
 ## Review Center
 
@@ -484,3 +495,115 @@ Current behavior:
 This layer does not wire news or macro data into research briefs,
 model debates, risk rules, or execution. Those integrations are
 reserved for future rounds.
+
+## Phase 11 — Research Brief and Debate Context
+
+The research layer can now consume news and macro data via the
+`ResearchContextBuilder` and prompt v2 templates. The integration is
+purely additive: all new schema fields are `Optional` and existing
+tests / fake provider paths still pass.
+
+Current behavior:
+
+1. `MarketBrief`, `SymbolBrief`, `DailyAlphaBrief`, and
+   `DebateQuestion` carry optional `news_context` /
+   `macro_context` / `sentiment_summary` / `news_and_macro_summary`
+   fields. Existing call sites that omit them continue to validate
+   unchanged.
+2. `ResearchContextBuilder` (in
+   `packages/alphabrief-research/src/alphabrief_research/context.py`)
+   accepts injected `news_loader` and `macro_loader` callables, so
+   the research package never imports from the API or DB layers.
+3. The API and CLI wire the builder to the existing
+   `NewsStore` / `MacroStore` on demand. Failures are swallowed and
+   fall back to an empty context block so prompt rendering never
+   blocks brief generation.
+4. Every external-content block is prefixed with an explicit
+   untrusted-data banner. Prompt template v2 (`daily_alpha_brief:v2`,
+   `market_brief:v2`, `symbol_brief:v2`, `debate_context:v1`) renders
+   the banner and tells the model to treat the data as background
+   only.
+5. The `_PERSPECTIVE_PROMPTS` for `fundamental`, `risk`, and `judge`
+   perspectives were updated to acknowledge the external context
+   while still requiring the model to be critical of it.
+6. The `/api/v1/brief/generate` and `/api/v1/research/debate` routes
+   accept new `include_news`, `include_macro`, `news_symbols`, and
+   `macro_indicators` fields. The CLI commands `alphabrief brief
+   daily` and `alphabrief research debate` mirror them.
+7. `RuleBasedSentimentAnalyzer` (in
+   `packages/alphabrief-news/src/alphabrief_news/sentiment.py`)
+   produces a deterministic, keyword-driven `SentimentLabel` for
+   each headline. The `RssNewsProvider` annotates fetched headlines
+   with sentiment by default; downstream consumers may opt out by
+   passing `auto_sentiment=False`.
+8. All research outputs continue to pass through `RiskGate` and
+   remain OrderIntent drafts only — external content is never
+   allowed to override deterministic risk rules.
+
+This layer does not turn the model into a broker. OrderIntent drafts
+still require an approved `RiskDecision` before reaching the paper
+broker.
+
+## Phase 11 — Additional Data Sources
+
+The News & Macro Data Layer and the Market Data Layer each received
+new providers in Phase 11.
+
+Current behavior:
+
+1. `FredMacroProvider` now performs real HTTP calls to
+   `api.stlouisfed.org` via `urllib`. The API key is read from the
+   `FRED_API_KEY` environment variable (or supplied via constructor)
+   and is never logged, stored, or echoed in error messages. A
+   missing key surfaces as `NewsProviderError(NO_API_KEY)`.
+2. `SecEdgarNewsProvider` reads SEC EDGAR's company filing RSS feed
+   and converts filings into `NewsHeadline` objects with
+   `category="earnings"`. The User-Agent is configurable so callers
+   can set a real contact per SEC's fair-access policy.
+3. `SocialSentimentNewsProvider` is a deterministic stub that emits
+   a small sentiment-tagged headline set per requested symbol. The
+   provider exposes the `NewsProvider` protocol and is wired into
+   the CLI/API `source=sentiment` branch.
+4. `AlphaVantageProvider` is a free, key-gated daily / weekly /
+   monthly OHLCV provider. The API key is read from
+   `ALPHAVANTAGE_API_KEY` (or supplied via constructor). A missing
+   key surfaces as `MarketDataProviderError(missing_api_key)`.
+5. The CLI accepts the new sources: `alphabrief news fetch
+   --source {mock,rss,sec,sentiment}` and `alphabrief data fetch
+   --source {yahoo,binance,alphavantage}`.
+6. The API mirrors them: `/api/v1/news/fetch` accepts
+   `source={mock,rss,sec,sentiment}` and `/api/v1/data/fetch`
+   accepts `source={yahoo,binance,alphavantage}`.
+7. `.env.example` documents the new optional variables
+   (`FRED_API_KEY`, `ALPHAVANTAGE_API_KEY`) without any real values.
+
+These providers never call third-party SDKs. They expose an
+injectable `http_get` so tests run with deterministic responses.
+
+## Phase 11 — Dashboard Pages
+
+The HTML dashboard grew from a single status page to a five-page
+navigation.
+
+Current behavior:
+
+1. `/dashboard` — main status page. Adds Positions table, Equity
+   Curve (canvas), and Recent Fills table alongside the existing
+   Project Status / Data Symbols / Last Backtest / Last Brief /
+   Paper Portfolio / Risk Status cards.
+2. `/dashboard/news` — lists headlines via `/api/v1/news/headlines`,
+   showing published time, source, symbols, title, and category.
+3. `/dashboard/macro` — lists indicators via
+   `/api/v1/macro/indicators`, showing release time, id, name, value,
+   and unit.
+4. `/dashboard/brief` — lists daily briefs via
+   `/api/v1/brief/history` and reveals a JSON detail panel on
+   click that fetches `/api/v1/brief/{id}`.
+5. `/dashboard/debate` — lists debates via
+   `/api/v1/research/debate` and reveals a JSON detail panel on
+   click that fetches `/api/v1/research/debate/{id}`.
+6. All pages share a top navigation bar, a consistent dark theme,
+   and the existing `escapeHtml` helper for all external strings.
+
+No new frontend dependency was added. The dashboard uses vanilla
+HTML, JavaScript, and CSS only.

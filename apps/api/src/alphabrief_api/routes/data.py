@@ -11,6 +11,7 @@ from typing import Literal
 from alphabrief_core.config import AppSettings, load_settings
 from alphabrief_core.domain import Bar  # noqa: F401
 from alphabrief_data import (
+    AlphaVantageProvider,
     BinanceProvider,
     MarketDataLoadError,
     MarketDataProvider,
@@ -167,7 +168,7 @@ class DataFetchRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    source: Literal["yahoo", "binance"]
+    source: Literal["yahoo", "binance", "alphavantage"]
     symbol: str = Field(min_length=1)
     start: str = Field(min_length=1, description="ISO-8601 date or datetime")
     end: str = Field(min_length=1, description="ISO-8601 date or datetime")
@@ -387,9 +388,11 @@ def _build_provider(source: str) -> MarketDataProvider:
         return YahooFinanceProvider()
     if source == "binance":
         return BinanceProvider()
+    if source == "alphavantage":
+        return AlphaVantageProvider()
     raise MarketDataProviderError(
         f"data fetch: unknown source {source!r}; "
-        "expected 'yahoo' or 'binance'",
+        "expected 'yahoo', 'binance', or 'alphavantage'",
         code="invalid_source",
     )
 

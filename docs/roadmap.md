@@ -300,3 +300,66 @@ Test suite: 489 passed (up from 431), ruff and strict mypy clean.
 This phase intentionally does not wire news/macro data into
 research briefs, model debates, risk rules, or execution. Those
 integrations are reserved for future rounds.
+
+## Phase 11: News/Macro Research Integration, More Data Sources, Trading Environment Expansion, Dashboard
+
+Goal: feed Phase 10 news/macro data into research briefs and debate
+prompts, expand the trading environment to multi-asset / continuous
+actions / short / leverage / liquidity / market impact / regime-aware
+rewards, add FRED/SEC/Social-Sentiment/AlphaVantage data sources, and
+grow the web dashboard with dedicated news / macro / brief / debate
+pages.
+
+Status: completed. 597 tests pass (up from 489), ruff clean, strict
+mypy errors unchanged from Phase 10 baseline.
+
+Progress:
+
+1. Optional news/macro context fields added to `MarketBrief`,
+   `SymbolBrief`, `DailyAlphaBrief`, and `DebateQuestion`. All
+   new fields default to `None` so existing fake-provider tests
+   pass unchanged.
+2. `ResearchContextBuilder` in the research package renders
+   natural-language news/macro context blocks for prompt
+   consumption. Every block is prefixed with an explicit
+   untrusted-data banner.
+3. v2 prompt templates (`daily_alpha_brief:v2`, `market_brief:v2`,
+   `symbol_brief:v2`, `debate_context:v1`) registered in
+   `PromptTemplateRegistry`. `render_brief_prompt_v2` helper
+   exposed in the public API.
+4. `DebateOrchestrator` injects `news_context` /
+   `macro_context` into per-perspective prompts. The fundamental,
+   risk, and judge perspective prompts were updated to require
+   critical treatment of any provided external context.
+5. `RuleBasedSentimentAnalyzer` provides deterministic
+   keyword-based sentiment classification. `RssNewsProvider` now
+   annotates fetched headlines with sentiment by default.
+6. `FredMacroProvider` upgraded from stub to a real
+   `urllib`-based implementation reading `FRED_API_KEY` from the
+   environment. No key is stored, logged, or echoed in errors.
+7. `SecEdgarNewsProvider` reads SEC EDGAR company filing RSS and
+   produces `NewsHeadline` objects with `category="earnings"`.
+   User-Agent is configurable per SEC fair-access policy.
+8. `SocialSentimentNewsProvider` is a deterministic stub
+   implementing the `NewsProvider` protocol. Wired into
+   `source=sentiment` branch.
+9. `AlphaVantageProvider` is a real daily/weekly/monthly OHLCV
+   provider reading `ALPHAVANTAGE_API_KEY` from the environment.
+10. CLI and API expose the new sources. `.env.example` documents
+    `FRED_API_KEY` and `ALPHAVANTAGE_API_KEY` (no real values).
+11. `alphabrief-gym` gained `schemas.py`, `env_v2.py`,
+    `action.py`, `market_impact.py`, and `rewards.py`.
+    `AlphaBriefTradingEnvV2` supports multi-asset continuous
+    target-weight actions, optional short, configurable
+    `max_leverage`, daily borrow cost accrual, per-step liquidity
+    limits, pluggable market-impact models, and pluggable
+    reward functions (PnL, return, Sharpe-style, regime-scaled).
+    The legacy single-asset `AlphaBriefTradingEnv` remains
+    available for backward compatibility.
+12. Dashboard grew from one page to five: main page with
+    Positions / Equity Curve / Recent Fills cards, plus
+    `/dashboard/news`, `/dashboard/macro`, `/dashboard/brief`,
+    `/dashboard/debate`. Vanilla HTML/JS/CSS only, no new
+    dependencies.
+13. Test suite: 597 passed (up from 489), ruff clean, strict
+    mypy errors unchanged from Phase 10 baseline.

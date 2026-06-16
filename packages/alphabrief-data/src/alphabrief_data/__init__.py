@@ -12,6 +12,7 @@ from alphabrief_data.features import (
 )
 from alphabrief_data.parquet_loader import ParquetBarLoader, load_ohlcv_parquet
 from alphabrief_data.providers import (
+    AlphaVantageProvider,
     BinanceProvider,
     MarketDataProvider,
     MarketDataProviderError,
@@ -30,6 +31,7 @@ from alphabrief_data.quality import (
 )
 
 __all__ = [
+    "AlphaVantageProvider",
     "BinanceProvider",
     "CsvBarLoader",
     "DataQualityIssue",

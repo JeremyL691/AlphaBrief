@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from alphabrief_models import (
     FakeProviderAdapter,
     ModelGateway,
     generate_daily_alpha_brief,
+    render_brief_prompt_v2,
 )
+from alphabrief_research import ResearchContextBuilder
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphabrief_api.db import BriefStore
+from alphabrief_api.db import BriefStore, MacroStore, NewsStore
 
 # ---------------------------------------------------------------------------
 # Persistent brief store (DuckDB-backed)
@@ -108,6 +110,22 @@ class BriefGenerateRequest(BaseModel):
         min_length=1,
     )
     prompt_version: str = "brief_v1:1"
+    include_news: bool = Field(
+        default=False,
+        description="Include news context in the prompt.",
+    )
+    include_macro: bool = Field(
+        default=False,
+        description="Include macro context in the prompt.",
+    )
+    news_symbols: list[str] | None = Field(
+        default=None,
+        description="Symbols to filter news for (default: empty = general).",
+    )
+    macro_indicators: list[str] | None = Field(
+        default=None,
+        description="Macro indicator series to include.",
+    )
 
 
 class BriefSummary(BaseModel):
@@ -145,10 +163,52 @@ router = APIRouter(prefix="/api/v1/brief", tags=["brief"])
 def generate_brief(body: BriefGenerateRequest) -> dict[str, object]:
     """Generate a DailyAlphaBrief through ModelGateway."""
     gateway = _get_gateway()
+
+    news_context = ""
+    macro_context = ""
+    if body.include_news or body.include_macro:
+        builder = _build_research_context_builder()
+        end = datetime.now(UTC)
+        start = end - timedelta(days=7)
+        symbols = body.news_symbols or []
+        if body.include_news:
+            news_context = builder.build_news_context(
+                symbols, start, end, limit=20
+            )
+        else:
+            news_context = "(news context disabled)"
+        indicators = body.macro_indicators or []
+        if body.include_macro and indicators:
+            macro_context = builder.build_macro_context(indicators, start, end)
+        else:
+            macro_context = "(macro context disabled)"
+
+    if body.prompt_version.endswith("v2") or body.include_news or body.include_macro:
+        try:
+            rendered = render_brief_prompt_v2(
+                "daily_alpha_brief",
+                "v2",
+                {
+                    "trading_day": datetime.now(UTC).date().isoformat(),
+                    "market_data_context": body.input_text,
+                    "news_context": news_context,
+                    "macro_context": macro_context,
+                    "sentiment_summary": "",
+                },
+            )
+            input_text = rendered.input_text
+            prompt_version = rendered.prompt_version
+        except Exception:
+            input_text = body.input_text
+            prompt_version = body.prompt_version
+    else:
+        input_text = body.input_text
+        prompt_version = body.prompt_version
+
     result = generate_daily_alpha_brief(
         gateway,
-        input_text=body.input_text,
-        prompt_version=body.prompt_version,
+        input_text=input_text,
+        prompt_version=prompt_version,
     )
 
     if not result.ok:
@@ -172,6 +232,51 @@ def generate_brief(body: BriefGenerateRequest) -> dict[str, object]:
     brief_dict = brief.model_dump(mode="json")
     store.save_brief(brief_dict, brief_id=brief_id)
     return brief_dict
+
+
+def _build_research_context_builder() -> ResearchContextBuilder:
+    """Build a ResearchContextBuilder wired to the current NewsStore/MacroStore."""
+    from alphabrief_news import MacroIndicator, NewsHeadline
+
+    news_store = NewsStore()
+    macro_store = MacroStore()
+
+    def news_loader(
+        symbols: list[str], start: datetime, end: datetime, limit: int,
+    ) -> list[NewsHeadline]:
+        try:
+            rows = news_store.list_headlines(
+                symbol=symbols[0] if symbols else None,
+                start=start,
+                end=end,
+                limit=limit,
+            )
+            return list(rows)
+        except Exception:
+            return []
+
+    def macro_loader(
+        indicators: list[str], start: datetime, end: datetime,
+    ) -> list[MacroIndicator]:
+        if not indicators:
+            return []
+        try:
+            all_rows: list[MacroIndicator] = []
+            for ind_id in indicators:
+                rows = macro_store.list_indicators(
+                    indicator_id=ind_id,
+                    start=start,
+                    end=end,
+                    limit=20,
+                )
+                all_rows.extend(rows)
+            return all_rows
+        except Exception:
+            return []
+
+    return ResearchContextBuilder(
+        news_loader=news_loader, macro_loader=macro_loader
+    )
 
 
 @router.get("/history", response_model=BriefHistoryResponse)

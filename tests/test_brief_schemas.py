@@ -207,3 +207,100 @@ def test_symbol_brief_validates_via_parse_structured_output() -> None:
     assert result.ok is True
     assert result.parsed is not None
     assert result.parsed.symbol == "NVDA"
+
+
+def test_market_brief_news_and_macro_fields_default_to_none() -> None:
+    brief = MarketBrief.model_validate(_market_payload())
+
+    assert brief.news_summary is None
+    assert brief.macro_summary is None
+
+
+def test_market_brief_news_and_macro_fields_accept_strings() -> None:
+    brief = MarketBrief.model_validate(
+        _market_payload(
+            news_summary="Markets cheered by earnings beats.",
+            macro_summary="CPI came in at 3.1% YoY.",
+        )
+    )
+
+    assert brief.news_summary is not None
+    assert "earnings" in brief.news_summary
+    assert brief.macro_summary is not None
+    assert "CPI" in brief.macro_summary
+
+
+def test_symbol_brief_news_and_macro_lists_default_to_empty() -> None:
+    brief = SymbolBrief.model_validate(_symbol_payload())
+
+    assert brief.news_headlines == []
+    assert brief.macro_factors == []
+
+
+def test_symbol_brief_news_and_macro_lists_accept_items() -> None:
+    brief = SymbolBrief.model_validate(
+        _symbol_payload(
+            news_headlines=["NVDA beats Q3 estimates", "New product launch"],
+            macro_factors=["rising rates", "weak dollar"],
+        )
+    )
+
+    assert brief.news_headlines == [
+        "NVDA beats Q3 estimates",
+        "New product launch",
+    ]
+    assert brief.macro_factors == ["rising rates", "weak dollar"]
+
+
+def test_symbol_brief_rejects_blank_news_headlines() -> None:
+    with pytest.raises(ValidationError, match="blank"):
+        SymbolBrief.model_validate(_symbol_payload(news_headlines=["valid", "  "]))
+
+
+def test_symbol_brief_rejects_blank_macro_factors() -> None:
+    with pytest.raises(ValidationError, match="blank"):
+        SymbolBrief.model_validate(_symbol_payload(macro_factors=["valid", "  "]))
+
+
+def test_daily_alpha_brief_news_and_macro_fields_default_to_none() -> None:
+    from alphabrief_models import DailyAlphaBrief
+
+    payload = {
+        "brief_id": "d_1",
+        "generated_at": GENERATED_AT.isoformat(),
+        "trading_day": TRADING_DAY.isoformat(),
+        "headline": "Day in review",
+        "executive_summary": "Markets ended mixed.",
+        "market_brief": _market_payload(),
+        "symbol_briefs": [_symbol_payload()],
+        "watchlist": ["NVDA"],
+        "risk_notes": ["Watch earnings"],
+    }
+
+    brief = DailyAlphaBrief.model_validate(payload)
+    assert brief.news_and_macro_summary is None
+    assert brief.sentiment_summary is None
+
+
+def test_daily_alpha_brief_news_and_macro_fields_accept_strings() -> None:
+    from alphabrief_models import DailyAlphaBrief
+
+    payload = {
+        "brief_id": "d_1",
+        "generated_at": GENERATED_AT.isoformat(),
+        "trading_day": TRADING_DAY.isoformat(),
+        "headline": "Day in review",
+        "executive_summary": "Markets ended mixed.",
+        "market_brief": _market_payload(),
+        "symbol_briefs": [_symbol_payload()],
+        "watchlist": ["NVDA"],
+        "risk_notes": ["Watch earnings"],
+        "news_and_macro_summary": "CPI came in below expectations.",
+        "sentiment_summary": "Positive on tech, negative on energy.",
+    }
+
+    brief = DailyAlphaBrief.model_validate(payload)
+    assert brief.news_and_macro_summary is not None
+    assert "CPI" in brief.news_and_macro_summary
+    assert brief.sentiment_summary is not None
+    assert "Positive" in brief.sentiment_summary
