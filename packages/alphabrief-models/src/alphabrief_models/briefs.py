@@ -32,6 +32,8 @@ class MarketBrief(AlphaBriefModel):
     summary: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
     key_factors: list[str]
+    news_summary: str | None = None
+    macro_summary: str | None = None
 
     @field_validator("brief_id", "summary")
     @classmethod
@@ -80,6 +82,8 @@ class SymbolBrief(AlphaBriefModel):
     verdict: SymbolVerdict
     catalysts: list[str]
     risks: list[str]
+    news_headlines: list[str] = Field(default_factory=list)
+    macro_factors: list[str] = Field(default_factory=list)
 
     @field_validator("brief_id", "symbol")
     @classmethod
@@ -95,11 +99,14 @@ class SymbolBrief(AlphaBriefModel):
             raise ValueError("generated_at must be timezone-aware")
         return value
 
-    @field_validator("catalysts", "risks")
+    @field_validator("catalysts", "risks", "news_headlines", "macro_factors")
     @classmethod
     def _factors_must_not_contain_blank(cls, value: list[str]) -> list[str]:
         if any(item.strip() == "" for item in value):
-            raise ValueError("catalysts and risks must not contain blank entries")
+            raise ValueError(
+                "catalysts, risks, news_headlines, and macro_factors must "
+                "not contain blank entries"
+            )
         return value
 
 
@@ -115,6 +122,8 @@ class DailyAlphaBrief(AlphaBriefModel):
     symbol_briefs: list[SymbolBrief]
     watchlist: list[str]
     risk_notes: list[str]
+    news_and_macro_summary: str | None = None
+    sentiment_summary: str | None = None
 
     @field_validator("brief_id", "headline", "executive_summary")
     @classmethod

@@ -6,10 +6,14 @@ from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from alphabrief_api.db.market_data import MarketDataStore
 from alphabrief_core.domain import Bar
+
+if TYPE_CHECKING:
+    from alphabrief_news.types import MacroIndicator, NewsHeadline
 
 
 def _make_bar(
@@ -1186,7 +1190,9 @@ def test_brief_close_then_reopen(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_headline(headline_id: str = "h1", symbol: str = "AAPL"):
+def _make_headline(
+    headline_id: str = "h1", symbol: str = "AAPL",
+) -> NewsHeadline:
     from alphabrief_news.types import NewsHeadline
     return NewsHeadline(
         headline_id=headline_id,
@@ -1198,9 +1204,9 @@ def _make_headline(headline_id: str = "h1", symbol: str = "AAPL"):
     )
 
 
-def _make_indicator(indicator_id: str = "CPI", name: str = "CPI"):
-    from decimal import Decimal
-
+def _make_indicator(
+    indicator_id: str = "CPI", name: str = "CPI",
+) -> MacroIndicator:
     from alphabrief_news.types import MacroIndicator
     return MacroIndicator(
         indicator_id=indicator_id,

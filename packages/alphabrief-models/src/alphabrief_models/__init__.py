@@ -31,10 +31,13 @@ from alphabrief_models.gateway import (
 )
 from alphabrief_models.openai_adapter import OpenAIProviderAdapter
 from alphabrief_models.prompts import (
+    PHASE11_PROMPT_TEMPLATES,
     PromptTemplate,
     PromptTemplateError,
     PromptTemplateRegistry,
     RenderedPrompt,
+    build_default_prompt_registry,
+    render_brief_prompt_v2,
 )
 from alphabrief_models.registry import ModelProfile, ModelRegistry, ProviderConfig
 from alphabrief_models.structured_output import (
@@ -65,6 +68,7 @@ __all__ = [
     "ModelTaskType",
     "OllamaProviderAdapter",
     "OpenAIProviderAdapter",
+    "PHASE11_PROMPT_TEMPLATES",
     "ProviderAdapter",
     "ProviderConfig",
     "PromptTemplate",
@@ -76,6 +80,8 @@ __all__ = [
     "SymbolBrief",
     "SymbolDirection",
     "SymbolVerdict",
+    "build_default_prompt_registry",
     "generate_daily_alpha_brief",
     "parse_structured_output",
+    "render_brief_prompt_v2",
 ]

@@ -641,6 +641,45 @@ def test_brief_generate_defaults_work() -> None:
     assert body["headline"] == "Market outlook is positive"
 
 
+def test_brief_generate_with_include_news_flag() -> None:
+    response = client.post(
+        "/api/v1/brief/generate",
+        json={"include_news": True, "news_symbols": ["AAPL"]},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "brief_id" in body
+    assert body["headline"] == "Market outlook is positive"
+
+
+def test_brief_generate_with_include_macro_flag() -> None:
+    response = client.post(
+        "/api/v1/brief/generate",
+        json={"include_macro": True, "macro_indicators": ["CPIAUCSL"]},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "brief_id" in body
+
+
+def test_brief_generate_with_both_flags() -> None:
+    response = client.post(
+        "/api/v1/brief/generate",
+        json={
+            "include_news": True,
+            "include_macro": True,
+            "news_symbols": ["AAPL"],
+            "macro_indicators": ["CPIAUCSL", "UNRATE"],
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "brief_id" in body
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/brief/history
 # ---------------------------------------------------------------------------
@@ -947,6 +986,41 @@ def test_dashboard_returns_200_and_html() -> None:
     assert "Paper Portfolio" in content
     assert "Risk Status" in content
     assert "API Docs" in content
+    assert "Positions" in content
+    assert "Equity Curve" in content
+    assert "Recent Fills" in content
+
+
+def test_dashboard_news_returns_200() -> None:
+    response = client.get("/dashboard/news")
+    assert response.status_code == 200
+    content = response.text
+    assert "News" in content
+    assert "/api/v1/news/headlines" in content
+
+
+def test_dashboard_macro_returns_200() -> None:
+    response = client.get("/dashboard/macro")
+    assert response.status_code == 200
+    content = response.text
+    assert "Macro" in content
+    assert "/api/v1/macro/indicators" in content
+
+
+def test_dashboard_brief_returns_200() -> None:
+    response = client.get("/dashboard/brief")
+    assert response.status_code == 200
+    content = response.text
+    assert "Briefs" in content
+    assert "/api/v1/brief/history" in content
+
+
+def test_dashboard_debate_returns_200() -> None:
+    response = client.get("/dashboard/debate")
+    assert response.status_code == 200
+    content = response.text
+    assert "Debates" in content or "Debate" in content
+    assert "/api/v1/research/debate" in content
 
 
 def test_api_docs_accessible() -> None:
@@ -996,6 +1070,37 @@ def test_research_debate_without_symbol() -> None:
     body = response.json()
     assert "debate_id" in body
     assert body["question"]["question"] == "General market outlook for Q3?"
+
+
+def test_research_debate_with_include_news_flag() -> None:
+    response = client.post(
+        "/api/v1/research/debate",
+        json={
+            "question": "How will AAPL trade?",
+            "symbol": "AAPL",
+            "include_news": True,
+            "news_symbols": ["AAPL"],
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "debate_id" in body
+
+
+def test_research_debate_with_include_macro_flag() -> None:
+    response = client.post(
+        "/api/v1/research/debate",
+        json={
+            "question": "How will AAPL trade?",
+            "include_macro": True,
+            "macro_indicators": ["CPIAUCSL"],
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "debate_id" in body
 
 
 # ---------------------------------------------------------------------------
@@ -1314,7 +1419,7 @@ def test_news_fetch_rss_with_injected_feed(monkeypatch: pytest.MonkeyPatch) -> N
 </rss>
 """
 
-    def fake_get(request, timeout):
+    def fake_get(request: Any, timeout: float) -> bytes:
         return xml
 
     import alphabrief_news.providers.rss as rss_mod
@@ -1430,6 +1535,26 @@ def test_macro_fetch_mock() -> None:
     assert response.status_code == 201
     data = response.json()
     assert data["indicator_count"] == 1
+
+
+def test_macro_fetch_fred_with_explicit_api_key() -> None:
+    import os
+
+    previous = os.environ.pop("FRED_API_KEY", None)
+    try:
+        response = client.post(
+            "/api/v1/macro/fetch",
+            json={
+                "source": "fred",
+                "indicators": ["CPIAUCSL"],
+                "start": "2024-06-01T00:00:00",
+                "end": "2024-06-30T00:00:00",
+            },
+        )
+        assert response.status_code == 422
+    finally:
+        if previous is not None:
+            os.environ["FRED_API_KEY"] = previous
 
 
 def test_macro_fetch_fred_returns_no_api_key() -> None:

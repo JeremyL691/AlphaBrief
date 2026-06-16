@@ -21,6 +21,8 @@ from alphabrief_news.providers.mock import (
     build_default_mock_news,
 )
 from alphabrief_news.providers.rss import RssNewsProvider
+from alphabrief_news.providers.sec_edgar import SecEdgarNewsProvider
+from alphabrief_news.providers.social_sentiment import SocialSentimentNewsProvider
 
 __all__ = [
     "FredMacroProvider",
@@ -31,6 +33,8 @@ __all__ = [
     "NewsProviderError",
     "NewsProviderErrorCode",
     "RssNewsProvider",
+    "SecEdgarNewsProvider",
+    "SocialSentimentNewsProvider",
     "build_default_mock_macro",
     "build_default_mock_news",
 ]

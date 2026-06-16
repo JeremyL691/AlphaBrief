@@ -7,12 +7,16 @@ for development/testing and ``DebateStore`` for DuckDB persistence.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_research import ResearchContextBuilder
 from alphabrief_research.orchestrator import DebateOrchestrator
 from alphabrief_research.schemas import DebateQuestion
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from alphabrief_api.db import MacroStore, NewsStore
 from alphabrief_api.db.debates import DebateStore
 
 # ---------------------------------------------------------------------------
@@ -92,6 +96,22 @@ class DebateRequest(BaseModel):
     time_horizon: str | None = None
     perspectives: list[str] | None = None
     context: str | None = None
+    include_news: bool = Field(
+        default=False,
+        description="Include news context in the debate prompt.",
+    )
+    include_macro: bool = Field(
+        default=False,
+        description="Include macro context in the debate prompt.",
+    )
+    news_symbols: list[str] | None = Field(
+        default=None,
+        description="Symbols to filter news for.",
+    )
+    macro_indicators: list[str] | None = Field(
+        default=None,
+        description="Macro indicator series to include.",
+    )
 
 
 class DebateSummary(BaseModel):
@@ -129,12 +149,32 @@ def create_debate(body: DebateRequest) -> dict[str, object]:
     """Run a multi-model research debate and persist the result."""
     gateway = _get_gateway()
 
+    news_context: str | None = None
+    macro_context: str | None = None
+    if body.include_news or body.include_macro:
+        builder = _build_research_context_builder()
+        end = datetime.now(UTC)
+        start = end - timedelta(days=7)
+        if body.include_news:
+            symbols = body.news_symbols or ([body.symbol] if body.symbol else [])
+            news_context = builder.build_news_context(
+                symbols, start, end, limit=20
+            )
+        if body.include_macro:
+            indicators = body.macro_indicators or []
+            if indicators:
+                macro_context = builder.build_macro_context(
+                    indicators, start, end
+                )
+
     question = DebateQuestion(
         question=body.question,
         symbol=body.symbol,
         time_horizon=body.time_horizon,
         perspectives=body.perspectives or ["technical", "fundamental", "risk", "judge"],
         context=body.context,
+        news_context=news_context,
+        macro_context=macro_context,
     )
     orchestrator = DebateOrchestrator(gateway)
     result = orchestrator.debate(question)
@@ -207,3 +247,48 @@ __all__ = [
     "_clear_debate_store",
     "router",
 ]
+
+
+def _build_research_context_builder() -> ResearchContextBuilder:
+    """Build a ResearchContextBuilder wired to NewsStore/MacroStore."""
+    from alphabrief_news import MacroIndicator, NewsHeadline
+
+    news_store = NewsStore()
+    macro_store = MacroStore()
+
+    def news_loader(
+        symbols: list[str], start: datetime, end: datetime, limit: int,
+    ) -> list[NewsHeadline]:
+        try:
+            rows = news_store.list_headlines(
+                symbol=symbols[0] if symbols else None,
+                start=start,
+                end=end,
+                limit=limit,
+            )
+            return list(rows)
+        except Exception:
+            return []
+
+    def macro_loader(
+        indicators: list[str], start: datetime, end: datetime,
+    ) -> list[MacroIndicator]:
+        if not indicators:
+            return []
+        try:
+            all_rows: list[MacroIndicator] = []
+            for ind_id in indicators:
+                rows = macro_store.list_indicators(
+                    indicator_id=ind_id,
+                    start=start,
+                    end=end,
+                    limit=20,
+                )
+                all_rows.extend(rows)
+            return all_rows
+        except Exception:
+            return []
+
+    return ResearchContextBuilder(
+        news_loader=news_loader, macro_loader=macro_loader
+    )

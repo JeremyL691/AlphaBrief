@@ -9,6 +9,8 @@ from alphabrief_news.providers import (
     MockNewsProvider,
     NewsProviderError,
     RssNewsProvider,
+    SecEdgarNewsProvider,
+    SocialSentimentNewsProvider,
     build_default_mock_news,
 )
 from alphabrief_news.types import NewsFetchQuery, NewsHeadline
@@ -48,7 +50,7 @@ def _close_store() -> None:
 # Request / response models
 # ---------------------------------------------------------------------------
 
-NewsSource = Literal["mock", "rss"]
+NewsSource = Literal["mock", "rss", "sec", "sentiment"]
 
 
 class NewsFetchRequest(BaseModel):
@@ -112,12 +114,21 @@ def _parse_iso_to_utc(value: str, *, field_name: str) -> datetime:
 
 
 def _build_provider(
-    source: NewsSource, symbols: list[str]
-) -> MockNewsProvider | RssNewsProvider:
+    source: NewsSource, symbols: list[str],
+) -> (
+    MockNewsProvider
+    | RssNewsProvider
+    | SecEdgarNewsProvider
+    | SocialSentimentNewsProvider
+):
     if source == "mock":
         return MockNewsProvider(seed_headlines=build_default_mock_news(symbols))
     if source == "rss":
         return RssNewsProvider()
+    if source == "sec":
+        return SecEdgarNewsProvider()
+    if source == "sentiment":
+        return SocialSentimentNewsProvider()
     raise HTTPException(
         status_code=422,
         detail=f"unknown news source: {source}",
