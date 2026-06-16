@@ -10,6 +10,7 @@ from alphabrief_strategy.interface import (
 )
 from alphabrief_strategy.spec import (
     EvaluationPeriod,
+    ExternalEvidenceConfig,
     StrategyCosts,
     StrategyEvaluation,
     StrategyRisk,
@@ -20,6 +21,7 @@ from alphabrief_strategy.spec import (
 
 __all__ = [
     "EvaluationPeriod",
+    "ExternalEvidenceConfig",
     "MovingAverageTrendStrategy",
     "StrategyExecutionError",
     "StrategyInput",

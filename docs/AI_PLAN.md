@@ -1,4 +1,536 @@
-# AlphaBrief Phase 11 开发计划
+# AlphaBrief Phase 12 开发计划
+
+> **计划范围**：Phase 11 已完成新闻/宏观研究上下文、更多 Provider、`AlphaBriefTradingEnvV2` 与多页面 Dashboard。Phase 12 的目标不是扩大交易权限，而是把 Phase 11 的数据与仿真能力接入更可审计的策略信号、风险提示、回测报告与只读展示面。
+>
+> **计划产出**：本文件覆盖当前 Phase 12 计划，并在文末完整保留 Phase 11 原计划作为历史附录。Phase 12 仍需按 `Plan -> Review Plan -> Implement -> Test -> Self Review -> Document -> Commit -> Next Task Proposal` 小步执行。
+>
+> **当前基线**：`docs/AI_HANDOFF.md` 记录 Phase 11 完成时为 `597 passed`、ruff clean、strict mypy clean。若 README 或旧文档仍显示 `431` 等旧测试数量，Phase 12 文档收尾轮需要一并校正为最新实际结果。
+>
+> **模型分工约定**：
+> - `kimi-k2.7-code`：架构/Schema 联动、Risk/Strategy 边界设计、EnvV2 报告接入。
+> - `deepseek-v4-flash`：API/CLI/Dashboard 实现、Provider 解析、测试补充。
+> - `minimax-m3`：文档、简单 route/command、HTML/JS 小改、回归测试整理。
+
+---
+
+## 1. 任务目标
+
+### A. 新闻/宏观数据 → 策略信号 / Risk Rules 集成
+
+1. 让新闻情绪、宏观指标和 `ResearchContextBuilder` 的输出可以成为策略信号的**证据与风险上下文**，但不直接生成订单。
+2. 扩展 StrategySpec/Signal 周边的可选元数据，使策略信号可携带 `news_evidence`、`macro_evidence`、`sentiment_score`、`external_context_version` 等审计信息。
+3. 在 RiskGate 外围新增一个**风险上下文评估层**（例如 `RiskContext` / `RiskSignalAdjustment` / `RiskRuleInput`），由调用方把新闻/宏观风险汇总为 deterministic metadata，再交给 RiskGate 现有接口或配置消费。
+4. 明确不改 RiskGate 核心判定语义：新闻极差时可提高风险标签、要求人工复核、降低建议仓位上限，但不得绕过现有限额或 KillSwitch。
+5. 可选：DailyAlphaBrief 增加“新闻驱动的观察建议”区块，只输出 watchlist / research task / strategy hypothesis，不输出 approved order。
+
+### B. Trading Env v2 接入回测和报告
+
+1. 将 `AlphaBriefTradingEnvV2` 的多资产 episode 结果转换为可持久化、可展示的报告结构。
+2. 扩展 `BacktestReport` 或新增 `BacktestReportV2` / `EnvV2BacktestReport`，支持多资产指标、资产权重历史、成本拆分、borrow cost、market impact、leverage exposure。
+3. 在 API/CLI 中提供显式 v2 入口，避免破坏既有 single-asset vectorized backtest 行为。
+4. 支持把 EnvV2 报告写入现有 backtest report store，或新增兼容字段，确保 dashboard/report viewer 可读。
+5. 不把 EnvV2 作为训练系统，不引入 RL 训练依赖，不默认启用 short/leverage。
+
+### C. Dashboard 增强
+
+1. 增强 Equity Curve 展示：原生 Canvas/JS 支持基本缩放、平移、重置视图，不引入前端依赖。
+2. 新增回测报告对比页面，展示 legacy backtest 与 EnvV2 report 的核心指标、成本、回撤、资产暴露对比。
+3. 增强 paper trading 净值展示：基于现有 paper portfolio / audit / fills 数据提供可刷新的只读净值曲线。
+4. 所有页面保持只读，禁止加入下单、启停策略、修改 live trading、修改风控配置的 UI。
+5. 所有外部文本继续走 `escapeHtml`，尤其是新闻标题、摘要、provider 错误和模型输出字段。
+
+### D. 更多 Provider
+
+1. 新增一个免费/低门槛市场数据 provider，例如 `TwelveDataProvider` 或 `EodhdProvider`，遵循 `MarketDataProvider` protocol。
+2. Provider 仅使用 `urllib` 与可注入 `http_get`；API key 仅从构造参数或环境变量读取，不写入日志、测试 fixture、文档真实值。
+3. CLI/API 增加 source 分支，错误使用现有 `MarketDataProviderError` / error code 体系。
+4. 新 Provider 优先作为独立小轮次，不与 Risk/Strategy 或 Dashboard 混做。
+5. 若免费接口需要 key 或限制不稳定，先实现严格 mock/fixture 测试与清晰 `MISSING_API_KEY` 行为。
+
+---
+
+## 2. 涉及文件
+
+### A. 新闻/宏观 → Strategy/Risk
+
+**可能修改/新建**：
+
+- `packages/alphabrief-strategy/src/alphabrief_strategy/spec.py`：为 StrategySpec 增加可选 external data / evidence 配置；必须保持向后兼容。
+- `packages/alphabrief-strategy/src/alphabrief_strategy/interface.py`：允许 `StrategyOutput` / `Signal` 周边携带外部上下文元数据；不得让策略访问 broker。
+- `packages/alphabrief-strategy/src/alphabrief_strategy/builtins.py`：如需要示例策略，仅做最小演示，不改旧行为。
+- `packages/alphabrief-core/src/alphabrief_core/models.py`（若 Signal 定义在此）：增加可选 evidence/risk metadata 字段；所有新增字段必须有默认值。
+- `packages/alphabrief-research/src/alphabrief_research/context.py`：复用 `ResearchContextBuilder`，必要时增加结构化摘要输出，而不是只返回 prompt 文本。
+- `packages/alphabrief-news/src/alphabrief_news/sentiment.py`：复用情绪汇总函数；如需新增评分类型，保持 deterministic。
+- `packages/alphabrief-risk/src/alphabrief_risk/context.py`（新建优先）：定义 RiskContext / NewsMacroRiskSummary / RiskAdjustment，不直接改 `gate.py` 核心。
+- `packages/alphabrief-risk/src/alphabrief_risk/gate.py`（谨慎，仅必要）：只做可选 metadata 或 human-review flag 输入，禁止重写核心拒绝规则。
+- `apps/api/src/alphabrief_api/routes/risk.py`：展示新闻/宏观风险上下文，不开放绕过接口。
+- `apps/api/src/alphabrief_api/routes/brief.py`：DailyAlphaBrief 可展示新闻驱动观察建议。
+- `apps/cli/src/alphabrief_cli/risk_commands.py`：新增只读 risk context 检查命令（可选）。
+- `tests/test_strategy_spec_schema.py`、`tests/test_strategy_interface.py`、`tests/test_research_context.py`、`tests/test_risk_gate.py`、`tests/test_api_server.py`。
+- `docs/risk_model.md`、`docs/architecture.md`、`docs/roadmap.md`。
+
+### B. Trading Env v2 → Backtest/Report
+
+**可能修改/新建**：
+
+- `packages/alphabrief-gym/src/alphabrief_gym/env_v2.py`：读取 episode metrics，不改核心 step/reset 语义。
+- `packages/alphabrief-gym/src/alphabrief_gym/schemas.py`：补齐 report 所需的 `EpisodeMetricsV2` / 权重历史 / 成本拆分 schema。
+- `packages/alphabrief-gym/src/alphabrief_gym/report.py`：新增 EnvV2 报告适配器或 comparison report 扩展。
+- `packages/alphabrief-backtest/src/alphabrief_backtest/report.py`（若存在）或 `vectorized.py`：扩展报告 schema 或新增 v2 report type；不得破坏 legacy report JSON。
+- `apps/api/src/alphabrief_api/routes/backtest.py`：新增显式 v2 route/body flag，例如 `engine="env_v2"`，默认仍为 legacy。
+- `apps/api/src/alphabrief_api/db/backtest_reports.py`：持久化 v2 report 字段，优先做向后兼容 JSON payload。
+- `apps/cli/src/alphabrief_cli/backtest_commands.py`：新增 `--engine env-v2` / `--multi-asset` 显式入口。
+- `tests/test_trading_env_v2.py`、`tests/test_trading_env.py`、`tests/test_vectorized_backtester.py`、`tests/test_api_server.py`。
+- `docs/architecture.md`、`docs/roadmap.md`。
+
+### C. Dashboard 增强
+
+**可能修改/新建**：
+
+- `apps/api/src/alphabrief_api/routes/dashboard.py`：增强 `/dashboard`，新增 `/dashboard/backtests/compare` 或 `/dashboard/backtests` 页面。
+- `apps/api/src/alphabrief_api/routes/backtest.py`：确认 report list/detail 可支持对比页 fetch。
+- `apps/api/src/alphabrief_api/routes/paper.py`：确认 paper portfolio/fills/audit 可支持净值曲线刷新。
+- `apps/api/src/alphabrief_api/db/backtest_reports.py`：确保报告列表包含对比所需 summary 字段。
+- `apps/api/src/alphabrief_api/db/paper.py`：确认 portfolio snapshots 可读；如缺失，只做只读查询扩展。
+- `tests/test_api_server.py`：页面 200、DOM anchor、fetch endpoint、HTML escape 测试。
+- `docs/architecture.md`。
+
+### D. 更多 Provider
+
+**可能修改/新建**：
+
+- `packages/alphabrief-data/src/alphabrief_data/providers/twelvedata.py`（新建）或 `eodhd.py`（二选一，优先 TwelveData）。
+- `packages/alphabrief-data/src/alphabrief_data/providers/__init__.py`：导出新 provider。
+- `apps/api/src/alphabrief_api/routes/data.py`：新增 source dispatch。
+- `apps/cli/src/alphabrief_cli/data_commands.py`：新增 source option/help。
+- `.env.example`：仅新增占位变量，例如 `TWELVEDATA_API_KEY=`，不得写真实值。
+- `tests/test_market_data_providers.py` 或 `tests/test_twelvedata_provider.py`（新建）。
+- `tests/test_api_server.py`、`tests/test_data_commands.py`。
+- `docs/architecture.md`、`docs/roadmap.md`。
+
+---
+
+## 3. 不应修改的范围
+
+1. `packages/alphabrief-models/src/alphabrief_models/gateway.py` 核心：不改 `ModelGateway` 选择逻辑、核心 request/response 语义。
+2. `packages/alphabrief-risk/src/alphabrief_risk/gate.py` 核心：不重写现有 deterministic 拒绝规则；优先新增外围 context/rule adapter。
+3. `packages/alphabrief-risk/src/alphabrief_risk/kill_switch.py` 核心：不改变 KillSwitch 激活/检查语义。
+4. `_reference_sources/` 下任何文件：不读取实现后迁移，不复制、翻译、改名复用。
+5. 任何 provider SDK 直接调用：Provider 只能用现有协议与 `urllib`/可注入 HTTP seam；模型 provider 仍通过 ModelGateway adapter。
+6. 已有测试断言：不得删除、禁用、降低断言；新增行为用新增测试覆盖。
+7. 用户配置、`.env`、密钥文件：不得修改；只允许 `.env.example` 增加空占位。
+8. live trading：不得新增真实 broker adapter，不得默认启用，不得增加前端 live trading 操作。
+9. `pyproject.toml` 依赖：Dashboard 和 Provider 默认不新增依赖；若必须新增，单独 Plan。
+10. Backtest legacy JSON：不得破坏现有报告字段和旧 report 读取路径。
+
+---
+
+## 4. 分步骤执行计划
+
+### Round 12.1 — Strategy 信号外部证据 Schema
+
+- **目标**：让 Strategy/Signal 可携带新闻/宏观证据 metadata，作为后续风险上下文输入。
+- **模型**：`kimi-k2.7-code`。
+- **涉及文件**：`alphabrief_strategy/spec.py`、`alphabrief_strategy/interface.py`、可能的 `alphabrief_core/models.py`、`tests/test_strategy_spec_schema.py`、`tests/test_strategy_interface.py`。
+- **步骤**：
+  1. 定义可选 `ExternalEvidenceConfig` / `SignalEvidence`（命名以现有风格为准）。
+  2. 字段包括 source、data_version、headline_ids、macro_indicator_ids、sentiment_score、generated_at。
+  3. 所有字段可选，不改变旧 StrategySpec/Signal 构造。
+  4. `run_strategy()` 仅校验 metadata 合法性，不读取 DB、不调用 provider。
+- **验收**：旧 strategy tests 全过；新增 schema/validation 测试；无 broker/model 调用。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_strategy_spec_schema.py tests/test_strategy_interface.py`。
+- **回滚**：还原 strategy/core 相关文件并删除新增测试。
+
+### Round 12.2 — ResearchContextBuilder 结构化摘要输出
+
+- **目标**：在现有 prompt 文本之外，输出可供 risk/strategy 使用的 deterministic 新闻/宏观摘要对象。
+- **模型**：`kimi-k2.7-code`。
+- **涉及文件**：`alphabrief_research/context.py`、`alphabrief_news/sentiment.py`、`tests/test_research_context.py`。
+- **步骤**：
+  1. 新增 `build_structured_summary(...)` 或等价函数。
+  2. 输出 headline count、negative/positive/neutral count、worst sentiment、macro indicators、data versions。
+  3. 保留 untrusted-data 标识；摘要不能生成订单建议。
+  4. 空数据返回空摘要而非异常。
+- **验收**：空数据、多 headline、多 indicator、混合 data_version 均有测试。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_research_context.py tests/test_news.py`。
+- **回滚**：还原 context/sentiment 改动。
+
+### Round 12.3 — Risk Context 外围规则层
+
+- **目标**：新增 RiskGate 外围的新闻/宏观风险上下文评估，不改核心 RiskGate 规则。
+- **模型**：`kimi-k2.7-code`。
+- **涉及文件**：`packages/alphabrief-risk/src/alphabrief_risk/context.py`（新建）、`packages/alphabrief-risk/src/alphabrief_risk/__init__.py`、`tests/test_risk_gate.py` 或 `tests/test_risk_context.py`。
+- **步骤**：
+  1. 定义 `NewsMacroRiskContext` 与 `RiskContextDecision`。
+  2. 规则示例：极端负面情绪 → `requires_human_review=True`、risk_tags 增加 `negative_news_context`；高宏观风险 → 建议降低 max position metadata。
+  3. 输出只能“加严”风险，不得放宽现有限额。
+  4. 不调用 ModelGateway、不读 DB、不访问 provider。
+- **验收**：负面新闻加严、空上下文 no-op、positive news 不放宽、KillSwitch 不受影响。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_risk_gate.py tests/test_risk_context.py`（若新建）。
+- **回滚**：删除 `context.py` 并还原 `__init__.py`。
+
+### Round 12.4 — Risk API/CLI 只读上下文展示
+
+- **目标**：把 Round 12.2/12.3 的风险上下文展示给用户，不允许用户绕过规则。
+- **模型**：`deepseek-v4-flash`。
+- **涉及文件**：`apps/api/src/alphabrief_api/routes/risk.py`、`apps/cli/src/alphabrief_cli/risk_commands.py`、`tests/test_api_server.py`、相关 CLI 测试。
+- **步骤**：
+  1. 新增只读 endpoint 或扩展 risk dashboard response。
+  2. CLI 增加 `alphabrief risk context`（可选）读取本地 stores 并输出摘要。
+  3. 返回 risk tags / human review / evidence ids，不返回秘密或原始 prompt。
+  4. 不改变 order routing。
+- **验收**：API/CLI 测试覆盖空数据、负面上下文、HTML/JSON 安全输出。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_api_server.py tests/test_data_commands.py tests/test_risk_gate.py`。
+- **回滚**：还原 risk route/CLI。
+
+### Round 12.5 — DailyAlphaBrief 新闻驱动观察建议
+
+- **目标**：在 DailyAlphaBrief 中加入“新闻/宏观驱动观察建议”字段或渲染区块。
+- **模型**：`kimi-k2.7-code`。
+- **涉及文件**：`alphabrief_models/briefs.py`、`alphabrief_models/prompts.py`、`alphabrief_models/daily.py`、`apps/api/routes/brief.py`、`tests/test_daily_alpha_brief.py`、`tests/test_prompt_templates.py`。
+- **步骤**：
+  1. 新增可选 `news_driven_watchlist` / `risk_officer_notes` 字段。
+  2. Prompt 明确只允许 watchlist/research task/strategy hypothesis。
+  3. Fake provider 测试仍可省略新增字段。
+  4. API/CLI 仅在 include-news/include-macro 时填充上下文。
+- **验收**：结构化输出校验通过；无 approved order 字段；旧测试不改断言。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_daily_alpha_brief.py tests/test_prompt_templates.py tests/test_api_server.py`。
+- **回滚**：还原 brief/prompt/API 改动。
+
+### Round 12.6 — EnvV2 Episode Report Adapter
+
+- **目标**：把 EnvV2 episode metrics 转换为可序列化 report，不接 API。
+- **模型**：`kimi-k2.7-code`。
+- **涉及文件**：`alphabrief_gym/report.py`、`alphabrief_gym/schemas.py`、`alphabrief_gym/env_v2.py`（只读或最小补充）、`tests/test_trading_env_v2.py`。
+- **步骤**：
+  1. 定义 `EnvV2Report` / `EnvV2AssetMetrics` / `EnvV2CostBreakdown`。
+  2. 从 episode result 中提取 total_return、drawdown、trade_count、leverage、borrow_cost、impact/slippage cost。
+  3. 支持 JSON-safe dict 输出。
+  4. 保留 legacy `StrategyComparisonReport`。
+- **验收**：两资产 episode report 可序列化；成本拆分准确；默认 short/leverage off。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_trading_env_v2.py tests/test_trading_env.py`。
+- **回滚**：还原 gym report/schema 改动。
+
+### Round 12.7 — BacktestReport Schema v2 兼容扩展
+
+- **目标**：让 backtest report store/API 能保存和读取 EnvV2 report。
+- **模型**：`kimi-k2.7-code`。
+- **涉及文件**：`alphabrief_backtest/vectorized.py` 或 report schema 文件、`apps/api/db/backtest_reports.py`、`tests/test_vectorized_backtester.py`、`tests/test_db.py`。
+- **步骤**：
+  1. 选择新增 `report_engine` / `report_version` / `engine_payload` 字段或新 v2 schema。
+  2. 旧 report JSON 不变，新字段可选。
+  3. DB store 以 JSON payload 兼容持久化。
+  4. 文档记录 legacy 与 env_v2 的差异。
+- **验收**：旧报告 round-trip 测试仍过；v2 report round-trip 新测试通过。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_vectorized_backtester.py tests/test_db.py`。
+- **回滚**：还原 report schema/store 改动。
+
+### Round 12.8 — CLI/API EnvV2 Backtest 显式入口
+
+- **目标**：提供显式 EnvV2 backtest/report 入口，默认仍为 legacy。
+- **模型**：`deepseek-v4-flash`。
+- **涉及文件**：`apps/api/routes/backtest.py`、`apps/cli/backtest_commands.py`、`tests/test_api_server.py`、CLI 相关测试。
+- **步骤**：
+  1. API request 增加 `engine` 字段，默认 legacy。
+  2. CLI 增加 `--engine legacy|env-v2`，必须显式选择 env-v2。
+  3. EnvV2 输入要求多资产 bars，缺失时报结构化错误。
+  4. 写入 BacktestReportStore。
+- **验收**：legacy API/CLI 测试不变；env-v2 happy path、invalid input、persisted report 测试通过。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_api_server.py tests/test_data_commands.py tests/test_trading_env_v2.py`。
+- **回滚**：还原 backtest route/CLI。
+
+### Round 12.9 — Dashboard Equity Curve 交互增强
+
+- **目标**：为主页 equity curve 增加缩放/平移/重置。
+- **模型**：`deepseek-v4-flash`。
+- **涉及文件**：`apps/api/routes/dashboard.py`、`tests/test_api_server.py`。
+- **步骤**：
+  1. 在现有 Canvas 绘图代码上增加 mouse wheel zoom、drag pan、reset button。
+  2. 空数据/单点数据正常显示。
+  3. 不引入外部 JS/CSS。
+  4. 所有文本继续 escape。
+- **验收**：页面包含相关 DOM/JS；现有 dashboard 页面 200。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_api_server.py`。
+- **回滚**：还原 `dashboard.py`。
+
+### Round 12.10 — Dashboard Backtest Report 对比页
+
+- **目标**：新增只读 report comparison 页面。
+- **模型**：`deepseek-v4-flash`。
+- **涉及文件**：`apps/api/routes/dashboard.py`、`apps/api/routes/backtest.py`、`tests/test_api_server.py`。
+- **步骤**：
+  1. 新增 `/dashboard/backtests` 或 `/dashboard/backtests/compare`。
+  2. fetch report list/detail，展示 return、drawdown、costs、engine、data_version。
+  3. 支持 EnvV2 的资产级指标展示。
+  4. 无 report 时显示 empty state。
+- **验收**：页面 200，包含 fetch endpoint、empty state、escapeHtml。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_api_server.py`。
+- **回滚**：还原 dashboard/backtest route 改动。
+
+### Round 12.11 — Dashboard Paper Trading 净值刷新
+
+- **目标**：Dashboard 只读显示 paper trading 实时/准实时净值。
+- **模型**：`minimax-m3`。
+- **涉及文件**：`apps/api/routes/dashboard.py`、`apps/api/routes/paper.py`、`apps/api/db/paper.py`、`tests/test_api_server.py`。
+- **步骤**：
+  1. 复用现有 portfolio/fills/audit 数据生成 equity series。
+  2. 前端 `setInterval` 定时 fetch，只读刷新。
+  3. 不增加 order 操作按钮。
+  4. 空数据显示安全状态。
+- **验收**：页面测试验证刷新 endpoint 和禁用交易操作。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_api_server.py`。
+- **回滚**：还原 dashboard/paper 改动。
+
+### Round 12.12 — TwelveData MarketDataProvider
+
+- **目标**：新增一个 provider（优先 TwelveData）作为独立扩展。
+- **模型**：`deepseek-v4-flash`。
+- **涉及文件**：`alphabrief_data/providers/twelvedata.py`、`providers/__init__.py`、`.env.example`、`tests/test_market_data_providers.py` 或 `tests/test_twelvedata_provider.py`。
+- **步骤**：
+  1. 实现 protocol：`fetch_ohlcv(symbol, start, end, interval, data_version)`。
+  2. API key 从 `TWELVEDATA_API_KEY` 或构造参数读取；缺失抛 `missing_api_key`。
+  3. 使用 `urllib` + injectable `http_get` + `RetryPolicy`。
+  4. 解析 mock JSON 为 `Bar`，处理 empty/error/rate limit。
+- **验收**：success、missing key、HTTP 4xx/5xx、empty payload、bad payload、retry 测试通过；无 SDK。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_market_data_providers.py tests/test_twelvedata_provider.py`。
+- **回滚**：删除 provider 文件与 export、还原 `.env.example`。
+
+### Round 12.13 — TwelveData CLI/API Source Wiring
+
+- **目标**：把新 provider 暴露到 `data fetch` CLI/API。
+- **模型**：`minimax-m3`。
+- **涉及文件**：`apps/api/routes/data.py`、`apps/cli/data_commands.py`、`tests/test_api_server.py`、`tests/test_data_commands.py`。
+- **步骤**：
+  1. `_build_provider` 增加 `source="twelvedata"`。
+  2. 更新 request Literal 与 CLI help。
+  3. API/CLI 错误不泄露 key。
+  4. 持久化仍走 `MarketDataStore`。
+- **验收**：API/CLI source 分支、missing key、mock success 测试通过。
+- **测试命令**：`.venv/bin/python -m pytest tests/test_api_server.py tests/test_data_commands.py tests/test_market_data_providers.py`。
+- **回滚**：还原 route/CLI source 分支。
+
+### Round 12.14 — 文档、状态校正与最终质量门
+
+- **目标**：更新文档，记录 Phase 12 完成状态，校正文档中旧测试数量。
+- **模型**：`minimax-m3`。
+- **涉及文件**：`docs/architecture.md`、`docs/roadmap.md`、`docs/risk_model.md`、`docs/development_log.md`（如存在）、`README.md`（仅状态数字/Phase summary）、`docs/AI_HANDOFF.md`。
+- **步骤**：
+  1. 记录新闻/宏观 → strategy/risk 的边界：只加严、不放宽、不下单。
+  2. 记录 EnvV2 report/API/CLI/dashboard 行为。
+  3. 记录新 provider 与 API key 安全边界。
+  4. 更新实际测试数量与质量门结果。
+- **验收**：文档与代码一致；无旧 Phase 9/11 测试数量误导；最终命令全过。
+- **测试命令**：`.venv/bin/python -m pytest && .venv/bin/ruff check . && .venv/bin/mypy`。
+- **回滚**：还原相关文档文件。
+
+---
+
+## 5. 风险点
+
+### A. 新闻/宏观 → Strategy/Risk
+
+| 风险 | 说明 | 缓解措施 |
+|---|---|---|
+| 外部内容变成交易指令 | 新闻或社交内容可能诱导模型/策略直接下单。 | 外部内容只作为 untrusted evidence；Strategy 输出 Signal/OrderIntent draft；执行仍需 RiskGate。 |
+| RiskGate 核心被污染 | 将情绪规则直接塞进核心 gate 可能破坏 deterministic 边界。 | 优先新增外围 context/rule adapter；只能加严，不能放宽。 |
+| 情绪评分过度自信 | 规则情绪分析可能误判。 | 输出 evidence 与 confidence，不作为唯一拒绝依据；需要 human review。 |
+| Schema 破坏兼容 | 新字段若必填会破坏旧测试/fixture。 | 全部可选，有默认值；旧断言不改。 |
+
+### B. Trading Env v2 报告
+
+| 风险 | 说明 | 缓解措施 |
+|---|---|---|
+| 报告口径混乱 | legacy vectorized backtest 与 EnvV2 episode 指标含义不同。 | 增加 `engine` / `report_version`；文档明确差异。 |
+| 杠杆/做空误导 | EnvV2 支持 short/leverage，但默认不应启用。 | CLI/API 必须显式选择；默认 `allow_short=false`、`max_leverage=1.0`。 |
+| 成本遗漏 | market impact/borrow/slippage 未写入报告会夸大收益。 | report 必须有成本拆分测试。 |
+| 持久化破坏旧 report | DB schema 变更可能破坏旧 report 读取。 | 使用可选 JSON payload 或迁移兼容测试。 |
+
+### C. Dashboard
+
+| 风险 | 说明 | 缓解措施 |
+|---|---|---|
+| XSS | 新闻/宏观/模型输出展示可能含恶意文本。 | 全部 `escapeHtml`；测试覆盖危险字符串。 |
+| 前端功能蔓延 | 图表和对比页容易引入复杂依赖。 | 原生 JS/Canvas；不引入新依赖。 |
+| 误加交易控制 | Dashboard 增强可能误加执行按钮。 | 只读原则；测试检查页面不含 order submit/live enable 控件。 |
+| 实时刷新压力 | 高频轮询可能影响本地 API。 | 低频 refresh；支持手动刷新。 |
+
+### D. 更多 Provider
+
+| 风险 | 说明 | 缓解措施 |
+|---|---|---|
+| API key 泄露 | 新 provider 可能把 key 放入错误或日志。 | 测试断言错误信息不含 key；只用 env name/constructor。 |
+| 接口限制/变更 | 免费 provider 可能限流或格式变化。 | 结构化错误码、retry、mock parser tests。 |
+| SDK 依赖 | provider SDK 会扩大依赖和边界。 | 仅 `urllib`；SDK 需求单独 Plan。 |
+| 与现有 source 冲突 | CLI/API Literal/source dispatch 易破坏旧 source。 | 新增分支，不改旧分支；全量 API/CLI 回归。 |
+
+---
+
+## 6. 验收标准
+
+### 通用验收标准
+
+1. 不修改 `_reference_sources/`。
+2. 不复制、翻译、改名复用参考源码。
+3. 不修改 ModelGateway / RiskGate / KillSwitch 核心语义。
+4. 不默认启用 live trading，不新增真实 broker adapter。
+5. 不直接调用 provider SDK；新增 provider 使用 protocol + injectable HTTP。
+6. 不删除、禁用、弱化已有测试断言。
+7. 新增行为必须有测试；涉及架构/风控/模型/报告需更新文档。
+8. 每个 commit 前必须通过：`.venv/bin/python -m pytest && .venv/bin/ruff check . && .venv/bin/mypy`。
+9. API key、broker key、secret 不进入代码、日志、测试、fixtures、prompt、文档真实值。
+10. 外部内容只作为 untrusted data，不得改变系统规则。
+
+### Aspect 专项验收
+
+**A. 新闻/宏观 → Strategy/Risk**：
+- Signal/StrategySpec 可携带外部证据 metadata，旧数据仍可验证。
+- RiskContext 能基于负面新闻/宏观风险加严 human review/risk tags。
+- Positive news 不得放宽现有限额；KillSwitch 仍优先阻断。
+- DailyAlphaBrief 只输出观察建议和研究任务，不输出 approved order。
+
+**B. EnvV2 报告**：
+- EnvV2 episode report 可 JSON 序列化并持久化。
+- 报告包含多资产指标、成本拆分、leverage/borrow/impact 信息。
+- Legacy backtest report 旧测试仍过。
+- API/CLI env-v2 入口必须显式选择。
+
+**C. Dashboard**：
+- Equity curve 支持缩放、平移、重置，空数据安全。
+- Backtest compare 页面返回 200，能展示 legacy/env-v2 核心指标。
+- Paper equity refresh 只读，不含交易按钮。
+- 外部文本均 escape。
+
+**D. Provider**：
+- 新 provider 缺 key 时返回结构化 missing-key 错误，不泄露 key。
+- HTTP mock 覆盖 success/error/retry/bad payload。
+- API/CLI source 分支可用，旧 source 不受影响。
+
+---
+
+## 7. 测试命令
+
+### 每轮相关测试
+
+```bash
+# Strategy/Risk/Research context
+.venv/bin/python -m pytest \
+  tests/test_strategy_spec_schema.py \
+  tests/test_strategy_interface.py \
+  tests/test_research_context.py \
+  tests/test_risk_gate.py
+
+# DailyAlphaBrief / prompts / research
+.venv/bin/python -m pytest \
+  tests/test_daily_alpha_brief.py \
+  tests/test_prompt_templates.py \
+  tests/test_research.py
+
+# EnvV2 / backtest reports
+.venv/bin/python -m pytest \
+  tests/test_trading_env_v2.py \
+  tests/test_trading_env.py \
+  tests/test_vectorized_backtester.py
+
+# API / CLI / Dashboard
+.venv/bin/python -m pytest \
+  tests/test_api_server.py \
+  tests/test_data_commands.py \
+  tests/test_serve_command.py
+
+# Providers
+.venv/bin/python -m pytest \
+  tests/test_news.py \
+  tests/test_market_data_providers.py \
+  tests/test_alphavantage_provider.py
+```
+
+### 提交前最终质量门
+
+```bash
+.venv/bin/python -m pytest && .venv/bin/ruff check . && .venv/bin/mypy
+```
+
+---
+
+## 8. 回滚建议
+
+### 按 Round 回滚
+
+每个 Round 单独 commit，提交信息建议：
+
+```bash
+git commit -m "phase-12-risk-context: add news macro risk context metadata"
+git commit -m "phase-12-env-v2-report: persist multi-asset episode reports"
+git commit -m "phase-12-dashboard: add backtest comparison page"
+git commit -m "phase-12-provider: add twelvedata market data provider"
+```
+
+失败时优先：
+
+```bash
+git revert <commit-hash>
+```
+
+### 按 Aspect 回滚
+
+**A. Strategy/Risk 上下文**：
+
+```bash
+git checkout packages/alphabrief-strategy/src/alphabrief_strategy/spec.py
+git checkout packages/alphabrief-strategy/src/alphabrief_strategy/interface.py
+git checkout packages/alphabrief-risk/src/alphabrief_risk/__init__.py
+git rm packages/alphabrief-risk/src/alphabrief_risk/context.py
+```
+
+**B. EnvV2 报告**：
+
+```bash
+git checkout packages/alphabrief-gym/src/alphabrief_gym/report.py
+git checkout packages/alphabrief-gym/src/alphabrief_gym/schemas.py
+git checkout apps/api/src/alphabrief_api/routes/backtest.py
+git checkout apps/api/src/alphabrief_api/db/backtest_reports.py
+```
+
+**C. Dashboard**：
+
+```bash
+git checkout apps/api/src/alphabrief_api/routes/dashboard.py
+git checkout apps/api/src/alphabrief_api/routes/paper.py
+```
+
+**D. Provider**：
+
+```bash
+git rm packages/alphabrief-data/src/alphabrief_data/providers/twelvedata.py
+git checkout packages/alphabrief-data/src/alphabrief_data/providers/__init__.py
+git checkout apps/api/src/alphabrief_api/routes/data.py
+git checkout apps/cli/src/alphabrief_cli/data_commands.py
+git checkout .env.example
+```
+
+### 紧急停止条件
+
+若出现以下情况，停止实现并回到 Plan：
+
+1. 需要改 RiskGate 核心拒绝规则才能继续。
+2. EnvV2 report 需要破坏 legacy report JSON。
+3. Dashboard 需要新增前端依赖或执行型交易控件。
+4. Provider 需要 SDK 或真实 secret 才能测试。
+5. 测试大量失败且原因不明。
+
+---
+
+## 9. 推荐实施顺序
+
+1. **首选 Round 12.1 → 12.3**：先完成新闻/宏观 → Strategy/Risk 的只加严上下文链路。这是 Phase 11 之后最自然的核心增量。
+2. **然后 Round 12.6 → 12.8**：把 EnvV2 从“可运行环境”提升为“可报告/可持久化/可展示”的研究资产。
+3. **再做 Round 12.9 → 12.11**：Dashboard 只读增强依赖稳定报告/API，不宜提前做。
+4. **Provider Round 12.12 → 12.13** 可并行或延后；它是独立扩展，不应阻塞 Risk/EnvV2 主线。
+5. **最后 Round 12.14**：文档、状态校正、最终 quality gate 与 handoff。
+
+---
+
+# 附录 A：AlphaBrief Phase 11 原开发计划（保留）
 
 > **计划范围**：Phase 10 已完成 News & Macro Data Layer 的独立数据接入（`alphabrief_news`、DuckDB 存储、CLI/API）。Phase 11 的目标是把新闻/宏观数据真正喂进研究、交易仿真和 Dashboard，同时扩展更多免费数据源、交易环境能力和前端展示面。
 >

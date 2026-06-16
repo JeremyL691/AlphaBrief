@@ -2,11 +2,11 @@
 
 from typing import Protocol, runtime_checkable
 
-from alphabrief_core import Bar, Signal
+from alphabrief_core import Bar, Signal, SignalEvidence
 from alphabrief_data import FeatureRow, check_bar_quality
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from alphabrief_strategy.spec import StrategySpec
+from alphabrief_strategy.spec import ExternalEvidenceConfig, StrategySpec
 
 
 class StrategyExecutionError(RuntimeError):
@@ -79,6 +79,7 @@ def _validate_strategy_output(
 ) -> None:
     allowed_symbols = set(strategy_input.spec.universe.symbols)
     bar_timestamps = {bar.timestamp for bar in strategy_input.bars}
+    evidence_cfg = strategy_input.spec.external_evidence
 
     for signal in output.signals:
         if signal.strategy_id != strategy_input.spec.strategy_id:
@@ -91,3 +92,51 @@ def _validate_strategy_output(
             )
         if signal.timestamp not in bar_timestamps:
             raise StrategyExecutionError("signal timestamp must come from input bars")
+        _validate_signal_evidence(signal, evidence_cfg)
+
+
+def _validate_signal_evidence(
+    signal: Signal,
+    evidence_cfg: ExternalEvidenceConfig | None,
+) -> None:
+    """Light validation of :class:`SignalEvidence` consistency.
+
+    The full schema validation is already performed by Pydantic; here
+    we only check that the evidence, when present, is consistent with
+    the strategy's declared :class:`ExternalEvidenceConfig` (e.g. a
+    signal cannot carry evidence that lists macro indicators the
+    strategy never declared). This function does **not** read the
+    database, call any provider, or affect risk decisions.
+    """
+    if signal.evidence is None:
+        return
+
+    if not _evidence_has_payload(signal.evidence):
+        return
+
+    if evidence_cfg is None:
+        raise StrategyExecutionError(
+            "signal evidence is present but StrategySpec has no "
+            "external_evidence config"
+        )
+
+    declared_indicators = set(evidence_cfg.macro_indicators)
+    for macro_id in signal.evidence.macro_indicator_ids:
+        if declared_indicators and macro_id not in declared_indicators:
+            raise StrategyExecutionError(
+                f"signal evidence macro_indicator_id '{macro_id}' "
+                "is not declared in StrategySpec external_evidence"
+            )
+
+
+def _evidence_has_payload(evidence: SignalEvidence) -> bool:
+    """Return True if the evidence carries any actual data."""
+    return bool(
+        evidence.news_headline_ids
+        or evidence.macro_indicator_ids
+        or evidence.sentiment_score is not None
+        or evidence.source is not None
+        or evidence.data_version is not None
+        or evidence.external_context_version is not None
+        or evidence.generated_at is not None
+    )
