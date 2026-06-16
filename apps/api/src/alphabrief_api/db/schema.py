@@ -125,6 +125,43 @@ CREATE TABLE IF NOT EXISTS debate_records (
 """
 
 # ---------------------------------------------------------------------------
+# Table: news_headlines
+# ---------------------------------------------------------------------------
+
+CREATE_NEWS_HEADLINES_TABLE = """
+CREATE TABLE IF NOT EXISTS news_headlines (
+    headline_id     VARCHAR PRIMARY KEY,
+    published_at    TIMESTAMPTZ NOT NULL,
+    symbols         VARCHAR NOT NULL,
+    category        VARCHAR NOT NULL,
+    source          VARCHAR NOT NULL,
+    title           VARCHAR NOT NULL,
+    summary         VARCHAR NOT NULL,
+    url             VARCHAR,
+    sentiment       VARCHAR,
+    data_version    VARCHAR NOT NULL
+)
+"""
+
+# ---------------------------------------------------------------------------
+# Table: macro_indicators
+# ---------------------------------------------------------------------------
+
+CREATE_MACRO_INDICATORS_TABLE = """
+CREATE TABLE IF NOT EXISTS macro_indicators (
+    indicator_id    VARCHAR PRIMARY KEY,
+    name            VARCHAR NOT NULL,
+    country         VARCHAR NOT NULL,
+    released_at     TIMESTAMPTZ NOT NULL,
+    period          VARCHAR,
+    value           DOUBLE NOT NULL,
+    unit            VARCHAR,
+    source          VARCHAR NOT NULL,
+    data_version    VARCHAR NOT NULL
+)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -137,6 +174,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_PORTFOLIO_SNAPSHOT_TABLE,
     CREATE_REVIEW_SNAPSHOTS_TABLE,
     CREATE_DEBATE_RECORDS_TABLE,
+    CREATE_NEWS_HEADLINES_TABLE,
+    CREATE_MACRO_INDICATORS_TABLE,
 )
 
 # ---------------------------------------------------------------------------
@@ -152,6 +191,8 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS macro_indicators")
+    connection.execute("DROP TABLE IF EXISTS news_headlines")
     connection.execute("DROP TABLE IF EXISTS debate_records")
     connection.execute("DROP TABLE IF EXISTS review_snapshots")
     connection.execute("DROP TABLE IF EXISTS portfolio_snapshot")
@@ -170,6 +211,8 @@ __all__ = [
     "CREATE_BARS_TABLE",
     "CREATE_BRIEFS_TABLE",
     "CREATE_DEBATE_RECORDS_TABLE",
+    "CREATE_MACRO_INDICATORS_TABLE",
+    "CREATE_NEWS_HEADLINES_TABLE",
     "CREATE_PORTFOLIO_SNAPSHOT_TABLE",
     "CREATE_REVIEW_SNAPSHOTS_TABLE",
     "CREATE_SYMBOLS_TABLE",

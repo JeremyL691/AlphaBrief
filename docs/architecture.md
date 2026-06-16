@@ -440,3 +440,47 @@ implement cross-provider fallbacks or persistent rate-limit
 queues — callers can disable retries by setting
 ``retry_policy.max_retries=0`` if they need strict at-most-once
 semantics.
+
+## News & Macro Data Layer
+
+`alphabrief_news` extends the Data Layer with structured news
+headline and macro-economic indicator schemas, provider protocols,
+mock providers for offline tests, a minimal RSS/Atom reader, and a
+FRED stub that clearly surfaces the missing-API-key boundary.
+
+Current behavior:
+
+1. ``NewsHeadline`` and ``MacroIndicator`` are pure Pydantic
+   validation boundaries with timezone-aware timestamps,
+   stable IDs, and explicit ``data_version`` fields.
+2. ``NewsProvider`` and ``MacroProvider`` are runtime-checkable
+   ``Protocol`` objects declaring ``fetch_headlines`` and
+   ``fetch_indicators`` respectively.
+3. ``NewsProviderError`` carries a stable ``code`` drawn from
+   ``NewsProviderErrorCode`` so CLI and API layers can branch on
+   the failure mode without parsing free-form messages.
+4. ``MockNewsProvider`` and ``MockMacroProvider`` return
+   deterministic canned data for tests and offline use.
+5. ``RssNewsProvider`` reads a hard-coded allowlist of free
+   RSS/Atom feeds using only ``urllib`` and the standard-library
+   XML parser. It extracts title, summary, published_at, source,
+   and url only. It accepts no arbitrary user URLs.
+6. ``FredMacroProvider`` is a stub that raises
+   ``NewsProviderError(NO_API_KEY)``. No secret is read or stored.
+7. ``check_headline_quality`` and ``check_indicator_quality``
+   provide explicit in-memory validation (empty input, mixed
+   ``data_version``, blank titles, invalid values, duplicate IDs,
+   non-increasing timestamps).
+8. ``NewsStore`` and ``MacroStore`` persist data in DuckDB through
+   the existing storage layer. ``GET`` endpoints support filtering
+   by symbol/indicator and time window.
+9. The API exposes ``/api/v1/news/*`` and ``/api/v1/macro/*``
+   endpoints; the CLI exposes ``alphabrief news`` and
+   ``alphabrief macro`` subcommands.
+10. Retry behavior is reused from ``alphabrief_data.providers``.
+    HTTP 429/418/5xx and transient network errors are retried;
+    non-rate-limit 4xx errors are not.
+
+This layer does not wire news or macro data into research briefs,
+model debates, risk rules, or execution. Those integrations are
+reserved for future rounds.

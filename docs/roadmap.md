@@ -261,3 +261,42 @@ Status: completed.
    to remove the now-incorrect "no retries" claim.
 8. Test suite: 431 passed (up from 408), ruff and strict mypy
    clean.
+
+## Phase 10: News & Macro Data Layer
+
+Goal: add the first read-only News & Macro Data Layer boundary so
+future research, brief, and risk modules can consume structured
+headlines and macro snapshots without calling provider SDKs,
+scraping arbitrary URLs, or reaching into the open internet.
+
+Status: completed.
+
+Planned sequence:
+
+1. `alphabrief_news` package with `NewsHeadline`, `MacroIndicator`,
+   `NewsProvider`, `MacroProvider`, `NewsProviderError`, and
+   quality checks: completed.
+2. `MockNewsProvider` and `MockMacroProvider` for deterministic
+   offline tests: completed.
+3. `RssNewsProvider` — stdlib-only RSS/Atom reader with a
+   hard-coded free feed allowlist and injectable `http_get`: completed.
+4. `FredMacroProvider` stub that raises `NO_API_KEY` and stores no
+   secrets: completed.
+5. DuckDB `news_headlines` and `macro_indicators` tables with
+   `NewsStore` and `MacroStore`: completed.
+6. `POST /api/v1/news/fetch`, `GET /api/v1/news/headlines`,
+   `GET /api/v1/news/headlines/{id}`, `POST /api/v1/macro/fetch`,
+   `GET /api/v1/macro/indicators`,
+   `GET /api/v1/macro/indicators/{id}` endpoints: completed.
+7. `alphabrief news fetch/list` and `alphabrief macro fetch/list`
+   CLI subcommands: completed.
+8. 26 unit tests in `tests/test_news.py`, 9 DB store tests, 14 API
+   integration tests, 9 CLI integration tests: completed.
+9. Updated `docs/architecture.md`, `docs/roadmap.md`,
+   `docs/development_log.md`, and `docs/agent_protocol.md`: completed.
+
+Test suite: 489 passed (up from 431), ruff and strict mypy clean.
+
+This phase intentionally does not wire news/macro data into
+research briefs, model debates, risk rules, or execution. Those
+integrations are reserved for future rounds.

@@ -1279,3 +1279,91 @@ Validation for 0037:
 1. `python3 -m pytest` passed (431 tests, up from 408).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy apps/api/src tests` passed.
+
+
+## 0038 News & Macro Data Layer (Phase 10)
+
+Status: completed.
+
+Goal: add the first read-only News & Macro Data Layer boundary that
+mirrors the Phase 9 market data provider structure, so future research,
+brief, and risk modules can consume structured headlines and macro
+snapshots without provider SDKs or arbitrary web scraping.
+
+Completed changes:
+
+1. Created `packages/alphabrief-news/` with Pydantic schemas
+   (`NewsHeadline`, `MacroIndicator`, `NewsFetchQuery`,
+   `MacroFetchQuery`), provider protocols (`NewsProvider`,
+   `MacroProvider`), and structured errors (`NewsProviderError`,
+   `NewsProviderErrorCode`).
+2. Added `alphabrief_news.quality` with `check_headline_quality` and
+   `check_indicator_quality`.
+3. Added `MockNewsProvider` and `MockMacroProvider` for deterministic
+   offline tests.
+4. Added `RssNewsProvider` — stdlib-only RSS/Atom reader with a
+   hard-coded allowlist of free feeds, injectable `http_get`, and
+   reuse of the shared `call_with_retry` helper.
+5. Added `FredMacroProvider` stub that raises `NO_API_KEY`; no secret
+   is read or stored.
+6. Added DuckDB `news_headlines` and `macro_indicators` tables and
+   the `NewsStore` / `MacroStore` data access classes.
+7. Added FastAPI routers `/api/v1/news/*` and `/api/v1/macro/*` with
+   fetch, list, and get-by-id endpoints.
+8. Added `alphabrief news fetch/list` and
+   `alphabrief macro fetch/list` CLI subcommands.
+9. Registered the new package in `pyproject.toml` pythonpath,
+   package discovery, and mypy path.
+10. Added 58 new tests: 26 unit tests in `tests/test_news.py`,
+    9 store tests in `tests/test_db.py`, 14 API integration tests
+    in `tests/test_api_server.py`, and 9 CLI integration tests in
+    `tests/test_data_commands.py`.
+11. Updated `docs/architecture.md`, `docs/roadmap.md`,
+    `docs/agent_protocol.md`, and this development log.
+
+Files changed:
+- `pyproject.toml` — added `packages/alphabrief-news/src` paths.
+- `packages/alphabrief-news/src/alphabrief_news/__init__.py` — new.
+- `packages/alphabrief-news/src/alphabrief_news/types.py` — new.
+- `packages/alphabrief-news/src/alphabrief_news/quality.py` — new.
+- `packages/alphabrief-news/src/alphabrief_news/providers/__init__.py` — new.
+- `packages/alphabrief-news/src/alphabrief_news/providers/base.py` — new.
+- `packages/alphabrief-news/src/alphabrief_news/providers/mock.py` — new.
+- `packages/alphabrief-news/src/alphabrief_news/providers/rss.py` — new.
+- `packages/alphabrief-news/src/alphabrief_news/providers/fred.py` — new.
+- `apps/api/src/alphabrief_api/db/schema.py` — added news/macro tables.
+- `apps/api/src/alphabrief_api/db/news.py` — new.
+- `apps/api/src/alphabrief_api/db/macro.py` — new.
+- `apps/api/src/alphabrief_api/db/__init__.py` — export new stores.
+- `apps/api/src/alphabrief_api/routes/news.py` — new.
+- `apps/api/src/alphabrief_api/routes/macro.py` — new.
+- `apps/api/src/alphabrief_api/main.py` — register new routers.
+- `apps/cli/src/alphabrief_cli/news_commands.py` — new.
+- `apps/cli/src/alphabrief_cli/macro_commands.py` — new.
+- `apps/cli/src/alphabrief_cli/main.py` — register new apps.
+- `tests/test_news.py` — new (26 tests).
+- `tests/test_db.py` — added 9 store tests.
+- `tests/test_api_server.py` — added 14 integration tests.
+- `tests/test_data_commands.py` — added 9 CLI tests.
+- `docs/architecture.md` — new chapter.
+- `docs/roadmap.md` — Phase 10 status.
+- `docs/agent_protocol.md` — untrusted data note.
+- `docs/development_log.md` — this entry.
+
+Validation for 0038:
+
+1. `python3 -m pytest` passed (489 tests, up from 431).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages apps` passed.
+4. `alphabrief news fetch --source mock --symbol AAPL ...` and
+   `alphabrief macro fetch --source mock --indicator CPIAUCSL ...`
+   work end-to-end and persist through DuckDB.
+5. `POST /api/v1/news/fetch`, `GET /api/v1/news/headlines`,
+   `POST /api/v1/macro/fetch`, and `GET /api/v1/macro/indicators`
+   return correct status codes and shapes.
+6. `fred` source returns 422 with `NO_API_KEY`; no secret touched.
+7. RSS provider parses injected Atom and RSS feeds; 5xx retries,
+   4xx does not retry.
+8. No file under `_reference_sources/` was opened or imported.
+9. No news/macro data was wired into briefs, debates, risk, or
+   execution.

@@ -15,3 +15,19 @@ This document records the expected protocol for future research agents.
    and auditable.
 
 No agent runtime is implemented in the scaffold round.
+
+## News & Macro Data
+
+News headlines and macro-economic indicators produced by the Phase 10
+Data Layer are untrusted external data. Agents may consume them as
+research inputs, but this data must not:
+
+- change system rules or risk limits,
+- bypass `RiskGate`,
+- alter broker configuration,
+- disable audit logging,
+- or generate orders directly.
+
+Future research agents that use news/macro data must declare it in
+audit metadata and keep the final risk decision in deterministic
+system code.
