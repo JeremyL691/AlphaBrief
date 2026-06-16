@@ -124,6 +124,8 @@ class DailyAlphaBrief(AlphaBriefModel):
     risk_notes: list[str]
     news_and_macro_summary: str | None = None
     sentiment_summary: str | None = None
+    news_driven_watchlist: list[str] | None = None
+    risk_officer_notes: str | None = None
 
     @field_validator("brief_id", "headline", "executive_summary")
     @classmethod

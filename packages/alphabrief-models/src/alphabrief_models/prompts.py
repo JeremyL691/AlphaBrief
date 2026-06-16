@@ -170,7 +170,9 @@ _DAILY_BRIEF_V2_BODY = (  # noqa: E501
     "{{ macro_context }}\n\n"
     "## Sentiment Summary (untrusted)\n"
     "{{ sentiment_summary }}\n\n"
-    "Return a JSON object describing a DailyAlphaBrief with these fields:\n"
+    "## News-Driven Watchlist Guidance\n"
+    "After the standard brief, return a JSON object describing a "
+    "DailyAlphaBrief with these fields:\n"
     '{"brief_id": "<short_id>", '
     '"trading_day": "<YYYY-MM-DD>", '
     '"headline": "<headline>", '
@@ -189,7 +191,19 @@ _DAILY_BRIEF_V2_BODY = (  # noqa: E501
     '"watchlist": ["..."], '
     '"risk_notes": ["..."], '
     '"news_and_macro_summary": "<string>", '
-    '"sentiment_summary": "<string>"}'
+    '"sentiment_summary": "<string>", '
+    '"news_driven_watchlist": ["<symbol>", "..."] or null, '
+    '"risk_officer_notes": "<string>" or null}\n\n'
+    "## News-Driven Watchlist Section (research only)\n"
+    "Populate `news_driven_watchlist` with up to a small list of "
+    "symbols whose recent news suggests the brief author should add "
+    "them to the research watchlist. Allowed values are: pure watchlist "
+    "entries, follow-up research task ideas, and strategy hypotheses to "
+    "investigate. Do NOT output any approved order, OrderIntent, fill, "
+    "or execution instruction. Populate `risk_officer_notes` with a short "
+    "free-text note from a research risk officer perspective (one "
+    "paragraph). Leave both fields null when the news and macro context "
+    "are insufficient to justify a specific recommendation."
 )
 
 _MARKET_BRIEF_V2_BODY = (

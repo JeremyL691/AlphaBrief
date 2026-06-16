@@ -73,6 +73,7 @@ extend-exclude = [
 [tool.ruff.lint.per-file-ignores]
 "apps/cli/**/*.py" = ["B008"]
 "apps/api/src/alphabrief_api/routes/dashboard.py" = ["E501"]
+"apps/api/src/alphabrief_api/routes/risk.py" = ["B008"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

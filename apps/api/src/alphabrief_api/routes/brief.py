@@ -166,6 +166,7 @@ def generate_brief(body: BriefGenerateRequest) -> dict[str, object]:
 
     news_context = ""
     macro_context = ""
+    watchlist_hint = ""
     if body.include_news or body.include_macro:
         builder = _build_research_context_builder()
         end = datetime.now(UTC)
@@ -177,6 +178,10 @@ def generate_brief(body: BriefGenerateRequest) -> dict[str, object]:
             )
         else:
             news_context = "(news context disabled)"
+        if symbols:
+            watchlist_hint = (
+                "Candidate symbols from caller: " + ", ".join(symbols) + "."
+            )
         indicators = body.macro_indicators or []
         if body.include_macro and indicators:
             macro_context = builder.build_macro_context(indicators, start, end)
@@ -193,7 +198,7 @@ def generate_brief(body: BriefGenerateRequest) -> dict[str, object]:
                     "market_data_context": body.input_text,
                     "news_context": news_context,
                     "macro_context": macro_context,
-                    "sentiment_summary": "",
+                    "sentiment_summary": watchlist_hint,
                 },
             )
             input_text = rendered.input_text
