@@ -395,3 +395,45 @@ This phase is additive and tighten-only: risk can never be relaxed
 by external evidence. All new fields are optional with safe defaults
 so existing tests and fake-provider paths continue to pass
 unchanged.
+
+## Phase 13: RiskContext → RiskGate Wiring
+
+Goal: wire the Phase 12 `RiskContextDecision` into `RiskGate` so the
+deterministic news/macro tightening is honored on every
+`OrderIntent` evaluation, without changing any base check semantics
+or weakening the kill switch / live-trading lock.
+
+Status: in progress. Round 13.1 complete.
+
+### Round 13.1 — RiskGate accepts optional RiskContextDecision
+
+1. `RiskGate.evaluate()` gained an optional keyword-only
+   `risk_context: RiskContextDecision | None = None` argument.
+2. The contract is **tighten-only**: tags are merged (deduplicated),
+   the human-review flag is OR-merged, and `max_quantity` is reduced
+   by `suggested_max_position_multiplier` (Decimal-first, no rounding,
+   never relaxed).
+3. Base checks are unchanged. The risk context cannot re-approve a
+   rejected intent, cannot override the kill switch, cannot lift the
+   live-trading lock, and cannot add symbols to the allowlist.
+4. 20 new tests in `tests/test_risk_gate.py` cover backward
+   compatibility, positive/negative/macro context effects,
+   re-approval rejection, multiplier-at-one no-op, kill switch
+   precedence, live-trading-lock precedence, tag deduplication, and
+   combined static-flag + context merging.
+5. Test suite: 679 passed (up from 659), ruff clean, strict mypy
+   clean.
+
+Planned follow-up rounds:
+
+* **R13.2** — `alphabrief risk check` CLI and `POST /api/v1/risk/check`
+  accept an optional `risk_context` payload and surface the merged
+  `RiskDecision`.
+* **R13.3** — `alphabrief paper order` and `POST /api/v1/paper/orders`
+  optionally accept a `risk_context` and block auto-execution when
+  the merged decision requires human review.
+* **R13.4** — `ExecutionAuditLog` records the risk-context decision
+  ID, tags, and multiplier that influenced the merged
+  `RiskDecision`, with no secret fields exposed.
+* **R13.5** — Final docs, roadmap, and AI handoff update for
+  Phase 13.

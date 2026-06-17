@@ -58,3 +58,36 @@ The blueprint defines these eventual checks:
    and portfolio updates.
 
 No live broker adapter or live trading path is implemented.
+
+## RiskContext Tightening (Phase 13.1)
+
+`RiskGate.evaluate()` accepts an optional `RiskContextDecision`. When
+provided, the gate applies the decision in a **tighten-only** manner.
+The context can never re-approve a rejected intent, can never relax the
+human-review flag, and can never increase `max_quantity` above the
+configured limit.
+
+The gate may:
+
+1. Merge the context's `risk_tags` into the decision tags
+   (deduplicated, original order preserved).
+2. Flip the final `requires_human_review` flag on when
+   `risk_context.requires_human_review` is `True`. The static
+   `RiskLimitConfig.require_human_review` flag is honored as well, so
+   the merge is effectively an OR.
+3. Reduce `max_quantity` by
+   `risk_context.suggested_max_position_multiplier` when that
+   multiplier is strictly below `1.0` and `max_order_quantity` is
+   configured. The reduction is Decimal-first with no rounding; the
+   cap is never relaxed even if the multiplier were 1.0.
+
+The context **cannot** override the kill switch, lift the live-trading
+lock, add symbols to the allowlist, or re-approve a rejected intent.
+A `RiskContextDecision` is produced by
+`alphabrief_risk.evaluate_news_macro_risk`, which is a pure
+deterministic function over `ResearchContextSummary` (or a
+`NewsMacroRiskContext` mirror) — it never calls ModelGateway, never
+reads a database, and never invokes a provider.
+
+When no `risk_context` is supplied, `evaluate()` is byte-for-byte
+backward compatible with the Phase 12 contract.
