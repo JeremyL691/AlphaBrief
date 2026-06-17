@@ -19,7 +19,7 @@ from alphabrief_execution import (
     PaperBrokerError,
     PortfolioState,
 )
-from alphabrief_risk import RiskGate, RiskLimitConfig
+from alphabrief_risk import RiskContextDecision, RiskGate, RiskLimitConfig
 from alphabrief_strategy.spec import StrategySpec
 
 paper_app = typer.Typer(
@@ -32,6 +32,24 @@ def _exit_error(message: str) -> None:
     sys.exit(1)
 
 
+def _parse_risk_context(
+    raw: str | None, source_label: str
+) -> RiskContextDecision | None:
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        _exit_error(f"invalid JSON in {source_label}: {exc}")
+    if not isinstance(data, dict):
+        _exit_error(f"{source_label} must be a JSON object")
+    try:
+        return RiskContextDecision.model_validate(data)
+    except ValueError as exc:
+        _exit_error(f"invalid RiskContextDecision in {source_label}: {exc}")
+    return None
+
+
 @paper_app.command("run")
 def run_cmd(
     data: Path = typer.Option(
@@ -42,6 +60,20 @@ def run_cmd(
     ),
     price: str = typer.Option(
         "100", "--price", help="Reference price for the paper order"
+    ),
+    risk_context: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--risk-context",
+        help=(
+            "Optional RiskContextDecision as inline JSON. Tightens the "
+            "order (human review flag, position-size reduction) but "
+            "never relaxes limits."
+        ),
+    ),
+    risk_context_file: Path | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--risk-context-file",
+        help="Optional path to a JSON file with a RiskContextDecision.",
     ),
 ) -> None:
     """Start a paper-trading session for a strategy."""
@@ -79,6 +111,25 @@ def run_cmd(
     if not bars:
         _exit_error("no bars loaded from CSV file")
 
+    if risk_context is not None and risk_context_file is not None:
+        _exit_error(
+            "--risk-context and --risk-context-file are mutually exclusive"
+        )
+
+    parsed_context: RiskContextDecision | None = None
+    if risk_context is not None:
+        parsed_context = _parse_risk_context(risk_context, "--risk-context")
+    elif risk_context_file is not None:
+        try:
+            file_text = risk_context_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            _exit_error(
+                f"could not read risk context file {risk_context_file}: {exc}"
+            )
+        parsed_context = _parse_risk_context(
+            file_text, f"--risk-context-file {risk_context_file}"
+        )
+
     # Create permissive RiskGate
     risk_gate = RiskGate(
         limits=RiskLimitConfig(
@@ -111,10 +162,17 @@ def run_cmd(
         intent,
         estimated_price=reference_price,
         data_quality_passed=True,
+        risk_context=parsed_context,
     )
 
     if not decision.approved:
         _exit_error(f"risk gate rejected order: {decision.reason}")
+
+    if decision.requires_human_review:
+        _exit_error(
+            "risk decision requires human review; "
+            "auto-execution blocked by PaperBroker"
+        )
 
     # Submit via PaperBroker
     try:
@@ -136,6 +194,8 @@ def run_cmd(
     pos_qty = result.portfolio.position_quantity(symbol)
     print(f"Portfolio Position ({symbol}): {pos_qty}")
     print(f"Portfolio Realized PnL: {result.portfolio.realized_pnl}")
+    if parsed_context is not None:
+        print(f"Applied Risk Context: {parsed_context.decision_id}")
 
 
 @paper_app.command("status")

@@ -15,6 +15,25 @@ from alphabrief_models.daily import (
     DailyBriefGenerationResult,
     generate_daily_alpha_brief,
 )
+from alphabrief_models.evaluation import (
+    MAX_SAMPLE_COUNT,
+    EvalDataset,
+    EvalDatasetSpec,
+    EvalResult,
+    EvalSample,
+    ModelEvaluation,
+    ModelEvaluator,
+    eval_result_to_record,
+)
+from alphabrief_models.evaluation_datasets import (
+    BUNDLED_DATASET_SPECS,
+    BUNDLED_DATASETS,
+    DAILY_BRIEF_V1_SPEC,
+    DEBATE_RESPONSE_V1_SPEC,
+    KNOWLEDGE_V1_SPEC,
+    MARKET_SUMMARY_V1_SPEC,
+    get_dataset_by_id,
+)
 from alphabrief_models.gateway import (
     FakeProviderAdapter,
     ModelCallRecord,
@@ -40,6 +59,13 @@ from alphabrief_models.prompts import (
     render_brief_prompt_v2,
 )
 from alphabrief_models.registry import ModelProfile, ModelRegistry, ProviderConfig
+from alphabrief_models.router import (
+    MIN_JSON_VALID_RATE,
+    MIN_SCHEMA_PASS_RATE,
+    ModelRouteDecision,
+    ModelRouter,
+    PerformanceSnapshot,
+)
 from alphabrief_models.structured_output import (
     StructuredOutputErrorCode,
     StructuredOutputResult,
@@ -47,16 +73,31 @@ from alphabrief_models.structured_output import (
 )
 
 __all__ = [
+    "BUNDLED_DATASETS",
+    "BUNDLED_DATASET_SPECS",
     "BriefHorizon",
+    "DAILY_BRIEF_V1_SPEC",
+    "DEBATE_RESPONSE_V1_SPEC",
     "DailyAlphaBrief",
     "DailyBriefGenerationErrorCode",
     "DailyBriefGenerationResult",
+    "EvalDataset",
+    "EvalDatasetSpec",
+    "EvalResult",
+    "EvalSample",
     "FakeProviderAdapter",
+    "KNOWLEDGE_V1_SPEC",
+    "MARKET_SUMMARY_V1_SPEC",
+    "MAX_SAMPLE_COUNT",
     "MarketBrief",
     "MarketRegime",
+    "MIN_JSON_VALID_RATE",
+    "MIN_SCHEMA_PASS_RATE",
     "ModelCallRecord",
     "ModelCallStatus",
     "ModelCapability",
+    "ModelEvaluation",
+    "ModelEvaluator",
     "ModelGateway",
     "ModelGatewayResult",
     "ModelProviderError",
@@ -65,9 +106,12 @@ __all__ = [
     "ModelResponse",
     "ModelResponseStatus",
     "ModelRegistry",
+    "ModelRouteDecision",
+    "ModelRouter",
     "ModelTaskType",
     "OllamaProviderAdapter",
     "OpenAIProviderAdapter",
+    "PerformanceSnapshot",
     "PHASE11_PROMPT_TEMPLATES",
     "ProviderAdapter",
     "ProviderConfig",
@@ -81,7 +125,9 @@ __all__ = [
     "SymbolDirection",
     "SymbolVerdict",
     "build_default_prompt_registry",
+    "eval_result_to_record",
     "generate_daily_alpha_brief",
+    "get_dataset_by_id",
     "parse_structured_output",
     "render_brief_prompt_v2",
 ]
