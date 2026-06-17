@@ -1,7 +1,7 @@
 # AlphaBrief Phase 13 — AI Handoff
 
 > 生成时间: 2026-06-17
-> 最后 Commit: `a3568fa` — `phase-13-risk-gate-context: wire optional RiskContextDecision into RiskGate`
+> 最后 Commit: `1733264` — `chore(phase-13): record R13.1 commit hash and document risk_context support`
 > 工作区状态: clean
 
 ## 当前状态
