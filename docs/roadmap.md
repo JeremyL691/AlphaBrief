@@ -403,7 +403,7 @@ deterministic news/macro tightening is honored on every
 `OrderIntent` evaluation, without changing any base check semantics
 or weakening the kill switch / live-trading lock.
 
-Status: in progress. Round 13.1 complete.
+Status: complete. Rounds 13.1–13.5 complete.
 
 ### Round 13.1 — RiskGate accepts optional RiskContextDecision
 
@@ -424,16 +424,125 @@ Status: in progress. Round 13.1 complete.
 5. Test suite: 679 passed (up from 659), ruff clean, strict mypy
    clean.
 
-Planned follow-up rounds:
+### Rounds 13.2–13.5 — risk_context end-to-end wiring
 
-* **R13.2** — `alphabrief risk check` CLI and `POST /api/v1/risk/check`
-  accept an optional `risk_context` payload and surface the merged
-  `RiskDecision`.
-* **R13.3** — `alphabrief paper order` and `POST /api/v1/paper/orders`
-  optionally accept a `risk_context` and block auto-execution when
-  the merged decision requires human review.
-* **R13.4** — `ExecutionAuditLog` records the risk-context decision
-  ID, tags, and multiplier that influenced the merged
-  `RiskDecision`, with no secret fields exposed.
-* **R13.5** — Final docs, roadmap, and AI handoff update for
-  Phase 13.
+1. `alphabrief risk check` and `POST /api/v1/risk/check` accept an
+   optional `risk_context` payload and surface the merged
+   `RiskDecision`. 16 new tests in `tests/test_r13_risk_context_wiring.py`.
+2. `PaperBroker.submit` blocks when the merged decision requires
+   human review. `alphabrief paper run` and `POST /api/v1/paper/orders`
+   accept `risk_context` and exit with code 1 / 422 respectively
+   when the broker would otherwise auto-execute.
+3. `ExecutionAuditEntry` carries the `risk_context_decision_id`,
+   `risk_context_tags`, and `risk_context_multiplier` of the merged
+   decision. The audit endpoints expose the metadata on every
+   recorded event.
+4. Test suite: 695 passed (up from 679), ruff clean, strict mypy
+   clean.
+
+## Phase 14: Model Evaluation & Performance Intelligence
+
+Goal: add the model evaluation system that makes AlphaBrief truly
+model-agnostic. Currently the system routes models by declared
+capability tags only — Phase 14 adds automated evaluation against
+gold-standard local datasets, cost/latency/performance-aware
+routing, model performance persistence, and a dashboard for
+comparing providers and models. This phase touches **zero**
+trading, risk, or execution code.
+
+Status: complete. Rounds 14.1–14.7 complete.
+
+### Round 14.1 — DuckDB model_evaluations table + ModelEvalStore
+
+1. Added `model_evaluations` table to `db/schema.py` with columns for
+   `json_valid_rate`, `schema_pass_rate`, `hallucination_rate`,
+   `avg_latency_ms`, `avg_cost_estimate`, `sample_count`, and a
+   JSON `eval_config` snapshot.
+2. Created `ModelEvalStore` with `save_evaluation`, `get_evaluations`,
+   `get_latest_evaluation`, `get_latest_per_task_for_model`,
+   `list_evaluations`, `clear`, and `close`. 14 new tests in
+   `tests/test_model_eval_store.py`.
+
+### Round 14.2 — ModelEvaluator engine
+
+1. Added `alphabrief_models.evaluation` with `EvalDataset`,
+   `EvalResult`, `EvalDatasetSpec`, `EvalSample`, `ModelEvaluation`,
+   and `ModelEvaluator`.
+2. `ModelEvaluator` runs JSON-validity, schema-pass, and
+   hallucination evaluations through `ModelGateway`. It **never**
+   calls provider SDKs directly.
+3. Bundled local datasets (`market_summary_v1`, `daily_brief_v1`,
+   `debate_response_v1`, `knowledge_v1`) are hardcoded Python
+   definitions with no network calls or secrets.
+4. `MAX_SAMPLE_COUNT = 50` hard upper bound.
+5. 20 new tests in `tests/test_model_evaluator.py`.
+
+### Round 14.3 — ModelRouter
+
+1. Added `alphabrief_models.router` with `ModelRouter`,
+   `ModelRouteDecision`, `PerformanceSnapshot`, and
+   `PerformanceProvider` callable type.
+2. Routing is **advisory only**: when no performance data exists,
+   the router preserves the existing capability-only behavior.
+3. When performance data is available, profiles are scored by
+   `schema_pass_rate` (descending), with optional
+   `prefer_low_latency` and `prefer_low_cost` flags. Profiles below
+   `min_schema_pass_rate` are deprioritized for structured tasks.
+4. The provider callable is exception-safe; routing falls back to
+   capability-only when the data source is unavailable.
+5. 15 new tests in `tests/test_model_router.py`.
+
+### Round 14.4 — API endpoints
+
+1. `POST /api/v1/models/evaluate` runs an evaluation and persists the
+   result.
+2. `GET /api/v1/models/evaluations` lists evaluation records with
+   optional `model_id` and `task_type` filters.
+3. `GET /api/v1/models/evaluations/{eval_id}` returns a single
+   record.
+4. `GET /api/v1/models/performance/{model_id}` returns the latest
+   evaluation per task for a model.
+5. `POST /api/v1/models/route` returns the router's recommendation
+   for a task type and capability set.
+6. `POST /api/v1/models/compare` returns side-by-side rows for
+   multiple models on a task type.
+7. `GET /api/v1/models/datasets` lists bundled dataset metadata.
+8. 20 new tests in `tests/test_models_api.py`.
+
+### Round 14.5 — CLI commands
+
+1. `alphabrief model evaluate` runs an evaluation, persists it, and
+   prints the result as JSON.
+2. `alphabrief model performance` lists stored evaluations for a
+   model, optionally filtered by task.
+3. `alphabrief model route` queries the router for a task type and
+   capability set.
+4. `alphabrief model compare` compares multiple models for a task
+   type.
+5. 14 new tests in `tests/test_model_cli.py`.
+
+### Round 14.6 — Dashboard
+
+1. Main `/dashboard` page adds a Model Performance card grid.
+   Each card shows the latest `schema_pass_rate` for a model,
+   color-coded (green ≥ 0.9, yellow 0.7–0.9, red < 0.7).
+2. New `/dashboard/models` page lists recent evaluations in a table
+   and shows per-model performance summaries broken down by task.
+3. Dashboard remains strictly read-only; no live model calls are
+   made from the page itself.
+4. 4 new tests in `tests/test_dashboard_models.py`.
+
+### Round 14.7 — Documentation
+
+1. Updated `docs/roadmap.md` (this section).
+2. Updated `docs/development_log.md` with the round-43 entry.
+3. Added the Model Evaluation chapter to `docs/architecture.md`.
+
+### Final quality gate
+
+- [x] 87 new tests across 7 rounds.
+- [x] 782 total tests pass (up from 695).
+- [x] `ruff check .` clean.
+- [x] `mypy packages apps tests` clean (156 source files).
+- [x] No files under `_reference_sources/` opened or imported.
+- [x] No risk / execution / trading files modified.

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from alphabrief_core import Order, OrderIntent, RiskDecision
 
@@ -9,6 +10,9 @@ from alphabrief_execution.audit import ExecutionAuditLog
 from alphabrief_execution.fills import BPS_DENOMINATOR, Fill, FillSimulator
 from alphabrief_execution.portfolio import PortfolioState
 from alphabrief_execution.router import OrderRouter, OrderRouterError
+
+if TYPE_CHECKING:
+    from alphabrief_risk import RiskContextDecision
 
 
 class PaperBrokerError(ValueError):
@@ -44,14 +48,46 @@ class PaperBroker:
         decision: RiskDecision | None,
         *,
         reference_price: Decimal,
+        risk_context: "RiskContextDecision | None" = None,
     ) -> PaperBrokerResult:
         decision_id = decision.decision_id if decision is not None else None
+        rcx_id = risk_context.decision_id if risk_context is not None else None
+        rcx_tags = (
+            tuple(risk_context.risk_tags) if risk_context is not None else ()
+        )
+        rcx_mult = (
+            risk_context.suggested_max_position_multiplier
+            if risk_context is not None
+            else None
+        )
+
         self.audit_log.append(
             event_type="risk_decision_recorded",
             intent_id=intent.intent_id,
             risk_decision_id=decision_id,
             message="risk decision received",
+            risk_context_decision_id=rcx_id,
+            risk_context_tags=rcx_tags,
+            risk_context_multiplier=rcx_mult,
         )
+
+        if decision is not None and decision.requires_human_review:
+            self.audit_log.append(
+                event_type="order_rejected",
+                intent_id=intent.intent_id,
+                risk_decision_id=decision_id,
+                message=(
+                    "auto-execution blocked: risk decision requires "
+                    "human review"
+                ),
+                risk_context_decision_id=rcx_id,
+                risk_context_tags=rcx_tags,
+                risk_context_multiplier=rcx_mult,
+            )
+            raise PaperBrokerError(
+                "risk decision requires human review; "
+                "auto-execution blocked by PaperBroker"
+            )
 
         try:
             quantity = self._resolve_quantity(intent, reference_price)
@@ -62,6 +98,9 @@ class PaperBroker:
                 intent_id=intent.intent_id,
                 risk_decision_id=decision_id,
                 message=str(exc),
+                risk_context_decision_id=rcx_id,
+                risk_context_tags=rcx_tags,
+                risk_context_multiplier=rcx_mult,
             )
             raise PaperBrokerError(str(exc)) from exc
 
@@ -71,6 +110,9 @@ class PaperBroker:
             risk_decision_id=decision_id,
             order_id=order.order_id,
             message="paper order created",
+            risk_context_decision_id=rcx_id,
+            risk_context_tags=rcx_tags,
+            risk_context_multiplier=rcx_mult,
         )
 
         try:
@@ -83,6 +125,9 @@ class PaperBroker:
                 risk_decision_id=decision_id,
                 order_id=order.order_id,
                 message=str(exc),
+                risk_context_decision_id=rcx_id,
+                risk_context_tags=rcx_tags,
+                risk_context_multiplier=rcx_mult,
             )
             raise PaperBrokerError(str(exc)) from exc
 
@@ -94,6 +139,9 @@ class PaperBroker:
             order_id=order.order_id,
             fill_id=fill.fill_id,
             message="paper fill created",
+            risk_context_decision_id=rcx_id,
+            risk_context_tags=rcx_tags,
+            risk_context_multiplier=rcx_mult,
         )
         self.audit_log.append(
             event_type="portfolio_updated",
@@ -102,6 +150,9 @@ class PaperBroker:
             order_id=order.order_id,
             fill_id=fill.fill_id,
             message="paper portfolio updated",
+            risk_context_decision_id=rcx_id,
+            risk_context_tags=rcx_tags,
+            risk_context_multiplier=rcx_mult,
         )
         return PaperBrokerResult(order=order, fill=fill, portfolio=self.portfolio)
 

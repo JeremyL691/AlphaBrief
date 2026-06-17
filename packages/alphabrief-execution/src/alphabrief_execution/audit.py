@@ -26,6 +26,9 @@ class ExecutionAuditEntry(BaseModel):
     fill_id: str | None = None
     message: str = Field(min_length=1)
     created_at: datetime
+    risk_context_decision_id: str | None = None
+    risk_context_tags: tuple[str, ...] = Field(default_factory=tuple)
+    risk_context_multiplier: float | None = None
 
     @field_validator("created_at")
     @classmethod
@@ -55,6 +58,9 @@ class ExecutionAuditLog:
         risk_decision_id: str | None = None,
         order_id: str | None = None,
         fill_id: str | None = None,
+        risk_context_decision_id: str | None = None,
+        risk_context_tags: tuple[str, ...] = (),
+        risk_context_multiplier: float | None = None,
     ) -> ExecutionAuditEntry:
         entry = ExecutionAuditEntry(
             event_id=f"audit_{len(self.entries) + 1}",
@@ -65,6 +71,9 @@ class ExecutionAuditLog:
             fill_id=fill_id,
             message=message,
             created_at=self._clock(),
+            risk_context_decision_id=risk_context_decision_id,
+            risk_context_tags=risk_context_tags,
+            risk_context_multiplier=risk_context_multiplier,
         )
         self.entries.append(entry)
         return entry

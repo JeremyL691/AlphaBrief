@@ -712,3 +712,85 @@ Current behavior:
 
 The report schemas are pure validation boundaries. They do not
 call the environment, compute metrics, or persist reports.
+
+## Phase 14 — Model Evaluation and Performance Intelligence
+
+Phase 14 adds the model evaluation system that makes AlphaBrief's
+"model-agnostic" promise actionable. Until Phase 14, the system routed
+models by **declared capability tags only** — it had no way to know
+which model actually performed better at which task, which model was
+cost-effective, or which model hallucinated. Phase 14 closes this
+gap with read-only intelligence that never touches trading, risk, or
+execution code.
+
+### Model Evaluation Store
+
+`alphabrief_api.db.model_eval.ModelEvalStore` is a DuckDB-backed
+persistent store for `ModelEvaluation` records. Each record carries
+`json_valid_rate`, `schema_pass_rate`, `hallucination_rate`,
+`avg_latency_ms`, `avg_cost_estimate`, `sample_count`, and a JSON
+`eval_config` snapshot. The store exposes `save_evaluation`,
+`get_evaluations`, `get_latest_evaluation`,
+`get_latest_per_task_for_model`, and pagination helpers.
+
+The store is read-only advisory: it never affects RiskGate,
+KillSwitch, or execution. It never stores provider credentials.
+
+### ModelEvaluator
+
+`alphabrief_models.evaluation.ModelEvaluator` runs automated
+evaluations against gold-standard local datasets through the
+existing `ModelGateway`. The evaluator never calls provider SDKs
+directly — all model invocations go through the gateway so that
+capability filtering, fallback, and `ModelCallRecord` are honored.
+
+The bundled datasets (`market_summary_v1`, `daily_brief_v1`,
+`debate_response_v1`, `knowledge_v1`) are hardcoded Python
+definitions in `alphabrief_models.evaluation_datasets`. They contain
+no secrets, no URLs, and no network resources.
+
+`MAX_SAMPLE_COUNT = 50` is a hard upper bound. Exceeding it is
+silently clamped to 50.
+
+### ModelRouter
+
+`alphabrief_models.router.ModelRouter` is a capability +
+performance-aware router. When no performance data exists, the
+router preserves the existing capability-only behavior (sorting
+profiles by `priority`, then `profile_id`). When performance data is
+available, profiles are scored by `schema_pass_rate` (descending)
+with optional `prefer_low_latency` and `prefer_low_cost` flags.
+Profiles with `schema_pass_rate < MIN_SCHEMA_PASS_RATE` (default
+0.7) are deprioritized for structured tasks.
+
+Routing is **advisory only** — the router returns a
+`ModelRouteDecision` that callers may inspect but are not required
+to follow. The provider callable is exception-safe; routing falls
+back to capability-only when the data source is unavailable.
+
+### API and CLI surface
+
+`/api/v1/models/{evaluate,evaluations,evaluations/{id},performance/{model_id},route,compare,datasets}`
+expose the full lifecycle: run an evaluation, list and query
+records, query the router, compare models, and list bundled
+datasets. The CLI adds `alphabrief model
+{evaluate,performance,route,compare}` mirroring the API.
+
+### Dashboard
+
+The main `/dashboard` page now includes a Model Performance card
+grid, and a new `/dashboard/models` page lists recent evaluations
+plus per-model performance summaries broken down by task. Both are
+read-only — no live model calls are made from the page itself.
+
+### Hard Constraints
+
+1. All model invocations go through `ModelGateway`. No provider SDK
+   is imported outside the existing adapter modules.
+2. `ModelEvalStore` does not store provider credentials or
+   secrets. API key environment variable names are never persisted.
+3. Routing is advisory. Callers may override any router decision.
+4. Bundled datasets are local Python definitions. No benchmark
+   leakage, no external network calls.
+5. The phase adds no new dependencies — only `duckdb`, `pydantic`,
+   `urllib` (existing), and the standard library.

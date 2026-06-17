@@ -16,6 +16,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from alphabrief_core import OrderIntent
 from alphabrief_research import (
     ResearchContextSummary,
     build_structured_summary,
@@ -114,6 +115,33 @@ class RiskContextResponse(BaseModel):
     query: dict[str, Any] = Field(
         description="Echo of the request parameters (for audit).",
     )
+
+
+class RiskCheckRequest(BaseModel):
+    """Request body for POST /api/v1/risk/check."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    intent: OrderIntent
+    estimated_price: Decimal | None = None
+    estimated_quantity: Decimal | None = None
+    strategy_id: str | None = None
+    data_quality_passed: bool = True
+    risk_context: RiskContextDecision | None = None
+
+
+class RiskCheckResponse(BaseModel):
+    """Response body for POST /api/v1/risk/check."""
+
+    model_config = ConfigDict(frozen=True)
+
+    decision_id: str
+    approved: bool
+    reason: str
+    risk_tags: list[str]
+    requires_human_review: bool
+    max_quantity: str | None
+    applied_risk_context: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +327,47 @@ def get_risk_context(
     )
 
 
+@router.post("/check", response_model=RiskCheckResponse)
+def post_risk_check(body: RiskCheckRequest) -> RiskCheckResponse:
+    """Evaluate an OrderIntent through the live RiskGate.
+
+    Optionally accepts a ``risk_context`` (a
+    :class:`RiskContextDecision`) which is applied in a
+    **tighten-only** manner. The response surfaces the merged
+    decision's decision_id, approval, reason, tags, human-review
+    flag, and (possibly reduced) ``max_quantity``.
+    """
+    gate = _get_risk_gate()
+    decision = gate.evaluate(
+        body.intent,
+        strategy_id=body.strategy_id,
+        estimated_price=body.estimated_price,
+        estimated_quantity=body.estimated_quantity,
+        data_quality_passed=body.data_quality_passed,
+        risk_context=body.risk_context,
+    )
+    return RiskCheckResponse(
+        decision_id=decision.decision_id,
+        approved=decision.approved,
+        reason=decision.reason,
+        risk_tags=list(decision.risk_tags),
+        requires_human_review=decision.requires_human_review,
+        max_quantity=(
+            str(decision.max_quantity)
+            if decision.max_quantity is not None
+            else None
+        ),
+        applied_risk_context=(
+            body.risk_context.decision_id
+            if body.risk_context is not None
+            else None
+        ),
+    )
+
+
 __all__ = [
+    "RiskCheckRequest",
+    "RiskCheckResponse",
     "RiskConfigResponse",
     "RiskContextResponse",
     "RiskDashboardResponse",

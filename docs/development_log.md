@@ -1623,3 +1623,125 @@ Validation for 0042:
 1. `.venv/bin/python -m pytest -q --tb=line` passed (668 tests, up from 659).
 2. `.venv/bin/ruff check .` passed.
 3. `.venv/bin/mypy` passed (130 source files).
+
+---
+
+## 0043 — Phase 13 R13.2–R13.5 and Phase 14 Model Evaluation
+
+Status: completed.
+
+Goal: close out the remaining Phase 13 risk_context wiring rounds
+and deliver Phase 14 Model Evaluation & Performance Intelligence:
+automated model evaluation, performance-aware routing, model
+performance persistence, and a model dashboard. Phase 14 is
+strictly read-only with respect to trading, risk, and execution.
+
+### Phase 13 R13.2–R13.5 — risk_context end-to-end
+
+1. `alphabrief risk check` and `POST /api/v1/risk/check` accept an
+   optional `risk_context` payload and surface the merged
+   `RiskDecision`.
+2. `PaperBroker.submit` blocks when the merged decision requires
+   human review. The CLI and the API both honor the block.
+3. `ExecutionAuditEntry` carries `risk_context_decision_id`,
+   `risk_context_tags`, and `risk_context_multiplier` of the merged
+   decision. The audit endpoints expose the metadata on every
+   recorded event.
+4. 16 new tests in `tests/test_r13_risk_context_wiring.py`.
+
+### Phase 14 R14.1 — DuckDB model_evaluations table + ModelEvalStore
+
+1. Added `model_evaluations` table to `db/schema.py` with columns for
+   `json_valid_rate`, `schema_pass_rate`, `hallucination_rate`,
+   `avg_latency_ms`, `avg_cost_estimate`, `sample_count`, and a
+   JSON `eval_config` snapshot.
+2. Created `ModelEvalStore` with `save_evaluation`,
+   `get_evaluations`, `get_latest_evaluation`,
+   `get_latest_per_task_for_model`, `list_evaluations`, `clear`,
+   and `close`.
+3. 14 new tests in `tests/test_model_eval_store.py`.
+
+### Phase 14 R14.2 — ModelEvaluator
+
+1. `alphabrief_models.evaluation` exposes `EvalDataset`, `EvalResult`,
+   `EvalDatasetSpec`, `EvalSample`, `ModelEvaluation`, and
+   `ModelEvaluator`.
+2. The evaluator runs JSON-validity, schema-pass, and hallucination
+   evaluations through `ModelGateway`. It never calls provider SDKs
+   directly.
+3. Bundled local datasets (`market_summary_v1`, `daily_brief_v1`,
+   `debate_response_v1`, `knowledge_v1`) are hardcoded Python
+   definitions in `alphabrief_models.evaluation_datasets`.
+4. `MAX_SAMPLE_COUNT = 50` hard upper bound.
+5. 20 new tests in `tests/test_model_evaluator.py`.
+
+### Phase 14 R14.3 — ModelRouter
+
+1. `alphabrief_models.router` exposes `ModelRouter`,
+   `ModelRouteDecision`, `PerformanceSnapshot`, and
+   `PerformanceProvider` callable type.
+2. Routing is **advisory only** — when no performance data exists,
+   the router preserves the existing capability-only behavior.
+3. When performance data is available, profiles are scored by
+   `schema_pass_rate` (descending), with optional
+   `prefer_low_latency` and `prefer_low_cost` flags. Profiles below
+   `min_schema_pass_rate` are deprioritized for structured tasks.
+4. The provider callable is exception-safe; routing falls back to
+   capability-only when the data source is unavailable.
+5. 15 new tests in `tests/test_model_router.py`.
+
+### Phase 14 R14.4 — API endpoints
+
+1. `POST /api/v1/models/evaluate` runs an evaluation and persists
+   the result.
+2. `GET /api/v1/models/evaluations` lists evaluation records with
+   optional `model_id` and `task_type` filters.
+3. `GET /api/v1/models/evaluations/{eval_id}` returns a single
+   record.
+4. `GET /api/v1/models/performance/{model_id}` returns the latest
+   evaluation per task for a model.
+5. `POST /api/v1/models/route` returns the router's recommendation
+   for a task type and capability set.
+6. `POST /api/v1/models/compare` returns side-by-side rows for
+   multiple models on a task type.
+7. `GET /api/v1/models/datasets` lists bundled dataset metadata.
+8. 20 new tests in `tests/test_models_api.py`.
+
+### Phase 14 R14.5 — CLI commands
+
+1. `alphabrief model evaluate` runs an evaluation, persists it, and
+   prints the result as JSON.
+2. `alphabrief model performance` lists stored evaluations for a
+   model, optionally filtered by task.
+3. `alphabrief model route` queries the router for a task type and
+   capability set.
+4. `alphabrief model compare` compares multiple models for a task
+   type.
+5. 14 new tests in `tests/test_model_cli.py`.
+
+### Phase 14 R14.6 — Dashboard
+
+1. Main `/dashboard` page adds a Model Performance card grid
+   showing the latest `schema_pass_rate` per model, color-coded
+   (green ≥ 0.9, yellow 0.7–0.9, red < 0.7).
+2. New `/dashboard/models` page lists recent evaluations and shows
+   per-model performance summaries broken down by task.
+3. Dashboard remains strictly read-only; no live model calls are
+   made from the page itself.
+4. 4 new tests in `tests/test_dashboard_models.py`.
+
+### Phase 14 R14.7 — Documentation
+
+1. Updated `docs/roadmap.md` with Phase 14 status block.
+2. Updated `docs/architecture.md` with the Model Evaluation
+   chapter.
+3. Updated `docs/development_log.md` (this entry).
+
+### Validation for 0043
+
+1. `.venv/bin/python -m pytest -q --tb=line` passed (782 tests, up
+   from 695).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages apps tests` passed (156 source files).
+4. No files under `_reference_sources/` were opened or imported.
+5. No risk / execution / trading files were modified.
