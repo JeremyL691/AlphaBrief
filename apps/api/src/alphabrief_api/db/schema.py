@@ -172,6 +172,28 @@ CREATE TABLE IF NOT EXISTS macro_indicators (
 """
 
 # ---------------------------------------------------------------------------
+# Table: model_evaluations
+# ---------------------------------------------------------------------------
+
+CREATE_MODEL_EVALUATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS model_evaluations (
+    id                    TEXT PRIMARY KEY,
+    model_id              TEXT NOT NULL,
+    provider              TEXT NOT NULL,
+    task_type             TEXT NOT NULL,
+    eval_dataset          TEXT NOT NULL,
+    json_valid_rate       DOUBLE,
+    schema_pass_rate      DOUBLE,
+    hallucination_rate    DOUBLE,
+    avg_latency_ms        INTEGER,
+    avg_cost_estimate     DOUBLE,
+    sample_count          INTEGER NOT NULL,
+    eval_config_json      TEXT NOT NULL DEFAULT '{}',
+    evaluated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -188,6 +210,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_DEBATE_RECORDS_TABLE,
     CREATE_NEWS_HEADLINES_TABLE,
     CREATE_MACRO_INDICATORS_TABLE,
+    CREATE_MODEL_EVALUATIONS_TABLE,
 )
 
 # ---------------------------------------------------------------------------
@@ -203,6 +226,7 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS model_evaluations")
     connection.execute("DROP TABLE IF EXISTS macro_indicators")
     connection.execute("DROP TABLE IF EXISTS news_headlines")
     connection.execute("DROP TABLE IF EXISTS debate_records")
@@ -224,6 +248,7 @@ __all__ = [
     "CREATE_BRIEFS_TABLE",
     "CREATE_DEBATE_RECORDS_TABLE",
     "CREATE_MACRO_INDICATORS_TABLE",
+    "CREATE_MODEL_EVALUATIONS_TABLE",
     "CREATE_NEWS_HEADLINES_TABLE",
     "CREATE_PORTFOLIO_SNAPSHOT_TABLE",
     "CREATE_REVIEW_SNAPSHOTS_TABLE",

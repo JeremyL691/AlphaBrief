@@ -11,9 +11,7 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-Phases 1–12 complete. Phase 13.1 in progress (RiskGate accepts
-optional `RiskContextDecision`). 679 tests pass. Ruff and strict mypy
-are clean.
+Phases 1–14 complete. 782 tests pass. Ruff and strict mypy are clean.
 
 - **Phase 1 — Core.** Domain models, CSV/Parquet OHLCV loaders, in-memory
   data quality checks, no-lookahead features, StrategySpec schema, and a
@@ -67,6 +65,21 @@ are clean.
   declaration and per-signal `SignalEvidence`, structured research
   context summary, and gymnasium EnvV2 episode reports with cost
   breakdowns. 62 new tests.
+- **Phase 13 — RiskContext → RiskGate wiring.** `RiskGate` accepts an
+  optional `RiskContextDecision` and applies it in a tighten-only
+  manner. `PaperBroker` blocks auto-execution when the merged
+  decision requires human review. The audit log records the
+  risk-context metadata.
+- **Phase 14 — Model evaluation & performance intelligence.**
+  `ModelEvaluator` runs automated JSON/schema/hallucination
+  evaluations against bundled local datasets through `ModelGateway`.
+  `ModelRouter` adds cost/latency/performance-aware routing on top
+  of the existing capability-based registry. The
+  `model_evaluations` DuckDB table plus `ModelEvalStore` persist
+  every record, and the new `/api/v1/models/*` endpoints and
+  `alphabrief model {evaluate,performance,route,compare}` commands
+  expose the full surface. The dashboard gains a Model Performance
+  card grid and a dedicated `/dashboard/models` page. 87 new tests.
 
 ## Safety Boundary
 
@@ -132,7 +145,7 @@ Run all checks before committing:
 .venv/bin/mypy
 ```
 
-Current result: 659 tests pass, ruff clean, strict mypy clean.
+Current result: 782 tests pass, ruff clean, strict mypy clean.
 
 ## Reference Source Policy
 

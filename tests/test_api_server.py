@@ -18,6 +18,7 @@ from alphabrief_api.routes.backtest import _clear_report_store
 from alphabrief_api.routes.brief import _clear_brief_store
 from alphabrief_api.routes.data import _close_store, _get_store
 from alphabrief_api.routes.macro import _clear_store as _clear_macro_store
+from alphabrief_api.routes.models import _clear_store as _clear_model_eval_store
 from alphabrief_api.routes.news import _clear_store as _clear_news_store
 from alphabrief_api.routes.paper import _reset_broker
 from alphabrief_api.routes.research import _clear_debate_store
@@ -46,6 +47,7 @@ def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
     _clear_debate_store()
     _clear_news_store()
     _clear_macro_store()
+    _clear_model_eval_store()
     _reset_broker()
     _reset_risk_gate()
     yield
