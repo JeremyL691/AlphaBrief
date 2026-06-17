@@ -260,6 +260,16 @@ Current behavior:
    audit entries.
 8. `ExecutionAuditLog` records risk decisions, order rejections, orders, fills,
    and portfolio updates.
+9. `RiskGate.evaluate()` (Phase 13.1) accepts an optional
+   `RiskContextDecision` and applies it in a **tighten-only** manner:
+   `risk_tags` are merged (deduplicated), the `requires_human_review`
+   flag is OR-merged with the static config flag, and `max_quantity`
+   is reduced by `suggested_max_position_multiplier` when that
+   multiplier is strictly below `1.0`. The risk context can never
+   re-approve a rejected intent, override the kill switch, lift the
+   live-trading lock, add symbols to the allowlist, or relax
+   `max_quantity`. When no `risk_context` is supplied the behavior is
+   byte-for-byte backward compatible with the Phase 12 contract.
 
 This layer is paper-only. It does not implement live broker adapters, live
 order routing, margin, leverage, partial fills, or external persistence.
