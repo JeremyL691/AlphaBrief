@@ -3,6 +3,13 @@
 Phase 7 Round 4: Module-level broker state is now DuckDB-persisted
 through ``PaperStore``.  The broker still runs the in-memory execution
 logic, but all data is saved to and read from the database.
+
+Phase 13 Round 4: ``POST /api/v1/paper/orders`` accepts an optional
+``risk_context`` (a :class:`RiskContextDecision`). When present, the
+context tightens the gate (tags merged, ``requires_human_review`` OR-ed,
+``max_quantity`` reduced). The merged decision's metadata is recorded
+in the audit log. If the merged decision requires human review, the
+broker blocks auto-execution and returns 422.
 """
 
 from __future__ import annotations
@@ -16,8 +23,10 @@ from alphabrief_execution import (
     ExecutionAuditLog,
     FillSimulator,
     PaperBroker,
+    PaperBrokerError,
     PortfolioState,
 )
+from alphabrief_risk import RiskContextDecision
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -90,6 +99,7 @@ class OrderRequest(BaseModel):
     target_position_pct: Decimal | None = None
     limit_price: Decimal | None = None
     rationale: str = "Paper order via API"
+    risk_context: RiskContextDecision | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +131,9 @@ class AuditEntryResponse(BaseModel):
     fill_id: str | None
     message: str
     created_at: str
+    risk_context_decision_id: str | None = None
+    risk_context_tags: list[str] = Field(default_factory=list)
+    risk_context_multiplier: float | None = None
 
 
 class AuditListResponse(BaseModel):
@@ -160,6 +173,41 @@ def get_portfolio() -> PortfolioResponse:
     )
 
 
+def _audit_entry_from_dict(e: dict[str, object]) -> AuditEntryResponse:
+    details_obj = e.get("details", {})
+    details_dict: dict[str, object] = (
+        details_obj if isinstance(details_obj, dict) else {}
+    )
+
+    def _str_or_none(key: str) -> str | None:
+        value = details_dict.get(key)
+        return value if isinstance(value, str) else None
+
+    def _tags() -> list[str]:
+        tags_raw = details_dict.get("risk_context_tags", [])
+        return [str(t) for t in tags_raw] if isinstance(tags_raw, list) else []
+
+    def _mult() -> float | None:
+        mult_raw = details_dict.get("risk_context_multiplier")
+        if isinstance(mult_raw, (int, float)):
+            return float(mult_raw)
+        return None
+
+    return AuditEntryResponse(
+        event_id=str(e["id"]),
+        event_type=str(e["event_type"]),
+        intent_id=_str_or_none("intent_id"),
+        risk_decision_id=_str_or_none("risk_decision_id"),
+        order_id=_str_or_none("order_id"),
+        fill_id=_str_or_none("fill_id"),
+        message=str(details_dict.get("message", "")),
+        created_at=str(e["created_at"]),
+        risk_context_decision_id=_str_or_none("risk_context_decision_id"),
+        risk_context_tags=_tags(),
+        risk_context_multiplier=_mult(),
+    )
+
+
 @router.get("/orders", response_model=AuditListResponse)
 def list_orders(
     status: str | None = Query(None, description="Filter by event_type"),
@@ -171,19 +219,7 @@ def list_orders(
     else:
         raw = store.get_audit_events()
     return AuditListResponse(
-        entries=[
-            AuditEntryResponse(
-                event_id=e["id"],
-                event_type=e["event_type"],
-                intent_id=e.get("details", {}).get("intent_id"),
-                risk_decision_id=e.get("details", {}).get("risk_decision_id"),
-                order_id=e.get("details", {}).get("order_id"),
-                fill_id=e.get("details", {}).get("fill_id"),
-                message=e.get("details", {}).get("message", ""),
-                created_at=e["created_at"],
-            )
-            for e in raw
-        ]
+        entries=[_audit_entry_from_dict(e) for e in raw]
     )
 
 
@@ -193,19 +229,7 @@ def get_audit_log() -> AuditListResponse:
     store = _get_paper_store()
     raw = store.get_audit_events()
     return AuditListResponse(
-        entries=[
-            AuditEntryResponse(
-                event_id=e["id"],
-                event_type=e["event_type"],
-                intent_id=e.get("details", {}).get("intent_id"),
-                risk_decision_id=e.get("details", {}).get("risk_decision_id"),
-                order_id=e.get("details", {}).get("order_id"),
-                fill_id=e.get("details", {}).get("fill_id"),
-                message=e.get("details", {}).get("message", ""),
-                created_at=e["created_at"],
-            )
-            for e in raw
-        ]
+        entries=[_audit_entry_from_dict(e) for e in raw]
     )
 
 
@@ -216,13 +240,18 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
     The OrderIntent is evaluated by RiskGate, and if approved the
     PaperBroker executes it.  All audit events and the resulting
     portfolio snapshot are persisted to DuckDB.
+
+    An optional ``risk_context`` (a
+    :class:`alphabrief_risk.RiskContextDecision`) is applied in a
+    **tighten-only** manner to the gate. If the merged decision
+    requires human review, auto-execution is blocked and a 422 is
+    returned.
     """
     broker = _get_broker()
     gate = _get_risk_gate()
     store = _get_paper_store()
     now = datetime.now(UTC)
 
-    # Build OrderIntent
     intent = OrderIntent(
         intent_id=f"intent_{uuid.uuid4().hex[:12]}",
         source="manual",
@@ -236,13 +265,12 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
         created_at=now,
     )
 
-    # Reference price (placeholder — will be fed from market data)
     reference_price = Decimal("100")
 
-    # Risk check
     decision = gate.evaluate(
         intent,
         estimated_price=reference_price,
+        risk_context=body.risk_context,
     )
     store.save_audit_event(
         event_type="risk_decision_recorded",
@@ -253,6 +281,21 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
             "approved": decision.approved,
             "reason": decision.reason,
             "message": "risk decision recorded",
+            "risk_context_decision_id": (
+                body.risk_context.decision_id
+                if body.risk_context is not None
+                else None
+            ),
+            "risk_context_tags": (
+                list(body.risk_context.risk_tags)
+                if body.risk_context is not None
+                else []
+            ),
+            "risk_context_multiplier": (
+                body.risk_context.suggested_max_position_multiplier
+                if body.risk_context is not None
+                else None
+            ),
         },
     )
 
@@ -262,11 +305,26 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
             detail=f"RiskGate rejected: {decision.reason}",
         )
 
-    # Execute via PaperBroker
-    reference_price = Decimal("100")  # Placeholder — will be fed from market data
-    result = broker.submit(intent, decision, reference_price=reference_price)
+    if decision.requires_human_review:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "RiskGate requires human review; auto-execution blocked. "
+                "Approve the decision manually or remove the risk_context."
+            ),
+        )
 
-    # Persist audit events from broker's audit log
+    reference_price = Decimal("100")  # Placeholder — will be fed from market data
+    try:
+        result = broker.submit(
+            intent,
+            decision,
+            reference_price=reference_price,
+            risk_context=body.risk_context,
+        )
+    except PaperBrokerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     for entry in broker.audit_log.entries:
         store.save_audit_event(
             event_type=entry.event_type,
@@ -277,10 +335,12 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
                 "order_id": entry.order_id,
                 "fill_id": entry.fill_id,
                 "message": entry.message,
+                "risk_context_decision_id": entry.risk_context_decision_id,
+                "risk_context_tags": list(entry.risk_context_tags),
+                "risk_context_multiplier": entry.risk_context_multiplier,
             },
         )
 
-    # Persist portfolio snapshot
     portfolio = result.portfolio
     positions_dict = {
         sym: {
@@ -309,6 +369,11 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
         "quantity": str(result.order.quantity),
         "status": "filled",
         "price": str(result.fill.price),
+        "applied_risk_context": (
+            body.risk_context.decision_id
+            if body.risk_context is not None
+            else None
+        ),
     }
 
 

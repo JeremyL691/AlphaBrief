@@ -47,6 +47,7 @@ _NAV_LINKS = """
   <a href="/dashboard/macro">Macro</a>
   <a href="/dashboard/brief">Briefs</a>
   <a href="/dashboard/debate">Debate</a>
+  <a href="/dashboard/models">Models</a>
 </nav>
 """.strip()
 
@@ -124,6 +125,10 @@ _DASHBOARD_HTML = f"""<!DOCTYPE html>
       <h2>Recent Fills</h2>
       <div id="recent-fills" class="loading">Loading...</div>
     </div>
+    <div class="card" style="grid-column: 1 / -1;">
+      <h2>Model Performance</h2>
+      <div id="model-performance" class="loading">Loading...</div>
+    </div>
   </div>
 </main>
 <footer>AlphaBrief v0.0.0 &mdash; <a href="/docs" style="color: #38bdf8;">API Docs</a> &middot; <a href="/redoc" style="color: #38bdf8;">ReDoc</a></footer>
@@ -184,6 +189,29 @@ async function loadDashboard() {{
   document.getElementById('risk-status').innerHTML = risk
     ? `<div class="status"><span class="status-dot ${{risk.kill_switch_active ? 'warn' : 'ok'}}"></span>${{risk.kill_switch_active ? 'Kill switch ACTIVE' : 'Risk gate OK'}}</div><div class="label">Trading: ${{risk.config.trading_enabled ? 'Enabled' : 'Disabled'}}</div>`
     : '<div class="error">Failed to load</div>';
+
+  const modelsData = await fetchJSON('/api/v1/models/evaluations?limit=20');
+  const evaluations = modelsData?.entries || [];
+  const modelIds = Array.from(new Set(evaluations.map(e => e.model_id))).slice(0, 6);
+  const modelCards = await Promise.all(modelIds.map(id => fetchJSON('/api/v1/models/performance/' + encodeURIComponent(id))));
+  const cardsHtml = modelCards
+    .filter(c => c !== null)
+    .map(card => {{
+      const tasks = Object.values(card.evaluations_by_task || {{}});
+      const latest = tasks[0];
+      const rate = latest ? Math.round((latest.schema_pass_rate || 0) * 100) : null;
+      const colorClass = rate === null ? 'warn' : rate >= 90 ? 'ok' : rate >= 70 ? 'warn' : 'warn';
+      const rateStr = rate === null ? 'No data' : rate + '%';
+      return `<div class="card" style="background: #0f172a; border: 1px solid #475569;">
+        <h2>${{escapeHtml(card.model_id)}}</h2>
+        <div class="value">${{rateStr}}</div>
+        <div class="label">schema pass rate (latest)</div>
+        <div class="status"><span class="status-dot ${{colorClass}}"></span>${{tasks.length}} task(s) evaluated</div>
+      </div>`;
+    }}).join('');
+  document.getElementById('model-performance').innerHTML = modelCards.length === 0
+    ? '<div class="label">No model evaluations yet. POST /api/v1/models/evaluate to run one.</div>'
+    : '<div class="grid">' + cardsHtml + '</div>';
 }}
 
 function drawEquityCurve(hasPositions) {{
@@ -424,6 +452,103 @@ loadDebates();
 </html>"""
 
 
+_MODELS_HTML = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Models Dashboard</title>
+<style>
+{_BASE_STYLES}
+</style>
+</head>
+<body>
+<header>
+  <h1>Model Performance</h1>
+  <p>Evaluation history across providers and task types</p>
+</header>
+{_NAV_LINKS}
+<main>
+  <div class="card" style="grid-column: 1 / -1;">
+    <h2>Recent Evaluations</h2>
+    <div id="evaluations" class="loading">Loading...</div>
+  </div>
+  <div class="card" style="grid-column: 1 / -1;">
+    <h2>Performance by Model</h2>
+    <div id="by-model" class="loading">Loading...</div>
+  </div>
+</main>
+<footer><a href="/dashboard" style="color: #38bdf8;">Back to dashboard</a></footer>
+<script>
+{_COMMON_SCRIPTS}
+
+function rateColor(rate) {{
+  if (rate === null || rate === undefined) return 'warn';
+  if (rate >= 0.9) return 'ok';
+  if (rate >= 0.7) return 'warn';
+  return 'warn';
+}}
+
+async function loadModels() {{
+  const data = await fetchJSON('/api/v1/models/evaluations?limit=100');
+  const list = data?.entries || [];
+  const html = list.length === 0
+    ? '<div class="label">No evaluations yet. Run ``alphabrief model evaluate`` to create one.</div>'
+    : '<table><thead><tr><th>Evaluated</th><th>Model</th><th>Task</th><th>JSON%</th><th>Schema%</th><th>Latency (ms)</th><th>Samples</th></tr></thead><tbody>'
+      + list.map(e => {{
+        const json = e.json_valid_rate !== null ? Math.round(e.json_valid_rate * 100) + '%' : '-';
+        const schema = e.schema_pass_rate !== null ? Math.round(e.schema_pass_rate * 100) + '%' : '-';
+        const latency = e.avg_latency_ms !== null ? e.avg_latency_ms : '-';
+        return `<tr>
+          <td>${{escapeHtml(e.evaluated_at)}}</td>
+          <td>${{escapeHtml(e.model_id)}}</td>
+          <td>${{escapeHtml(e.task_type)}}</td>
+          <td>${{escapeHtml(json)}}</td>
+          <td>${{escapeHtml(schema)}}</td>
+          <td>${{escapeHtml(String(latency))}}</td>
+          <td>${{e.sample_count}}</td>
+        </tr>`;
+      }}).join('')
+      + '</tbody></table>';
+  document.getElementById('evaluations').innerHTML = html;
+
+  const modelIds = Array.from(new Set(list.map(e => e.model_id)));
+  const perfData = await Promise.all(
+    modelIds.map(id => fetchJSON('/api/v1/models/performance/' + encodeURIComponent(id)))
+  );
+  const byModelHtml = perfData
+    .filter(p => p !== null)
+    .map(p => {{
+      const tasks = Object.entries(p.evaluations_by_task || {{}});
+      const taskRows = tasks.map(([task, ev]) => {{
+        const sp = ev.schema_pass_rate !== null ? Math.round(ev.schema_pass_rate * 100) + '%' : '-';
+        return `<tr>
+          <td>${{escapeHtml(task)}}</td>
+          <td>${{escapeHtml(sp)}}</td>
+          <td>${{escapeHtml(String(ev.sample_count))}}</td>
+          <td>${{escapeHtml(String(ev.avg_latency_ms ?? '-'))}}</td>
+        </tr>`;
+      }}).join('');
+      return `<div class="card" style="background: #0f172a; border: 1px solid #475569;">
+        <h2>${{escapeHtml(p.model_id)}}</h2>
+        <div class="label">Latest: ${{escapeHtml(p.latest_evaluated_at || '-')}}</div>
+        <table style="margin-top: 0.5rem;">
+          <thead><tr><th>Task</th><th>Schema pass</th><th>Samples</th><th>Latency</th></tr></thead>
+          <tbody>${{taskRows}}</tbody>
+        </table>
+      </div>`;
+    }}).join('');
+  document.getElementById('by-model').innerHTML = perfData.filter(p => p !== null).length === 0
+    ? '<div class="label">No model performance data yet.</div>'
+    : '<div class="grid">' + byModelHtml + '</div>';
+}}
+
+loadModels();
+</script>
+</body>
+</html>"""
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 def get_dashboard() -> HTMLResponse:
     """Serve the AlphaBrief web dashboard main page."""
@@ -452,6 +577,12 @@ def get_dashboard_brief() -> HTMLResponse:
 def get_dashboard_debate() -> HTMLResponse:
     """Serve the debate dashboard page."""
     return HTMLResponse(content=_DEBATE_HTML)
+
+
+@router.get("/dashboard/models", response_class=HTMLResponse)
+def get_dashboard_models() -> HTMLResponse:
+    """Serve the model evaluation dashboard page."""
+    return HTMLResponse(content=_MODELS_HTML)
 
 
 __all__ = ["router"]

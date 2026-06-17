@@ -25,6 +25,7 @@ _reference_sources/
 # Local agent / dev-tool state (not part of the project)
 .hermes/
 .omo/
+.codegraph/
 
 # Per-round development plans stay local, except the scaffold record
 # required by repository scaffold tests.
