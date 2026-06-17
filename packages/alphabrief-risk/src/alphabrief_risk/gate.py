@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from alphabrief_core import OrderIntent, RiskDecision
 
+from alphabrief_risk.context import RiskContextDecision
 from alphabrief_risk.kill_switch import KillSwitch
 
 
@@ -50,8 +51,34 @@ class RiskGate:
         estimated_price: Decimal | None = None,
         estimated_quantity: Decimal | None = None,
         data_quality_passed: bool = True,
+        risk_context: RiskContextDecision | None = None,
     ) -> RiskDecision:
-        """Return a complete RiskDecision for an order intent."""
+        """Return a complete RiskDecision for an order intent.
+
+        If ``risk_context`` is provided, it is applied in a
+        **tighten-only** manner: it can never re-approve a decision
+        that the base checks already rejected, it can never relax the
+        human-review flag, and it can never increase ``max_quantity``
+        above the configured limit.
+
+        Specifically, when ``risk_context`` is set the layer may:
+
+        * merge ``risk_context.risk_tags`` into the decision tags
+          (deduplicated, original order preserved);
+        * flip the final ``requires_human_review`` flag on when
+          ``risk_context.requires_human_review`` is ``True`` (the
+          static ``RiskLimitConfig.require_human_review`` flag is
+          honored as well, so the merge is effectively an OR);
+        * reduce ``max_quantity`` by
+          ``risk_context.suggested_max_position_multiplier`` when that
+          multiplier is strictly below ``1.0`` and the configured
+          ``max_order_quantity`` is set (Decimal-first, no rounding,
+          never relaxed).
+
+        The risk context **cannot** override the kill switch, lift
+        the live-trading lock, add symbols to the allowlist, or
+        re-approve a rejected intent.
+        """
 
         failures: list[str] = []
         tags: list[str] = []
@@ -107,14 +134,34 @@ class RiskGate:
         if approved:
             tags.append("approved")
 
+        max_quantity = self.limits.max_order_quantity
+        requires_human_review = self.limits.require_human_review
+
+        if risk_context is not None:
+            for tag in risk_context.risk_tags:
+                if tag not in tags:
+                    tags.append(tag)
+            if risk_context.requires_human_review:
+                requires_human_review = True
+            if (
+                0.0 < risk_context.suggested_max_position_multiplier < 1.0
+                and max_quantity is not None
+            ):
+                multiplier = Decimal(
+                    str(risk_context.suggested_max_position_multiplier)
+                )
+                reduced = max_quantity * multiplier
+                if reduced < max_quantity:
+                    max_quantity = reduced
+
         return RiskDecision(
             decision_id=self.decision_id_factory(),
             intent_id=intent.intent_id,
             approved=approved,
             reason="approved" if approved else "; ".join(failures),
-            max_quantity=self.limits.max_order_quantity,
+            max_quantity=max_quantity,
             risk_tags=tags,
-            requires_human_review=self.limits.require_human_review,
+            requires_human_review=requires_human_review,
             source_module="alphabrief_risk",
             created_at=self.clock(),
         )

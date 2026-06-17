@@ -11,7 +11,9 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-Phases 1–12 complete. 659 tests pass. Ruff and strict mypy are clean.
+Phases 1–12 complete. Phase 13.1 in progress (RiskGate accepts
+optional `RiskContextDecision`). 679 tests pass. Ruff and strict mypy
+are clean.
 
 - **Phase 1 — Core.** Domain models, CSV/Parquet OHLCV loaders, in-memory
   data quality checks, no-lookahead features, StrategySpec schema, and a
