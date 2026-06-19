@@ -48,6 +48,7 @@ _NAV_LINKS = """
   <a href="/dashboard/brief">Briefs</a>
   <a href="/dashboard/debate">Debate</a>
   <a href="/dashboard/models">Models</a>
+  <a href="/dashboard/strategies">Strategies</a>
 </nav>
 """.strip()
 
@@ -583,6 +584,127 @@ def get_dashboard_debate() -> HTMLResponse:
 def get_dashboard_models() -> HTMLResponse:
     """Serve the model evaluation dashboard page."""
     return HTMLResponse(content=_MODELS_HTML)
+
+
+_STRATEGIES_HTML = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strategies Dashboard</title>
+<style>
+{_BASE_STYLES}
+.badge {{
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}}
+.badge.on {{ background: #14532d; color: #bbf7d0; }}
+.badge.off {{ background: #1f2937; color: #9ca3af; }}
+.advisory {{
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-style: italic;
+}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Strategy Registry</h1>
+  <p>Persisted StrategySpec objects and their advisory signal history</p>
+</header>
+{_NAV_LINKS}
+<main>
+  <div class="card">
+    <h2>Strategies</h2>
+    <div id="strategies" class="loading">Loading...</div>
+    <p class="advisory">The <code>enabled</code> flag is advisory only. It does not block orders and is not consulted by RiskGate or PaperBroker.</p>
+  </div>
+  <div class="card" id="strategy-detail" style="display:none;">
+    <h2>Detail</h2>
+    <div id="strategy-detail-content"></div>
+  </div>
+  <div class="card">
+    <h2>Signal Counts</h2>
+    <div id="signal-counts" class="loading">Loading...</div>
+    <p class="advisory">Signal history is a write-only advisory log; it never modifies risk decisions.</p>
+  </div>
+</main>
+<footer><a href="/dashboard" style="color: #38bdf8;">Back to dashboard</a></footer>
+<script>
+{_COMMON_SCRIPTS}
+
+async function loadStrategies() {{
+  const data = await fetchJSON('/api/v1/strategies/specs');
+  const list = data?.strategies || [];
+  const html = list.length === 0
+    ? '<div class="label">No strategies yet. POST /api/v1/strategies/specs or run <code>alphabrief strategy save</code> to create one.</div>'
+    : '<table><thead><tr><th>Strategy ID</th><th>Name</th><th>Version</th><th>Enabled</th><th>Updated</th><th></th></tr></thead><tbody>'
+      + list.map(s => {{
+          const badge = s.enabled
+            ? '<span class="badge on">Enabled</span>'
+            : '<span class="badge off">Disabled</span>';
+          return `<tr>
+            <td>${{escapeHtml(s.strategy_id)}}</td>
+            <td>${{escapeHtml(s.name)}}</td>
+            <td>${{escapeHtml(s.version)}}</td>
+            <td>${{badge}}</td>
+            <td>${{escapeHtml(s.updated_at)}}</td>
+            <td><a href="#" data-id="${{escapeHtml(s.strategy_id)}}" class="strategy-link">View</a></td>
+          </tr>`;
+        }}).join('')
+      + '</tbody></table>';
+  document.getElementById('strategies').innerHTML = html;
+  document.querySelectorAll('.strategy-link').forEach(el => {{
+    el.addEventListener('click', async (e) => {{
+      e.preventDefault();
+      const id = e.target.dataset.id;
+      const detail = await fetchJSON('/api/v1/strategies/specs/' + encodeURIComponent(id));
+      const card = document.getElementById('strategy-detail');
+      const content = document.getElementById('strategy-detail-content');
+      if (detail) {{
+        content.innerHTML = `<pre style="white-space: pre-wrap; color: #cbd5e1; font-size: 0.8rem;">${{escapeHtml(JSON.stringify(detail, null, 2))}}</pre>`;
+        card.style.display = 'block';
+      }}
+    }});
+  }});
+
+  const enabled = await fetchJSON('/api/v1/strategies/enabled');
+  const ids = list.map(s => s.strategy_id);
+  const counts = await Promise.all(
+    ids.map(id => fetchJSON('/api/v1/strategies/' + encodeURIComponent(id) + '/signals/count'))
+  );
+  const rows = ids.map((id, i) => ({{
+    id,
+    count: counts[i]?.count ?? 0,
+    isEnabled: (enabled?.strategy_ids || []).includes(id),
+  }}));
+  const countHtml = rows.length === 0
+    ? '<div class="label">No strategies to summarize.</div>'
+    : '<table><thead><tr><th>Strategy ID</th><th>Signals recorded</th><th>Advisory activation</th></tr></thead><tbody>'
+      + rows.map(r => `<tr>
+          <td>${{escapeHtml(r.id)}}</td>
+          <td>${{r.count}}</td>
+          <td>${{r.isEnabled ? '<span class="badge on">Enabled</span>' : '<span class="badge off">Disabled</span>'}}</td>
+        </tr>`).join('')
+      + '</tbody></table>';
+  document.getElementById('signal-counts').innerHTML = countHtml;
+}}
+
+loadStrategies();
+</script>
+</body>
+</html>"""
+
+
+@router.get("/dashboard/strategies", response_class=HTMLResponse)
+def get_dashboard_strategies() -> HTMLResponse:
+    """Serve the strategy registry dashboard page."""
+    return HTMLResponse(content=_STRATEGIES_HTML)
 
 
 __all__ = ["router"]
