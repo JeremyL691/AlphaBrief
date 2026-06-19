@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.100,<1",
     "pydantic>=2.10,<3",
     "pytz>=2024",
+    "pyyaml>=6.0,<7",
     "typer>=0.12,<1",
     "uvicorn[standard]>=0.20,<1",
 ]
@@ -22,6 +23,7 @@ dev = [
     "mypy>=1.10",
     "pytest>=8.0",
     "ruff>=0.5",
+    "types-PyYAML>=6.0",
 ]
 
 [project.scripts]
