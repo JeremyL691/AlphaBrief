@@ -1132,7 +1132,7 @@ def test_dashboard_returns_200_and_html() -> None:
     assert response.status_code == 200
     content = response.text
     assert "<!DOCTYPE html>" in content
-    assert "AlphaBrief Dashboard" in content
+    assert "Main - AlphaBrief" in content
     assert "Project Status" in content
     assert "Data Symbols" in content
     assert "Last Backtest" in content
