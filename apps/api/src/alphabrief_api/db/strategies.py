@@ -176,18 +176,22 @@ class StrategySpecStore:
     def list_specs(
         self,
         *,
-        enabled_only: bool = False,
+        enabled_only: bool | None = None,
     ) -> list[dict[str, Any]]:
         """Return summary rows ordered by strategy_id ascending.
 
-        ``enabled_only=True`` filters to rows with ``enabled = TRUE``.
+        ``enabled_only=True`` filters to rows with ``enabled = TRUE``;
+        ``enabled_only=False`` filters to rows with ``enabled = FALSE``;
+        ``None`` returns all rows.
         """
         sql = """SELECT strategy_id, name, version, enabled,
                         spec_json, created_at, updated_at
                  FROM strategy_specs"""
         params: list[Any] = []
-        if enabled_only:
+        if enabled_only is True:
             sql += " WHERE enabled = TRUE"
+        elif enabled_only is False:
+            sql += " WHERE enabled = FALSE"
         sql += " ORDER BY strategy_id ASC"
 
         rows = self._conn.execute(sql, params).fetchall()
