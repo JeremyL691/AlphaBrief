@@ -19,6 +19,14 @@ Commands
   block orders, gate execution, or affect risk allowlists.
 - ``strategy delete <strategy_id>``
   Remove a strategy from the registry.
+- ``strategy record-signal --from-yaml <path> [--source <label>]``
+  Persist a signal to the advisory history table.
+- ``strategy list-signals [--strategy-id] [--symbol] [--source] [--limit]``
+  List signal history rows (advisory only).
+- ``strategy show-signal <signal_id>``
+  Print one signal record (including the full payload) as JSON.
+- ``strategy count-signals <strategy_id>``
+  Print the number of stored signals for a strategy.
 
 The CLI never imports RiskGate, PaperBroker, broker code, or
 ``_reference_sources``. It only persists and reads registry rows.
@@ -34,7 +42,7 @@ from typing import Any
 
 import typer
 import yaml
-from alphabrief_api.db import StrategySpecStore
+from alphabrief_api.db import StrategySignalStore, StrategySpecStore
 from alphabrief_strategy import StrategySpec
 
 strategy_app = typer.Typer(help="Manage the local strategy registry.")
@@ -53,6 +61,16 @@ def _open_store() -> StrategySpecStore:
         db_dir.mkdir(parents=True, exist_ok=True)
         return StrategySpecStore(db_path=db_dir / "alphabrief.db")
     return StrategySpecStore()
+
+
+def _open_signal_store() -> StrategySignalStore:
+    """Return a signal store rooted at ``$ALPHABRIEF_DATA_DIR`` (if set)."""
+    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
+    if db_dir_str:
+        db_dir = Path(db_dir_str)
+        db_dir.mkdir(parents=True, exist_ok=True)
+        return StrategySignalStore(db_path=db_dir / "alphabrief.db")
+    return StrategySignalStore()
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +308,192 @@ def delete_cmd(
         sys.exit(1)
     print(f"strategy_id: {strategy_id}")
     print("deleted: True")
+
+
+# ---------------------------------------------------------------------------
+# Signal history (advisory)
+# ---------------------------------------------------------------------------
+
+
+_VALID_SOURCES: frozenset[str] = frozenset({"backtest", "manual", "other"})
+
+
+@strategy_app.command("record-signal")
+def record_signal_cmd(
+    from_yaml: Path | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--from-yaml",
+        help="Path to a YAML file containing a signal payload.",
+    ),
+    from_json: Path | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--from-json",
+        help="Path to a JSON file containing a signal payload.",
+    ),
+    source: str = typer.Option(  # noqa: B008 - typer pattern
+        "other",
+        "--source",
+        help="Source label: 'backtest', 'manual', or 'other'.",
+    ),
+) -> None:
+    """Persist a single signal to the advisory history.
+
+    The payload is validated as a signal (``signal_id``,
+    ``strategy_id``, ``symbol``, ``timestamp``, ``direction``,
+    ``confidence``, ``horizon``). The record is purely advisory.
+    """
+    if from_yaml is None and from_json is None:
+        print(
+            "error: provide --from-yaml or --from-json",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if from_yaml is not None and from_json is not None:
+        print(
+            "error: --from-yaml and --from-json are mutually exclusive",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if source not in _VALID_SOURCES:
+        print(
+            f"error: --source must be one of {sorted(_VALID_SOURCES)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    src = from_yaml if from_yaml is not None else from_json
+    assert src is not None
+    try:
+        raw = src.read_text()
+    except OSError as exc:
+        print(f"error: could not read {src}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        if from_yaml is not None:
+            payload: Any = yaml.safe_load(raw)
+        else:
+            payload = json.loads(raw)
+    except (yaml.YAMLError, json.JSONDecodeError) as exc:
+        print(f"error: invalid payload in {src}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if not isinstance(payload, dict):
+        print(
+            f"error: payload in {src} must be a JSON/YAML object",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        store = _open_signal_store()
+        signal_id = store.save_signal(payload, source=source)
+    except ValueError as exc:
+        print(f"error: invalid signal payload: {exc}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        try:
+            store.close()
+        except (NameError, UnboundLocalError):
+            pass
+
+    print(f"signal_id: {signal_id}")
+    print(f"source: {source}")
+
+
+@strategy_app.command("list-signals")
+def list_signals_cmd(
+    strategy_id: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--strategy-id",
+        help="Filter to a single strategy id.",
+    ),
+    symbol: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--symbol",
+        help="Filter to a single symbol.",
+    ),
+    source: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--source",
+        help="Filter by source label.",
+    ),
+    limit: int | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--limit",
+        min=1,
+        help="Cap on the number of returned rows.",
+    ),
+    pretty: bool = typer.Option(  # noqa: B008 - typer pattern
+        True,
+        "--pretty/--compact",
+    ),
+) -> None:
+    """List signal history rows (advisory only)."""
+    store = _open_signal_store()
+    try:
+        rows = store.list_signals(
+            strategy_id=strategy_id,
+            symbol=symbol,
+            source=source,
+            limit=limit,
+        )
+    finally:
+        store.close()
+
+    indent = 2 if pretty else None
+    json.dump(
+        {"signals": rows},
+        sys.stdout,
+        indent=indent,
+        sort_keys=True,
+        default=str,
+    )
+    sys.stdout.write("\n")
+
+
+@strategy_app.command("show-signal")
+def show_signal_cmd(
+    signal_id: str = typer.Argument(  # noqa: B008 - typer pattern
+        ...,
+        help="Identifier of the signal to show.",
+    ),
+    pretty: bool = typer.Option(  # noqa: B008 - typer pattern
+        True,
+        "--pretty/--compact",
+    ),
+) -> None:
+    """Print one signal record (including the full payload) as JSON."""
+    store = _open_signal_store()
+    try:
+        record = store.get_signal(signal_id)
+    finally:
+        store.close()
+
+    if record is None:
+        print(f"error: signal {signal_id!r} not found", file=sys.stderr)
+        sys.exit(1)
+
+    indent = 2 if pretty else None
+    json.dump(record, sys.stdout, indent=indent, sort_keys=True, default=str)
+    sys.stdout.write("\n")
+
+
+@strategy_app.command("count-signals")
+def count_signals_cmd(
+    strategy_id: str = typer.Argument(  # noqa: B008 - typer pattern
+        ...,
+        help="Strategy id whose signal count to show.",
+    ),
+) -> None:
+    """Print the number of stored signals for a strategy."""
+    store = _open_signal_store()
+    try:
+        count = store.count_signals(strategy_id=strategy_id)
+    finally:
+        store.close()
+    print(f"strategy_id: {strategy_id}")
+    print(f"count: {count}")
 
 
 __all__ = ["strategy_app"]
