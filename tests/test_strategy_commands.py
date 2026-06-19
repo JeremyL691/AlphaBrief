@@ -311,3 +311,176 @@ def test_delete_missing_exits_nonzero() -> None:
     result = runner.invoke(strategy_app, ["delete", "ghost"])
     assert result.exit_code != 0
     assert "not found" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# record-signal / list-signals / show-signal / count-signals
+# ---------------------------------------------------------------------------
+
+
+def _signal(
+    signal_id: str = "sig_1",
+    strategy_id: str = "ema_trend_v1",
+    symbol: str = "BTC-USD",
+    ts: str = "2024-06-01T00:00:00+00:00",
+    direction: str = "long",
+    confidence: float = 0.8,
+    horizon: str = "1d",
+) -> dict[str, object]:
+    return {
+        "signal_id": signal_id,
+        "strategy_id": strategy_id,
+        "symbol": symbol,
+        "timestamp": ts,
+        "direction": direction,
+        "confidence": confidence,
+        "horizon": horizon,
+        "rationale": f"rationale for {signal_id}",
+    }
+
+
+def test_record_signal_from_yaml_persists(tmp_path: Path) -> None:
+    sig_path = tmp_path / "sig.yaml"
+    sig_path.write_text(yaml.safe_dump(_signal()), encoding="utf-8")
+
+    result = runner.invoke(
+        strategy_app,
+        ["record-signal", "--from-yaml", str(sig_path)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "signal_id: sig_1" in result.output
+    assert "source: other" in result.output
+
+    show = runner.invoke(strategy_app, ["show-signal", "sig_1", "--compact"])
+    body = json.loads(show.stdout.strip())
+    assert body["strategy_id"] == "ema_trend_v1"
+
+
+def test_record_signal_from_json_with_source(tmp_path: Path) -> None:
+    sig_path = tmp_path / "sig.json"
+    sig_path.write_text(json.dumps(_signal(signal_id="s1")), encoding="utf-8")
+
+    result = runner.invoke(
+        strategy_app,
+        [
+            "record-signal",
+            "--from-json",
+            str(sig_path),
+            "--source",
+            "backtest",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "source: backtest" in result.output
+
+
+def test_record_signal_requires_input() -> None:
+    result = runner.invoke(strategy_app, ["record-signal"])
+    assert result.exit_code != 0
+    assert "--from-yaml" in result.stderr or "or --from-json" in result.stderr
+
+
+def test_record_signal_rejects_invalid_source(tmp_path: Path) -> None:
+    sig_path = tmp_path / "sig.json"
+    sig_path.write_text(json.dumps(_signal()), encoding="utf-8")
+    result = runner.invoke(
+        strategy_app,
+        [
+            "record-signal",
+            "--from-json",
+            str(sig_path),
+            "--source",
+            "bogus",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "source" in result.stderr
+
+
+def test_record_signal_rejects_invalid_payload(tmp_path: Path) -> None:
+    bad = _signal()
+    del bad["confidence"]
+    sig_path = tmp_path / "bad.json"
+    sig_path.write_text(json.dumps(bad), encoding="utf-8")
+
+    result = runner.invoke(
+        strategy_app, ["record-signal", "--from-json", str(sig_path)]
+    )
+    assert result.exit_code != 0
+    assert "confidence" in result.stderr
+
+
+def test_list_signals_empty() -> None:
+    result = runner.invoke(strategy_app, ["list-signals", "--compact"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout.strip()) == {"signals": []}
+
+
+def test_list_signals_filters(tmp_path: Path) -> None:
+    for sid, src in [("a", "backtest"), ("b", "manual"), ("c", "other")]:
+        p = tmp_path / f"{sid}.json"
+        strategy = "s1" if sid != "c" else "s2"
+        p.write_text(
+            json.dumps(_signal(signal_id=sid, strategy_id=strategy)),
+            encoding="utf-8",
+        )
+        result = runner.invoke(
+            strategy_app,
+            [
+                "record-signal",
+                "--from-json",
+                str(p),
+                "--source",
+                src,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+    body = json.loads(
+        runner.invoke(strategy_app, ["list-signals", "--compact"]).stdout.strip()
+    )
+    assert len(body["signals"]) == 3
+
+    body = json.loads(
+        runner.invoke(
+            strategy_app,
+            ["list-signals", "--strategy-id", "s1", "--compact"],
+        ).stdout.strip()
+    )
+    assert len(body["signals"]) == 2
+
+    body = json.loads(
+        runner.invoke(
+            strategy_app,
+            ["list-signals", "--source", "manual", "--compact"],
+        ).stdout.strip()
+    )
+    assert len(body["signals"]) == 1
+    assert body["signals"][0]["signal_id"] == "b"
+
+
+def test_show_signal_missing(tmp_path: Path) -> None:
+    result = runner.invoke(strategy_app, ["show-signal", "ghost"])
+    assert result.exit_code != 0
+    assert "not found" in result.stderr
+
+
+def test_count_signals(tmp_path: Path) -> None:
+    for i in range(3):
+        p = tmp_path / f"s{i}.json"
+        p.write_text(
+            json.dumps(_signal(signal_id=f"s{i}", strategy_id="s1")),
+            encoding="utf-8",
+        )
+        runner.invoke(strategy_app, ["record-signal", "--from-json", str(p)])
+
+    p = tmp_path / "x.json"
+    p.write_text(json.dumps(_signal(signal_id="x", strategy_id="s2")), encoding="utf-8")
+    runner.invoke(strategy_app, ["record-signal", "--from-json", str(p)])
+
+    result = runner.invoke(strategy_app, ["count-signals", "s1"])
+    assert result.exit_code == 0
+    assert "count: 3" in result.output
+
+    result_zero = runner.invoke(strategy_app, ["count-signals", "empty"])
+    assert "count: 0" in result_zero.output
