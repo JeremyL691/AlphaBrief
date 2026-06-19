@@ -546,3 +546,117 @@ Status: complete. Rounds 14.1–14.7 complete.
 - [x] `mypy packages apps tests` clean (156 source files).
 - [x] No files under `_reference_sources/` opened or imported.
 - [x] No risk / execution / trading files modified.
+
+## Phase 15: Strategy Lifecycle Management
+
+Goal: make strategies first-class persistent artifacts. Strategies
+become durable in the system: they can be saved, listed, queried,
+enabled/disabled, deleted, and have their signal history replayed.
+The activation flag and the signal history are **strictly advisory**
+and never modify RiskGate semantics or block orders.
+
+Status: complete. Rounds 15.1–15.7 complete.
+
+### Round 15.1 — StrategySpecStore
+
+1. Added `strategy_specs` DuckDB table with `strategy_id` (PK),
+   `name`, `version`, `enabled`, `spec_json`, `created_at`,
+   `updated_at`.
+2. `StrategySpecStore` exposes `save_spec`, `set_enabled`,
+   `delete_spec`, `get_spec`, `list_specs`, `list_enabled_strategy_ids`,
+   `exists`, `count`, `clear`, `close`.
+3. 27 new tests in `tests/test_strategy_store.py`.
+
+### Round 15.2 — API endpoints
+
+1. `POST /api/v1/strategies/specs` — create or replace a spec.
+2. `GET /api/v1/strategies/specs` — list summaries
+   (`?enabled=true|false`).
+3. `GET /api/v1/strategies/specs/{id}` — full record.
+4. `PATCH /api/v1/strategies/specs/{id}` — flip the activation flag.
+5. `DELETE /api/v1/strategies/specs/{id}` — remove.
+6. 24 new tests in `tests/test_strategies_api.py`.
+
+### Round 15.3 — CLI commands
+
+1. `alphabrief strategy save --from-yaml <path>` (also `--from-json`,
+   `--enable` / `--disable`).
+2. `alphabrief strategy list [--enabled|--disabled]`.
+3. `alphabrief strategy show <strategy_id>`.
+4. `alphabrief strategy enable <strategy_id>` /
+   `strategy disable <strategy_id>`.
+5. `alphabrief strategy delete <strategy_id>`.
+6. 19 new tests in `tests/test_strategy_commands.py`. PyYAML added
+   as a runtime dep (was already a transitive).
+
+### Round 15.4 — Activation flag (advisory surface)
+
+1. `GET /api/v1/strategies/enabled` — read-only advisory surface
+   returning the list of strategy_ids whose ``enabled`` flag is
+   ``True``.
+2. The flag remains **strictly advisory**:
+   `RiskGate`, `PaperBroker`, and live-trading never consult it.
+   The RiskGate has its own `enabled_strategies` allowlist that is
+   configured separately and is not wired to the registry.
+3. 5 new tests in `tests/test_strategies_api.py` including a
+   dedicated advisory-safety test that exercises RiskGate to prove
+   the registry flag cannot grant, relax, or block risk decisions.
+
+### Round 15.5 — Strategy signal history persistence
+
+1. Added `strategy_signals` DuckDB table with `signal_id` (PK),
+   `strategy_id`, `symbol`, `signal_ts`, `direction`, `confidence`,
+   `horizon`, `source`, `signal_json`, `created_at`. Index on
+   `(strategy_id, signal_ts DESC)`.
+2. `StrategySignalStore` with `save_signal`, `get_signal`,
+   `list_signals`, `count_signals`, `list_strategy_ids`,
+   `delete_signal`, `clear`, `close`. Full validation of
+   `signal_id`, `strategy_id`, `symbol`, `timestamp`, `direction`,
+   `confidence` (in `[0, 1]`, not bool), `horizon`. Allowed sources:
+   `backtest`, `manual`, `other`.
+3. API endpoints:
+   - `POST   /api/v1/strategies/signals`
+   - `GET    /api/v1/strategies/signals`
+     (`?strategy_id`, `?symbol`, `?source`, `?limit`)
+   - `GET    /api/v1/strategies/signals/{signal_id}`
+   - `DELETE /api/v1/strategies/signals/{signal_id}`
+   - `GET    /api/v1/strategies/{strategy_id}/signals/count`
+4. CLI: `alphabrief strategy record-signal`, `list-signals`,
+   `show-signal`, `count-signals`.
+5. 32 new unit tests + 21 new API tests + 9 new CLI tests
+   (`tests/test_strategy_signals.py`, `test_strategy_signals_api.py`,
+   plus additions in `test_strategy_commands.py`).
+6. Dedicated advisory-safety test that records signals and
+   confirms the risk gate is unaffected.
+
+### Round 15.6 — Dashboard
+
+1. New `/dashboard/strategies` page lists saved strategies with
+   name, version, enabled badge, updated timestamp, and a
+   "View" link to the full JSON record.
+2. Per-strategy signal counts are shown alongside the activation
+   badge.
+3. Both the registry and the signal history carry explicit
+   "advisory only" disclaimers in the page UI.
+4. New nav link on the main `/dashboard` page.
+5. 7 new tests in `tests/test_dashboard_strategies.py`.
+
+### Round 15.7 — Documentation
+
+1. Updated `docs/roadmap.md` (this section).
+2. Updated `docs/architecture.md` with the Strategy Registry
+   chapter.
+3. Updated `docs/development_log.md` (entry 0045).
+
+### Final quality gate
+
+- [x] **144 new tests** across 5 rounds (R15.3–R15.7).
+- [x] **926 total tests** pass (up from 833 at R15.2 entry).
+- [x] `ruff check .` clean.
+- [x] `mypy packages apps tests` clean (167 source files).
+- [x] No files under `_reference_sources/` opened or imported.
+- [x] No risk / execution / trading core files modified. Activation
+      flag and signal history are independent of RiskGate,
+      PaperBroker, and live-trading state.
+- [x] Live trading remains disabled by default. No provider SDK
+      calls outside ModelGateway.

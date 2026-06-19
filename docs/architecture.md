@@ -794,3 +794,113 @@ read-only — no live model calls are made from the page itself.
    leakage, no external network calls.
 5. The phase adds no new dependencies — only `duckdb`, `pydantic`,
    `urllib` (existing), and the standard library.
+
+## Phase 15 — Strategy Registry and Signal History
+
+Phase 15 makes strategies first-class persistent artifacts in the
+system. Two stores live under `apps/api/src/alphabrief_api/db/`:
+
+- `StrategySpecStore` (`strategies.py`) — DuckDB-backed CRUD for
+  `StrategySpec` payloads plus an `enabled` advisory flag.
+- `StrategySignalStore` (`strategy_signals.py`) — DuckDB-backed
+  write-only history of individual signals emitted by a strategy.
+
+### Storage layer
+
+`strategy_specs` table:
+
+| Column        | Type          | Notes                                 |
+|---------------|---------------|---------------------------------------|
+| `strategy_id` | TEXT PRIMARY  | Stable id from `StrategySpec`         |
+| `name`        | TEXT          | Display name                          |
+| `version`     | TEXT          | Spec version                          |
+| `enabled`     | BOOLEAN       | Advisory activation flag              |
+| `spec_json`   | JSON          | Full `StrategySpec` payload           |
+| `created_at`  | TIMESTAMPTZ   | Auto-set on insert                    |
+| `updated_at`  | TIMESTAMPTZ   | Auto-set on update                    |
+
+`strategy_signals` table:
+
+| Column        | Type          | Notes                                 |
+|---------------|---------------|---------------------------------------|
+| `signal_id`   | TEXT PRIMARY  | Idempotent upsert key                 |
+| `strategy_id` | TEXT          | Strategy that emitted the signal      |
+| `symbol`      | TEXT          | Symbol from the spec universe         |
+| `signal_ts`   | TIMESTAMPTZ   | Bar timestamp of the signal           |
+| `direction`   | TEXT          | "long" / "short" / etc.               |
+| `confidence`  | DOUBLE        | Confidence in `[0, 1]`                |
+| `horizon`     | TEXT          | Signal horizon label                  |
+| `source`      | TEXT          | "backtest" / "manual" / "other"       |
+| `signal_json` | JSON          | Full original signal payload          |
+| `created_at`  | TIMESTAMPTZ   | Auto-set on insert                    |
+
+Index: `(strategy_id, signal_ts DESC)`.
+
+### Advisory-only safety contract
+
+The two Phase 15 surfaces are **strictly advisory**:
+
+1. The `enabled` flag on a stored spec is a user opt-in marker. It
+   is not wired into `RiskGate.enabled_strategies` (a separate,
+   manually configured frozenset), is not consulted by
+   `PaperBroker`, and never enables live trading.
+2. The signal history is a write-only log of strategy output. It
+   is not consulted by `RiskGate.evaluate`, by `PaperBroker.submit`,
+   or by any execution path.
+
+`GET /api/v1/strategies/enabled` is the only consumer-facing
+read-only surface for the activation flag, and it is documented as
+"informational only". Future rounds may opt to read it, but the
+registry flag never grants, relaxes, or blocks risk decisions.
+
+### API surface
+
+- `POST   /api/v1/strategies/specs` — create or replace a spec
+- `GET    /api/v1/strategies/specs` — list summaries
+- `GET    /api/v1/strategies/specs/{id}` — full record
+- `PATCH  /api/v1/strategies/specs/{id}` — flip the activation flag
+- `DELETE /api/v1/strategies/specs/{id}` — remove
+- `GET    /api/v1/strategies/enabled` — advisory list of enabled ids
+- `POST   /api/v1/strategies/signals` — record a signal
+- `GET    /api/v1/strategies/signals` — list signal summaries
+- `GET    /api/v1/strategies/signals/{signal_id}` — full signal
+- `DELETE /api/v1/strategies/signals/{signal_id}` — remove
+- `GET    /api/v1/strategies/{strategy_id}/signals/count` — count
+
+### CLI surface
+
+```
+alphabrief strategy save --from-yaml FILE [--from-json FILE] [--enable|--disable]
+alphabrief strategy list [--enabled|--disabled]
+alphabrief strategy show STRATEGY_ID
+alphabrief strategy enable STRATEGY_ID
+alphabrief strategy disable STRATEGY_ID
+alphabrief strategy delete STRATEGY_ID
+alphabrief strategy record-signal --from-yaml FILE [--source backtest|manual|other]
+alphabrief strategy list-signals [--strategy-id] [--symbol] [--source] [--limit]
+alphabrief strategy show-signal SIGNAL_ID
+alphabrief strategy count-signals STRATEGY_ID
+```
+
+### Dashboard
+
+A new `/dashboard/strategies` page lists saved strategies with
+their name, version, enabled badge, updated timestamp, and a "View"
+link to the full JSON record. Per-strategy signal counts are
+shown alongside the activation badge. Both the registry and the
+signal history carry explicit "advisory only" disclaimers in the
+page UI.
+
+### Hard Constraints
+
+1. No imports from `_reference_sources/`.
+2. The registry and signal history never modify `RiskDecision`
+   semantics, never enable live trading, and never call broker
+   code.
+3. The activation flag and signal history are independent of
+   `RiskGate.enabled_strategies` and `RiskGate.trading_enabled`.
+4. Tests assert the advisory nature by exercising the risk gate
+   with the registry flag set and confirming the gate's decision
+   is unchanged.
+5. The phase adds PyYAML (already a transitive of uvicorn) as a
+   declared runtime dep, plus `types-PyYAML` as a dev dep.

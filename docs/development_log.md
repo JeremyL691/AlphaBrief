@@ -1804,3 +1804,121 @@ Validation for 0044:
    passed.
 4. No files under `_reference_sources/` were opened or imported.
 5. No risk, execution, strategy, model, or trading files were modified.
+
+## 0045 Phase 15 R15.3–R15.7 — Strategy Registry, Activation, Signal History, Dashboard
+
+Status: completed.
+
+Goal: complete the Strategy Lifecycle Management surface so
+strategies are first-class persistent artifacts with CLI / API /
+Dashboard access, an advisory activation flag, and a write-only
+signal history. The phase is **strictly advisory**: no part of
+Phase 15 modifies `RiskGate` semantics, blocks orders, or enables
+live trading.
+
+### Phase 15 R15.3 — CLI strategy commands
+
+1. `apps/cli/src/alphabrief_cli/strategy_commands.py` — new
+   `strategy_app` Typer subcommand group.
+2. Commands: `save --from-yaml|--from-json [--enable|--disable]`,
+   `list [--enabled|--disabled]`, `show <id>`, `enable <id>`,
+   `disable <id>`, `delete <id>`.
+3. Registered in `apps/cli/src/alphabrief_cli/main.py`.
+4. PyYAML added as a declared runtime dep; `types-PyYAML` added as
+   a dev dep.
+5. 19 new tests in `tests/test_strategy_commands.py`.
+
+### Phase 15 R15.4 — Activation flag (advisory surface)
+
+1. New endpoint `GET /api/v1/strategies/enabled` returns the list
+   of strategy_ids whose advisory `enabled` flag is `True`.
+2. The flag remains **strictly advisory**:
+   - `RiskGate.enabled_strategies` is a separate, manually
+     configured frozenset. The registry flag is **not** wired into
+     it.
+   - The flag is not consulted by `PaperBroker` or any execution
+     path.
+3. 5 new tests in `tests/test_strategies_api.py`, including a
+   dedicated advisory-safety test that exercises `RiskGate` to
+   prove the registry flag cannot grant, relax, or block risk
+   decisions.
+
+### Phase 15 R15.5 — Strategy signal history persistence
+
+1. New `strategy_signals` DuckDB table with `signal_id` (PK),
+   `strategy_id`, `symbol`, `signal_ts`, `direction`, `confidence`,
+   `horizon`, `source`, `signal_json`, `created_at`. Index on
+   `(strategy_id, signal_ts DESC)`.
+2. New `StrategySignalStore` with `save_signal`, `get_signal`,
+   `list_signals`, `count_signals`, `list_strategy_ids`,
+   `delete_signal`, `clear`, `close`. Full input validation
+   including `confidence in [0, 1]`, `bool` rejected for
+   `confidence`, allowed sources `backtest` / `manual` / `other`.
+3. New API endpoints:
+   - `POST   /api/v1/strategies/signals`
+   - `GET    /api/v1/strategies/signals`
+   - `GET    /api/v1/strategies/signals/{signal_id}`
+   - `DELETE /api/v1/strategies/signals/{signal_id}`
+   - `GET    /api/v1/strategies/{strategy_id}/signals/count`
+4. New CLI subcommands: `strategy record-signal`,
+   `strategy list-signals`, `strategy show-signal`,
+   `strategy count-signals`.
+5. 32 new unit tests + 21 new API tests + 9 new CLI tests.
+6. Dedicated advisory-safety test confirms that recording
+   signals does not change the risk gate's decision.
+
+### Phase 15 R15.6 — Dashboard
+
+1. New `/dashboard/strategies` page lists saved strategies with
+   name, version, enabled badge, updated timestamp, and a "View"
+   link to the full JSON record.
+2. Per-strategy signal counts are shown alongside the activation
+   badge.
+3. Both the registry and the signal history carry explicit
+   "advisory only" disclaimers in the page UI.
+4. New nav link on the main `/dashboard` page.
+5. 7 new tests in `tests/test_dashboard_strategies.py`.
+
+### Phase 15 R15.7 — Documentation
+
+1. Added Phase 15 status block to `docs/roadmap.md` with
+   per-round detail and a final quality gate.
+2. Added a "Phase 15 — Strategy Registry and Signal History"
+   chapter to `docs/architecture.md`, including the storage
+   schema, the advisory-only safety contract, the API and CLI
+   surface, and the hard constraints.
+3. Updated `docs/development_log.md` (this entry).
+
+### Files changed (R15.3–R15.7)
+
+- `apps/api/src/alphabrief_api/db/__init__.py` — export new store
+- `apps/api/src/alphabrief_api/db/schema.py` — strategy_signals DDL
+- `apps/api/src/alphabrief_api/db/strategy_signals.py` — new (320 lines)
+- `apps/api/src/alphabrief_api/main.py` — register router
+- `apps/api/src/alphabrief_api/routes/strategies.py` — enabled endpoint
+- `apps/api/src/alphabrief_api/routes/strategy_signals.py` — new (270 lines)
+- `apps/api/src/alphabrief_api/routes/dashboard.py` — strategies page
+- `apps/cli/src/alphabrief_cli/main.py` — register strategy_app
+- `apps/cli/src/alphabrief_cli/strategy_commands.py` — new (340 lines)
+- `tests/test_strategy_commands.py` — new (28 tests)
+- `tests/test_strategy_signals.py` — new (32 tests)
+- `tests/test_strategy_signals_api.py` — new (21 tests)
+- `tests/test_dashboard_strategies.py` — new (7 tests)
+- `tests/test_strategies_api.py` — 5 new tests (advisory surface)
+- `pyproject.toml` — PyYAML + types-PyYAML deps
+- `docs/roadmap.md`, `docs/architecture.md`,
+  `docs/development_log.md` — documentation
+
+### Validation for 0045
+
+1. `.venv/bin/python -m pytest -q` passed (926 tests, up from
+   833 at the entry of R15.3).
+2. `.venv/bin/ruff check . --fix` clean.
+3. `.venv/bin/mypy packages apps tests` clean (167 source files).
+4. No files under `_reference_sources/` were opened or imported.
+5. No risk, execution, or trading core files were modified. The
+   activation flag and the signal history are independent of
+   `RiskGate`, `PaperBroker`, and live-trading state, and tests
+   explicitly assert this.
+6. Live trading remains disabled by default; no provider SDK
+   calls were added outside `ModelGateway`.
