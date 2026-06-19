@@ -3,7 +3,8 @@
 This package provides a DuckDB-based data access layer that replaces
 in-memory dictionaries for market data, backtest reports, briefs, paper
 portfolio, audit logs, review snapshots, debate records, news headlines,
-macro-economic indicators, model evaluations, and strategy specs.
+macro-economic indicators, model evaluations, strategy specs, and
+strategy signal history.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from alphabrief_api.db.news import NewsStore
 from alphabrief_api.db.paper import PaperStore
 from alphabrief_api.db.review import ReviewStore
 from alphabrief_api.db.strategies import StrategySpecStore
+from alphabrief_api.db.strategy_signals import StrategySignalStore
 
 __all__ = [
     "BacktestReportStore",
@@ -29,5 +31,6 @@ __all__ = [
     "NewsStore",
     "PaperStore",
     "ReviewStore",
+    "StrategySignalStore",
     "StrategySpecStore",
 ]

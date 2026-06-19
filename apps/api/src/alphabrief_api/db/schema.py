@@ -210,6 +210,48 @@ CREATE TABLE IF NOT EXISTS strategy_specs (
 """
 
 # ---------------------------------------------------------------------------
+# Table: strategy_signals
+# ---------------------------------------------------------------------------
+#
+# Persistent signal history. Each row is one strategy-generated
+# signal. The store is **advisory**: it never blocks orders, never
+# modifies risk decisions, and is never consulted by the execution
+# path. It exists so backtests, manual runs, and the dashboard can
+# replay / inspect what a strategy emitted at a specific bar
+# timestamp. ``signal_json`` is the full signal payload (incl.
+# optional ``evidence``), so the store is forward-compatible with
+# future signal schema additions.
+#
+# ``source`` distinguishes the call site that produced the signal:
+# - ``"backtest"``  : vectorized backtester
+# - ``"manual"``    : explicit CLI / API call
+# - ``"other"``     : default for unknown callers
+#
+# Phase 15 R15.5 records manual recordings from CLI/API; automatic
+# backtest recording is wired when the vectorized backtester emits
+# signals. Both code paths share this single table.
+
+CREATE_STRATEGY_SIGNALS_TABLE = """
+CREATE TABLE IF NOT EXISTS strategy_signals (
+    signal_id      TEXT PRIMARY KEY,
+    strategy_id    TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    signal_ts      TIMESTAMPTZ NOT NULL,
+    direction      TEXT NOT NULL,
+    confidence     DOUBLE NOT NULL,
+    horizon        TEXT NOT NULL,
+    source         TEXT NOT NULL DEFAULT 'other',
+    signal_json    JSON NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_STRATEGY_SIGNALS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_strategy_signals_strategy_ts
+    ON strategy_signals (strategy_id, signal_ts DESC)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -228,6 +270,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_MACRO_INDICATORS_TABLE,
     CREATE_MODEL_EVALUATIONS_TABLE,
     CREATE_STRATEGY_SPECS_TABLE,
+    CREATE_STRATEGY_SIGNALS_TABLE,
+    CREATE_STRATEGY_SIGNALS_INDEX,
 )
 
 # ---------------------------------------------------------------------------
@@ -243,6 +287,7 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS strategy_signals")
     connection.execute("DROP TABLE IF EXISTS strategy_specs")
     connection.execute("DROP TABLE IF EXISTS model_evaluations")
     connection.execute("DROP TABLE IF EXISTS macro_indicators")
@@ -270,6 +315,8 @@ __all__ = [
     "CREATE_NEWS_HEADLINES_TABLE",
     "CREATE_PORTFOLIO_SNAPSHOT_TABLE",
     "CREATE_REVIEW_SNAPSHOTS_TABLE",
+    "CREATE_STRATEGY_SIGNALS_TABLE",
+    "CREATE_STRATEGY_SIGNALS_INDEX",
     "CREATE_STRATEGY_SPECS_TABLE",
     "CREATE_SYMBOLS_TABLE",
 ]
