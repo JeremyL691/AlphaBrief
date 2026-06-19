@@ -194,6 +194,22 @@ CREATE TABLE IF NOT EXISTS model_evaluations (
 """
 
 # ---------------------------------------------------------------------------
+# Table: strategy_specs
+# ---------------------------------------------------------------------------
+
+CREATE_STRATEGY_SPECS_TABLE = """
+CREATE TABLE IF NOT EXISTS strategy_specs (
+    strategy_id    TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    version        TEXT NOT NULL,
+    enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+    spec_json      JSON NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -211,6 +227,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_NEWS_HEADLINES_TABLE,
     CREATE_MACRO_INDICATORS_TABLE,
     CREATE_MODEL_EVALUATIONS_TABLE,
+    CREATE_STRATEGY_SPECS_TABLE,
 )
 
 # ---------------------------------------------------------------------------
@@ -226,6 +243,7 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS strategy_specs")
     connection.execute("DROP TABLE IF EXISTS model_evaluations")
     connection.execute("DROP TABLE IF EXISTS macro_indicators")
     connection.execute("DROP TABLE IF EXISTS news_headlines")
@@ -252,5 +270,6 @@ __all__ = [
     "CREATE_NEWS_HEADLINES_TABLE",
     "CREATE_PORTFOLIO_SNAPSHOT_TABLE",
     "CREATE_REVIEW_SNAPSHOTS_TABLE",
+    "CREATE_STRATEGY_SPECS_TABLE",
     "CREATE_SYMBOLS_TABLE",
 ]

@@ -1745,3 +1745,62 @@ strictly read-only with respect to trading, risk, and execution.
 3. `.venv/bin/mypy packages apps tests` passed (156 source files).
 4. No files under `_reference_sources/` were opened or imported.
 5. No risk / execution / trading files were modified.
+
+## 0044 Phase 15 R15.1 — StrategySpecStore
+
+Status: completed.
+
+Goal: add the first persistent Strategy Registry storage layer — a
+DuckDB-backed `StrategySpecStore` that lets strategies become
+first-class artifacts in the system. This is the foundation for
+Strategy Lifecycle Management (Phase 15) and unlocks every future
+strategy-driven feature (paper trading loop, daily automation,
+P&L attribution by strategy).
+
+Completed changes:
+
+1. Added `strategy_specs` table DDL to `db/schema.py` with columns:
+   `strategy_id` (PK), `name`, `version`, `enabled`, `spec_json`
+   (full StrategySpec payload), `created_at`, `updated_at`.
+2. Created `apps/api/src/alphabrief_api/db/strategies.py` with
+   `StrategySpecStore` exposing:
+   - `save_spec(spec, *, enabled=_UNSET)` — upsert; preserves the
+     existing `enabled` flag when the caller omits it. Validates
+     non-empty `strategy_id`, `name`, `version`.
+   - `set_enabled(strategy_id, enabled)` — boolean flag flip;
+     returns `False` if no such strategy exists.
+   - `delete_spec(strategy_id)` — returns `False` if missing.
+   - `get_spec(strategy_id)` — full record including `spec_json`.
+   - `list_specs(enabled_only=False)` — summaries (no spec payload),
+     ordered by `strategy_id` ascending.
+   - `list_enabled_strategy_ids()` — convenience for risk consumers.
+   - `exists(strategy_id)` and `count()`.
+   - `clear()` / `close()` for test isolation.
+3. Exported `StrategySpecStore` from `db/__init__.py`.
+4. Wrote `tests/test_strategy_store.py` with **27 new unit tests**
+   covering schema creation, save (default + explicit enabled, payload
+   fidelity, validation, upsert with and without enabled preservation),
+   set_enabled (true / false / missing / bad type), get / exists /
+   count, list_specs (empty / summaries exclude spec / enabled_only /
+   ordered), list_enabled_strategy_ids, delete (present / missing),
+   clear, reopen persistence, and idempotent close.
+
+Files changed:
+- `apps/api/src/alphabrief_api/db/schema.py` — strategy_specs DDL
+- `apps/api/src/alphabrief_api/db/strategies.py` — new (220 lines)
+- `apps/api/src/alphabrief_api/db/__init__.py` — export
+- `tests/test_strategy_store.py` — new (27 tests)
+- `docs/development_log.md` — this entry
+
+Validation for 0044:
+
+1. `.venv/bin/python -m pytest tests/test_strategy_store.py -q` passed
+   (27 tests).
+2. `.venv/bin/ruff check apps/api/src/alphabrief_api/db/strategies.py
+   tests/test_strategy_store.py` passed.
+3. `.venv/bin/mypy apps/api/src/alphabrief_api/db/strategies.py
+   apps/api/src/alphabrief_api/db/schema.py
+   apps/api/src/alphabrief_api/db/__init__.py tests/test_strategy_store.py`
+   passed.
+4. No files under `_reference_sources/` were opened or imported.
+5. No risk, execution, strategy, model, or trading files were modified.
