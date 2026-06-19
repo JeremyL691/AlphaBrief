@@ -1,6 +1,6 @@
 """Strategy registry routes — CRUD over persisted StrategySpec objects.
 
-This round (Phase 15 R15.2) wires the
+This round (Phase 15 R15.2 + R15.4) wires the
 :class:`alphabrief_api.db.strategies.StrategySpecStore` to a read-write
 HTTP API. It is the entry point for the Strategy Lifecycle surface.
 
@@ -11,6 +11,7 @@ Endpoints:
 - ``GET  /api/v1/strategies/specs/{id}``    — full spec record
 - ``PATCH /api/v1/strategies/specs/{id}``   — flip the enabled flag
 - ``DELETE /api/v1/strategies/specs/{id}``  — remove
+- ``GET  /api/v1/strategies/enabled``       — advisory list of enabled ids
 
 The router never modifies RiskGate semantics, never enables live
 trading, and never calls broker code. The activation flag is purely
@@ -140,6 +141,28 @@ class StrategyActivationResponse(BaseModel):
 
     strategy_id: str
     enabled: bool
+
+
+class EnabledStrategyIdsResponse(BaseModel):
+    """Response body for ``GET /api/v1/strategies/enabled``.
+
+    The ``enabled`` flag on a stored ``StrategySpec`` is purely
+    advisory: it is the user's opt-in marker, does not affect the
+    risk allowlist, and never blocks orders. This endpoint is the
+    read-only surface that exposes the list of strategy ids whose
+    ``enabled`` flag is currently ``True``. It is meant for
+    dashboards, audit views, and human review — not for execution
+    paths.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    strategy_ids: list[str] = Field(
+        description=(
+            "Strategy ids whose advisory ``enabled`` flag is True, "
+            "ordered ascending. Informational only."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +305,26 @@ def delete_spec(strategy_id: str) -> StrategyActivationResponse:
     return StrategyActivationResponse(strategy_id=strategy_id, enabled=False)
 
 
+@router.get("/enabled", response_model=EnabledStrategyIdsResponse)
+def list_enabled_strategy_ids() -> EnabledStrategyIdsResponse:
+    """Return the strategy ids whose advisory ``enabled`` flag is ``True``.
+
+    This is the **read-only advisory surface** for the activation
+    flag. It is exposed for dashboards, audit views, and human
+    review. It is **never** consumed by ``RiskGate``, ``PaperBroker``,
+    or any execution path: the flag is a user opt-in marker, not a
+    risk control. Future rounds may opt to read this list as a
+    convenience surface, but at this round it is informational
+    only.
+    """
+    store = _get_strategy_store()
+    return EnabledStrategyIdsResponse(
+        strategy_ids=store.list_enabled_strategy_ids()
+    )
+
+
 __all__ = [
+    "EnabledStrategyIdsResponse",
     "StrategyActivationRequest",
     "StrategyActivationResponse",
     "StrategyCreateRequest",
