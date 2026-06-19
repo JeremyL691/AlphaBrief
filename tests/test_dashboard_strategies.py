@@ -25,7 +25,9 @@ def _isolate(tmp_path: Path) -> Generator[None, None, None]:
     _clear_signal_store()
 
 
-def _spec(strategy_id: str = "ema_trend_v1", name: str = "EMA Trend v1") -> dict[str, object]:
+def _spec(
+    strategy_id: str = "ema_trend_v1", name: str = "EMA Trend v1"
+) -> dict[str, object]:
     return {
         "strategy_id": strategy_id,
         "name": name,
