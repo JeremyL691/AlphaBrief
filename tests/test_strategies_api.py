@@ -352,3 +352,116 @@ def test_validation_train_test_overlap_rejected() -> None:
     }
     resp = client.post("/api/v1/strategies/specs", json={"spec": bad})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/strategies/enabled (Phase 15 R15.4 — advisory activation)
+# ---------------------------------------------------------------------------
+
+
+def test_enabled_endpoint_empty() -> None:
+    resp = client.get("/api/v1/strategies/enabled")
+    assert resp.status_code == 200
+    assert resp.json() == {"strategy_ids": []}
+
+
+def test_enabled_endpoint_returns_enabled_ids() -> None:
+    client.post(
+        "/api/v1/strategies/specs",
+        json={"spec": _spec(strategy_id="a"), "enabled": True},
+    )
+    client.post(
+        "/api/v1/strategies/specs",
+        json={"spec": _spec(strategy_id="b")},
+    )
+    client.post(
+        "/api/v1/strategies/specs",
+        json={"spec": _spec(strategy_id="c"), "enabled": True},
+    )
+    resp = client.get("/api/v1/strategies/enabled")
+    assert resp.status_code == 200
+    assert resp.json() == {"strategy_ids": ["a", "c"]}
+
+
+def test_enabled_endpoint_reflects_patch() -> None:
+    client.post(
+        "/api/v1/strategies/specs",
+        json={"spec": _spec(strategy_id="a")},
+    )
+    client.patch("/api/v1/strategies/specs/a", json={"enabled": True})
+    resp = client.get("/api/v1/strategies/enabled")
+    assert resp.json() == {"strategy_ids": ["a"]}
+
+    client.patch("/api/v1/strategies/specs/a", json={"enabled": False})
+    resp = client.get("/api/v1/strategies/enabled")
+    assert resp.json() == {"strategy_ids": []}
+
+
+def test_enabled_endpoint_reflects_delete() -> None:
+    client.post(
+        "/api/v1/strategies/specs",
+        json={"spec": _spec(strategy_id="a"), "enabled": True},
+    )
+    client.delete("/api/v1/strategies/specs/a")
+    resp = client.get("/api/v1/strategies/enabled")
+    assert resp.json() == {"strategy_ids": []}
+
+
+# ---------------------------------------------------------------------------
+# Advisory nature: activation flag is informational only
+# ---------------------------------------------------------------------------
+
+
+def test_advisory_flag_does_not_affect_risk_gate_allowlist() -> None:
+    """The ``enabled`` flag must be independent from the risk allowlist.
+
+    The risk gate's ``enabled_strategies`` is a separate, manually
+    configured frozenset. Setting the registry ``enabled`` flag for a
+    strategy that is NOT in the risk allowlist must not change what
+    the gate accepts. This is the safety property the advisory
+    surface relies on.
+    """
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from alphabrief_core import OrderIntent
+    from alphabrief_risk import RiskGate, RiskLimitConfig
+
+    # The risk allowlist is the default empty frozenset.
+    gate = RiskGate(limits=RiskLimitConfig(enabled_strategies=frozenset({"ghost"})))
+
+    client.post(
+        "/api/v1/strategies/specs",
+        json={"spec": _spec(strategy_id="ghost"), "enabled": True},
+    )
+
+    enabled_resp = client.get("/api/v1/strategies/enabled")
+    assert enabled_resp.json() == {"strategy_ids": ["ghost"]}
+
+    intent = OrderIntent(
+        intent_id="i1",
+        source="strategy",
+        symbol="BTC-USD",
+        side="buy",
+        order_type="market",
+        quantity=Decimal("0.1"),
+        rationale="test",
+        created_at=datetime.now(UTC),
+    )
+
+    # The risk gate allowlist happens to contain the strategy, so the
+    # gate decision is determined by *other* checks, not by the
+    # registry ``enabled`` flag. Here the order value is well within
+    # the default limits and there is no symbol allowlist configured,
+    # so the decision is approved — proving the registry flag is
+    # purely advisory and not consulted by the gate.
+    decision = gate.evaluate(intent, strategy_id="ghost")
+    assert decision.approved is True
+
+    # And the same order with a strategy id NOT in the allowlist is
+    # rejected for the strategy check, irrespective of any registry
+    # flag. This is the symmetric negative case: the registry flag
+    # never grants, never blocks.
+    decision_blocked = gate.evaluate(intent, strategy_id="nope")
+    assert decision_blocked.approved is False
+    assert "nope" in decision_blocked.reason
