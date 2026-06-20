@@ -787,11 +787,11 @@ def test_paper_orders_with_status_filter() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_paper_submit_order_returns_201() -> None:
+def test_paper_submit_order_requires_human_review_by_default() -> None:
     response = client.post(
         "/api/v1/paper/orders",
         json={
-            "symbol": "BTC-USD",
+            "symbol": "SPY",
             "side": "buy",
             "order_type": "market",
             "quantity": "1",
@@ -799,20 +799,15 @@ def test_paper_submit_order_returns_201() -> None:
         },
     )
 
-    assert response.status_code == 201
-    body = response.json()
-    assert "order_id" in body
-    assert "fill_id" in body
-    assert body["symbol"] == "BTC-USD"
-    assert body["side"] == "buy"
-    assert body["status"] == "filled"
+    assert response.status_code == 422
+    assert "human review" in response.json()["detail"].lower()
 
 
 def test_paper_submit_order_persists_audit_events() -> None:
     client.post(
         "/api/v1/paper/orders",
         json={
-            "symbol": "BTC-USD",
+            "symbol": "SPY",
             "side": "buy",
             "quantity": "1",
             "rationale": "Audit test",
@@ -824,30 +819,29 @@ def test_paper_submit_order_persists_audit_events() -> None:
     assert response.status_code == 200
     body = response.json()
     assert len(body["entries"]) > 0
-    # Should include risk_decision_recorded and order_created at minimum
+    # The Phase 16 policy records a decision but blocks auto-execution.
     event_types = {e["event_type"] for e in body["entries"]}
     assert "risk_decision_recorded" in event_types
-    assert "order_created" in event_types
+    assert "order_created" not in event_types
 
 
 def test_paper_submit_order_creates_portfolio_snapshot() -> None:
     client.post(
         "/api/v1/paper/orders",
         json={
-            "symbol": "BTC-USD",
+            "symbol": "SPY",
             "side": "buy",
             "quantity": "1",
             "rationale": "Portfolio snapshot test",
         },
     )
 
-    # Verify portfolio is updated
+    # Human review blocks auto-execution, so the portfolio is unchanged.
     response = client.get("/api/v1/paper/portfolio")
     assert response.status_code == 200
     body = response.json()
-    assert body["cash"] != "100000"  # Should have been reduced by the buy
-    assert len(body["positions"]) > 0
-    assert body["positions"][0]["symbol"] == "BTC-USD"
+    assert body["cash"] == "100000"
+    assert body["positions"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -876,8 +870,10 @@ def test_risk_config_returns_200() -> None:
     body = response.json()
     assert body["trading_enabled"] is True
     assert body["live_trading_enabled"] is False
-    assert "ma_trend" in body["enabled_strategies"]
-    assert "BTC-USD" in body["symbol_allowlist"]
+    assert body["enabled_strategies"] == []
+    assert body["symbol_allowlist"] == ["QQQ", "SPY"]
+    assert body["max_order_value"] == "100"
+    assert body["require_human_review"] is True
 
 
 # ---------------------------------------------------------------------------

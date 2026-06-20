@@ -26,6 +26,7 @@ _reference_sources/
 .hermes/
 .omo/
 .codegraph/
+.codebase-memory/
 
 # Per-round development plans stay local, except the scaffold record
 # required by repository scaffold tests.

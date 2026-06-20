@@ -45,6 +45,21 @@ import yaml
 from alphabrief_api.db import StrategySignalStore, StrategySpecStore
 from alphabrief_strategy import StrategySpec
 
+# When the API server is running, proxy through HTTP to avoid DuckDB file-lock
+# conflicts between the CLI and the long-running API process.
+from alphabrief_cli.api_client import (
+    api_signal_count,
+    api_signal_create,
+    api_signal_get,
+    api_signal_list,
+    api_strategy_create,
+    api_strategy_delete,
+    api_strategy_get,
+    api_strategy_list,
+    api_strategy_set_enabled,
+    is_api_running,
+)
+
 strategy_app = typer.Typer(help="Manage the local strategy registry.")
 
 
@@ -149,6 +164,16 @@ def save_cmd(
         )
         sys.exit(1)
 
+    # Proxy through the API when the server is running to avoid DuckDB file
+    # lock conflicts between the CLI process and the long-running API process.
+    if is_api_running():
+        api_strategy_create(payload, enabled=enable)
+        print(f"strategy_id: {spec.strategy_id}")
+        print(f"name: {spec.name}")
+        print(f"version: {spec.version}")
+        print(f"enabled: {enable}")
+        return
+
     store = _open_store()
     try:
         store.save_spec(
@@ -191,6 +216,21 @@ def list_cmd(
     else:
         enabled_only = None
 
+    # Proxy through the API when the server is running to avoid DuckDB file
+    # lock conflicts.
+    if is_api_running():
+        rows = api_strategy_list(enabled_only=enabled_only)
+        indent = 2 if pretty else None
+        json.dump(
+            {"strategies": rows},
+            sys.stdout,
+            indent=indent,
+            sort_keys=True,
+            default=str,
+        )
+        sys.stdout.write("\n")
+        return
+
     store = _open_store()
     try:
         rows = store.list_specs(enabled_only=enabled_only)
@@ -226,6 +266,16 @@ def show_cmd(
     ),
 ) -> None:
     """Print the full record (including the spec payload) as JSON."""
+    if is_api_running():
+        record = api_strategy_get(strategy_id)
+        if record is None:
+            print(f"error: strategy {strategy_id!r} not found", file=sys.stderr)
+            sys.exit(1)
+        indent = 2 if pretty else None
+        json.dump(record, sys.stdout, indent=indent, sort_keys=True, default=str)
+        sys.stdout.write("\n")
+        return
+
     store = _open_store()
     try:
         record = store.get_spec(strategy_id)
@@ -258,6 +308,15 @@ def enable_cmd(
     The flag is advisory only at this round and never blocks orders, gates
     execution, or affects the risk allowlist.
     """
+    if is_api_running():
+        ok = api_strategy_set_enabled(strategy_id, True)
+        if not ok:
+            print(f"error: strategy {strategy_id!r} not found", file=sys.stderr)
+            sys.exit(1)
+        print(f"strategy_id: {strategy_id}")
+        print("enabled: True")
+        return
+
     store = _open_store()
     try:
         ok = store.set_enabled(strategy_id, True)
@@ -278,6 +337,15 @@ def disable_cmd(
     ),
 ) -> None:
     """Flip the activation flag to disabled (advisory only)."""
+    if is_api_running():
+        ok = api_strategy_set_enabled(strategy_id, False)
+        if not ok:
+            print(f"error: strategy {strategy_id!r} not found", file=sys.stderr)
+            sys.exit(1)
+        print(f"strategy_id: {strategy_id}")
+        print("enabled: False")
+        return
+
     store = _open_store()
     try:
         ok = store.set_enabled(strategy_id, False)
@@ -298,6 +366,15 @@ def delete_cmd(
     ),
 ) -> None:
     """Remove a strategy from the registry."""
+    if is_api_running():
+        ok = api_strategy_delete(strategy_id)
+        if not ok:
+            print(f"error: strategy {strategy_id!r} not found", file=sys.stderr)
+            sys.exit(1)
+        print(f"strategy_id: {strategy_id}")
+        print("deleted: True")
+        return
+
     store = _open_store()
     try:
         ok = store.delete_spec(strategy_id)
@@ -385,6 +462,14 @@ def record_signal_cmd(
         )
         sys.exit(1)
 
+    # Proxy through the API when the server is running to avoid DuckDB file
+    # lock conflicts between the CLI process and the long-running API process.
+    if is_api_running():
+        signal_id = api_signal_create(payload, source=source)
+        print(f"signal_id: {signal_id}")
+        print(f"source: {source}")
+        return
+
     try:
         store = _open_signal_store()
         signal_id = store.save_signal(payload, source=source)
@@ -430,6 +515,24 @@ def list_signals_cmd(
     ),
 ) -> None:
     """List signal history rows (advisory only)."""
+    if is_api_running():
+        rows = api_signal_list(
+            strategy_id=strategy_id,
+            symbol=symbol,
+            source=source,
+            limit=limit,
+        )
+        indent = 2 if pretty else None
+        json.dump(
+            {"signals": rows},
+            sys.stdout,
+            indent=indent,
+            sort_keys=True,
+            default=str,
+        )
+        sys.stdout.write("\n")
+        return
+
     store = _open_signal_store()
     try:
         rows = store.list_signals(
@@ -464,6 +567,16 @@ def show_signal_cmd(
     ),
 ) -> None:
     """Print one signal record (including the full payload) as JSON."""
+    if is_api_running():
+        record = api_signal_get(signal_id)
+        if record is None:
+            print(f"error: signal {signal_id!r} not found", file=sys.stderr)
+            sys.exit(1)
+        indent = 2 if pretty else None
+        json.dump(record, sys.stdout, indent=indent, sort_keys=True, default=str)
+        sys.stdout.write("\n")
+        return
+
     store = _open_signal_store()
     try:
         record = store.get_signal(signal_id)
@@ -487,6 +600,12 @@ def count_signals_cmd(
     ),
 ) -> None:
     """Print the number of stored signals for a strategy."""
+    if is_api_running():
+        count = api_signal_count(strategy_id)
+        print(f"strategy_id: {strategy_id}")
+        print(f"count: {count}")
+        return
+
     store = _open_signal_store()
     try:
         count = store.count_signals(strategy_id=strategy_id)
