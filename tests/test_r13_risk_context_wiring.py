@@ -60,6 +60,17 @@ def _gate() -> RiskGate:
     )
 
 
+def _api_test_limits() -> RiskLimitConfig:
+    """Legacy-compatible limits for tests that isolate context wiring."""
+
+    return RiskLimitConfig(
+        trading_enabled=True,
+        symbol_allowlist=frozenset({"BTC-USD"}),
+        max_order_quantity=Decimal("10"),
+        max_order_value=Decimal("1000"),
+    )
+
+
 def _negative_context() -> RiskContextDecision:
     return RiskContextDecision(
         requires_human_review=True,
@@ -313,7 +324,7 @@ def test_api_risk_check_accepts_risk_context() -> None:
     from alphabrief_api.routes.risk import _reset_risk_gate
     from fastapi.testclient import TestClient
 
-    _reset_risk_gate()
+    _reset_risk_gate(_api_test_limits())
     client = TestClient(app)
     ctx = _negative_context()
     resp = client.post(
@@ -337,7 +348,7 @@ def test_api_risk_check_works_without_risk_context() -> None:
     from alphabrief_api.routes.risk import _reset_risk_gate
     from fastapi.testclient import TestClient
 
-    _reset_risk_gate()
+    _reset_risk_gate(_api_test_limits())
     client = TestClient(app)
     resp = client.post(
         "/api/v1/risk/check",
@@ -358,7 +369,7 @@ def test_api_paper_orders_blocked_on_human_review() -> None:
     from alphabrief_api.routes.risk import _reset_risk_gate
     from fastapi.testclient import TestClient
 
-    _reset_risk_gate()
+    _reset_risk_gate(_api_test_limits())
     _reset_broker()
     client = TestClient(app)
     ctx = _negative_context()
@@ -382,7 +393,7 @@ def test_api_paper_orders_audit_records_risk_context() -> None:
     from alphabrief_api.routes.risk import _reset_risk_gate
     from fastapi.testclient import TestClient
 
-    _reset_risk_gate()
+    _reset_risk_gate(_api_test_limits())
     _reset_broker()
     client = TestClient(app)
     ctx = RiskContextDecision(

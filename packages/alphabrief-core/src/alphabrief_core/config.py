@@ -23,6 +23,7 @@ _ENV_TO_FIELD = {
     f"{_ENV_PREFIX}DATA_DIR": "data_dir",
     f"{_ENV_PREFIX}REPORTS_DIR": "reports_dir",
     f"{_ENV_PREFIX}AUDIT_LOG_DIR": "audit_log_dir",
+    f"{_ENV_PREFIX}EXECUTION_POLICY_FILE": "execution_policy_file",
 }
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
@@ -39,6 +40,9 @@ class AppSettings(BaseModel):
     data_dir: Path = Field(default_factory=lambda: Path("data/local"))
     reports_dir: Path = Field(default_factory=lambda: Path("reports/generated"))
     audit_log_dir: Path = Field(default_factory=lambda: Path("reports/audit"))
+    execution_policy_file: Path = Field(
+        default_factory=lambda: Path("config/paper_execution_policy.yaml")
+    )
 
     @field_validator("env", mode="before")
     @classmethod

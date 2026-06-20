@@ -1,0 +1,15 @@
+# Phase 16 operating boundary. This file contains no credentials and never
+# authorizes broker calls. Alpaca Paper is a future Phase 17 target only.
+mode: paper
+provider: alpaca_paper
+market: us_equity
+symbols: [SPY, QQQ]
+order_types: [market, limit]
+timezone: America/New_York
+trading_days: [mon, tue, wed, thu, fri]
+session_start: "09:30"
+session_end: "16:00"
+max_order_notional: "100"
+max_total_exposure: "300"
+require_human_review: true
+automated_execution: false

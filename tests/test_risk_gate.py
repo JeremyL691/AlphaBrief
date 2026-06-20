@@ -123,6 +123,32 @@ def test_risk_gate_rejects_symbol_strategy_and_data_quality_failures() -> None:
     assert "data quality" in decision.reason
 
 
+def test_empty_strategy_allowlist_denies_all_strategy_orders() -> None:
+    gate = RiskGate(
+        limits=RiskLimitConfig(enabled_strategies=frozenset()),
+        clock=lambda: NOW,
+        decision_id_factory=lambda: "risk_1",
+    )
+
+    decision = gate.evaluate(_intent(), strategy_id="ema_trend_v1")
+
+    assert decision.approved is False
+    assert "ema_trend_v1" in decision.reason
+    assert "strategy_disabled" in decision.risk_tags
+
+
+def test_unconfigured_strategy_allowlist_preserves_legacy_behavior() -> None:
+    gate = RiskGate(
+        limits=RiskLimitConfig(enabled_strategies=None),
+        clock=lambda: NOW,
+        decision_id_factory=lambda: "risk_1",
+    )
+
+    decision = gate.evaluate(_intent(), strategy_id="ema_trend_v1")
+
+    assert decision.approved is True
+
+
 def test_risk_gate_rejects_quantity_and_order_value_limits() -> None:
     decision = _gate().evaluate(
         _intent(quantity=Decimal("3")),
