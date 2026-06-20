@@ -904,3 +904,23 @@ page UI.
    is unchanged.
 5. The phase adds PyYAML (already a transitive of uvicorn) as a
    declared runtime dep, plus `types-PyYAML` as a dev dep.
+
+## Phase 16 — Paper Execution Boundary and Strategy Admission
+
+`config/paper_execution_policy.yaml` is the reviewed operating boundary for
+the first future external-paper integration: Alpaca Paper, `SPY`/`QQQ`, US
+regular session, market/limit orders, `$100` maximum order notional, and
+`$300` maximum total exposure. It has no credentials, permits only `paper`
+mode, and sets `automated_execution: false` plus mandatory human review.
+
+The API maps only currently enforceable policy fields into `RiskGate`:
+symbol allowlist, maximum order value, and human review. The `$300` total
+exposure is a documented Phase 16 boundary, not a claimed runtime control;
+account-level enforcement remains Phase 19 work.
+
+`strategy_admissions` is an append-only DuckDB audit table. Its API creates
+and reads version-matched evidence records, but neither `RiskGate` nor
+`PaperBroker` reads it. `RiskLimitConfig.enabled_strategies=None` means no
+strategy allowlist is configured, while an explicit empty set denies all
+strategy orders. This prevents advisory registry state or admission evidence
+from granting execution authority.

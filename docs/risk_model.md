@@ -91,3 +91,19 @@ reads a database, and never invokes a provider.
 
 When no `risk_context` is supplied, `evaluate()` is byte-for-byte
 backward compatible with the Phase 12 contract.
+
+## Phase 16 Paper Boundary
+
+The runtime's default enforceable boundary is loaded from the checked-in
+paper execution policy: `SPY`/`QQQ`, maximum order notional `$100`, and
+mandatory human review. Therefore, the internal paper-order API records a
+risk decision but does not auto-execute under this policy.
+
+`max_total_exposure: $300` is an approved operating constraint, but it is
+not yet enforced against account state. It must not be represented as a
+runtime risk check until Phase 19 implements account-level exposure controls.
+
+An explicit empty `enabled_strategies` set denies all strategy-originated
+orders. `None` retains the legacy unconfigured behavior. Strategy registry
+activation and strategy-admission records are audit-only and never modify this
+allowlist or otherwise relax a RiskDecision.

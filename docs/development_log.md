@@ -1922,3 +1922,32 @@ live trading.
    explicitly assert this.
 6. Live trading remains disabled by default; no provider SDK
    calls were added outside `ModelGateway`.
+
+## 0046 Phase 16 — Controlled Operating Boundary and Strategy Admission
+
+Goal: establish an auditable, paper-only operating contract before any
+external broker adapter work.
+
+1. Added a strict YAML `PaperExecutionPolicy` for Alpaca Paper, `SPY`/`QQQ`,
+   US regular hours, market/limit orders, `$100` maximum order notional,
+   `$300` maximum total exposure, human review, and disabled automation.
+2. Replaced the API's hard-coded BTC/ETH defaults with policy-derived,
+   enforceable RiskGate values. No provider SDK, credentials, endpoint, or
+   external request was added.
+3. Changed `RiskLimitConfig.enabled_strategies` so `None` is unconfigured and
+   an explicit empty set is deny-all for strategy-originated orders.
+4. Added append-only `strategy_admissions` persistence plus create/list/get
+   APIs. Records require a version-matched StrategySpec and structured review
+   evidence, but are not consulted by RiskGate or execution code.
+5. Added policy, RiskGate, and strategy-admission API coverage. The `$300`
+   account exposure bound is documented only; its runtime enforcement belongs
+   to Phase 19.
+
+### Validation for 0046
+
+1. `.venv/bin/pytest -q` passed: 941 tests, with six existing deprecation
+   warnings from the CLI risk-context timestamp helper.
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy` passed for 156 source files.
+4. `git diff --check` passed; no implementation imports from
+   `_reference_sources/`.

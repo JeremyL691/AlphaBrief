@@ -660,3 +660,25 @@ Status: complete. Rounds 15.1–15.7 complete.
       PaperBroker, and live-trading state.
 - [x] Live trading remains disabled by default. No provider SDK
       calls outside ModelGateway.
+
+## Phase 16: Controlled Operating Boundary and Strategy Admission
+
+Status: implemented and locally verified; no external broker connection is
+introduced.
+
+1. Checked-in `PaperExecutionPolicy` locks the future adapter target to
+   Alpaca Paper and the paper-only US ETF boundary: `SPY`/`QQQ`, US regular
+   hours, market/limit orders, `$100` per order, `$300` total exposure,
+   mandatory human review, and no automatic execution.
+2. The API risk default derives its enforceable fields from that policy.
+   The total-exposure value is explicitly deferred to Phase 19 rather than
+   presented as an existing account-level runtime guard.
+3. `strategy_admissions` stores immutable, version-matched human-review
+   evidence. Its append-only API cannot modify `RiskGate`, the advisory
+   strategy `enabled` flag, `PaperBroker`, or live-trading state.
+4. Phase 17 remains responsible for any Alpaca Paper adapter, credentials,
+   order lifecycle, account synchronization, and reconciliation.
+
+Quality gate: 941 tests pass, `ruff check .` is clean, and `mypy` reports no
+issues. The suite retains six unrelated deprecation warnings from the existing
+CLI risk-context timestamp helper.

@@ -18,7 +18,9 @@ class RiskLimitConfig:
 
     trading_enabled: bool = True
     live_trading_enabled: bool = False
-    enabled_strategies: frozenset[str] = frozenset()
+    # None preserves legacy "not configured" behavior. An explicit empty set
+    # is a deny-all strategy boundary, never an implicit allow-all.
+    enabled_strategies: frozenset[str] | None = None
     symbol_allowlist: frozenset[str] = frozenset()
     max_order_quantity: Decimal | None = None
     max_order_value: Decimal | None = None
@@ -108,7 +110,7 @@ class RiskGate:
 
         if (
             strategy_id is not None
-            and self.limits.enabled_strategies
+            and self.limits.enabled_strategies is not None
             and strategy_id not in self.limits.enabled_strategies
         ):
             failures.append(f"strategy {strategy_id} is not enabled")
