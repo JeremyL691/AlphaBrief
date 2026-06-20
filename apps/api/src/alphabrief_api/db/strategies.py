@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import duckdb
 
@@ -157,6 +158,45 @@ class StrategySpecStore:
         )
         return True
 
+    def create_admission(self, record: dict[str, Any]) -> str:
+        """Append immutable strategy-admission evidence and return its id."""
+
+        strategy_id = _required_string(record, "strategy_id")
+        strategy_version = _required_string(record, "strategy_version")
+        status = _required_string(record, "status")
+        reviewer_id = _required_string(record, "reviewer_id")
+        reviewed_at = _required_string(record, "reviewed_at")
+        evidence = record.get("evidence")
+        if not isinstance(evidence, dict):
+            raise ValueError("evidence must be an object")
+        supersedes_admission_id = record.get("supersedes_admission_id")
+        if supersedes_admission_id is not None and (
+            not isinstance(supersedes_admission_id, str)
+            or supersedes_admission_id.strip() == ""
+        ):
+            raise ValueError("supersedes_admission_id must be a non-empty string")
+
+        admission_id = f"admission_{uuid4().hex[:12]}"
+        self._conn.execute(
+            """
+            INSERT INTO strategy_admissions (
+                admission_id, strategy_id, strategy_version, status,
+                reviewer_id, reviewed_at, evidence_json, supersedes_admission_id
+            ) VALUES (?, ?, ?, ?, ?, ?::TIMESTAMPTZ, ?::JSON, ?)
+            """,
+            [
+                admission_id,
+                strategy_id,
+                strategy_version,
+                status,
+                reviewer_id,
+                reviewed_at,
+                json.dumps(evidence),
+                supersedes_admission_id,
+            ],
+        )
+        return admission_id
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
@@ -205,6 +245,48 @@ class StrategySpecStore:
         ).fetchall()
         return [str(r[0]) for r in rows]
 
+    def get_admission(self, admission_id: str) -> dict[str, Any] | None:
+        """Return one immutable strategy-admission record, if present."""
+
+        row = self._conn.execute(
+            """SELECT admission_id, strategy_id, strategy_version, status,
+                      reviewer_id, reviewed_at, evidence_json,
+                      supersedes_admission_id, created_at
+               FROM strategy_admissions WHERE admission_id = ?""",
+            [admission_id],
+        ).fetchone()
+        return self._admission_row_to_dict(row) if row is not None else None
+
+    def list_admissions(
+        self,
+        *,
+        strategy_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return admission records newest first, optionally filtered."""
+
+        conditions: list[str] = []
+        params: list[Any] = []
+        if strategy_id is not None:
+            conditions.append("strategy_id = ?")
+            params.append(strategy_id)
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(limit)
+        rows = self._conn.execute(
+            """SELECT admission_id, strategy_id, strategy_version, status,
+                      reviewer_id, reviewed_at, evidence_json,
+                      supersedes_admission_id, created_at
+               FROM strategy_admissions"""
+            + where
+            + " ORDER BY created_at DESC, admission_id DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [self._admission_row_to_dict(row) for row in rows]
+
     def exists(self, strategy_id: str) -> bool:
         """Return ``True`` if a spec with this id exists."""
         row = self._conn.execute(
@@ -246,6 +328,28 @@ class StrategySpecStore:
             result["spec"] = spec_obj
         return result
 
+    @staticmethod
+    def _admission_row_to_dict(row: tuple[Any, ...]) -> dict[str, Any]:
+        evidence_raw = row[6]
+        evidence = (
+            evidence_raw
+            if isinstance(evidence_raw, dict)
+            else json.loads(str(evidence_raw))
+        )
+        return {
+            "admission_id": str(row[0]),
+            "strategy_id": str(row[1]),
+            "strategy_version": str(row[2]),
+            "status": str(row[3]),
+            "reviewer_id": str(row[4]),
+            "reviewed_at": str(row[5]),
+            "evidence": evidence,
+            "supersedes_admission_id": (
+                str(row[7]) if row[7] is not None else None
+            ),
+            "created_at": str(row[8]),
+        }
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -261,6 +365,13 @@ class StrategySpecStore:
             self._conn.close()
         except Exception:
             pass  # already closed
+
+
+def _required_string(record: dict[str, Any], field_name: str) -> str:
+    value = record.get(field_name)
+    if not isinstance(value, str) or value.strip() == "":
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
 
 
 __all__ = ["StrategySpecStore"]

@@ -16,7 +16,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from alphabrief_core import OrderIntent
+from alphabrief_core import OrderIntent, load_paper_execution_policy, load_settings
 from alphabrief_research import (
     ResearchContextSummary,
     build_structured_summary,
@@ -38,15 +38,18 @@ from alphabrief_api.routes.news import _get_store as _get_news_store
 # Module-level risk gate (runtime config — stays in-memory)
 # ---------------------------------------------------------------------------
 
+_execution_policy = load_paper_execution_policy(
+    load_settings().execution_policy_file
+)
 _default_limits = RiskLimitConfig(
     trading_enabled=True,
     live_trading_enabled=False,
-    enabled_strategies=frozenset(["ma_trend"]),
-    symbol_allowlist=frozenset(["BTC-USD", "ETH-USD"]),
-    max_order_value=Decimal("100000"),
-    max_order_quantity=Decimal("100"),
+    enabled_strategies=frozenset(),
+    symbol_allowlist=frozenset(_execution_policy.symbols),
+    max_order_value=_execution_policy.max_order_notional,
+    max_order_quantity=None,
     require_data_quality_passed=True,
-    require_human_review=False,
+    require_human_review=_execution_policy.require_human_review,
 )
 _default_kill_switch = KillSwitch()
 _default_risk_gate = RiskGate(limits=_default_limits, kill_switch=_default_kill_switch)
@@ -56,12 +59,13 @@ def _get_risk_gate() -> RiskGate:
     return _default_risk_gate
 
 
-def _reset_risk_gate() -> None:
+def _reset_risk_gate(limits: RiskLimitConfig | None = None) -> None:
     """Reset risk gate state for test isolation."""
     global _default_kill_switch, _default_risk_gate
     _default_kill_switch = KillSwitch()
     _default_risk_gate = RiskGate(
-        limits=_default_limits, kill_switch=_default_kill_switch
+        limits=_default_limits if limits is None else limits,
+        kill_switch=_default_kill_switch,
     )
 
 
@@ -164,7 +168,7 @@ def get_risk_config() -> RiskConfigResponse:
     return RiskConfigResponse(
         trading_enabled=limits.trading_enabled,
         live_trading_enabled=limits.live_trading_enabled,
-        enabled_strategies=sorted(limits.enabled_strategies),
+        enabled_strategies=sorted(limits.enabled_strategies or ()),
         symbol_allowlist=sorted(limits.symbol_allowlist),
         max_order_quantity=(
             str(limits.max_order_quantity)

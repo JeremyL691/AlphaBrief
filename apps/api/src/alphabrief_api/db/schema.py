@@ -252,6 +252,33 @@ CREATE INDEX IF NOT EXISTS idx_strategy_signals_strategy_ts
 """
 
 # ---------------------------------------------------------------------------
+# Table: strategy_admissions
+# ---------------------------------------------------------------------------
+#
+# Strategy-admission records are append-only audit evidence. They are never
+# consulted by RiskGate or execution code, so an approval cannot authorize an
+# order by itself.
+
+CREATE_STRATEGY_ADMISSIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS strategy_admissions (
+    admission_id            TEXT PRIMARY KEY,
+    strategy_id             TEXT NOT NULL,
+    strategy_version        TEXT NOT NULL,
+    status                  TEXT NOT NULL,
+    reviewer_id             TEXT NOT NULL,
+    reviewed_at             TIMESTAMPTZ NOT NULL,
+    evidence_json           JSON NOT NULL,
+    supersedes_admission_id TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_STRATEGY_ADMISSIONS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_strategy_admissions_strategy_created
+    ON strategy_admissions (strategy_id, created_at DESC)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -272,6 +299,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_STRATEGY_SPECS_TABLE,
     CREATE_STRATEGY_SIGNALS_TABLE,
     CREATE_STRATEGY_SIGNALS_INDEX,
+    CREATE_STRATEGY_ADMISSIONS_TABLE,
+    CREATE_STRATEGY_ADMISSIONS_INDEX,
 )
 
 # ---------------------------------------------------------------------------
@@ -287,6 +316,7 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS strategy_admissions")
     connection.execute("DROP TABLE IF EXISTS strategy_signals")
     connection.execute("DROP TABLE IF EXISTS strategy_specs")
     connection.execute("DROP TABLE IF EXISTS model_evaluations")
@@ -318,5 +348,7 @@ __all__ = [
     "CREATE_STRATEGY_SIGNALS_TABLE",
     "CREATE_STRATEGY_SIGNALS_INDEX",
     "CREATE_STRATEGY_SPECS_TABLE",
+    "CREATE_STRATEGY_ADMISSIONS_INDEX",
+    "CREATE_STRATEGY_ADMISSIONS_TABLE",
     "CREATE_SYMBOLS_TABLE",
 ]
