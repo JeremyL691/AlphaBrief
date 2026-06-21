@@ -52,9 +52,7 @@ class PaperBroker:
     ) -> PaperBrokerResult:
         decision_id = decision.decision_id if decision is not None else None
         rcx_id = risk_context.decision_id if risk_context is not None else None
-        rcx_tags = (
-            tuple(risk_context.risk_tags) if risk_context is not None else ()
-        )
+        rcx_tags = tuple(risk_context.risk_tags) if risk_context is not None else ()
         rcx_mult = (
             risk_context.suggested_max_position_multiplier
             if risk_context is not None
@@ -76,10 +74,7 @@ class PaperBroker:
                 event_type="order_rejected",
                 intent_id=intent.intent_id,
                 risk_decision_id=decision_id,
-                message=(
-                    "auto-execution blocked: risk decision requires "
-                    "human review"
-                ),
+                message=("auto-execution blocked: risk decision requires human review"),
                 risk_context_decision_id=rcx_id,
                 risk_context_tags=rcx_tags,
                 risk_context_multiplier=rcx_mult,

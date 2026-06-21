@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -109,8 +109,7 @@ def check_cmd(
             file_text = risk_context_file.read_text()
         except OSError as exc:
             print(
-                f"error: could not read risk context file "
-                f"{risk_context_file}: {exc}",
+                f"error: could not read risk context file {risk_context_file}: {exc}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -220,8 +219,7 @@ def context_cmd(
             sys.exit(1)
         try:
             indicator_objs = [
-                MacroIndicator.model_validate(item)
-                for item in raw_indicators
+                MacroIndicator.model_validate(item) for item in raw_indicators
             ]
         except ValueError as exc:
             print(
@@ -232,7 +230,8 @@ def context_cmd(
 
     summary = build_structured_summary(headline_objs, indicator_objs)
     decision: RiskContextDecision = evaluate_news_macro_risk(
-        summary, decision_id=decision_id,
+        summary,
+        decision_id=decision_id,
     )
 
     payload = {
@@ -252,7 +251,7 @@ def context_cmd(
             "headlines_path": str(headlines) if headlines else None,
             "indicators_path": str(indicators) if indicators else None,
             "decision_id": decision_id,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         },
     }
     indent = 2 if pretty else None
