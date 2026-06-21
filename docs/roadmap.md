@@ -682,3 +682,79 @@ introduced.
 Quality gate: 941 tests pass, `ruff check .` is clean, and `mypy` reports no
 issues. The suite retains six unrelated deprecation warnings from the existing
 CLI risk-context timestamp helper.
+
+## Phase 17: External Paper-Broker Adapter (Alpaca)
+
+Status: implemented and locally verified. The first external broker
+adapter (Alpaca Paper) is now plumbed end-to-end through a broker-neutral
+port, with reconciliation, freeze controls, and an operations scheduler
+scaffold. No live-trading path exists; no live-trading code path was
+modified.
+
+### What landed
+
+1. `PaperExecutionPolicy` symbol list expanded from `SPY`/`QQQ` to the
+   full Phase 17 paper allowlist: `SPY`, `QQQ`, `IVV`, `VOO`, `AGG`,
+   `BND`, `GLD`, `SLV`. The single-order `$100` and total-exposure
+   `$300` values are unchanged. Phase 19 remains responsible for
+   runtime account-level enforcement.
+2. The monolithic `alphabrief_execution/broker.py` was split into a
+   `broker/` package with the broker-neutral `port`, a concrete
+   `alpaca/` subpackage, a `legacy.py` that preserves the deterministic
+   `PaperBroker` import path, `errors.py` with typed broker errors,
+   and a `recon_store.py` DuckDB store for `broker_order_id_map`,
+   `broker_recon_snapshots`, and `broker_freeze_events`.
+3. New `BrokerAdapter` port exposes async `submit`, `cancel`,
+   `get_order`, `list_orders`, `list_positions`, `get_account`, and
+   `health` methods on strict Pydantic request/response models
+   (`SubmitRequest`, `SubmitResult`, `OrderState`, `Position`,
+   `AccountSnapshot`, `BrokerHealth`, `Fill`, `CancelResult`).
+4. `AlpacaPaperAdapter` is the first concrete implementation. It
+   reads `ALPHABRIEF_ALPACA_KEY` / `ALPHABRIEF_ALPACA_SECRET` from
+   the environment only, never from disk. `config/alpaca_paper.yaml`
+   holds only non-secret fields (`base_url`, timeouts, retry budget).
+5. `ReconciliationRunner` reconciles local id-map / fills / cash /
+   positions against a callable broker snapshot, persists a
+   `ReconSnapshot`, and raises typed freezes. `ALLOWED_SCOPES`
+   exposes the `startup`, `cycle`, `eod` set. The runnable does not
+   place any orders.
+6. `OperationsScheduler` is the Phase 18 scaffold: tasks declared as
+   `ScheduledTask`, run by `asyncio` in a single event loop, with
+   per-task `max_retries` and `HeartbeatStore` / `AlertSink` seams.
+   This round ships the types and tests; the wiring of broker
+   reconcile tasks into the live scheduler is reserved for Phase 18.
+7. API: `GET /api/v1/broker/status`, `POST /api/v1/broker/reconcile`
+   (scope-validated), `GET /api/v1/broker/orders`, `GET
+   /api/v1/broker/positions`, `GET /api/v1/broker/account`,
+   `POST /api/v1/broker/freeze`, `POST /api/v1/broker/unfreeze`.
+   The routes proxy through `BrokerReconStore` and never place
+   orders without a `RiskDecision`.
+8. CLI: `alphabrief broker {status, reconcile, orders, positions,
+   account, freeze, unfreeze}`. The CLI falls back to the local
+   store when the API is not running, mirroring the existing
+   `risk_commands.py` pattern.
+
+### Hard constraints
+
+- No credentials are committed, logged, or echoed in error paths.
+  `AlpacaHttpClient` raises `BrokerAuthError` at construction if the
+  env vars are missing.
+- Live trading remains disabled. The adapter is configured only for
+  `paper-api.alpaca.markets`. There is no live-mode code path.
+- The Phase 16 `PaperExecutionPolicy` (`max_order_notional=100`,
+  `automated_execution=false`, mandatory human review) remains the
+  source of truth. The adapter rejects symbols outside the policy
+  symbol set before any HTTP call.
+- `RiskGate`, `PaperBroker`, the advisory `enabled` flag, and
+  `strategy_admissions` are **not** modified by this phase. They
+  remain the only authority on whether an `OrderIntent` may proceed.
+
+### Quality gate
+
+- 1019 tests pass (up from 941). 78 new tests across the alpaca
+  adapter, broker port, reconciliation, freeze controls,
+  execution-audit seam, scheduler, API, and CLI.
+- `ruff check .` clean. `ruff format --check` clean on every
+  modified or added Python file.
+- `mypy packages apps tests` clean.
+- No files under `_reference_sources/` opened or imported.

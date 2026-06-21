@@ -16,7 +16,16 @@ def test_checked_in_execution_policy_is_paper_only_and_locked() -> None:
 
     assert policy.mode == "paper"
     assert policy.provider == "alpaca_paper"
-    assert policy.symbols == ("SPY", "QQQ")
+    assert policy.symbols == (
+        "SPY",
+        "QQQ",
+        "IVV",
+        "VOO",
+        "AGG",
+        "BND",
+        "GLD",
+        "SLV",
+    )
     assert policy.order_types == ("market", "limit")
     assert policy.max_order_notional == Decimal("100")
     assert policy.max_total_exposure == Decimal("300")
@@ -30,7 +39,7 @@ def test_checked_in_execution_policy_is_paper_only_and_locked() -> None:
         ("mode: live", "Input should be 'paper'"),
         ("order_types: [market, stop]", "market' or 'limit"),
         ("max_order_notional: 100.0", "must not be floats"),
-        ("session_end: \"09:30\"", "session_start must be earlier"),
+        ('session_end: "09:30"', "session_start must be earlier"),
     ],
 )
 def test_execution_policy_rejects_invalid_operating_boundaries(
@@ -45,9 +54,9 @@ def test_execution_policy_rejects_invalid_operating_boundaries(
     elif replacement.startswith("order_types:"):
         text = baseline.replace("order_types: [market, limit]", replacement)
     elif replacement.startswith("max_order_notional:"):
-        text = baseline.replace("max_order_notional: \"100\"", replacement)
+        text = baseline.replace('max_order_notional: "100"', replacement)
     else:
-        text = baseline.replace("session_end: \"16:00\"", replacement)
+        text = baseline.replace('session_end: "16:00"', replacement)
     policy_path.write_text(text, encoding="utf-8")
 
     with pytest.raises((ValidationError, ValueError), match=error):
@@ -63,9 +72,7 @@ def test_execution_policy_rejects_unknown_fields(tmp_path: Path) -> None:
 
 
 def test_settings_accepts_execution_policy_file_override() -> None:
-    settings = load_settings(
-        {"ALPHABRIEF_EXECUTION_POLICY_FILE": "custom/policy.yaml"}
-    )
+    settings = load_settings({"ALPHABRIEF_EXECUTION_POLICY_FILE": "custom/policy.yaml"})
 
     assert settings.execution_policy_file == Path("custom/policy.yaml")
 
@@ -99,3 +106,48 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
     assert allowed_decision.requires_human_review is True
     assert blocked_symbol_decision.approved is False
     assert blocked_value_decision.approved is False
+
+
+@pytest.mark.parametrize("symbol", ["IVV", "VOO", "AGG", "BND", "GLD", "SLV"])
+def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
+    from alphabrief_api.routes.risk import _get_risk_gate, _reset_risk_gate
+
+    _reset_risk_gate()
+    gate = _get_risk_gate()
+    intent = OrderIntent(
+        intent_id=f"policy-{symbol.lower()}",
+        source="manual",
+        symbol=symbol,
+        side="buy",
+        order_type="market",
+        quantity=Decimal("1"),
+        rationale="policy boundary test",
+        created_at=datetime(2026, 6, 20, tzinfo=UTC),
+    )
+
+    decision = gate.evaluate(intent, estimated_price=Decimal("50"))
+
+    assert decision.approved is True
+
+
+@pytest.mark.parametrize("symbol", ["AAPL", "TSLA", "BTC-USD", "ETH-USD"])
+def test_risk_gate_rejects_unapproved_symbols(symbol: str) -> None:
+    from alphabrief_api.routes.risk import _get_risk_gate, _reset_risk_gate
+
+    _reset_risk_gate()
+    gate = _get_risk_gate()
+    intent = OrderIntent(
+        intent_id=f"policy-{symbol.lower()}",
+        source="manual",
+        symbol=symbol,
+        side="buy",
+        order_type="market",
+        quantity=Decimal("1"),
+        rationale="policy boundary test",
+        created_at=datetime(2026, 6, 20, tzinfo=UTC),
+    )
+
+    decision = gate.evaluate(intent, estimated_price=Decimal("100"))
+
+    assert decision.approved is False
+    assert "symbol_not_allowed" in decision.risk_tags

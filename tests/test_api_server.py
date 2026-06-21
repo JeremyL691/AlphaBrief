@@ -53,6 +53,7 @@ def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
     yield
     _close_store()
 
+
 # ---------------------------------------------------------------------------
 # Helper factories
 # ---------------------------------------------------------------------------
@@ -206,7 +207,7 @@ def test_load_csv_missing_file_returns_404(tmp_path: Path) -> None:
 def test_load_csv_bad_format_returns_422(tmp_path: Path) -> None:
     csv_path = _write_csv(
         tmp_path / "bad.csv",
-        "wrong,col,names\n" "1,2,3\n",
+        "wrong,col,names\n1,2,3\n",
     )
 
     response = client.post(
@@ -871,7 +872,9 @@ def test_risk_config_returns_200() -> None:
     assert body["trading_enabled"] is True
     assert body["live_trading_enabled"] is False
     assert body["enabled_strategies"] == []
-    assert body["symbol_allowlist"] == ["QQQ", "SPY"]
+    assert body["symbol_allowlist"] == sorted(
+        ["SPY", "QQQ", "IVV", "VOO", "AGG", "BND", "GLD", "SLV"]
+    )
     assert body["max_order_value"] == "100"
     assert body["require_human_review"] is True
 
@@ -1001,14 +1004,18 @@ def test_risk_context_with_high_macro_suggests_position_reduction() -> None:
     all_body = all_response.json()
     assert "decision" in all_body
     assert all_body["query"]["macro_indicators"] == [
-        "fred:I0", "fred:I1", "fred:I2", "fred:I3", "fred:I4", "fred:I5",
+        "fred:I0",
+        "fred:I1",
+        "fred:I2",
+        "fred:I3",
+        "fred:I4",
+        "fred:I5",
     ]
 
 
 def test_risk_context_rejects_inverted_window() -> None:
     response = client.get(
-        "/api/v1/risk/context?start=2026-06-15T00:00:00Z"
-        "&end=2026-06-14T00:00:00Z",
+        "/api/v1/risk/context?start=2026-06-15T00:00:00Z&end=2026-06-14T00:00:00Z",
     )
 
     assert response.status_code == 422
@@ -1573,6 +1580,7 @@ def test_news_fetch_rss_with_injected_feed(monkeypatch: pytest.MonkeyPatch) -> N
         return xml
 
     import alphabrief_news.providers.rss as rss_mod
+
     monkeypatch.setattr(rss_mod, "_default_http_get", fake_get)
 
     response = client.post(

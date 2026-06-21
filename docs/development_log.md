@@ -1951,3 +1951,130 @@ external broker adapter work.
 3. `.venv/bin/mypy` passed for 156 source files.
 4. `git diff --check` passed; no implementation imports from
    `_reference_sources/`.
+
+## 0047 Phase 17 — External Paper-Broker Adapter (Alpaca)
+
+Goal: deliver the first external paper-broker adapter end-to-end behind a
+broker-neutral port, with reconciliation, freeze controls, and an
+operations-scheduler scaffold, while keeping Phase 16's
+`PaperExecutionPolicy` as the only authority on what may trade.
+
+### Changes
+
+1. Expanded `config/paper_execution_policy.yaml` symbol list from
+   `[SPY, QQQ]` to `[SPY, QQQ, IVV, VOO, AGG, BND, GLD, SLV]`. Per-order
+   and total-exposure caps, market/limit-only, mandatory human review,
+   and `automated_execution: false` are unchanged.
+2. Split the monolithic `alphabrief_execution/broker.py` into a
+   `broker/` package: `port.py` (the `BrokerAdapter` port + strict
+   request/response models), `legacy.py` (the deterministic
+   `PaperBroker` re-exported under the old import path),
+   `errors.py` (typed `BrokerAuthError`, `BrokerTransientError`,
+   `BrokerPermanentError`), `recon_store.py` (DuckDB store for
+   `broker_order_id_map`, `broker_recon_snapshots`,
+   `broker_freeze_events`), `reconciliation.py` (`ReconcilerConfig`,
+   `ReconciliationRunner`, `ALLOWED_SCOPES`), and `alpaca/` with
+   `client.py`, `adapter.py`, `config.py`, and `__init__.py`. The
+   public `alphabrief_execution` exports now include both the
+   legacy `PaperBroker` and the new `BrokerAdapter`,
+   `AlpacaPaperAdapter`, `BrokerReconStore`, `ReconciliationRunner`,
+   `HeartbeatStore`, and `OperationsScheduler`.
+3. `AlpacaHttpClient` reads `ALPHABRIEF_ALPACA_KEY` and
+   `ALPHABRIEF_ALPACA_SECRET` from the environment only and raises
+   `BrokerAuthError` at construction when they are missing.
+   `config/alpaca_paper.yaml` carries only non-secret fields.
+4. New API routes (`apps/api/src/alphabrief_api/routes/broker.py`):
+   - `GET  /api/v1/broker/status`
+   - `POST /api/v1/broker/reconcile?scope={startup|cycle|eod}`
+   - `GET  /api/v1/broker/orders`
+   - `GET  /api/v1/broker/positions`
+   - `GET  /api/v1/broker/account`
+   - `POST /api/v1/broker/freeze`
+   - `POST /api/v1/broker/unfreeze`
+5. New CLI subcommands (`apps/cli/src/alphabrief_cli/broker_commands.py`):
+   `alphabrief broker {status, reconcile, orders, positions, account,
+   freeze, unfreeze}`. The CLI proxies through the API when one is
+   running and falls back to the local `BrokerReconStore` otherwise.
+6. New `alphabrief_execution/operations/` package containing the
+   Phase 18 scheduler scaffold: `OperationsScheduler`,
+   `ScheduledTask`, `SchedulerConfig`, `HeartbeatStore`,
+   `AlertSink`, `SchedulerStartupBlockedError`,
+   `build_default_tasks`. The wiring of the live reconcile tasks is
+   reserved for Phase 18.
+7. New helper test fixture `tests/_helpers/mock_alpaca_server.py`
+   (stdlib `http.server` only, threaded, no `requests`/`flask`).
+8. New tests:
+   - `tests/test_alpaca_adapter.py` — adapter contract, retry
+     classification, retry exhaustion, 4xx-no-retry, auth failure,
+     symbol-policy rejection, missing-credentials construction
+     failure.
+   - `tests/test_broker_port.py` — port request/response validation
+     and `BrokerAdapter` interface.
+   - `tests/test_reconciliation.py` — `ReconciliationRunner` happy
+     path, drift detection, freeze emission, scope validation.
+   - `tests/test_execution_audit.py` — execution-audit seam still
+     receives the same events after broker split.
+   - `tests/test_scheduler.py` — `OperationsScheduler` task
+     lifecycle, retry counting, heartbeat recording.
+   - `tests/test_broker_api.py` — every new API route, including
+     freeze / unfreeze and the scope-validation guard.
+   - `tests/test_broker_cli.py` — every new CLI subcommand as
+     subprocesses with `ALPHABRIEF_DATA_DIR` redirected to a
+     per-test tempdir.
+   - `tests/test_review_submodules.py` — the review journal /
+     viewer / io submodules (added in this round so the split broker
+     module can rely on the existing review public API).
+
+### Files added
+
+- `packages/alphabrief-execution/src/alphabrief_execution/broker/__init__.py`
+- `packages/alphabrief-execution/src/alphabrief_execution/broker/alpaca/__init__.py`
+- `packages/alphabrief-execution/src/alphabrief_execution/broker/alpaca/{adapter,client,config}.py`
+- `packages/alphabrief-execution/src/alphabrief_execution/broker/{errors,legacy,port,recon_store,reconciliation}.py`
+- `packages/alphabrief-execution/src/alphabrief_execution/operations/__init__.py`
+- `packages/alphabrief-execution/src/alphabrief_execution/operations/scheduler.py`
+- `apps/api/src/alphabrief_api/routes/broker.py`
+- `apps/cli/src/alphabrief_cli/broker_commands.py`
+- `config/alpaca_paper.yaml`
+- `tests/_helpers/__init__.py`
+- `tests/_helpers/mock_alpaca_server.py`
+- `tests/test_alpaca_adapter.py`
+- `tests/test_broker_api.py`
+- `tests/test_broker_cli.py`
+- `tests/test_broker_port.py`
+- `tests/test_execution_audit.py`
+- `tests/test_reconciliation.py`
+- `tests/test_review_submodules.py`
+- `tests/test_scheduler.py`
+
+### Files removed
+
+- `packages/alphabrief-execution/src/alphabrief_execution/broker.py`
+  (split into the `broker/` package; the legacy `PaperBroker` import
+  path is preserved by re-exporting it from
+  `alphabrief_execution/broker/__init__.py`).
+
+### Hard constraints honored
+
+- No credentials are stored in the repo, in YAML, or in the DB. The
+  adapter raises `BrokerAuthError` if the env vars are missing.
+- Live trading remains disabled. The adapter is configured only
+  against `paper-api.alpaca.markets`. No live-trading code path was
+  added or modified.
+- `RiskGate`, `PaperBroker`, the advisory `enabled` flag, and
+  `strategy_admissions` were not modified by this phase. The
+  adapter's `submit` accepts only symbols in the Phase 16 policy
+  symbol set before any HTTP call.
+- The `$300` total-exposure bound remains a documented Phase 16
+  boundary. Its runtime account-level enforcement is reserved for
+  Phase 19.
+
+### Validation for 0047
+
+1. `.venv/bin/pytest -q` passed: 1019 tests (up from 941 at the end of
+   Phase 16).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/ruff format --check` passed for every file added or
+   modified in this phase.
+4. `git diff --check` passed; no implementation imports from
+   `_reference_sources/`.

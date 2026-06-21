@@ -924,3 +924,44 @@ and reads version-matched evidence records, but neither `RiskGate` nor
 strategy allowlist is configured, while an explicit empty set denies all
 strategy orders. This prevents advisory registry state or admission evidence
 from granting execution authority.
+
+## Phase 17 — External Paper-Broker Adapter (Alpaca)
+
+`alphabrief_execution/broker.py` is replaced by a `broker/` package whose
+single outward face is the broker-neutral `BrokerAdapter` port
+(`SubmitRequest`, `SubmitResult`, `OrderState`, `Position`, `AccountSnapshot`,
+`Fill`, `CancelResult`, `BrokerHealth`). The first concrete implementation is
+`AlpacaPaperAdapter`, talking to `paper-api.alpaca.markets` over stdlib
+HTTP. The deterministic `PaperBroker` is preserved in
+`broker/legacy.py` and re-exported from the new package so existing
+imports continue to work.
+
+Credentials are read from `ALPHABRIEF_ALPACA_KEY` and
+`ALPHABRIEF_ALPACA_SECRET` only. The adapter raises `BrokerAuthError` at
+construction if either is missing. Non-secret configuration (base URL,
+timeouts, retry budget) lives in `config/alpaca_paper.yaml`. The adapter
+rejects any symbol outside the Phase 16 `PaperExecutionPolicy` symbol set
+before issuing an HTTP call, and `automated_execution: false` plus
+mandatory human review are unchanged.
+
+`broker/recon_store.py` persists three DuckDB tables:
+`broker_order_id_map` (client_order_id -> broker_order_id, so restarts
+do not double-submit), `broker_recon_snapshots` (per-reconciliation
+diff records), and `broker_freeze_events` (append-only freeze /
+unfreeze log; an open freeze has `cleared_at IS NULL`).
+`ReconciliationRunner` reconciles a callable broker snapshot against
+the local id-map / fills / cash / positions, records a
+`ReconSnapshot`, and emits a typed freeze on drift.
+
+The API exposes read-only and admin routes under
+`/api/v1/broker/` (`status`, `reconcile`, `orders`, `positions`,
+`account`, `freeze`, `unfreeze`). The CLI mirrors those subcommands
+and falls back to the local store when the API is not running. The
+`OperationsScheduler` scaffold (`HeartbeatStore`, `AlertSink`,
+`ScheduledTask`) ships in `alphabrief_execution/operations/`; wiring
+the live reconcile tasks into the scheduler is reserved for Phase 18.
+
+`RiskGate`, `PaperBroker`, the advisory `enabled` flag, and
+`strategy_admissions` are not modified by this phase. The
+`$300` total-exposure bound remains a documented Phase 16 boundary
+until Phase 19.
