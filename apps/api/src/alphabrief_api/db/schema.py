@@ -279,6 +279,62 @@ CREATE INDEX IF NOT EXISTS idx_strategy_admissions_strategy_created
 """
 
 # ---------------------------------------------------------------------------
+# Phase 17 broker reconciliation tables
+# ---------------------------------------------------------------------------
+#
+# The broker reconciliation store keeps three append-only tables that
+# together form an auditable trail of external paper broker activity:
+#
+# - ``broker_order_id_map``: bidirectional mapping between AlphaBrief
+#   client order ids and external broker order ids. Idempotent submit
+#   relies on this map; restarts reload it before the first order.
+#
+# - ``broker_recon_snapshots``: one row per reconciliation pass. The
+#   ``scope`` column distinguishes startup / cycle / eod runs. A row
+#   with ``all_match=False`` is the signal that auto-ordering must be
+#   frozen; ``freeze_events`` records the resulting freeze.
+#
+# - ``broker_freeze_events``: append-only log of freeze and unfreeze
+#   actions. A freeze is in effect while at least one row with
+#   ``cleared_at IS NULL`` exists for the same scope. The store
+#   refuses auto-submit while any open freeze is present.
+
+CREATE_BROKER_ORDER_ID_MAP_TABLE = """
+CREATE TABLE IF NOT EXISTS broker_order_id_map (
+    client_order_id    TEXT PRIMARY KEY,
+    broker_order_id    TEXT NOT NULL,
+    status             TEXT NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_BROKER_RECON_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS broker_recon_snapshots (
+    snapshot_id        TEXT PRIMARY KEY,
+    captured_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    scope              TEXT NOT NULL,
+    orders_match       BOOLEAN NOT NULL,
+    fills_match        BOOLEAN NOT NULL,
+    cash_match         BOOLEAN NOT NULL,
+    positions_match    BOOLEAN NOT NULL,
+    diff_json          JSON NOT NULL DEFAULT '{}'
+)
+"""
+
+CREATE_BROKER_FREEZE_EVENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS broker_freeze_events (
+    event_id           TEXT PRIMARY KEY,
+    raised_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cleared_at         TIMESTAMPTZ,
+    scope              TEXT NOT NULL,
+    reason             TEXT NOT NULL,
+    source             TEXT NOT NULL,
+    related_snapshot_id TEXT
+)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -301,6 +357,9 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_STRATEGY_SIGNALS_INDEX,
     CREATE_STRATEGY_ADMISSIONS_TABLE,
     CREATE_STRATEGY_ADMISSIONS_INDEX,
+    CREATE_BROKER_ORDER_ID_MAP_TABLE,
+    CREATE_BROKER_RECON_SNAPSHOTS_TABLE,
+    CREATE_BROKER_FREEZE_EVENTS_TABLE,
 )
 
 # ---------------------------------------------------------------------------
@@ -317,6 +376,9 @@ def apply_schema(connection: Any) -> None:
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
     connection.execute("DROP TABLE IF EXISTS strategy_admissions")
+    connection.execute("DROP TABLE IF EXISTS broker_freeze_events")
+    connection.execute("DROP TABLE IF EXISTS broker_recon_snapshots")
+    connection.execute("DROP TABLE IF EXISTS broker_order_id_map")
     connection.execute("DROP TABLE IF EXISTS strategy_signals")
     connection.execute("DROP TABLE IF EXISTS strategy_specs")
     connection.execute("DROP TABLE IF EXISTS model_evaluations")
@@ -339,6 +401,9 @@ __all__ = [
     "CREATE_BACKTEST_REPORTS_TABLE",
     "CREATE_BARS_TABLE",
     "CREATE_BRIEFS_TABLE",
+    "CREATE_BROKER_FREEZE_EVENTS_TABLE",
+    "CREATE_BROKER_ORDER_ID_MAP_TABLE",
+    "CREATE_BROKER_RECON_SNAPSHOTS_TABLE",
     "CREATE_DEBATE_RECORDS_TABLE",
     "CREATE_MACRO_INDICATORS_TABLE",
     "CREATE_MODEL_EVALUATIONS_TABLE",

@@ -12,6 +12,7 @@ import typer
 from alphabrief_cli.audit_commands import audit_app
 from alphabrief_cli.backtest_commands import backtest_app
 from alphabrief_cli.brief_commands import brief_app
+from alphabrief_cli.broker_commands import broker_app
 from alphabrief_cli.data_commands import data_app
 from alphabrief_cli.macro_commands import macro_app
 from alphabrief_cli.model_commands import model_app
@@ -42,6 +43,7 @@ app.add_typer(risk_app, name="risk")
 app.add_typer(audit_app, name="audit")
 app.add_typer(review_app, name="review")
 app.add_typer(strategy_app, name="strategy")
+app.add_typer(broker_app, name="broker")
 app.add_typer(serve_app, name="serve")
 
 

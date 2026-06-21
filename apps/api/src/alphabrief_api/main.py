@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from alphabrief_api.routes.backtest import router as backtest_router
 from alphabrief_api.routes.brief import router as brief_router
+from alphabrief_api.routes.broker import router as broker_router
 from alphabrief_api.routes.dashboard import router as dashboard_router
 from alphabrief_api.routes.data import router as data_router
 from alphabrief_api.routes.health import router as health_router
@@ -50,6 +51,7 @@ def create_app() -> FastAPI:
     api_app.include_router(strategies_router)
     api_app.include_router(strategy_admissions_router)
     api_app.include_router(strategy_signals_router)
+    api_app.include_router(broker_router)
     api_app.include_router(dashboard_router)
     return api_app
 
