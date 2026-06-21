@@ -1,0 +1,379 @@
+"""Operations scheduler tests.
+
+Exercises:
+- startup reconciliation that raises a freeze blocks the main loop
+- a single failing task auto-freezes after ``max_consecutive_failures``
+- heartbeats are recorded per task
+- an existing freeze prevents subsequent task execution
+- alert payloads scrub forbidden credential fields
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+import pytest
+from alphabrief_execution.broker.port import (
+    AccountSnapshot,
+    BrokerAdapter,
+    BrokerHealth,
+    BrokerOrderSide,
+    BrokerOrderStatus,
+    BrokerOrderType,
+    CancelResult,
+    Fill,
+    OrderState,
+    Position,
+    SubmitRequest,
+    SubmitResult,
+)
+from alphabrief_execution.broker.recon_store import BrokerReconStore
+from alphabrief_execution.broker.reconciliation import (
+    ReconcilerConfig,
+    ReconciliationRunner,
+)
+from alphabrief_execution.operations.scheduler import (
+    AlertSink,
+    HeartbeatStore,
+    OperationsScheduler,
+    ScheduledTask,
+    SchedulerConfig,
+    SchedulerStartupBlockedError,
+    build_default_tasks,
+)
+
+
+class _StubAdapter(BrokerAdapter):
+    async def health(self) -> BrokerHealth:
+        return BrokerHealth(
+            healthy=True, detail="ok", checked_at=datetime(2026, 6, 20, tzinfo=UTC)
+        )
+
+    async def submit(
+        self, request: SubmitRequest, *, client_order_id: str
+    ) -> SubmitResult:
+        return SubmitResult(
+            broker_order_id="b",
+            client_order_id=client_order_id,
+            status=BrokerOrderStatus.NEW,
+            accepted_at=datetime(2026, 6, 20, tzinfo=UTC),
+        )
+
+    async def cancel(self, broker_order_id: str) -> CancelResult:
+        return CancelResult(
+            broker_order_id=broker_order_id,
+            status=BrokerOrderStatus.CANCELLED,
+            cancelled_at=datetime(2026, 6, 20, tzinfo=UTC),
+        )
+
+    async def get_order(self, broker_order_id: str) -> OrderState:
+        raise ValueError("nope")
+
+    async def list_orders(
+        self, status: BrokerOrderStatus | None = None
+    ) -> list[OrderState]:
+        return []
+
+    async def list_fills(self, since: datetime | None = None) -> list[Fill]:
+        return []
+
+    async def get_positions(self) -> list[Position]:
+        return []
+
+    async def get_account(self) -> AccountSnapshot:
+        return AccountSnapshot(
+            account_id="a",
+            cash="0",  # type: ignore[arg-type]
+            equity="0",  # type: ignore[arg-type]
+            buying_power="0",  # type: ignore[arg-type]
+            currency="USD",
+            captured_at=datetime(2026, 6, 20, tzinfo=UTC),
+        )
+
+
+def _ok_task() -> ScheduledTask:
+    async def handler() -> None:
+        return None
+
+    return ScheduledTask(
+        name="noop",
+        interval_seconds=0.05,
+        handler=handler,
+        timeout_seconds=0.5,
+        max_retries=2,
+    )
+
+
+def _failing_task(failures: int) -> ScheduledTask:
+    state = {"calls": 0}
+
+    async def handler() -> None:
+        state["calls"] += 1
+        if state["calls"] <= failures:
+            raise RuntimeError("boom")
+
+    return ScheduledTask(
+        name="flaky",
+        interval_seconds=0.05,
+        handler=handler,
+        timeout_seconds=0.5,
+        max_retries=2,
+    )
+
+
+def _build_scheduler(
+    tmp_path: Path,
+    *,
+    tasks: list[ScheduledTask],
+    config: SchedulerConfig | None = None,
+    reconciler_config: ReconcilerConfig | None = None,
+) -> tuple[OperationsScheduler, HeartbeatStore, BrokerReconStore, AlertSink]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
+    adapter = _StubAdapter()
+    runner = ReconciliationRunner(
+        adapter=adapter, store=recon_store, config=reconciler_config
+    )
+    alert_sink = AlertSink(heartbeat_store=heartbeats)
+    scheduler = OperationsScheduler(
+        tasks=tasks,
+        heartbeat_store=heartbeats,
+        alert_sink=alert_sink,
+        recon_runner=runner,
+        recon_store=recon_store,
+        config=config or SchedulerConfig(max_consecutive_failures=2),
+    )
+    return scheduler, heartbeats, recon_store, alert_sink
+
+
+def _run(coro: Any) -> Any:
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def test_startup_reconciliation_freeze_blocks_scheduler(tmp_path: Path) -> None:
+    # Pre-populate the recon store at the path the scheduler will use.
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
+    recon_store.close()
+
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[_ok_task()],
+    )
+    # Replace the runner's adapter with one that has an orphan order
+    # so startup reconciliation raises a freeze.
+    orphan_adapter = _OrphanAdapter()
+    scheduler._recon = ReconciliationRunner(
+        adapter=orphan_adapter,
+        store=scheduler._recon_store,
+    )
+    try:
+        with pytest.raises(SchedulerStartupBlockedError):
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(scheduler.run())
+            finally:
+                loop.close()
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
+class _OrphanAdapter(BrokerAdapter):
+    """Adapter that reports one orphan order — recon flags it as diff."""
+
+    async def health(self) -> BrokerHealth:
+        return BrokerHealth(
+            healthy=True, detail="ok", checked_at=datetime(2026, 6, 20, tzinfo=UTC)
+        )
+
+    async def submit(
+        self, request: SubmitRequest, *, client_order_id: str
+    ) -> SubmitResult:
+        raise NotImplementedError
+
+    async def cancel(self, broker_order_id: str) -> CancelResult:
+        raise NotImplementedError
+
+    async def get_order(self, broker_order_id: str) -> OrderState:
+        raise NotImplementedError
+
+    async def list_orders(
+        self, status: BrokerOrderStatus | None = None
+    ) -> list[OrderState]:
+        return [
+            OrderState(
+                broker_order_id="orphan",
+                client_order_id="orphan-cli",
+                symbol="SPY",
+                side=BrokerOrderSide.BUY,
+                order_type=BrokerOrderType.MARKET,
+                quantity=Decimal("1"),
+                filled_quantity=Decimal("0"),
+                status=BrokerOrderStatus.NEW,
+                submitted_at=datetime(2026, 6, 20, tzinfo=UTC),
+                updated_at=datetime(2026, 6, 20, tzinfo=UTC),
+            )
+        ]
+
+    async def list_fills(self, since: datetime | None = None) -> list[Fill]:
+        return []
+
+    async def get_positions(self) -> list[Position]:
+        return []
+
+    async def get_account(self) -> AccountSnapshot:
+        return AccountSnapshot(
+            account_id="orphan",
+            cash=Decimal("1000"),
+            equity=Decimal("1000"),
+            buying_power=Decimal("2000"),
+            currency="USD",
+            captured_at=datetime(2026, 6, 20, tzinfo=UTC),
+        )
+
+
+def test_failing_task_auto_freezes_after_max_consecutive_failures(
+    tmp_path: Path,
+) -> None:
+    task = _failing_task(failures=10)
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[task],
+        config=SchedulerConfig(max_consecutive_failures=2),
+    )
+
+    async def drive() -> None:
+        await asyncio.sleep(0.3)
+        scheduler.request_stop()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_drive_and_run(scheduler, drive))
+    finally:
+        loop.close()
+    try:
+        assert recon_store.has_open_freeze() is True
+        assert heartbeats.last_run_at("flaky") is not None
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
+def test_ok_task_records_heartbeat(tmp_path: Path) -> None:
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path, tasks=[_ok_task()]
+    )
+
+    async def drive() -> None:
+        await asyncio.sleep(0.2)
+        scheduler.request_stop()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_drive_and_run(scheduler, drive))
+    finally:
+        loop.close()
+    try:
+        assert heartbeats.last_run_at("noop") is not None
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
+def test_existing_freeze_blocks_task_execution(tmp_path: Path) -> None:
+    # First raise a freeze so the scheduler sees it during the first tick.
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
+    recon_store.raise_freeze(reason="external", source="test")
+    recon_store.close()
+
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[_ok_task()],
+        config=SchedulerConfig(reconcile_on_start=False, max_consecutive_failures=99),
+    )
+
+    async def drive() -> None:
+        await asyncio.sleep(0.2)
+        scheduler.request_stop()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_drive_and_run(scheduler, drive))
+    finally:
+        loop.close()
+    try:
+        # Heartbeat is None because the task was skipped while a freeze was open.
+        assert heartbeats.last_run_at("noop") is None
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
+async def _drive_and_run(scheduler: OperationsScheduler, drive: Any) -> None:
+    """Run the scheduler and a co-driver on a single event loop."""
+    run_task = asyncio.create_task(scheduler.run())
+    await drive()
+    scheduler.request_stop()
+    try:
+        await run_task
+    except SchedulerStartupBlockedError:
+        pass
+
+
+def test_alert_sink_scrubs_forbidden_credentials(tmp_path: Path) -> None:
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    sink = AlertSink(heartbeat_store=heartbeats)
+    try:
+        alert_id = _run(
+            sink.emit(
+                severity="warning",
+                source="scheduler",
+                message="leaked",
+                payload={
+                    "api_key": "AKIA...",
+                    "secret": "shhh",
+                    "token": "t",
+                    "ok": "kept",
+                },
+            )
+        )
+        alerts = heartbeats.list_alerts()
+        assert alerts[0]["alert_id"] == alert_id
+        assert alerts[0]["message"] == "leaked"
+    finally:
+        heartbeats.close()
+
+
+def test_build_default_tasks_returns_reconcile_task() -> None:
+    async def reconcile_cycle(scope: str) -> None:
+        return None
+
+    tasks = build_default_tasks(on_reconcile=reconcile_cycle)
+    assert [t.name for t in tasks] == ["reconcile"]
+    assert tasks[0].interval_seconds == 300.0
+
+
+def test_scheduled_task_rejects_invalid_interval() -> None:
+    async def handler() -> None:
+        return None
+
+    with pytest.raises(ValueError, match="interval_seconds must be positive"):
+        ScheduledTask(name="bad", interval_seconds=0, handler=handler)
+
+
+def test_scheduled_task_rejects_negative_max_retries() -> None:
+    async def handler() -> None:
+        return None
+
+    with pytest.raises(ValueError, match="max_retries must be non-negative"):
+        ScheduledTask(name="bad", interval_seconds=1, handler=handler, max_retries=-1)

@@ -3,7 +3,7 @@
 mode: paper
 provider: alpaca_paper
 market: us_equity
-symbols: [SPY, QQQ]
+symbols: [SPY, QQQ, IVV, VOO, AGG, BND, GLD, SLV]
 order_types: [market, limit]
 timezone: America/New_York
 trading_days: [mon, tue, wed, thu, fri]

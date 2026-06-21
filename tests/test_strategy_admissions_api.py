@@ -154,7 +154,9 @@ def test_approval_record_cannot_grant_execution_authority() -> None:
     config = client.get("/api/v1/risk/config")
     assert config.status_code == 200
     assert config.json()["enabled_strategies"] == []
-    assert config.json()["symbol_allowlist"] == ["QQQ", "SPY"]
+    assert config.json()["symbol_allowlist"] == sorted(
+        ["SPY", "QQQ", "IVV", "VOO", "AGG", "BND", "GLD", "SLV"]
+    )
     assert config.json()["max_order_value"] == "100"
     assert config.json()["require_human_review"] is True
 
