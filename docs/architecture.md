@@ -958,10 +958,46 @@ The API exposes read-only and admin routes under
 `account`, `freeze`, `unfreeze`). The CLI mirrors those subcommands
 and falls back to the local store when the API is not running. The
 `OperationsScheduler` scaffold (`HeartbeatStore`, `AlertSink`,
-`ScheduledTask`) ships in `alphabrief_execution/operations/`; wiring
-the live reconcile tasks into the scheduler is reserved for Phase 18.
+`ScheduledTask`) ships in `alphabrief_execution/operations/`; the
+operator surface for it (CLI + API) is described in the next section.
 
 `RiskGate`, `PaperBroker`, the advisory `enabled` flag, and
 `strategy_admissions` are not modified by this phase. The
 `$300` total-exposure bound remains a documented Phase 16 boundary
 until Phase 19.
+
+## Phase 18 — Scheduler Operations Surface
+
+The Phase 17 `OperationsScheduler` is a typed scaffold plus tests; this
+phase adds the operator entry points on top of it without changing the
+scheduler core.
+
+1. `HeartbeatStore` gained a read-only `list_heartbeats()` method that
+   returns one row per registered task, newest-first by `last_run_at`,
+   in the same shape as the existing `list_alerts` method.
+2. A new FastAPI router at `apps/api/src/alphabrief_api/routes/scheduler.py`
+   exposes five read-only endpoints under `/api/v1/scheduler`:
+   - `GET /status` — aggregate heartbeat / freeze / alert counts and
+     the always-`False` `running` flag.
+   - `GET /heartbeats` — per-task heartbeat rows.
+   - `GET /alerts?limit=N` — recent alerts, clamped to `[1, 500]`.
+   - `GET /tasks` — static description of `build_default_tasks()`.
+   - `GET /freezes` — currently-open broker freezes.
+3. A new Typer subapp at
+   `apps/cli/src/alphabrief_cli/scheduler_commands.py` exposes the same
+   surface as CLI commands (`scheduler status`, `scheduler heartbeats`,
+   `scheduler alerts`, `scheduler tasks`, `scheduler freezes`) and
+   proxies through the API when the server is running.
+4. `scheduler run` is CLI-only: it starts the `OperationsScheduler` as
+   a foreground asyncio process with options `--reconcile-interval`
+   and `--max-failures`, traps SIGINT/SIGTERM, exits 2 on startup
+   reconciliation freeze, and exits 3 if
+   `ALPHABRIEF_LIVE_TRADING_ENABLED` is truthy. When both
+   `ALPHABRIEF_ALPACA_KEY` and `ALPHABRIEF_ALPACA_SECRET` are set, it
+   builds a real `AlpacaPaperAdapter`; otherwise it uses a
+   `NullBrokerAdapter` that returns empty results so the scheduler
+   can run in dev / CI without a live broker connection.
+
+The scheduler never places orders. `RiskGate`, `PaperBroker`,
+`KillSwitch`, the Alpaca adapter, the recon store, and the
+reconciliation runner are unchanged.

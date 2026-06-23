@@ -2078,3 +2078,79 @@ operations-scheduler scaffold, while keeping Phase 16's
    modified in this phase.
 4. `git diff --check` passed; no implementation imports from
    `_reference_sources/`.
+
+## 0044 Phase 18: Scheduler Operations Surface
+
+Status: completed.
+
+Goal: wire the Phase 17 `OperationsScheduler` (a typed scaffold with
+tests but no operator entry point) into a runnable, observable, and
+read-only surface.
+
+### R18.1 — `HeartbeatStore.list_heartbeats()`
+
+- Added a read-only `list_heartbeats()` method to `HeartbeatStore`
+  in `packages/alphabrief-execution/src/alphabrief_execution/operations/scheduler.py`.
+  The method returns one row per registered task, newest-first by
+  `last_run_at`, with the same shape as the existing `list_alerts`
+  method.
+- 3 new unit tests in `tests/test_scheduler.py` cover the
+  empty-store case, the post-`record_run` shape, and the DESC
+  ordering.
+
+### R18.2 — API `/api/v1/scheduler/*` routes
+
+- New `apps/api/src/alphabrief_api/routes/scheduler.py` registers a
+  FastAPI router with five read-only endpoints:
+  - `GET /api/v1/scheduler/status` — aggregate counts.
+  - `GET /api/v1/scheduler/heartbeats` — per-task heartbeat rows.
+  - `GET /api/v1/scheduler/alerts` — recent alerts with
+    `?limit=N` (clamped to `[1, 500]`).
+  - `GET /api/v1/scheduler/tasks` — static description of
+    `build_default_tasks()`.
+  - `GET /api/v1/scheduler/freezes` — currently-open broker freezes.
+- The router is registered in `apps/api/src/alphabrief_api/main.py`
+  (one import + one `include_router` line) and never calls broker
+  SDKs or model APIs.
+- 10 new tests in `tests/test_scheduler_api.py` cover the empty
+  state, the populated state for each endpoint, the alert limit
+  clamping, and the aggregated status counts.
+
+### R18.3 — CLI `scheduler` subapp + `run` command
+
+- New `apps/cli/src/alphabrief_cli/scheduler_commands.py` registers
+  a Typer subapp with six commands: `status`, `heartbeats`,
+  `alerts`, `tasks`, `freezes`, and `run`.
+- The five read-only commands mirror the API surface and fall back
+  to the local DuckDB stores when the API is not running (matching
+  the broker CLI pattern).
+- `scheduler run` is CLI-only and starts the `OperationsScheduler`
+  as a foreground asyncio process. Options `--reconcile-interval`
+  and `--max-failures` tune the cycle. The command traps
+  SIGINT/SIGTERM to call `scheduler.request_stop()` and exits with
+  code 2 on `SchedulerStartupBlockedError`.
+- The CLI hard-refuses to start the scheduler if
+  `ALPHABRIEF_LIVE_TRADING_ENABLED` is set to a truthy value,
+  printing a clear log line and exiting with code 3.
+- 9 new tests in `tests/test_scheduler_cli.py` cover the help text,
+  the offline read paths, the SIGINT-driven graceful stop, and the
+  live-trading refusal.
+
+### R18.4 — Documentation
+
+- Updated `docs/roadmap.md` (Phase 18 status block + planned
+  Phase 19 stub).
+- Updated `docs/development_log.md` (this entry).
+- Added the Operations Scheduler subsection to
+  `docs/architecture.md`.
+- Created `docs/development_plans/0044-phase-18-scheduler-surface.md`.
+
+### Validation for 0044
+
+1. `.venv/bin/pytest -q` passed: 1041 tests (up from 1019).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/ruff format --check` passed for every file added or
+   modified in this phase.
+4. `.venv/bin/mypy packages apps tests` passed.
+5. `git diff --check` passed; no implementation imports from
+   `_reference_sources/`.

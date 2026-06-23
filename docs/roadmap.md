@@ -758,3 +758,102 @@ modified.
   modified or added Python file.
 - `mypy packages apps tests` clean.
 - No files under `_reference_sources/` opened or imported.
+
+## Phase 18: Scheduler Operations Surface
+
+Status: complete. Rounds 18.1–18.4 complete.
+
+Goal: wire the Phase 17 `OperationsScheduler` (a typed scaffold with
+tests but no operator entry point) into a runnable, observable, and
+read-only surface so an operator can inspect heartbeats, alerts,
+registered tasks, and freeze state through both the CLI and the API,
+and start the scheduler as a long-running foreground process from the
+CLI.
+
+### Round 18.1 — `HeartbeatStore.list_heartbeats()`
+
+1. Added a read-only `list_heartbeats()` method on the existing
+   `HeartbeatStore`. The method returns one row per registered task,
+   newest-first by `last_run_at`, with the same shape (`last_run_at`
+   as ISO string or `None`, `run_count` as int, `last_error` as
+   `None` for healthy runs) as the existing `list_alerts` method.
+2. 3 new unit tests in `tests/test_scheduler.py` cover the
+   empty-store case, the post-`record_run` shape, and the DESC
+   ordering.
+
+### Round 18.2 — API `/api/v1/scheduler/*` routes
+
+1. New `apps/api/src/alphabrief_api/routes/scheduler.py` exposes five
+   read-only endpoints under `/api/v1/scheduler`:
+   - `GET /api/v1/scheduler/status` — aggregate heartbeat / freeze /
+     alert counts and the always-`False` `running` flag.
+   - `GET /api/v1/scheduler/heartbeats` — list per-task heartbeat rows.
+   - `GET /api/v1/scheduler/alerts` — recent alerts (query:
+     `?limit=N`, clamped to `[1, 500]`).
+   - `GET /api/v1/scheduler/tasks` — static description of the default
+     task set returned by `build_default_tasks()`.
+   - `GET /api/v1/scheduler/freezes` — currently-open broker freezes.
+2. The router proxies through the same `HeartbeatStore` and
+   `BrokerReconStore` instances the scheduler process writes to;
+   it never calls broker SDKs or model APIs.
+3. 10 new tests in `tests/test_scheduler_api.py` cover the empty
+   state, the populated state for each endpoint, the alert limit
+   query param (clamping, min, max), and the aggregated status
+   counts.
+
+### Round 18.3 — CLI `scheduler` subapp + `run` command
+
+1. New `apps/cli/src/alphabrief_cli/scheduler_commands.py` registers
+   a Typer subapp with six commands:
+   - `scheduler status`, `scheduler heartbeats`, `scheduler alerts`,
+     `scheduler tasks`, `scheduler freezes` — read-only inspection
+     commands that proxy through the API when the server is running
+     and fall back to the local DuckDB stores otherwise.
+   - `scheduler run` — starts the `OperationsScheduler` as a
+     foreground asyncio process. Options `--reconcile-interval` and
+     `--max-failures` let the operator tune the cycle. Traps
+     SIGINT/SIGTERM to call `scheduler.request_stop()`. Catches
+     `SchedulerStartupBlockedError` and exits with code 2.
+2. `scheduler run` builds a real `AlpacaPaperAdapter` (with the
+   default config) when both `ALPHABRIEF_ALPACA_KEY` and
+   `ALPHABRIEF_ALPACA_SECRET` are set in the environment, and falls
+   back to a `NullBrokerAdapter` otherwise. The null adapter is
+   documented as "Phase 18 dev mode" and lets the scheduler run
+   in dev / CI without a live broker connection.
+3. The CLI hard-refuses to start the scheduler if
+   `ALPHABRIEF_LIVE_TRADING_ENABLED` is set to a truthy value,
+   printing a clear log line and exiting with code 3.
+4. 9 new tests in `tests/test_scheduler_cli.py` cover the help
+   text, the offline read paths, the SIGINT-driven graceful stop
+   (with a post-exit heartbeat check delegated to a separate CLI
+   invocation to avoid the DuckDB single-writer lock), and the
+   live-trading refusal.
+
+### Round 18.4 — Documentation & final quality gate
+
+1. Updated `docs/roadmap.md` (this section).
+2. Updated `docs/development_log.md` (entry 0044).
+3. Added the Operations Scheduler subsection to `docs/architecture.md`.
+4. Created `docs/development_plans/0044-phase-18-scheduler-surface.md`.
+
+### Final quality gate
+
+- [x] 22 new tests across R18.1–R18.3.
+- [x] 1041 total tests pass (up from 1019).
+- [x] `ruff check .` clean.
+- [x] `ruff format --check` clean on every modified or added file.
+- [x] `mypy packages apps tests` clean.
+- [x] No files under `_reference_sources/` opened or imported.
+- [x] No risk / execution / trading core file modified.
+- [x] Live trading remains disabled by default. No provider SDK
+      calls outside ModelGateway.
+
+## Phase 19: Account-Level Runtime Enforcement (planned)
+
+Status: planned. Building on Phase 18's runnable scheduler.
+
+Goal: enforce the `PaperExecutionPolicy` total-exposure limit
+(`$300`) at runtime by querying the live broker account snapshot,
+not just the static `RiskLimitConfig`. Already referenced in the
+Phase 16/17 docs as Phase 19 work.
+
