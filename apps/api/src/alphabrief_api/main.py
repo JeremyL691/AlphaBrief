@@ -17,6 +17,7 @@ from alphabrief_api.routes.paper import router as paper_router
 from alphabrief_api.routes.research import router as research_router
 from alphabrief_api.routes.review import router as review_router
 from alphabrief_api.routes.risk import router as risk_router
+from alphabrief_api.routes.scheduler import router as scheduler_router
 from alphabrief_api.routes.status import router as status_router
 from alphabrief_api.routes.strategies import router as strategies_router
 from alphabrief_api.routes.strategy_admissions import (
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     api_app.include_router(strategy_admissions_router)
     api_app.include_router(strategy_signals_router)
     api_app.include_router(broker_router)
+    api_app.include_router(scheduler_router)
     api_app.include_router(dashboard_router)
     return api_app
 

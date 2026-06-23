@@ -108,6 +108,29 @@ class HeartbeatStore:
             return None
         return _parse_iso(str(row[0]))
 
+    def list_heartbeats(self) -> list[dict[str, Any]]:
+        """Return one row per registered task, newest-first by ``last_run_at``.
+
+        Mirrors :meth:`list_alerts`: ``last_run_at`` is an ISO string
+        (or ``None`` if the task has never run), ``run_count`` is an
+        int, and ``last_error`` is ``None`` for healthy runs. The
+        query is read-only and does not require a transaction.
+        """
+        rows = self._conn.execute(
+            "SELECT task_name, last_run_at, last_status, last_error, run_count "
+            "FROM scheduler_heartbeats ORDER BY last_run_at DESC"
+        ).fetchall()
+        return [
+            {
+                "task_name": str(row[0]),
+                "last_run_at": str(row[1]) if row[1] is not None else None,
+                "last_status": str(row[2]),
+                "last_error": str(row[3]) if row[3] is not None else None,
+                "run_count": int(row[4]),
+            }
+            for row in rows
+        ]
+
     def record_alert(
         self,
         *,

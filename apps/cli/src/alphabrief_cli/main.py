@@ -21,6 +21,7 @@ from alphabrief_cli.paper_commands import paper_app
 from alphabrief_cli.research_commands import research_app
 from alphabrief_cli.review_commands import review_app
 from alphabrief_cli.risk_commands import risk_app
+from alphabrief_cli.scheduler_commands import scheduler_app
 from alphabrief_cli.serve_commands import serve_app
 from alphabrief_cli.strategy_commands import strategy_app
 
@@ -44,6 +45,7 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(review_app, name="review")
 app.add_typer(strategy_app, name="strategy")
 app.add_typer(broker_app, name="broker")
+app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(serve_app, name="serve")
 
 
