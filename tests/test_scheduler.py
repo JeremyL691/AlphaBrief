@@ -377,3 +377,49 @@ def test_scheduled_task_rejects_negative_max_retries() -> None:
 
     with pytest.raises(ValueError, match="max_retries must be non-negative"):
         ScheduledTask(name="bad", interval_seconds=1, handler=handler, max_retries=-1)
+
+
+def test_heartbeat_store_list_heartbeats_empty(tmp_path: Path) -> None:
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    try:
+        assert heartbeats.list_heartbeats() == []
+    finally:
+        heartbeats.close()
+
+
+def test_heartbeat_store_list_heartbeats_after_record_run(tmp_path: Path) -> None:
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    try:
+        heartbeats.record_run(task_name="reconcile", status="ok", error=None)
+        heartbeats.record_run(task_name="other", status="error", error="boom")
+        rows = heartbeats.list_heartbeats()
+        assert len(rows) == 2
+        names = {row["task_name"] for row in rows}
+        assert names == {"reconcile", "other"}
+        by_name = {row["task_name"]: row for row in rows}
+        assert by_name["reconcile"]["last_status"] == "ok"
+        assert by_name["reconcile"]["last_error"] is None
+        assert by_name["reconcile"]["run_count"] == 1
+        assert by_name["other"]["last_status"] == "error"
+        assert by_name["other"]["last_error"] == "boom"
+    finally:
+        heartbeats.close()
+
+
+def test_heartbeat_store_list_heartbeats_orders_by_last_run_desc(
+    tmp_path: Path,
+) -> None:
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    try:
+        heartbeats.record_run(task_name="first", status="ok", error=None)
+        # Force a later last_run_at for the second task so the DESC
+        # ordering is observable. record_run uses datetime.now(UTC);
+        # a tiny sleep is enough to make the timestamps distinct.
+        import time as _time
+
+        _time.sleep(0.01)
+        heartbeats.record_run(task_name="second", status="ok", error=None)
+        rows = heartbeats.list_heartbeats()
+        assert [row["task_name"] for row in rows] == ["second", "first"]
+    finally:
+        heartbeats.close()
