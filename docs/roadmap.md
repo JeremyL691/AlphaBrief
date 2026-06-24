@@ -1002,13 +1002,108 @@ risk package free of any broker dependency.
       calls outside ModelGateway.
 - [x] `git diff --check` passed.
 
-## Phase 20: API-side Broker Adapter Singleton (planned)
+## Phase 20: API-side Broker Adapter Singleton (read-only observability)
 
-Status: planned. Building on Phase 19's risk-enforcement work.
+Status: complete. Rounds 20.1–20.4 complete.
 
 Goal: wire a single `BrokerAdapter` (Alpaca paper) into the API
 process so `/api/v1/broker/positions` and `/api/v1/broker/account`
 return live reads (still stubbed in Phase 19), while keeping
 account-level exposure enforcement in `RiskGate`. Phase 19
 delivered the *enforcement* path; Phase 20 closes the
-*observability* gap on the API side.
+*observability* gap on the API side. The wiring is **read-only**: the
+API never calls `submit` / `cancel` / `get_order` / `list_orders` /
+`list_fills` through the singleton — order placement stays inside the
+operations scheduler and behind a `RiskDecision`. The 30–60-day
+external-paper observation period (the rest of
+`FINAL_ACCEPTANCE_REPORT.md` §10) is a future operating milestone, not
+a code deliverable of this phase.
+
+### Round 20.1 — Adapter singleton module
+
+1. New `apps/api/src/alphabrief_api/broker_adapter.py` holds a
+   process-wide lazy `BrokerAdapter` singleton: `get_broker_adapter()`
+   builds it on first access, `_reset_broker_adapter()` is the test
+   isolation hook (mirrors `_reset_broker()` in `routes/paper.py`), and
+   `has_live_broker()` distinguishes a real Alpaca adapter from the
+   dev/CI null fallback without leaking the concrete type.
+2. `_build_broker_adapter()` reuses the CLI `scheduler run` selection
+   logic: build an `AlpacaPaperAdapter` when `ALPHABRIEF_ALPACA_KEY`
+   and `ALPHABRIEF_ALPACA_SECRET` are set, else a `_NullBrokerAdapter`.
+   Alpaca modules are imported locally so the module imports cleanly
+   without credentials and the client (which reads creds) is never
+   constructed at import time.
+3. `_NullBrokerAdapter` returns empty positions and a zero
+   `AccountSnapshot` (`account_id="null-adapter"`, zero Decimals) so
+   the API boots in dev / CI; `submit` / `cancel` / `get_order` raise
+   `NotImplementedError` so accidental order placement through the
+   API is impossible.
+4. `ALPHABRIEF_ALPACA_BASE_URL` env override lets tests point the
+   adapter at a mock Alpaca server without writing YAML; an `http://`
+   mock is permitted via `allow_insecure_base_url=True` (the paper-only
+   "live" check still applies).
+5. 5 new tests in `tests/test_broker_adapter_singleton.py`.
+
+### Round 20.2 — Wire `/positions` + `/account`
+
+1. `apps/api/.../routes/broker.py` `broker_positions()` and
+   `broker_account()` now call the singleton. Routes stay `sync def`;
+   the async adapter methods are awaited via `asyncio.run()` per
+   request (the Alpaca client is a sync urllib client that `await`s
+   nothing — mirrors the scheduler's
+   `asyncio.run(scheduler.run())` bridge idiom).
+2. New stringified response models `BrokerPositionResponse` and
+   `BrokerAccountResponse` (`str` fields) so `Decimal` / `captured_at`
+   never hit FastAPI float coercion — reuses the `routes/paper.py`
+   `PositionResponse` / `PortfolioResponse` precedent.
+3. Adapter failure (network refused, auth, protocol) → **HTTP 503**
+   with a structured `{"error","kind"}` detail (`kind` is the
+   `BrokerAdapterError` subclass name or `"transport"`); never a 500
+   and never a silent fall-back to the stub. The null adapter returns
+   the empty / zero shapes so the API still boots without credentials.
+4. The recon-store-backed routes (`/status`, `/orders`, `/reconcile`,
+   `/freeze`, `/unfreeze`) are byte-for-byte unchanged.
+5. `_reset_broker_adapter()` added to the `tests/test_api_server.py`
+   autouse fixture and the `tests/test_broker_api.py` client fixture
+   so a cred-bearing test cannot leak its adapter. The
+   `test_broker_account_returns_null` test is updated to the new
+   zero-snapshot shape and a positions null-path test is added.
+6. 5 new live-path tests in `tests/test_broker_api_live.py` exercise
+   the API against `tests/_helpers/MockAlpacaServer`: seeded live
+   `/positions` and `/account`, 503 on an unreachable port, null-adapter
+   shapes without credentials, and unchanged sibling routes.
+
+### Round 20.3 — CLI lock-in
+
+1. No source change: `alphabrief broker positions` / `account` already
+   proxy through the API (`broker_commands.py`), so they automatically
+   serve live data once the API does and refuse with a clear error when
+   no API is running.
+2. The `broker --help` assertion in `tests/test_broker_cli.py` is
+   expanded to lock `positions` and `account` into the CLI surface,
+   plus two offline-refusal tests.
+
+### Round 20.4 — Documentation & final quality gate
+
+1. Updated `docs/roadmap.md` (this section), `docs/development_log.md`
+   (entry `## 0050`), `docs/architecture.md` (API-side Broker Adapter
+   Singleton subsection), and `FINAL_ACCEPTANCE_REPORT.md` (Phase 20
+   read-only observability subset marked landed; the broader
+   submit/cancel/fills criteria and 30–60-day observation period left
+   to a future round — no overclaim).
+2. Created `docs/development_plans/0050-phase-20-api-broker-adapter-singleton.md`.
+
+### Final quality gate
+
+- [x] 13 new tests across R20.1–R20.3 (5 singleton, 5 live-path,
+      2 null-shape, 1 CLI help expansion + 2 CLI offline-refusal).
+- [x] 1090 total tests pass (up from 1077).
+- [x] `ruff check .` clean.
+- [x] `ruff format --check` clean on every modified or added file.
+- [x] `mypy packages apps tests` clean (206 source files).
+- [x] No files under `_reference_sources/` opened or imported.
+- [x] No risk / execution core file relaxed: the singleton is
+      read-only; `RiskGate`, `PaperBroker`, and the live-trading lock
+      are untouched. No API order placement path was added.
+- [x] Live trading remains disabled by default. No provider SDK
+      calls outside ModelGateway.

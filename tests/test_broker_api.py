@@ -4,6 +4,8 @@ These tests cover:
 - broker status reflects the local recon store
 - broker reconcile records a snapshot
 - broker freeze / unfreeze round-trip
+- broker /positions and /account null-adapter shape (live reads are
+  covered by tests/test_broker_api_live.py against a mock Alpaca server)
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from alphabrief_api.broker_adapter import _reset_broker_adapter
 from alphabrief_api.main import create_app
 from fastapi.testclient import TestClient
 
@@ -18,6 +21,12 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+    # No Alpaca credentials in the default suite -> null adapter. Reset
+    # first so a cred-bearing test from elsewhere cannot leak its adapter.
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_BASE_URL", raising=False)
+    _reset_broker_adapter()
     app = create_app()
     return TestClient(app)
 
@@ -78,7 +87,27 @@ def test_broker_orders_returns_mapping(client: TestClient) -> None:
     assert response.json() == {"orders": []}
 
 
-def test_broker_account_returns_null(client: TestClient) -> None:
+def test_broker_positions_returns_empty_without_credentials(
+    client: TestClient,
+) -> None:
+    # Null adapter (no Alpaca credentials) -> empty positions list.
+    response = client.get("/api/v1/broker/positions")
+    assert response.status_code == 200
+    assert response.json() == {"positions": []}
+
+
+def test_broker_account_returns_zero_snapshot_without_credentials(
+    client: TestClient,
+) -> None:
+    # Null adapter -> a real zero AccountSnapshot, not the pre-Phase-20
+    # {"account": None} stub.
     response = client.get("/api/v1/broker/account")
     assert response.status_code == 200
-    assert response.json() == {"account": None}
+    account = response.json()["account"]
+    assert account["account_id"] == "null-adapter"
+    assert account["cash"] == "0"
+    assert account["equity"] == "0"
+    assert account["buying_power"] == "0"
+    assert account["currency"] == "USD"
+    # captured_at is an ISO timestamp string.
+    assert isinstance(account["captured_at"], str) and account["captured_at"]

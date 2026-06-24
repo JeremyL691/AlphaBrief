@@ -328,6 +328,58 @@ the mark when no live quote is supplied. The
 market and overstates it in a falling one) and the upgrade path
 (pass `mark_prices` from a quote provider when one exists).
 
+### API-side Broker Adapter Singleton (Phase 20)
+
+The API process holds a single lazy `BrokerAdapter` singleton
+(`apps/api/src/alphabrief_api/broker_adapter.py`) so the read-only
+`GET /api/v1/broker/positions` and `GET /api/v1/broker/account`
+endpoints return live reads from the Alpaca Paper account instead of the
+Phase 19 stubs. Phase 19 delivered account-exposure *enforcement*
+(`RiskGate`); this singleton closes the *observability* gap on the API
+side.
+
+```
+broker_adapter.get_broker_adapter()  (lazy, built on first access)
+    │   AlpacaPaperAdapter  when ALPHABRIEF_ALPACA_KEY / SECRET set
+    │   _NullBrokerAdapter otherwise (empty positions, zero account)
+    ▼
+routes/broker.py  /positions, /account  (sync def; asyncio.run() bridge)
+    │   stringified BrokerPositionResponse / BrokerAccountResponse
+    │   adapter failure → HTTP 503 {error,kind,message} (never silent)
+    ▼
+JSON response (Decimal / captured_at as strings)
+```
+
+Key invariants:
+
+- **Read-only**: the API never calls `submit` / `cancel` / `get_order`
+  / `list_orders` / `list_fills` through the singleton; those raise
+  `NotImplementedError` on the null adapter and are simply never
+  invoked on the live one. Order placement stays inside the operations
+  scheduler and behind a `RiskDecision`. Account-exposure enforcement
+  is still owned by `RiskGate`, not by these read endpoints.
+- **Lazy + resettable**: the singleton is built on first access so
+  `create_app()` boots without credentials; `_reset_broker_adapter()`
+  is the test-isolation hook (mirrors `_reset_broker()` in
+  `routes/paper.py`). `has_live_broker()` distinguishes a real adapter
+  from the null fallback without leaking the concrete type.
+- **Credential safety**: credentials are env-only, never logged or
+  echoed; Alpaca modules are imported locally so the module imports
+  cleanly without them and the HTTP client (which reads creds) is never
+  constructed at import time.
+- **Failure surfaces, never silently stubs**: an unreachable / refused
+  / auth-failing live adapter returns HTTP 503 with a structured
+  `{"error":"broker_adapter_unavailable","kind":...}` detail, not the
+  empty list / null that the no-credentials null adapter returns. The
+  two are distinct: no credentials is a graceful zero; a live failure
+  is an explicit error.
+- **Factory duplication** (`ponytail:duplicated-adapter-factory`): the
+  adapter-selection logic duplicates the CLI `scheduler run`
+  `_build_adapter` rather than importing the CLI into the API (which
+  would invert layering). The upgrade path is to promote the factory
+  into `alphabrief_execution.broker` and have both call it; deferred
+  until a second caller justifies the move.
+
 ## Trading Environment
 
 `alphabrief_gym` implements the Phase 4 Gymnasium-style simulation boundary
@@ -392,11 +444,15 @@ Current behavior:
 3. Data status endpoint reports whether the configured data directory exists,
    whether it has files, and a CSV/Parquet file summary.
 
-The API server is read-only. It is exposed through the CLI with
-`alphabrief serve` and runs the FastAPI app via Uvicorn.
+The API server is read-only with respect to execution. It is exposed
+through the CLI with `alphabrief serve` and runs the FastAPI app via
+Uvicorn.
 
-It does not call models, access brokers, bypass RiskGate, or enable live
-trading.
+It does not place or cancel orders, bypass RiskGate, or enable live
+trading. The `/api/v1/broker/positions` and `/account` endpoints
+perform **read-only** probes against the API-side `BrokerAdapter`
+singleton (Phase 20) — they never submit orders, and account-exposure
+*enforcement* still lives in `RiskGate`, not in these read endpoints.
 
 ## Vectorized Backtester
 

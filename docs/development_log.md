@@ -2290,3 +2290,96 @@ scope.
    file groups to preserve the tool environment's local-port support); Ruff,
    `pip check`, `git diff --check`, and strict Mypy passed. CLI help smoke
    checks also passed for the root and scheduler command groups.
+
+## 0050 Phase 20: API-side Broker Adapter Singleton (read-only observability)
+
+Status: completed.
+
+Goal: wire a single `BrokerAdapter` (Alpaca paper) into the API process
+so `/api/v1/broker/positions` and `/api/v1/broker/account` return live
+reads (still stubbed at the end of Phase 19), while keeping account-level
+exposure enforcement in `RiskGate`. Phase 19 delivered the *enforcement*
+path; this phase closes the *observability* gap on the API side. The
+wiring is read-only: the API never places, cancels, or queries orders
+through the singleton — order placement stays inside the operations
+scheduler and behind a `RiskDecision`.
+
+### Completed changes:
+
+1. **Adapter singleton module** — new
+   `apps/api/src/alphabrief_api/broker_adapter.py` with a lazy
+   process-wide `BrokerAdapter` singleton (`get_broker_adapter()`),
+   a `_reset_broker_adapter()` test hook, and `has_live_broker()`.
+   `_build_broker_adapter()` reuses the CLI `scheduler run` selection
+   logic: an `AlpacaPaperAdapter` when `ALPHABRIEF_ALPACA_KEY` /
+   `ALPHABRIEF_ALPACA_SECRET` are set, else a `_NullBrokerAdapter` that
+   returns empty positions and a zero `AccountSnapshot` so the API boots
+   in dev / CI. Alpaca modules are imported locally and the client is
+   never constructed at import time, so `create_app()` boots without
+   credentials. A `ALPHABRIEF_ALPACA_BASE_URL` env override lets tests
+   point the adapter at a mock server. A `ponytail:duplicated-adapter-factory`
+   comment flags the factory duplication (vs. importing the CLI into the
+   API, which would invert layering) and the upgrade path
+   (promote into `alphabrief_execution.broker`).
+
+2. **Route wiring** — `routes/broker.py` `broker_positions()` and
+   `broker_account()` call the singleton via `asyncio.run()` per
+   request (routes stay `sync def`; the Alpaca client is a sync urllib
+   client that `await`s nothing — mirrors the scheduler bridge idiom).
+   New stringified response models `BrokerPositionResponse` /
+   `BrokerAccountResponse` (`str` fields) keep `Decimal` /
+   `captured_at` off FastAPI's float coercion. Adapter failure → HTTP
+   503 with a structured `{"error","kind"}` detail (never 500, never a
+   silent stub); the null adapter returns the empty / zero shapes so
+   the API still boots without credentials. The recon-store-backed
+   routes are byte-for-byte unchanged.
+
+3. **Tests** — 13 new tests across R20.1–R20.3:
+   `tests/test_broker_adapter_singleton.py` (5: no-creds null adapter,
+   creds→live adapter, reset clears cache, null read probes, module
+   imports without creds), `tests/test_broker_api_live.py` (5: seeded
+   live `/positions` and `/account`, 503 on unreachable port,
+   null-adapter shapes, unchanged sibling routes), and
+   `tests/test_broker_cli.py` appended (3: `--help` locks
+   `positions`/`account`, two offline-refusal tests). The
+   `test_broker_account_returns_null` test in `test_broker_api.py` is
+   updated to the new zero-snapshot shape plus a positions null-path
+   test; `_reset_broker_adapter()` is added to the
+   `test_api_server.py` autouse fixture and the `test_broker_api.py`
+   client fixture.
+
+4. **Documentation** — updated `docs/roadmap.md` (Phase 20 section
+   expanded into rounds), `docs/development_log.md` (this entry),
+   `docs/architecture.md` (API-side Broker Adapter Singleton
+   subsection), and `FINAL_ACCEPTANCE_REPORT.md` (read-only
+   observability subset of §10 marked landed; the broader
+   submit/cancel/fills criteria and 30–60-day observation period left
+   to a future round — no overclaim). New
+   `docs/development_plans/0050-phase-20-api-broker-adapter-singleton.md`.
+
+Files changed:
+
+- `apps/api/src/alphabrief_api/broker_adapter.py` — new
+- `apps/api/src/alphabrief_api/routes/broker.py` — live `/positions` + `/account`, response models, 503 handling
+- `tests/test_broker_adapter_singleton.py` — new
+- `tests/test_broker_api_live.py` — new
+- `tests/test_broker_api.py` — null-shape tests updated + reset in fixture
+- `tests/test_api_server.py` — `_reset_broker_adapter()` in autouse fixture
+- `tests/test_broker_cli.py` — help lock-in + offline-refusal tests
+- `docs/roadmap.md`, `docs/development_log.md`, `docs/architecture.md`,
+  `FINAL_ACCEPTANCE_REPORT.md`, `docs/development_plans/0050-phase-20-api-broker-adapter-singleton.md`
+
+Validation for 0050:
+
+1. `.venv/bin/pytest -q` passed: 1090 tests (up from 1077).
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/ruff format --check` passed for every file added or
+   modified in this phase.
+4. `.venv/bin/mypy packages apps tests` passed clean (206 source
+   files).
+5. `git diff --check` passed; no implementation imports from
+   `_reference_sources/`.
+6. No risk / execution core relaxation: the singleton is read-only;
+   `RiskGate`, `PaperBroker`, and the live-trading lock are untouched.
+   No API order-placement path was added. Live trading remains
+   disabled by default; no provider SDK calls outside ModelGateway.
