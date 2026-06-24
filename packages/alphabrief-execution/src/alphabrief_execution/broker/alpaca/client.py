@@ -186,7 +186,7 @@ def _default_http_send(request: Request, timeout_seconds: float) -> bytes:
     from urllib.request import urlopen
 
     with urlopen(request, timeout=timeout_seconds) as response:
-        return response.read()
+        return bytes(response.read())
 
 
 def _encode(value: str) -> str:
@@ -201,9 +201,12 @@ def _safe_decode(raw: bytes) -> dict[str, Any] | list[Any] | None:
     except UnicodeDecodeError as exc:
         raise BrokerProtocolError(f"alpaca response is not valid UTF-8: {exc}") from exc
     try:
-        return json.loads(text)
+        payload = json.loads(text)
     except json.JSONDecodeError as exc:
         raise BrokerProtocolError(f"alpaca response is not valid JSON: {exc}") from exc
+    if payload is None or isinstance(payload, (dict, list)):
+        return payload
+    raise BrokerProtocolError("alpaca response must be a JSON object, array, or null")
 
 
 def _http_error_to_broker_error(exc: HTTPError, request: Request) -> Exception:

@@ -28,6 +28,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -190,7 +191,7 @@ def reconcile_cmd(
 # ---------------------------------------------------------------------------
 
 
-def _read_broker_endpoint(endpoint: str, *, command: str) -> dict:
+def _read_broker_endpoint(endpoint: str, *, command: str) -> dict[str, Any]:
     """Fetch a JSON payload from ``/api/v1/broker/{endpoint}`` or exit with an error."""
     if not is_api_running():
         print(
@@ -203,7 +204,10 @@ def _read_broker_endpoint(endpoint: str, *, command: str) -> dict:
     base = os.environ.get("ALPHABRIEF_API_URL", "http://127.0.0.1:8000")
     url = f"{base}/api/v1/broker/{endpoint}"
     with urllib.request.urlopen(url, timeout=5) as response:
-        return json.loads(response.read().decode("utf-8"))
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"broker {command} returned a non-object JSON response")
+    return payload
 
 
 @broker_app.command("orders")

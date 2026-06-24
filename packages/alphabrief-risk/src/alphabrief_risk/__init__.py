@@ -1,5 +1,6 @@
 """Risk controls for AlphaBrief paper trading."""
 
+from alphabrief_risk.account_context import AccountExposureContext
 from alphabrief_risk.context import (
     MACRO_HIGH_RISK_INDICATOR_COUNT,
     MACRO_HIGH_RISK_POSITION_MULTIPLIER,
@@ -16,6 +17,7 @@ from alphabrief_risk.gate import RiskGate, RiskLimitConfig
 from alphabrief_risk.kill_switch import KillSwitch
 
 __all__ = [
+    "AccountExposureContext",
     "KillSwitch",
     "MACRO_HIGH_RISK_INDICATOR_COUNT",
     "MACRO_HIGH_RISK_POSITION_MULTIPLIER",

@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from alphabrief_core import OrderIntent, RiskDecision
 
+from alphabrief_risk.account_context import AccountExposureContext
 from alphabrief_risk.context import RiskContextDecision
 from alphabrief_risk.kill_switch import KillSwitch
 
@@ -24,6 +25,11 @@ class RiskLimitConfig:
     symbol_allowlist: frozenset[str] = frozenset()
     max_order_quantity: Decimal | None = None
     max_order_value: Decimal | None = None
+    # Account-level total-exposure cap. ``None`` preserves the legacy
+    # per-order-only behavior (no runtime account-exposure check). When
+    # set, ``RiskGate`` enforces it against an
+    # :class:`AccountExposureContext` supplied at evaluation time.
+    max_total_exposure: Decimal | None = None
     require_data_quality_passed: bool = True
     require_human_review: bool = False
 
@@ -32,6 +38,14 @@ class RiskLimitConfig:
             raise ValueError("max_order_quantity must be positive")
         if self.max_order_value is not None and self.max_order_value <= 0:
             raise ValueError("max_order_value must be positive")
+        if self.max_total_exposure is not None and self.max_total_exposure <= 0:
+            raise ValueError("max_total_exposure must be positive")
+        if (
+            self.max_total_exposure is not None
+            and self.max_order_value is not None
+            and self.max_total_exposure < self.max_order_value
+        ):
+            raise ValueError("max_total_exposure must be at least max_order_value")
 
 
 @dataclass
@@ -54,6 +68,7 @@ class RiskGate:
         estimated_quantity: Decimal | None = None,
         data_quality_passed: bool = True,
         risk_context: RiskContextDecision | None = None,
+        account_context: AccountExposureContext | None = None,
     ) -> RiskDecision:
         """Return a complete RiskDecision for an order intent.
 
@@ -62,6 +77,19 @@ class RiskGate:
         that the base checks already rejected, it can never relax the
         human-review flag, and it can never increase ``max_quantity``
         above the configured limit.
+
+        If ``account_context`` is provided and
+        ``limits.max_total_exposure`` is configured, an account-level
+        total-exposure check is applied in the same **tighten-only**
+        spirit: a buy that would push gross account exposure above the
+        cap is rejected, and ``max_quantity`` is clamped down to the
+        largest size that lands exactly on the cap. The check is
+        **fail-closed** — when ``max_total_exposure`` is configured but
+        ``account_context`` is ``None``, the intent is rejected with
+        the ``account_context_required`` tag rather than silently
+        skipped. It can never re-approve a rejected intent, never
+        relaxes the human-review flag, and never increases
+        ``max_quantity``.
 
         Specifically, when ``risk_context`` is set the layer may:
 
@@ -132,6 +160,17 @@ class RiskGate:
                 tags=tags,
             )
 
+        # Account-level total-exposure check (tighten-only / fail-closed).
+        # Returns the largest buyable quantity that lands exactly on the
+        # cap, or None when no clamp applies.
+        account_qty_clamp = self._check_account_exposure(
+            intent=intent,
+            estimated_price=estimated_price,
+            account_context=account_context,
+            failures=failures,
+            tags=tags,
+        )
+
         approved = not failures
         if approved:
             tags.append("approved")
@@ -155,6 +194,18 @@ class RiskGate:
                 reduced = max_quantity * multiplier
                 if reduced < max_quantity:
                     max_quantity = reduced
+
+        # Fold the account-exposure clamp into max_quantity. The clamp is
+        # tighten-only: it can only reduce an existing max_quantity, never
+        # create one where the per-order limit is unset, and never increase
+        # it. It composes with the risk_context multiplier by taking the
+        # smaller of the two (the stricter bound wins).
+        if (
+            account_qty_clamp is not None
+            and max_quantity is not None
+            and account_qty_clamp < max_quantity
+        ):
+            max_quantity = account_qty_clamp
 
         return RiskDecision(
             decision_id=self.decision_id_factory(),
@@ -224,3 +275,86 @@ class RiskGate:
         if quantity * estimated_price > self.limits.max_order_value:
             failures.append("order value exceeds max_order_value")
             tags.append("max_order_value")
+
+    def _check_account_exposure(
+        self,
+        *,
+        intent: OrderIntent,
+        estimated_price: Decimal | None,
+        account_context: AccountExposureContext | None,
+        failures: list[str],
+        tags: list[str],
+    ) -> Decimal | None:
+        """Enforce ``max_total_exposure`` against live account state.
+
+        Returns the largest buyable quantity that lands exactly on the
+        cap (so the caller can clamp ``max_quantity`` down), or ``None``
+        when no clamp applies (cap unset, sell side, or no headroom).
+
+        Tighten-only / fail-closed:
+
+        * When ``max_total_exposure`` is unset, this is a no-op (legacy
+          per-order-only behavior preserved).
+        * When the cap is set but ``account_context`` is ``None``, the
+          intent is rejected with the ``account_context_required`` tag.
+          Skipping would defeat runtime enforcement.
+        * Sells never increase gross exposure, so they bypass the
+          new-exposure projection (they may still fail other checks).
+          ponytail:sell-exposure-ceiling: we treat sells as never
+          increasing gross exposure, which ignores a short-sale flip
+          from a net-short position. Acceptable for the paper long-only
+          policy (``us_equity``, allowlisted ETFs); upgrade path is to
+          track signed exposure if shorts are ever admitted.
+        * Buys project ``current_total_exposure + qty * price`` and
+          reject with ``max_total_exposure`` when over the cap; the
+          returned clamp is ``headroom / price``.
+        * A buy with no ``estimated_price`` while the cap is set is
+          rejected with ``missing_price`` (mirrors
+          ``_check_order_value_limit``).
+        """
+        cap = self.limits.max_total_exposure
+        if cap is None:
+            return None
+
+        if account_context is None:
+            failures.append(
+                "runtime account exposure check required but no account "
+                "context supplied"
+            )
+            tags.append("account_context_required")
+            return None
+
+        # Sells reduce or close exposure; they do not add gross notional.
+        if intent.side == "sell":
+            return None
+
+        if intent.quantity is None:
+            # target_position_pct path: no discrete quantity to clamp.
+            # We cannot project a new-notional without a quantity, so we
+            # do not enforce the cap here. The per-order value check and
+            # the human-review gate still apply.
+            return None
+
+        if estimated_price is None:
+            failures.append("estimated_price is required for max_total_exposure")
+            tags.append("missing_price")
+            return None
+
+        new_notional = intent.quantity * estimated_price
+        projected = account_context.current_total_exposure + new_notional
+        if projected <= cap:
+            return None
+
+        failures.append("order would breach max_total_exposure")
+        tags.append("max_total_exposure")
+
+        headroom = cap - account_context.current_total_exposure
+        if headroom <= 0:
+            return None
+        # Largest buyable qty that lands on the cap. Decimal division
+        # under the default context never raises here (price > 0 is
+        # guaranteed to reach this point, and headroom > 0). The clamp
+        # is advisory: a caller that resubmits at this size is
+        # re-evaluated, so a last-digit rounding-up edge case simply
+        # re-rejects rather than breaching the cap.
+        return headroom / estimated_price

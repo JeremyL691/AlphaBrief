@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 from alphabrief_execution.broker.alpaca.adapter import AlpacaPaperAdapter
-from alphabrief_execution.broker.alpaca.client import AlpacaHttpClient
+from alphabrief_execution.broker.alpaca.client import AlpacaHttpClient, _safe_decode
 from alphabrief_execution.broker.alpaca.config import (
     DEFAULT_BASE_URL,
     ENV_KEY,
@@ -33,6 +33,7 @@ from alphabrief_execution.broker.alpaca.config import (
 from alphabrief_execution.broker.errors import (
     BrokerAuthError,
     BrokerNotFoundError,
+    BrokerProtocolError,
     BrokerRejectError,
     BrokerTransientError,
 )
@@ -413,6 +414,11 @@ def test_list_fills_returns_empty_on_null_body() -> None:
         adapter = _make_adapter(_client(mock.base_url))
         fills = adapter._run(adapter.list_fills())  # type: ignore[attr-defined]
         assert fills == []
+
+
+def test_client_rejects_scalar_json_response() -> None:
+    with pytest.raises(BrokerProtocolError, match="JSON object, array, or null"):
+        _safe_decode(b'"unexpected scalar"')
 
 
 def test_status_mapping_normalizes_cancelled() -> None:

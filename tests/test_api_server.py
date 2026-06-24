@@ -26,6 +26,7 @@ from alphabrief_api.routes.review import _clear_review_store
 from alphabrief_api.routes.risk import _reset_risk_gate
 from alphabrief_data import ParquetBarLoader
 from alphabrief_news import MacroIndicator, NewsHeadline
+from alphabrief_risk import RiskLimitConfig
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
@@ -876,6 +877,8 @@ def test_risk_config_returns_200() -> None:
         ["SPY", "QQQ", "IVV", "VOO", "AGG", "BND", "GLD", "SLV"]
     )
     assert body["max_order_value"] == "100"
+    # Phase 19: the runtime account-exposure cap from PaperExecutionPolicy.
+    assert body["max_total_exposure"] == "300"
     assert body["require_human_review"] is True
 
 
@@ -1778,3 +1781,158 @@ def test_macro_list_and_get_indicator() -> None:
 def test_macro_get_indicator_not_found() -> None:
     response = client.get("/api/v1/macro/indicators/NOSUCH")
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — account-level total-exposure enforcement (API path)
+# ---------------------------------------------------------------------------
+
+
+def _relaxed_exposure_gate(max_total_exposure: Decimal) -> None:
+    """Reset the module-level risk gate to enforce the cap WITHOUT the
+    default human-review block, so the exposure check is reachable on
+    the auto-execution paper path.
+    """
+    _reset_risk_gate(
+        RiskLimitConfig(
+            trading_enabled=True,
+            live_trading_enabled=False,
+            symbol_allowlist=frozenset({"SPY"}),
+            enabled_strategies=frozenset(),
+            max_order_value=Decimal("200"),
+            max_order_quantity=Decimal("10"),
+            max_total_exposure=max_total_exposure,
+            require_data_quality_passed=False,
+            require_human_review=False,
+        )
+    )
+
+
+def test_paper_buy_under_cap_fills_and_records_account_exposure() -> None:
+    _relaxed_exposure_gate(Decimal("250"))
+    response = client.post(
+        "/api/v1/paper/orders",
+        json={
+            "symbol": "SPY",
+            "side": "buy",
+            "order_type": "market",
+            "quantity": "1",
+            "rationale": "under cap",
+        },
+    )
+    assert response.status_code == 201
+    # The exposure fields are persisted into the audit-event details_json
+    # (DuckDB audit trail). They are not surfaced on the AuditEntryResponse
+    # model, so read them straight from the store to confirm they landed.
+    from alphabrief_api.routes.paper import _get_paper_store
+
+    raw = _get_paper_store().get_audit_events(event_type="risk_decision_recorded")
+    # Two events share this type: one from PaperBroker.submit (legacy)
+    # and one from the route. The route's carries the exposure fields.
+    route_event = next(e for e in raw if "account_total_exposure" in e["details"])
+    details = route_event["details"]
+    assert details["account_total_exposure"] == "0"
+    assert details["max_total_exposure"] == "250"
+
+
+def test_paper_buy_over_cap_is_rejected_with_max_total_exposure_tag() -> None:
+    # Cap 250. Two buys of 1 SPY @ 100 land (exposure 200), the third
+    # buy projects 300 > 250 -> rejected with the account-exposure tag.
+    _relaxed_exposure_gate(Decimal("250"))
+    for _ in range(2):
+        r = client.post(
+            "/api/v1/paper/orders",
+            json={
+                "symbol": "SPY",
+                "side": "buy",
+                "order_type": "market",
+                "quantity": "1",
+                "rationale": "build up to near cap",
+            },
+        )
+        assert r.status_code == 201
+    over_cap = client.post(
+        "/api/v1/paper/orders",
+        json={
+            "symbol": "SPY",
+            "side": "buy",
+            "order_type": "market",
+            "quantity": "1",
+            "rationale": "this one crosses the cap",
+        },
+    )
+    assert over_cap.status_code == 422
+    detail = over_cap.json()["detail"]
+    assert "max_total_exposure" in detail
+
+
+def test_risk_check_enforces_cap_with_account_context() -> None:
+    # The /risk/check endpoint accepts account_context and enforces the
+    # runtime cap without needing the paper broker.
+    _reset_risk_gate(
+        RiskLimitConfig(
+            trading_enabled=True,
+            live_trading_enabled=False,
+            symbol_allowlist=frozenset({"SPY"}),
+            enabled_strategies=frozenset(),
+            max_order_value=Decimal("200"),
+            max_order_quantity=Decimal("10"),
+            max_total_exposure=Decimal("300"),
+            require_data_quality_passed=False,
+            require_human_review=False,
+        )
+    )
+    intent = {
+        "intent_id": "intent_over",
+        "source": "manual",
+        "symbol": "SPY",
+        "side": "buy",
+        "order_type": "market",
+        "quantity": "2",  # 2 * 100 = 200 new notional
+        "rationale": "over cap",
+        "created_at": "2026-06-23T10:00:00+00:00",
+    }
+    account_ctx = {
+        "current_total_exposure": "200",  # existing 200 + 200 = 400 > 300
+        "exposure_by_symbol": {"SPY": "200"},
+        "cash": "800",
+        "account_id": "acct_test",
+        "captured_at": "2026-06-23T10:00:00+00:00",
+    }
+    response = client.post(
+        "/api/v1/risk/check",
+        json={
+            "intent": intent,
+            "estimated_price": "100",
+            "account_context": account_ctx,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["approved"] is False
+    assert "max_total_exposure" in body["risk_tags"]
+
+
+def test_risk_check_fail_closed_when_account_context_omitted() -> None:
+    # max_total_exposure is configured (via _default_limits = $300) but
+    # no account_context is supplied -> the gate fails closed.
+    response = client.post(
+        "/api/v1/risk/check",
+        json={
+            "intent": {
+                "intent_id": "intent_no_ctx",
+                "source": "manual",
+                "symbol": "SPY",
+                "side": "buy",
+                "order_type": "market",
+                "quantity": "1",
+                "rationale": "no ctx",
+                "created_at": "2026-06-23T10:00:00+00:00",
+            },
+            "estimated_price": "100",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["approved"] is False
+    assert "account_context_required" in body["risk_tags"]

@@ -103,7 +103,7 @@ def test_submit_and_cancel_results_are_immutable() -> None:
         accepted_at=datetime(2026, 6, 20, tzinfo=UTC),
     )
     with pytest.raises(ValidationError):
-        submit.broker_order_id = "changed"  # type: ignore[misc]
+        submit.broker_order_id = "changed"
 
     cancel = CancelResult(
         broker_order_id="abc",
@@ -111,7 +111,7 @@ def test_submit_and_cancel_results_are_immutable() -> None:
         cancelled_at=datetime(2026, 6, 20, tzinfo=UTC),
     )
     with pytest.raises(ValidationError):
-        cancel.status = BrokerOrderStatus.NEW  # type: ignore[misc]
+        cancel.status = BrokerOrderStatus.NEW
 
 
 def test_fill_quantity_and_price_must_be_positive() -> None:

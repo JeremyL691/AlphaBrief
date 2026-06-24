@@ -443,11 +443,13 @@ def _row_to_snapshot(row: tuple[Any, ...]) -> ReconSnapshot:
     sid, captured_at, scope, om, fm, cm, pm, diff_json = row
     if isinstance(diff_json, str):
         try:
-            diff = json.loads(diff_json)
+            parsed = json.loads(diff_json)
         except json.JSONDecodeError:
             diff = {"_raw": diff_json}
-    elif isinstance(diff_json, (dict, list)):
-        diff = diff_json  # type: ignore[assignment]
+        else:
+            diff = parsed if isinstance(parsed, dict) else {"_raw": diff_json}
+    elif isinstance(diff_json, dict):
+        diff = diff_json
     else:
         diff = {}
     return ReconSnapshot(

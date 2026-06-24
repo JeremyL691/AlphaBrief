@@ -11,7 +11,10 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-Phases 1–14 complete. 782 tests pass. Ruff and strict mypy are clean.
+Phases 1–19 are implemented and locally verified. The project remains
+paper-only: external broker credentials and a long-running external-paper
+observation period are separate acceptance gates, and live trading stays
+locked.
 
 - **Phase 1 — Core.** Domain models, CSV/Parquet OHLCV loaders, in-memory
   data quality checks, no-lookahead features, StrategySpec schema, and a
@@ -80,6 +83,12 @@ Phases 1–14 complete. 782 tests pass. Ruff and strict mypy are clean.
   `alphabrief model {evaluate,performance,route,compare}` commands
   expose the full surface. The dashboard gains a Model Performance
   card grid and a dedicated `/dashboard/models` page. 87 new tests.
+- **Phases 15–19 — Strategy lifecycle and paper-broker operations.**
+  Strategy specifications and signals are persistent, versioned artifacts;
+  the reviewed paper-only execution policy, Alpaca paper adapter,
+  reconciliation store, scheduler operations surface, and account-level
+  exposure guard are implemented. The exposure guard is fail-closed and
+  tighten-only: it cannot relax an existing RiskGate decision.
 
 ## Safety Boundary
 
@@ -145,7 +154,9 @@ Run all checks before committing:
 .venv/bin/mypy
 ```
 
-Current result: 782 tests pass, ruff clean, strict mypy clean.
+Current result: 1077 tests pass, Ruff is clean, and strict Mypy is clean. The
+development log records the latest verified run and its environment
+constraints.
 
 ## Reference Source Policy
 
