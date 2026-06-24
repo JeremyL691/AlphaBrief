@@ -13,6 +13,7 @@ from typing import Any
 import alphabrief_data.providers.binance as binance_mod
 import alphabrief_data.providers.yahoo as yahoo_mod
 import pytest
+from alphabrief_api.broker_adapter import _reset_broker_adapter
 from alphabrief_api.main import app
 from alphabrief_api.routes.backtest import _clear_report_store
 from alphabrief_api.routes.brief import _clear_brief_store
@@ -51,6 +52,7 @@ def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
     _clear_model_eval_store()
     _reset_broker()
     _reset_risk_gate()
+    _reset_broker_adapter()
     yield
     _close_store()
 
