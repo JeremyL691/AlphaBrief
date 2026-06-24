@@ -13,6 +13,10 @@ uncoordinated coroutines when state lives on the instance. Concrete
 adapters should document their concurrency guarantees.
 """
 
+from alphabrief_execution.broker.exposure import (
+    build_account_exposure_context,
+    build_account_exposure_context_from_portfolio,
+)
 from alphabrief_execution.broker.legacy import (
     PaperBroker,
     PaperBrokerError,
@@ -51,4 +55,6 @@ __all__ = [
     "Position",
     "SubmitRequest",
     "SubmitResult",
+    "build_account_exposure_context",
+    "build_account_exposure_context_from_portfolio",
 ]

@@ -4,7 +4,28 @@ from pathlib import Path
 
 import pytest
 from alphabrief_core import OrderIntent, load_paper_execution_policy, load_settings
+from alphabrief_risk import AccountExposureContext
 from pydantic import ValidationError
+
+POLICY_NOW = datetime(2026, 6, 20, tzinfo=UTC)
+
+
+def _empty_account_context() -> "AccountExposureContext":
+    """An AccountExposureContext with zero exposure.
+
+    The Phase 19 default gate enforces the $300 total-exposure cap at
+    runtime, so a buy without an account_context fails closed
+    (``account_context_required``). These tests exercise the symbol /
+    order-value / human-review boundaries, not the exposure cap, so they
+    supply a zero-exposure context to let those checks surface.
+    """
+    return AccountExposureContext(
+        current_total_exposure=Decimal("0"),
+        exposure_by_symbol={},
+        cash=Decimal("100000"),
+        account_id="paper_local",
+        captured_at=POLICY_NOW,
+    )
 
 
 def _configured_policy_text() -> str:
@@ -90,17 +111,20 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
         order_type="market",
         quantity=Decimal("1"),
         rationale="policy boundary test",
-        created_at=datetime(2026, 6, 20, tzinfo=UTC),
+        created_at=POLICY_NOW,
     )
     blocked_symbol = allowed.model_copy(update={"symbol": "BTC-USD"})
     blocked_value = allowed.model_copy(update={"quantity": Decimal("2")})
 
-    allowed_decision = gate.evaluate(allowed, estimated_price=Decimal("100"))
+    ctx = _empty_account_context()
+    allowed_decision = gate.evaluate(
+        allowed, estimated_price=Decimal("100"), account_context=ctx
+    )
     blocked_symbol_decision = gate.evaluate(
-        blocked_symbol, estimated_price=Decimal("100")
+        blocked_symbol, estimated_price=Decimal("100"), account_context=ctx
     )
     blocked_value_decision = gate.evaluate(
-        blocked_value, estimated_price=Decimal("100")
+        blocked_value, estimated_price=Decimal("100"), account_context=ctx
     )
     assert allowed_decision.approved is True
     assert allowed_decision.requires_human_review is True
@@ -122,10 +146,14 @@ def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
         order_type="market",
         quantity=Decimal("1"),
         rationale="policy boundary test",
-        created_at=datetime(2026, 6, 20, tzinfo=UTC),
+        created_at=POLICY_NOW,
     )
 
-    decision = gate.evaluate(intent, estimated_price=Decimal("50"))
+    decision = gate.evaluate(
+        intent,
+        estimated_price=Decimal("50"),
+        account_context=_empty_account_context(),
+    )
 
     assert decision.approved is True
 
