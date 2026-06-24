@@ -274,6 +274,60 @@ Current behavior:
 This layer is paper-only. It does not implement live broker adapters, live
 order routing, margin, leverage, partial fills, or external persistence.
 
+### Account-Level Exposure Enforcement (Phase 19)
+
+`RiskGate` enforces a per-account total-exposure cap at runtime, fed
+by a plain `AccountExposureContext` value object owned by the risk
+package. The cap is sourced from `PaperExecutionPolicy.max_total_exposure`
+(`$300` in the reviewed policy) and is exposed as
+`RiskLimitConfig.max_total_exposure`.
+
+```
+alphabrief-execution (broker.exposure)
+    │   async build_account_exposure_context(adapter, *, mark_prices=)
+    │   sync  build_account_exposure_context_from_portfolio(portfolio, ...)
+    ▼
+alphabrief-risk (account_context.AccountExposureContext)
+    │   current_total_exposure, exposure_by_symbol, cash, account_id, captured_at
+    ▼
+RiskGate.evaluate(intent, ..., account_context=...) → RiskDecision
+    │   no-op when cap unset; fail-closed (``account_context_required``)
+    │   when cap set but context missing; sell exempt; buy over cap
+    │   rejected with ``max_total_exposure``; max_quantity clamped
+    │   down to ``headroom / price`` (tighten-only).
+    ▼
+RiskDecision.approved (False on breach), risk_tags, max_quantity
+```
+
+Key invariants:
+
+- **Layer discipline**: `alphabrief-risk` imports only
+  `alphabrief_core`, never `alphabrief-execution`. The execution-side
+  projection helper is the *only* place that touches a
+  `BrokerAdapter` to feed account-level state to `RiskGate`. The
+  dependency arrow is one-way: execution → risk.
+- **Tighten-only**: the account check can only reject, clamp
+  `max_quantity` down, or no-op. It can never re-approve a rejected
+  intent, relax the human-review flag, raise `max_quantity`, or
+  override the live-trading lock.
+- **Fail-closed**: when the cap is configured but no
+  `account_context` is supplied, the intent is rejected with the
+  `account_context_required` tag. Skipping would defeat runtime
+  enforcement.
+- **Sells** never increase gross exposure and bypass the
+  new-exposure projection (the paper policy is long-only;
+  `ponytail:sell-exposure-ceiling` names the ceiling and the upgrade
+  path).
+- **No new SDK dependencies** and no imports from
+  `_reference_sources/`.
+
+The execution-side helper falls back to `position.average_price` as
+the mark when no live quote is supplied. The
+`ponytail:mark_price_ceiling` comment names the ceiling
+(cost-basis not current market; understates exposure in a rising
+market and overstates it in a falling one) and the upgrade path
+(pass `mark_prices` from a quote provider when one exists).
+
 ## Trading Environment
 
 `alphabrief_gym` implements the Phase 4 Gymnasium-style simulation boundary
@@ -908,15 +962,17 @@ page UI.
 ## Phase 16 — Paper Execution Boundary and Strategy Admission
 
 `config/paper_execution_policy.yaml` is the reviewed operating boundary for
-the first future external-paper integration: Alpaca Paper, `SPY`/`QQQ`, US
-regular session, market/limit orders, `$100` maximum order notional, and
+the external-paper integration: Alpaca Paper, `SPY`, `QQQ`, `IVV`, `VOO`,
+`AGG`, `BND`, `GLD`, and `SLV`, US regular session, market/limit orders,
+`$100` maximum order notional, and
 `$300` maximum total exposure. It has no credentials, permits only `paper`
 mode, and sets `automated_execution: false` plus mandatory human review.
 
-The API maps only currently enforceable policy fields into `RiskGate`:
-symbol allowlist, maximum order value, and human review. The `$300` total
-exposure is a documented Phase 16 boundary, not a claimed runtime control;
-account-level enforcement remains Phase 19 work.
+The API maps policy fields into `RiskGate`: symbol allowlist, maximum order
+value, human review, and the `$300` total-exposure ceiling. Phase 19 supplies
+an execution-side `AccountExposureContext`; when the ceiling is configured,
+the risk gate fails closed without that context and can only reject or tighten
+the permitted quantity.
 
 `strategy_admissions` is an append-only DuckDB audit table. Its API creates
 and reads version-matched evidence records, but neither `RiskGate` nor
@@ -961,10 +1017,10 @@ and falls back to the local store when the API is not running. The
 `ScheduledTask`) ships in `alphabrief_execution/operations/`; the
 operator surface for it (CLI + API) is described in the next section.
 
-`RiskGate`, `PaperBroker`, the advisory `enabled` flag, and
-`strategy_admissions` are not modified by this phase. The
-`$300` total-exposure bound remains a documented Phase 16 boundary
-until Phase 19.
+Phase 19 adds the account-exposure input to `RiskGate` without changing the
+paper-only execution policy, advisory `enabled` flag, or strategy-admission
+authority. The `$300` total-exposure bound is now an enforced, tighten-only
+runtime guard; it does not grant any execution authority.
 
 ## Phase 18 — Scheduler Operations Surface
 

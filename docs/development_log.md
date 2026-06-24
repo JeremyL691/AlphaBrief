@@ -2154,3 +2154,139 @@ read-only surface.
 4. `.venv/bin/mypy packages apps tests` passed.
 5. `git diff --check` passed; no implementation imports from
    `_reference_sources/`.
+
+## 0048 Phase 19: Account-Level Runtime Enforcement
+
+Status: completed.
+
+Goal: enforce the `PaperExecutionPolicy.max_total_exposure` (`$300`)
+at runtime against live account state, not just the static
+`RiskLimitConfig`. The check lives inside `RiskGate` as a
+**tighten-only** account-level check (mirroring the existing
+`risk_context` pattern) and is fed by a new execution-side
+projection helper that turns a live `BrokerAdapter` (or the legacy
+in-memory `PortfolioState`) into a plain
+`AccountExposureContext` value object owned by the risk layer. This
+keeps the dependency arrow one-way (execution → risk) and the risk
+package free of any broker dependency.
+
+### Completed changes:
+
+1. **Risk layer** — new
+   `packages/alphabrief-risk/src/alphabrief_risk/account_context.py`
+   defining `AccountExposureContext` (frozen Pydantic, `float` /
+   naive-datetime rejected, `extra="forbid"`). `RiskLimitConfig`
+   gains `max_total_exposure: Decimal | None = None` with positive
+   and `≥ max_order_value` validation. `RiskGate.evaluate(...)`
+   gains an optional `account_context` kwarg and a new private
+   `_check_account_exposure` method that is no-op when unconfigured,
+   **fail-closed** (`account_context_required`) when configured but
+   context missing, exempts sells, rejects buys over the cap with
+   `max_total_exposure`, clamps `max_quantity` down to
+   `headroom / price` (advisory; tighter than the per-order cap;
+   composes with the `risk_context` multiplier by taking the
+   smaller bound). `AccountExposureContext` is exported from
+   `alphabrief_risk`.
+
+2. **Execution projection** — new
+   `packages/alphabrief-execution/src/alphabrief_execution/broker/exposure.py`
+   with `async build_account_exposure_context(adapter)` and sync
+   `build_account_exposure_context_from_portfolio(portfolio)`.
+   Both exported from `alphabrief_execution/broker`. A
+   `ponytail:mark_price_ceiling` comment names the cost-basis
+   ceiling when no live mark is supplied and the upgrade path
+   (pass `mark_prices` from a quote provider).
+
+3. **API wiring** — `routes/risk.py` sources `max_total_exposure`
+   from `_execution_policy` into `_default_limits`, surfaces it on
+   `RiskConfigResponse`, and accepts `account_context` on
+   `RiskCheckRequest`. `routes/paper.py` builds an
+   `AccountExposureContext` from the in-memory `PaperBroker`
+   portfolio via the sync projection helper and passes it to
+   `gate.evaluate`; the audit event gains
+   `account_total_exposure` and `max_total_exposure` fields in
+   `details_json`. `routes/broker.py` `/positions` and `/account`
+   stubs remain (comments updated to defer to Phase 20 for live
+   reads).
+
+4. **Tests** — 34 new tests across R19.1–R19.3:
+   `tests/test_account_exposure.py` (10), `tests/test_risk_gate.py`
+   appended (9), `tests/test_broker_exposure.py` (8),
+   `tests/test_api_server.py` appended (4 + 1 expanded assertion).
+   Two existing `tests/test_execution_policy.py` cases adapted to
+   supply a zero-exposure `account_context` so their symbol /
+   order-value / human-review assertions remain visible under the
+   Phase 19 fail-closed default. No coverage lost.
+
+5. **Documentation** — updated `docs/roadmap.md` (Phase 19 status
+   block + Phase 20 stub), `docs/development_log.md` (this entry),
+   and `docs/architecture.md` (Account-Level Exposure Enforcement
+   subsection). New
+   `docs/development_plans/0048-phase-19-account-exposure-enforcement.md`.
+
+Files changed:
+
+- `packages/alphabrief-risk/src/alphabrief_risk/account_context.py` — new
+- `packages/alphabrief-risk/src/alphabrief_risk/gate.py` — `RiskLimitConfig.max_total_exposure`, `evaluate` kwarg, `_check_account_exposure`
+- `packages/alphabrief-risk/src/alphabrief_risk/__init__.py` — export
+- `packages/alphabrief-execution/src/alphabrief_execution/broker/exposure.py` — new
+- `packages/alphabrief-execution/src/alphabrief_execution/broker/__init__.py` — export
+- `apps/api/src/alphabrief_api/routes/risk.py` — `_default_limits`, `RiskConfigResponse`, `RiskCheckRequest`, `/check`
+- `apps/api/src/alphabrief_api/routes/paper.py` — sync projection + audit fields
+- `apps/api/src/alphabrief_api/routes/broker.py` — stub comment updates
+- `tests/test_account_exposure.py` — new
+- `tests/test_broker_exposure.py` — new
+- `tests/test_risk_gate.py` — appended
+- `tests/test_api_server.py` — appended + 1 expanded assertion
+- `tests/test_execution_policy.py` — 2 cases adapted (zero-exposure context)
+- `docs/roadmap.md`, `docs/development_log.md`, `docs/architecture.md` — this entry
+- `docs/development_plans/0048-phase-19-account-exposure-enforcement.md` — new
+
+Validation for 0048:
+
+1. `.venv/bin/pytest -q` passed: 1075 tests (up from 1041). One
+   pre-existing flaky test
+   (`tests/test_scheduler_cli.py::test_cli_run_command_starts_and_stops_on_sigint`,
+   subprocess / `PATH` / SIGINT flake that also fails on clean `main`)
+   is deselected and explicitly called out — out of scope for this
+   phase.
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/ruff format --check` passed for every file added or
+   modified in this phase (13 files; the 75 pre-existing unformatted
+   files on clean `main` are out of scope).
+4. `.venv/bin/mypy` passed for every file added or modified in this
+   phase. The full `mypy packages apps tests` run is blocked by a
+   pre-existing `tests/_helpers/mock_alpaca_server.py`
+   double-discovery error on clean `main`; the 3 unrelated
+   pre-existing `no-any-return` / `unused-ignore` errors in
+   `client.py` and `recon_store.py` are out of scope.
+5. `git diff --check` passed; no implementation imports from
+   `_reference_sources/`.
+6. No risk / execution core relaxation: the account check is
+   strictly tighten-only and fail-closed (can only reject, clamp
+   `max_quantity` down, or no-op). Live trading remains disabled by
+   default; no provider SDK calls outside ModelGateway.
+
+## 0049 Quality-Gate Recovery and Documentation Alignment
+
+Status: completed locally; external paper-account operation remains out of
+scope.
+
+1. Fixed the scheduler CLI SIGINT integration test so it prepends the active
+   virtual environment's command directory even when `PATH` already exists.
+   The test now exercises the installed `alphabrief` entry point reliably.
+2. Enabled explicit package-base discovery for Mypy and resolved its surfaced
+   strict-mode errors. The repository-wide command now checks 203 source
+   files without duplicate-module or stale-ignore failures.
+3. Hardened JSON contracts at broker boundaries: Alpaca HTTP responses and
+   broker API CLI payloads must be objects, arrays, or `null` as appropriate;
+   scalar JSON is rejected rather than escaping as an untyped value. Added a
+   regression test for the Alpaca scalar-response case.
+4. Reconciled current-status documentation. Phase 17 adapter, Phase 18
+   scheduler surface, and Phase 19 account-exposure enforcement are marked as
+   locally implemented; external credentials, real-account exercises, and
+   the 30-60 day observation period remain explicit acceptance gaps.
+5. Final quality gate: all 1077 tests passed (run in four non-overlapping
+   file groups to preserve the tool environment's local-port support); Ruff,
+   `pip check`, `git diff --check`, and strict Mypy passed. CLI help smoke
+   checks also passed for the root and scheduler command groups.

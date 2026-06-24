@@ -161,13 +161,25 @@ def broker_orders() -> dict[str, Any]:
 
 @router.get("/positions")
 def broker_positions() -> dict[str, Any]:
-    """List broker positions (currently returns empty until Phase 19 recon)."""
+    """List broker positions (stub — deferred to Phase 20).
+
+    The runtime account-exposure *enforcement* (Phase 19) is delivered
+    by :class:`alphabrief_risk.RiskGate` against an
+    :class:`AccountExposureContext`, not by these read endpoints. This
+    route still returns an empty list until a live ``BrokerAdapter``
+    singleton is wired into the API process (Phase 20).
+    """
     return {"positions": []}
 
 
 @router.get("/account")
 def broker_account() -> dict[str, Any]:
-    """Return the cached account snapshot (none at this round)."""
+    """Return the cached account snapshot (stub — deferred to Phase 20).
+
+    Like ``/positions``, the enforcement path does not depend on this
+    endpoint. Returns ``None`` until a live ``BrokerAdapter`` singleton
+    is wired into the API process (Phase 20).
+    """
     return {"account": None}
 
 

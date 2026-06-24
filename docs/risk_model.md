@@ -95,13 +95,17 @@ backward compatible with the Phase 12 contract.
 ## Phase 16 Paper Boundary
 
 The runtime's default enforceable boundary is loaded from the checked-in
-paper execution policy: `SPY`/`QQQ`, maximum order notional `$100`, and
+paper execution policy: `SPY`, `QQQ`, `IVV`, `VOO`, `AGG`, `BND`, `GLD`, and
+`SLV`, maximum order notional `$100`, and
 mandatory human review. Therefore, the internal paper-order API records a
 risk decision but does not auto-execute under this policy.
 
-`max_total_exposure: $300` is an approved operating constraint, but it is
-not yet enforced against account state. It must not be represented as a
-runtime risk check until Phase 19 implements account-level exposure controls.
+`max_total_exposure: $300` is enforced at runtime by the Phase 19
+account-exposure check. When the cap is configured, `RiskGate` fails closed
+without an `AccountExposureContext`; buys that would breach the cap are
+rejected and the advisory quantity bound can only be reduced. Sells do not
+increase the long-only paper policy's gross exposure. The context is projected
+by the execution layer, so the risk package remains free of broker imports.
 
 An explicit empty `enabled_strategies` set denies all strategy-originated
 orders. `None` retains the legacy unconfigured behavior. Strategy registry

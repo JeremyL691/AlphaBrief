@@ -1,5 +1,8 @@
 # AlphaBrief AI Plan — Phase 15
 
+> Historical planning snapshot for Phase 15. For current status and quality
+> gates, use `docs/roadmap.md` and `docs/development_log.md`.
+
 ## Current State Assessment
 
 After 14 phases, AlphaBrief has solid foundations:

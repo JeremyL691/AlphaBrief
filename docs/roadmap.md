@@ -848,12 +848,167 @@ CLI.
 - [x] Live trading remains disabled by default. No provider SDK
       calls outside ModelGateway.
 
-## Phase 19: Account-Level Runtime Enforcement (planned)
+## Phase 19: Account-Level Runtime Enforcement
 
-Status: planned. Building on Phase 18's runnable scheduler.
+Status: complete. Rounds 19.1–19.4 complete.
 
 Goal: enforce the `PaperExecutionPolicy` total-exposure limit
-(`$300`) at runtime by querying the live broker account snapshot,
-not just the static `RiskLimitConfig`. Already referenced in the
-Phase 16/17 docs as Phase 19 work.
+(`$300`) at runtime against live account state, not just the
+static `RiskLimitConfig`. The check lives inside
+:class:`alphabrief_risk.RiskGate` as a **tighten-only** account-level
+check (mirroring the existing `risk_context` pattern) and is fed by
+a new execution-side projection helper that turns a live
+:class:`BrokerAdapter` (or the legacy in-memory
+:class:`PortfolioState`) into a plain
+:class:`AccountExposureContext` value object owned by the risk layer.
+This keeps the dependency arrow one-way (execution → risk) and the
+risk package free of any broker dependency.
 
+### Round 19.1 — `AccountExposureContext` + `RiskGate` account-exposure check
+
+1. New `packages/alphabrief-risk/src/alphabrief_risk/account_context.py`
+   defines a frozen Pydantic value object
+   (:class:`AccountExposureContext`) carrying `current_total_exposure`,
+   `exposure_by_symbol`, `cash`, `account_id`, `captured_at`. It
+   rejects `float` inputs (Decimal-first), rejects naive
+   `captured_at`, and uses `ConfigDict(extra="forbid", frozen=True)`
+   mirroring `RiskContextDecision`.
+2. `RiskLimitConfig` gains a new optional field
+   `max_total_exposure: Decimal | None = None` (defaults preserve the
+   legacy per-order-only behavior) with `__post_init__` validation:
+   must be positive, and must be `≥ max_order_value` when both are set
+   (mirrors the `PaperExecutionPolicy` invariant).
+3. `RiskGate.evaluate(...)` gains a new optional kwarg
+   `account_context: AccountExposureContext | None = None` and a new
+   private `_check_account_exposure` method. Semantics:
+   - **No-op** when `max_total_exposure` is `None` (legacy path).
+   - **Fail-closed** when `max_total_exposure` is set but
+     `account_context is None`: rejects with the
+     `account_context_required` tag. Skipping would defeat runtime
+     enforcement.
+   - **Sells** bypass the new-exposure projection (gross notional
+     cannot grow on a sell); documented with a
+     `ponytail:sell-exposure-ceiling` comment naming the ceiling
+     (long-only paper policy) and the upgrade path.
+   - **Buys** project `current_total_exposure + qty * price` and
+     reject with `max_total_exposure` when over the cap; the returned
+     clamp is `headroom / price` (advisory; re-evaluated on resubmit).
+   - **Missing `estimated_price`** while the cap is set → rejected
+     with `missing_price` (parity with `_check_order_value_limit`).
+   - The clamp folds into `max_quantity` **tighten-only**: it can
+     only reduce an existing `max_quantity`, never create one from
+     `None`, never exceed the configured per-order cap. It composes
+     with the `risk_context` multiplier by taking the smaller bound.
+4. `AccountExposureContext` is exported from `alphabrief_risk`.
+5. 19 new tests: 10 in `tests/test_account_exposure.py` (value
+   object: construction, frozen + `extra="forbid"`, `float`
+   rejection, naive-datetime rejection, negative-cash acceptance)
+   and 9 in `tests/test_risk_gate.py` (under-cap approved, exactly-
+   at-cap approved, one-cent-over rejected, sell exempt, fail-closed
+   on missing context, legacy no-op when unconfigured, tighten-only
+   clamp, clamp stacking with `risk_context` multiplier, missing
+   price, zero headroom, construction-time `max_total_exposure <
+   max_order_value` and non-positive rejections).
+
+### Round 19.2 — Execution-side projection helper
+
+1. New `packages/alphabrief-execution/src/alphabrief_execution/broker/exposure.py`
+   exposes two pure functions:
+   - `async def build_account_exposure_context(adapter, *,
+     mark_prices=None)` — reads `adapter.get_positions()` and
+     `adapter.get_account()` and projects into
+     `AccountExposureContext`. Gross notional per position is
+     `abs(quantity) * mark_price` where the mark is
+     `mark_prices[symbol]` if supplied else `position.average_price`.
+   - `def build_account_exposure_context_from_portfolio(portfolio,
+     *, account_id="paper_local", mark_prices=None, clock=...)` —
+     sync variant that reads the in-memory `PortfolioState` used by
+     the legacy `PaperBroker` so the API paper route can enforce the
+     cap without an external adapter.
+   A `ponytail:mark_price_ceiling` comment names the ceiling
+   (cost-basis not current market when no live mark is supplied;
+   understates exposure in a rising market and overstates it in a
+   falling one; upgrade path is to pass `mark_prices` from a quote
+   provider when one exists).
+2. Both functions are exported from `alphabrief_execution/broker`.
+3. 8 new tests in `tests/test_broker_exposure.py` cover the async
+   adapter variant (sums from `average_price`, empty positions,
+   `mark_prices` override, `abs()` for shorts, zero-qty skip) and the
+   sync portfolio variant (sums from `PortfolioState`, empty
+   portfolio, `mark_prices` override).
+
+### Round 19.3 — API wiring
+
+1. `apps/api/.../routes/risk.py`:
+   - `_default_limits` now sources `max_total_exposure` directly
+     from `_execution_policy.max_total_exposure` — the **single
+     point** that turns the static `$300` YAML boundary into a live
+     `RiskGate` check.
+   - `RiskConfigResponse` gains `max_total_exposure: str | None`,
+     emitted in `GET /api/v1/risk/config`.
+   - `RiskCheckRequest` gains optional `account_context:
+     AccountExposureContext | None`. `POST /api/v1/risk/check`
+     passes it through to `gate.evaluate`.
+2. `apps/api/.../routes/paper.py` — `POST /api/v1/paper/orders`
+   builds an `AccountExposureContext` from the in-memory
+   `PaperBroker` portfolio via the sync projection helper (using the
+   existing `reference_price = Decimal("100")` placeholder as the
+   local mark for the order symbol) and passes it to
+   `gate.evaluate`. The audit event gains `account_total_exposure`
+   and `max_total_exposure` fields, persisted into DuckDB
+   `details_json`.
+3. `apps/api/.../routes/broker.py` — `/positions` and `/account`
+   stubs remain (updated comments defer to **Phase 20** for live
+   reads). The enforcement path is delivered by `RiskGate`, not by
+   these read endpoints.
+4. 4 new tests in `tests/test_api_server.py` (the under-cap fill
+   path with audit-event assertions via `PaperStore`, the
+   over-cap-rejected path, `/risk/check` enforces the cap when
+   `account_context` is supplied, `/risk/check` fails closed when
+   `account_context` is omitted). Plus 1 expanded assertion on the
+   existing `risk/config` test confirming `max_total_exposure`
+   surfaces from the policy.
+5. 2 existing tests in `tests/test_execution_policy.py` adapted to
+   supply a zero-exposure `account_context` (their intent is to
+   exercise the symbol / order-value / human-review boundaries; the
+   Phase 19 fail-closed default would otherwise have masked those
+   checks). No coverage lost.
+
+### Round 19.4 — Documentation & final quality gate
+
+1. Updated `docs/roadmap.md` (this section + a Phase 20 stub).
+2. Updated `docs/development_log.md` (entry `## 0048`).
+3. Added an "Account-Level Exposure Enforcement" subsection to
+   `docs/architecture.md`.
+4. Created `docs/development_plans/0048-phase-19-account-exposure-enforcement.md`.
+
+### Final quality gate
+
+- [x] 34 new tests across R19.1–R19.3 (10 account-context, 9
+      risk-gate, 8 broker-exposure, 5 api-server, 2 execution-policy
+      adapted). The full suite now passes 1077 tests.
+- [x] `ruff check .` clean.
+- [x] `ruff format --check` clean on every modified or added file
+      (13 files; the 75 pre-existing unformatted files on clean
+      `main` are out of scope).
+- [x] `mypy packages apps tests` is clean with explicit package-base
+      discovery. JSON response boundaries are validated before typed code
+      consumes them, and obsolete type-ignore comments were removed.
+- [x] No files under `_reference_sources/` opened or imported.
+- [x] No risk / execution core relaxation: the account check is
+      strictly tighten-only and fail-closed; it can only reject,
+      clamp `max_quantity` down, or no-op.
+- [x] Live trading remains disabled by default. No provider SDK
+      calls outside ModelGateway.
+- [x] `git diff --check` passed.
+
+## Phase 20: API-side Broker Adapter Singleton (planned)
+
+Status: planned. Building on Phase 19's risk-enforcement work.
+
+Goal: wire a single `BrokerAdapter` (Alpaca paper) into the API
+process so `/api/v1/broker/positions` and `/api/v1/broker/account`
+return live reads (still stubbed in Phase 19), while keeping
+account-level exposure enforcement in `RiskGate`. Phase 19
+delivered the *enforcement* path; Phase 20 closes the
+*observability* gap on the API side.

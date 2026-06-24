@@ -1,5 +1,5 @@
-# Phase 16 operating boundary. This file contains no credentials and never
-# authorizes broker calls. Alpaca Paper is a future Phase 17 target only.
+# Reviewed paper-only operating boundary. This file contains no credentials and
+# never authorizes broker calls; all execution still requires RiskGate.
 mode: paper
 provider: alpaca_paper
 market: us_equity

@@ -1,5 +1,9 @@
 # AlphaBrief Phase 13 — AI Handoff
 
+> Historical Phase 13 handoff. Its test count and working-tree status are not
+> the current project status; consult `docs/roadmap.md` and
+> `docs/development_log.md` for the active baseline.
+
 > 生成时间: 2026-06-17
 > 最后 Commit: `1733264` — `chore(phase-13): record R13.1 commit hash and document risk_context support`
 > 工作区状态: clean
