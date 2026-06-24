@@ -157,7 +157,9 @@ def test_cli_run_command_starts_and_stops_on_sigint(
     """
     env = dict(os.environ)
     env.update(isolated_data_dir)
-    env.setdefault("PATH", str(Path(sys.executable).parent) + ":" + env.get("PATH", ""))
+    venv_bin = str(Path(sys.executable).parent)
+    if venv_bin not in env.get("PATH", "").split(":"):
+        env["PATH"] = venv_bin + ":" + env.get("PATH", "")
     cmd = [
         "alphabrief",
         "scheduler",

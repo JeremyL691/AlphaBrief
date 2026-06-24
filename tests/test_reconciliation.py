@@ -12,6 +12,7 @@ a real Alpaca server. Covers:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -119,7 +120,7 @@ class FakeAdapter(BrokerAdapter):
 
 
 @pytest.fixture
-def store(tmp_path: Any) -> BrokerReconStore:
+def store(tmp_path: Any) -> Iterator[BrokerReconStore]:
     s = BrokerReconStore(db_path=tmp_path / "recon.db")
     yield s
     s.close()
@@ -239,4 +240,4 @@ def test_reconciler_config_rejects_unknown_scope() -> None:
     config = ReconcilerConfig()
     snapshot = type("S", (), {"all_match": True})()
     with pytest.raises(ValueError, match="unknown reconciliation scope"):
-        config.should_freeze("garbage", snapshot)  # type: ignore[arg-type]
+        config.should_freeze("garbage", snapshot)

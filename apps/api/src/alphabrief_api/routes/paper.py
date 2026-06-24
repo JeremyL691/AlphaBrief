@@ -26,6 +26,9 @@ from alphabrief_execution import (
     PaperBrokerError,
     PortfolioState,
 )
+from alphabrief_execution.broker import (
+    build_account_exposure_context_from_portfolio,
+)
 from alphabrief_risk import RiskContextDecision
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -218,9 +221,7 @@ def list_orders(
         raw = store.get_audit_events(event_type=status)
     else:
         raw = store.get_audit_events()
-    return AuditListResponse(
-        entries=[_audit_entry_from_dict(e) for e in raw]
-    )
+    return AuditListResponse(entries=[_audit_entry_from_dict(e) for e in raw])
 
 
 @router.get("/audit", response_model=AuditListResponse)
@@ -228,9 +229,7 @@ def get_audit_log() -> AuditListResponse:
     """Return the complete execution audit log from persistent store."""
     store = _get_paper_store()
     raw = store.get_audit_events()
-    return AuditListResponse(
-        entries=[_audit_entry_from_dict(e) for e in raw]
-    )
+    return AuditListResponse(entries=[_audit_entry_from_dict(e) for e in raw])
 
 
 @router.post("/orders", status_code=201)
@@ -267,10 +266,23 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
 
     reference_price = Decimal("100")
 
+    # Phase 19: project the in-memory PaperBroker portfolio into an
+    # AccountExposureContext so RiskGate can enforce the runtime
+    # max_total_exposure cap ($300 from PaperExecutionPolicy). The
+    # legacy broker holds cost-basis (average_price) marks only — the
+    # projection falls back to average_price when no live mark exists
+    # (see the ponytail:mark_price_ceiling note in broker.exposure).
+    account_context = build_account_exposure_context_from_portfolio(
+        broker.portfolio,
+        account_id="paper_local",
+        mark_prices={intent.symbol: reference_price},
+    )
+
     decision = gate.evaluate(
         intent,
         estimated_price=reference_price,
         risk_context=body.risk_context,
+        account_context=account_context,
     )
     store.save_audit_event(
         event_type="risk_decision_recorded",
@@ -282,9 +294,7 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
             "reason": decision.reason,
             "message": "risk decision recorded",
             "risk_context_decision_id": (
-                body.risk_context.decision_id
-                if body.risk_context is not None
-                else None
+                body.risk_context.decision_id if body.risk_context is not None else None
             ),
             "risk_context_tags": (
                 list(body.risk_context.risk_tags)
@@ -294,6 +304,12 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
             "risk_context_multiplier": (
                 body.risk_context.suggested_max_position_multiplier
                 if body.risk_context is not None
+                else None
+            ),
+            "account_total_exposure": str(account_context.current_total_exposure),
+            "max_total_exposure": (
+                str(gate.limits.max_total_exposure)
+                if gate.limits.max_total_exposure is not None
                 else None
             ),
         },
@@ -351,8 +367,7 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
         for sym, pos in portfolio.positions.items()
     }
     total_value = portfolio.cash + sum(
-        pos.quantity * pos.average_price
-        for pos in portfolio.positions.values()
+        pos.quantity * pos.average_price for pos in portfolio.positions.values()
     )
     store.save_portfolio_snapshot(
         cash=str(portfolio.cash),
@@ -370,9 +385,7 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
         "status": "filled",
         "price": str(result.fill.price),
         "applied_risk_context": (
-            body.risk_context.decision_id
-            if body.risk_context is not None
-            else None
+            body.risk_context.decision_id if body.risk_context is not None else None
         ),
     }
 

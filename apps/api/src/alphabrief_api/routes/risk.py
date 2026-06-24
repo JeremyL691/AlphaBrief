@@ -22,6 +22,7 @@ from alphabrief_research import (
     build_structured_summary,
 )
 from alphabrief_risk import (
+    AccountExposureContext,
     KillSwitch,
     RiskContextDecision,
     RiskGate,
@@ -38,9 +39,7 @@ from alphabrief_api.routes.news import _get_store as _get_news_store
 # Module-level risk gate (runtime config — stays in-memory)
 # ---------------------------------------------------------------------------
 
-_execution_policy = load_paper_execution_policy(
-    load_settings().execution_policy_file
-)
+_execution_policy = load_paper_execution_policy(load_settings().execution_policy_file)
 _default_limits = RiskLimitConfig(
     trading_enabled=True,
     live_trading_enabled=False,
@@ -48,6 +47,10 @@ _default_limits = RiskLimitConfig(
     symbol_allowlist=frozenset(_execution_policy.symbols),
     max_order_value=_execution_policy.max_order_notional,
     max_order_quantity=None,
+    # Phase 19: pull the runtime account-exposure cap straight from the
+    # reviewed PaperExecutionPolicy. This is the single point that turns
+    # the static $300 boundary into a live RiskGate check.
+    max_total_exposure=_execution_policy.max_total_exposure,
     require_data_quality_passed=True,
     require_human_review=_execution_policy.require_human_review,
 )
@@ -83,6 +86,7 @@ class RiskConfigResponse(BaseModel):
     symbol_allowlist: list[str]
     max_order_quantity: str | None
     max_order_value: str | None
+    max_total_exposure: str | None
     require_data_quality_passed: bool
     require_human_review: bool
 
@@ -132,6 +136,11 @@ class RiskCheckRequest(BaseModel):
     strategy_id: str | None = None
     data_quality_passed: bool = True
     risk_context: RiskContextDecision | None = None
+    # Phase 19: live account state for the runtime total-exposure check.
+    # When ``max_total_exposure`` is configured and this is omitted, the
+    # gate fails closed (``account_context_required``). Supply it to
+    # enforce the cap against the caller's projected exposure.
+    account_context: AccountExposureContext | None = None
 
 
 class RiskCheckResponse(BaseModel):
@@ -176,8 +185,11 @@ def get_risk_config() -> RiskConfigResponse:
             else None
         ),
         max_order_value=(
-            str(limits.max_order_value)
-            if limits.max_order_value is not None
+            str(limits.max_order_value) if limits.max_order_value is not None else None
+        ),
+        max_total_exposure=(
+            str(limits.max_total_exposure)
+            if limits.max_total_exposure is not None
             else None
         ),
         require_data_quality_passed=limits.require_data_quality_passed,
@@ -289,19 +301,19 @@ def get_risk_context(
     # summary's reported counts match the user's query intent.
     if symbol_list:
         wanted = set(symbol_list)
-        headlines = [
-            h for h in headlines if any(sym in wanted for sym in h.symbols)
-        ]
+        headlines = [h for h in headlines if any(sym in wanted for sym in h.symbols)]
     if macro_list:
         wanted_macro = set(macro_list)
         indicators = [i for i in indicators if i.indicator_id in wanted_macro]
 
     summary: ResearchContextSummary = build_structured_summary(
-        headlines, indicators,
+        headlines,
+        indicators,
     )
 
     decision: RiskContextDecision = evaluate_news_macro_risk(
-        summary, decision_id=decision_id,
+        summary,
+        decision_id=decision_id,
     )
 
     config = get_risk_config()
@@ -349,6 +361,7 @@ def post_risk_check(body: RiskCheckRequest) -> RiskCheckResponse:
         estimated_quantity=body.estimated_quantity,
         data_quality_passed=body.data_quality_passed,
         risk_context=body.risk_context,
+        account_context=body.account_context,
     )
     return RiskCheckResponse(
         decision_id=decision.decision_id,
@@ -357,14 +370,10 @@ def post_risk_check(body: RiskCheckRequest) -> RiskCheckResponse:
         risk_tags=list(decision.risk_tags),
         requires_human_review=decision.requires_human_review,
         max_quantity=(
-            str(decision.max_quantity)
-            if decision.max_quantity is not None
-            else None
+            str(decision.max_quantity) if decision.max_quantity is not None else None
         ),
         applied_risk_context=(
-            body.risk_context.decision_id
-            if body.risk_context is not None
-            else None
+            body.risk_context.decision_id if body.risk_context is not None else None
         ),
     )
 
