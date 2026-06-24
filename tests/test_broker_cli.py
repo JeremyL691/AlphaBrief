@@ -54,6 +54,26 @@ def test_cli_help_lists_broker_subcommand() -> None:
     assert "status" in combined
     assert "freeze" in combined
     assert "unfreeze" in combined
+    # Phase 20 read-only live-read commands are locked into the CLI surface.
+    assert "positions" in combined
+    assert "account" in combined
+
+
+def test_cli_broker_positions_requires_api(
+    tmp_path: Path, isolated_data_dir: dict[str, str]
+) -> None:
+    # Without a running API the CLI must refuse rather than fabricate data.
+    result = _run_cli(["broker", "positions"], env=isolated_data_dir)
+    assert result.returncode != 0
+    assert "requires the API server to be running" in result.stderr
+
+
+def test_cli_broker_account_requires_api(
+    tmp_path: Path, isolated_data_dir: dict[str, str]
+) -> None:
+    result = _run_cli(["broker", "account"], env=isolated_data_dir)
+    assert result.returncode != 0
+    assert "requires the API server to be running" in result.stderr
 
 
 def test_cli_broker_status_empty_store(
