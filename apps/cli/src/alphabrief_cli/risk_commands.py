@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import sys
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import typer
 from alphabrief_core import OrderIntent
 from alphabrief_research import build_structured_summary
 from alphabrief_risk import (
+    AccountExposureContext,
     RiskContextDecision,
     RiskGate,
     RiskLimitConfig,
@@ -56,6 +59,54 @@ def _parse_risk_context(
         sys.exit(1)
 
 
+def _parse_optional_decimal(raw: str | None, *, label: str) -> Decimal | None:
+    """Parse a ``Decimal`` from a CLI string, or return None.
+
+    Mirrors the API string-transport style for monetary inputs so the
+    CLI never has to bridge ``float`` (Pydantic rejects ``float`` on
+    the context boundary)."""
+    if raw is None:
+        return None
+    try:
+        return Decimal(raw)
+    except ArithmeticError as exc:
+        print(f"error: invalid decimal in {label}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _parse_reference_mark_prices(
+    raw: str | None, *, label: str
+) -> dict[str, Decimal] | None:
+    """Parse a JSON object of ``{symbol: decimal_str}`` into Decimals."""
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"error: invalid JSON in {label}: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print(f"error: {label} must be a JSON object", file=sys.stderr)
+        sys.exit(1)
+    out: dict[str, Decimal] = {}
+    for symbol, value in data.items():
+        if not isinstance(symbol, str) or not symbol:
+            print(
+                f"error: {label} keys must be non-empty strings",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        try:
+            out[symbol] = Decimal(str(value))
+        except ArithmeticError as exc:
+            print(
+                f"error: invalid decimal in {label} for {symbol}: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    return out
+
+
 @risk_app.command("check")
 def check_cmd(
     intent: Path = typer.Option(  # noqa: B008 - typer pattern
@@ -76,6 +127,56 @@ def check_cmd(
         None,
         "--risk-context-file",
         help="Optional path to a JSON file with a RiskContextDecision.",
+    ),
+    # Phase 21 R21.x account-context overrides. The CLI builds an
+    # AccountExposureContext from these so the new R21.x checks
+    # (symbol exposure, concentration, leverage, price deviation, daily
+    # loss, drawdown) can be exercised end-to-end through the CLI. The
+    # existing ``--total-exposure`` / ``--symbol-exposure`` /
+    # ``--cash`` overrides are not present — the defaults built below
+    # are a permissive zero-exposure portfolio so callers only have to
+    # pass the fields they care about.
+    equity: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--equity",
+        help=(
+            "Optional current account equity (Decimal string). Required "
+            "when a max_leverage / max_daily_loss_pct / "
+            "max_drawdown_floor_pct rule is configured."
+        ),
+    ),
+    reference_mark_prices: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--reference-mark-prices",
+        help=(
+            "Optional JSON object of {symbol: decimal_str} mapping the "
+            "live mark for each symbol. Consumed by the "
+            "max_price_deviation_pct rule."
+        ),
+    ),
+    equity_hwm: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--equity-hwm",
+        help=(
+            "Optional equity high-water mark (Decimal string). Required "
+            "when max_drawdown_floor_pct is configured."
+        ),
+    ),
+    day_start_equity: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--day-start-equity",
+        help=(
+            "Optional day-start equity (Decimal string). Required when "
+            "max_daily_loss_pct is configured."
+        ),
+    ),
+    day_realized_pnl: str | None = typer.Option(  # noqa: B008 - typer pattern
+        None,
+        "--day-realized-pnl",
+        help=(
+            "Optional day-realized PnL (Decimal string; may be negative "
+            "for loss days). Surfaced for audit / diagnostics only."
+        ),
     ),
 ) -> None:
     """Evaluate an OrderIntent JSON file through RiskGate."""
@@ -117,9 +218,54 @@ def check_cmd(
             file_text, f"--risk-context-file {risk_context_file}"
         )
 
+    # Build a permissive zero-exposure AccountExposureContext from the
+    # R21.x CLI overrides. Only the fields the caller passed are set;
+    # the rest stay None so the gate's fail-closed paths can be
+    # exercised explicitly.
+    account_ctx_overrides: dict[str, Any] = {
+        "current_total_exposure": Decimal("0"),
+        "exposure_by_symbol": {},
+        "cash": Decimal("0"),
+        "account_id": "cli_risk_check",
+        "captured_at": datetime.now(UTC),
+    }
+    parsed_equity = _parse_optional_decimal(equity, label="--equity")
+    if parsed_equity is not None:
+        account_ctx_overrides["equity"] = parsed_equity
+    parsed_marks = _parse_reference_mark_prices(
+        reference_mark_prices, label="--reference-mark-prices"
+    )
+    if parsed_marks is not None:
+        account_ctx_overrides["reference_mark_prices"] = parsed_marks
+    parsed_hwm = _parse_optional_decimal(equity_hwm, label="--equity-hwm")
+    if parsed_hwm is not None:
+        account_ctx_overrides["equity_high_water_mark"] = parsed_hwm
+    parsed_day_start = _parse_optional_decimal(
+        day_start_equity, label="--day-start-equity"
+    )
+    if parsed_day_start is not None:
+        account_ctx_overrides["day_start_equity"] = parsed_day_start
+    parsed_day_pnl = _parse_optional_decimal(
+        day_realized_pnl, label="--day-realized-pnl"
+    )
+    if parsed_day_pnl is not None:
+        account_ctx_overrides["day_realized_pnl"] = parsed_day_pnl
+    try:
+        account_context = AccountExposureContext.model_validate(account_ctx_overrides)
+    except ValueError as exc:
+        print(
+            f"error: invalid account context from CLI overrides: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     gate = RiskGate(limits=RiskLimitConfig())
     try:
-        decision = gate.evaluate(order_intent, risk_context=parsed_context)
+        decision = gate.evaluate(
+            order_intent,
+            risk_context=parsed_context,
+            account_context=account_context,
+        )
     except Exception as exc:
         print(f"error: risk gate evaluation failed: {exc}", file=sys.stderr)
         sys.exit(1)
