@@ -55,7 +55,6 @@ def _clear_report_store() -> None:
         _report_store.clear()
 
 
-
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
@@ -104,6 +103,15 @@ class BacktestMetricsResponse(BaseModel):
     max_drawdown: float
     trade_count: int
     win_rate: float | None
+    # R21.4 credibility metrics. ``None`` fields stay ``None`` for
+    # degenerate runs (single bar, zero variance, no trades).
+    benchmark_total_return: float | None = None
+    alpha_vs_benchmark: float | None = None
+    cagr: float | None = None
+    sharpe: float | None = None
+    sortino: float | None = None
+    turnover: float
+    exposure_pct: float
 
 
 class BacktestReportSummary(BaseModel):
@@ -223,15 +231,25 @@ def _build_strategy_spec(req: BacktestRunRequest) -> StrategySpec:
 
 
 def _report_metrics_to_response(report: BacktestReport) -> BacktestMetricsResponse:
+    m = report.metrics
     return BacktestMetricsResponse(
-        total_return=float(report.metrics.total_return),
-        max_drawdown=float(report.metrics.max_drawdown),
-        trade_count=report.metrics.trade_count,
-        win_rate=(
-            float(report.metrics.win_rate)
-            if report.metrics.win_rate is not None
+        total_return=float(m.total_return),
+        max_drawdown=float(m.max_drawdown),
+        trade_count=m.trade_count,
+        win_rate=float(m.win_rate) if m.win_rate is not None else None,
+        benchmark_total_return=(
+            float(m.benchmark_total_return)
+            if m.benchmark_total_return is not None
             else None
         ),
+        alpha_vs_benchmark=(
+            float(m.alpha_vs_benchmark) if m.alpha_vs_benchmark is not None else None
+        ),
+        cagr=float(m.cagr) if m.cagr is not None else None,
+        sharpe=float(m.sharpe) if m.sharpe is not None else None,
+        sortino=float(m.sortino) if m.sortino is not None else None,
+        turnover=float(m.turnover),
+        exposure_pct=float(m.exposure_pct),
     )
 
 
@@ -427,9 +445,7 @@ def _run_env_v2_backtest(
             detail=f"missing or empty bars for symbols: {sorted(missing)}",
         )
 
-    insufficient = [
-        s for s in symbols if len(bars_by_symbol.get(s, [])) < 2
-    ]
+    insufficient = [s for s in symbols if len(bars_by_symbol.get(s, [])) < 2]
     if insufficient:
         raise HTTPException(
             status_code=422,
@@ -501,9 +517,7 @@ def get_report(report_id: str) -> BacktestReportResponse:
     store = _get_report_store()
     row = store.get_report(report_id)
     if row is None:
-        raise HTTPException(
-            status_code=404, detail=f"report {report_id!r} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"report {report_id!r} not found")
     try:
         report = BacktestReport.model_validate(row["report"])
     except Exception as exc:

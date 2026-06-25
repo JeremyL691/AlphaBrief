@@ -8,6 +8,12 @@ from alphabrief_backtest.vectorized import (
     VectorizedBacktester,
     write_backtest_report,
 )
+from alphabrief_backtest.walk_forward import (
+    WalkForwardError,
+    WalkForwardResult,
+    WalkForwardWindow,
+    run_walk_forward,
+)
 
 __all__ = [
     "BacktestMetrics",
@@ -15,5 +21,9 @@ __all__ = [
     "BacktestTrade",
     "EquityPoint",
     "VectorizedBacktester",
+    "WalkForwardError",
+    "WalkForwardResult",
+    "WalkForwardWindow",
+    "run_walk_forward",
     "write_backtest_report",
 ]

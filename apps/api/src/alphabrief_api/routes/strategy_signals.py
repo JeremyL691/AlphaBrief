@@ -159,9 +159,7 @@ def _validate_signal_payload(
     if source not in _VALID_SOURCES:
         raise HTTPException(
             status_code=422,
-            detail=(
-                f"source must be one of {sorted(_VALID_SOURCES)}, got {source!r}"
-            ),
+            detail=(f"source must be one of {sorted(_VALID_SOURCES)}, got {source!r}"),
         )
     sid = signal.get("signal_id")
     if not isinstance(sid, str) or sid.strip() == "":
@@ -176,10 +174,7 @@ def _validate_signal_payload(
                 detail=f"signal.{field} must be a non-empty string",
             )
     confidence = signal.get("confidence")
-    if (
-        not isinstance(confidence, (int, float))
-        or isinstance(confidence, bool)
-    ):
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
         raise HTTPException(
             status_code=422,
             detail="signal.confidence must be a number in [0, 1]",

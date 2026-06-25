@@ -335,6 +335,35 @@ CREATE TABLE IF NOT EXISTS broker_freeze_events (
 """
 
 # ---------------------------------------------------------------------------
+# Table: account_equity_snapshots
+# ---------------------------------------------------------------------------
+#
+# R21.3: append-only account equity snapshots used by the daily-loss and
+# drawdown risk rules. One row per fill (written by the paper route after
+# each execution). The gate reads the latest snapshot (current equity, the
+# drawdown high-water mark) and the day's first snapshot (day-start equity
+# for the daily-loss check). Persisting across restarts keeps the
+# drawdown floor tighten-only: an in-memory HWM would reset on restart and
+# silently widen the floor. Equity is stored as TEXT to preserve Decimal
+# precision (mirrors portfolio_snapshot's cash/realized_pnl columns).
+
+CREATE_ACCOUNT_EQUITY_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS account_equity_snapshots (
+    snapshot_id        TEXT PRIMARY KEY,
+    account_id         TEXT NOT NULL,
+    captured_at        TIMESTAMPTZ NOT NULL,
+    equity             TEXT NOT NULL,
+    realized_pnl_day   TEXT NOT NULL DEFAULT '0',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_ACCOUNT_EQUITY_SNAPSHOTS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_account_equity_snapshots_account_captured
+    ON account_equity_snapshots (account_id, captured_at)
+"""
+
+# ---------------------------------------------------------------------------
 # Ordered list for apply / clear helpers
 # ---------------------------------------------------------------------------
 
@@ -360,6 +389,8 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_BROKER_ORDER_ID_MAP_TABLE,
     CREATE_BROKER_RECON_SNAPSHOTS_TABLE,
     CREATE_BROKER_FREEZE_EVENTS_TABLE,
+    CREATE_ACCOUNT_EQUITY_SNAPSHOTS_TABLE,
+    CREATE_ACCOUNT_EQUITY_SNAPSHOTS_INDEX,
 )
 
 # ---------------------------------------------------------------------------
@@ -375,6 +406,7 @@ def apply_schema(connection: Any) -> None:
 
 def drop_schema(connection: Any) -> None:
     """Drop all tables (for test isolation)."""
+    connection.execute("DROP TABLE IF EXISTS account_equity_snapshots")
     connection.execute("DROP TABLE IF EXISTS strategy_admissions")
     connection.execute("DROP TABLE IF EXISTS broker_freeze_events")
     connection.execute("DROP TABLE IF EXISTS broker_recon_snapshots")
@@ -397,6 +429,8 @@ def drop_schema(connection: Any) -> None:
 __all__ = [
     "apply_schema",
     "drop_schema",
+    "CREATE_ACCOUNT_EQUITY_SNAPSHOTS_INDEX",
+    "CREATE_ACCOUNT_EQUITY_SNAPSHOTS_TABLE",
     "CREATE_AUDIT_EVENTS_TABLE",
     "CREATE_BACKTEST_REPORTS_TABLE",
     "CREATE_BARS_TABLE",

@@ -263,9 +263,7 @@ def get_spec(strategy_id: str) -> StrategyRecordResponse:
     )
 
 
-@router.patch(
-    "/specs/{strategy_id}", response_model=StrategyActivationResponse
-)
+@router.patch("/specs/{strategy_id}", response_model=StrategyActivationResponse)
 def set_enabled(
     strategy_id: str,
     body: StrategyActivationRequest,
@@ -282,14 +280,10 @@ def set_enabled(
             status_code=404,
             detail=f"strategy {strategy_id!r} not found",
         )
-    return StrategyActivationResponse(
-        strategy_id=strategy_id, enabled=body.enabled
-    )
+    return StrategyActivationResponse(strategy_id=strategy_id, enabled=body.enabled)
 
 
-@router.delete(
-    "/specs/{strategy_id}", response_model=StrategyActivationResponse
-)
+@router.delete("/specs/{strategy_id}", response_model=StrategyActivationResponse)
 def delete_spec(strategy_id: str) -> StrategyActivationResponse:
     """Remove a strategy from the registry.
 
@@ -318,9 +312,7 @@ def list_enabled_strategy_ids() -> EnabledStrategyIdsResponse:
     only.
     """
     store = _get_strategy_store()
-    return EnabledStrategyIdsResponse(
-        strategy_ids=store.list_enabled_strategy_ids()
-    )
+    return EnabledStrategyIdsResponse(strategy_ids=store.list_enabled_strategy_ids())
 
 
 __all__ = [

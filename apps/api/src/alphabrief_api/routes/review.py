@@ -226,9 +226,7 @@ def get_weekly_journal(
         except ValueError as exc:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    f"Invalid date format: {week_start!r}. Use YYYY-MM-DD."
-                ),
+                detail=(f"Invalid date format: {week_start!r}. Use YYYY-MM-DD."),
             ) from exc
     else:
         start = datetime.now(UTC).date()

@@ -173,9 +173,7 @@ def generate_brief(body: BriefGenerateRequest) -> dict[str, object]:
         start = end - timedelta(days=7)
         symbols = body.news_symbols or []
         if body.include_news:
-            news_context = builder.build_news_context(
-                symbols, start, end, limit=20
-            )
+            news_context = builder.build_news_context(symbols, start, end, limit=20)
         else:
             news_context = "(news context disabled)"
         if symbols:
@@ -247,7 +245,10 @@ def _build_research_context_builder() -> ResearchContextBuilder:
     macro_store = MacroStore()
 
     def news_loader(
-        symbols: list[str], start: datetime, end: datetime, limit: int,
+        symbols: list[str],
+        start: datetime,
+        end: datetime,
+        limit: int,
     ) -> list[NewsHeadline]:
         try:
             rows = news_store.list_headlines(
@@ -261,7 +262,9 @@ def _build_research_context_builder() -> ResearchContextBuilder:
             return []
 
     def macro_loader(
-        indicators: list[str], start: datetime, end: datetime,
+        indicators: list[str],
+        start: datetime,
+        end: datetime,
     ) -> list[MacroIndicator]:
         if not indicators:
             return []
@@ -279,9 +282,7 @@ def _build_research_context_builder() -> ResearchContextBuilder:
         except Exception:
             return []
 
-    return ResearchContextBuilder(
-        news_loader=news_loader, macro_loader=macro_loader
-    )
+    return ResearchContextBuilder(news_loader=news_loader, macro_loader=macro_loader)
 
 
 @router.get("/history", response_model=BriefHistoryResponse)
@@ -306,9 +307,7 @@ def get_brief(brief_id: str) -> dict[str, object]:
     store = _get_brief_store()
     result = store.get_brief(brief_id)
     if result is None:
-        raise HTTPException(
-            status_code=404, detail=f"brief {brief_id!r} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"brief {brief_id!r} not found")
     return result["brief"]  # type: ignore[no-any-return]
 
 

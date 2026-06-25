@@ -74,9 +74,7 @@ def _get_stored_bars(symbol: str) -> list[Bar]:
 
     store = _get_store()
     if not store.symbol_exists(symbol):
-        raise HTTPException(
-            status_code=404, detail=f"symbol {symbol!r} not loaded"
-        )
+        raise HTTPException(status_code=404, detail=f"symbol {symbol!r} not loaded")
     return store.get_bar_models(symbol)
 
 
@@ -265,9 +263,7 @@ def load_market_data(body: DataLoadRequest) -> DataLoadResponse:
     """
     file_path = Path(body.file_path)
     if not file_path.is_file():
-        raise HTTPException(
-            status_code=404, detail=f"file not found: {body.file_path}"
-        )
+        raise HTTPException(status_code=404, detail=f"file not found: {body.file_path}")
 
     try:
         if body.file_type == "parquet":
@@ -326,24 +322,18 @@ def get_bars(
 ) -> BarsResponse:
     """Return OHLCV bars for *symbol* with pagination."""
     if limit < 1 or limit > 10_000:
-        raise HTTPException(
-            status_code=422, detail="limit must be between 1 and 10000"
-        )
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 10000")
     if offset < 0:
         raise HTTPException(status_code=422, detail="offset must be >= 0")
 
     store = _get_store()
     if not store.symbol_exists(symbol):
-        raise HTTPException(
-            status_code=404, detail=f"symbol {symbol!r} not loaded"
-        )
+        raise HTTPException(status_code=404, detail=f"symbol {symbol!r} not loaded")
 
     total = store.get_bar_count(symbol)
 
     if offset >= total and total > 0:
-        raise HTTPException(
-            status_code=416, detail="offset exceeds total bar count"
-        )
+        raise HTTPException(status_code=416, detail="offset exceeds total bar count")
 
     json_bars = store.get_bars(symbol, limit=limit, offset=offset)
 
@@ -363,9 +353,7 @@ def get_symbol_info(symbol: str) -> SymbolInfo:
     store = _get_store()
     info = store.get_symbol_info(symbol)
     if info is None:
-        raise HTTPException(
-            status_code=404, detail=f"symbol {symbol!r} not loaded"
-        )
+        raise HTTPException(status_code=404, detail=f"symbol {symbol!r} not loaded")
 
     return SymbolInfo(
         symbol=str(info["symbol"]),
