@@ -71,6 +71,43 @@ def _api_test_limits() -> RiskLimitConfig:
     )
 
 
+def _isolate_market_data_store(tmp_path: Path) -> None:
+    """Point the MarketDataStore singleton at a tmp dir (no env leakage).
+
+    R21.1: the paper order route resolves a mark price from stored bars,
+    so API-level paper tests must seed BTC-USD bars in an isolated
+    DuckDB before submitting. Sets ``ALPHABRIEF_DATA_DIR`` and closes the
+    process-wide store singleton so the next access rebuilds it at the
+    new path.
+    """
+    import os
+
+    os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
+    from alphabrief_api.routes.data import _close_store
+
+    _close_store()
+
+
+def _load_btc_bars(client: object, tmp_path: Path) -> None:
+    """Load a minimal BTC-USD bar so the paper route can resolve a mark.
+
+    R21.1: the paper route fails closed without stored bars. These r13
+    tests exercise risk_context wiring, not pricing, so the close matches
+    the historical $100 assumption the tests were written against.
+    """
+    csv_path = tmp_path / "btc.csv"
+    csv_path.write_text(
+        "timestamp,open,high,low,close,volume\n"
+        "2026-06-17T09:30:00,100.0,105.0,98.0,100.0,1.0\n",
+        encoding="utf-8",
+    )
+    resp = client.post(  # type: ignore[attr-defined]
+        "/api/v1/data/load",
+        json={"file_path": str(csv_path), "symbol": "BTC-USD", "source": "test"},
+    )
+    assert resp.status_code == 201, resp.text
+
+
 def _negative_context() -> RiskContextDecision:
     return RiskContextDecision(
         requires_human_review=True,
@@ -103,9 +140,7 @@ def test_paper_broker_blocks_when_decision_requires_human_review() -> None:
     assert merged.approved is True
 
     with pytest.raises(PaperBrokerError, match="human review"):
-        broker.submit(
-            _intent(), merged, reference_price=Decimal("100")
-        )
+        broker.submit(_intent(), merged, reference_price=Decimal("100"))
 
     rejected_events = [
         e for e in broker.audit_log.entries if e.event_type == "order_rejected"
@@ -120,9 +155,7 @@ def test_paper_broker_executes_when_human_review_not_required() -> None:
         fill_simulator=FillSimulator(),
     )
     decision = _gate().evaluate(_intent(), estimated_price=Decimal("100"))
-    result = broker.submit(
-        _intent(), decision, reference_price=Decimal("100")
-    )
+    result = broker.submit(_intent(), decision, reference_price=Decimal("100"))
     assert result.order.symbol == "BTC-USD"
     types = [e.event_type for e in broker.audit_log.entries]
     assert "order_created" in types
@@ -149,9 +182,7 @@ def test_audit_log_records_risk_context_metadata_on_success() -> None:
         decision_id="rctx_audit_1",
     )
     decision = _gate().evaluate(_intent(), estimated_price=Decimal("100"))
-    broker.submit(
-        _intent(), decision, reference_price=Decimal("100"), risk_context=ctx
-    )
+    broker.submit(_intent(), decision, reference_price=Decimal("100"), risk_context=ctx)
 
     business_events = [
         e
@@ -189,9 +220,7 @@ def test_audit_log_records_risk_context_on_human_review_block() -> None:
             risk_context=ctx,
         )
 
-    rejected = [
-        e for e in broker.audit_log.entries if e.event_type == "order_rejected"
-    ]
+    rejected = [e for e in broker.audit_log.entries if e.event_type == "order_rejected"]
     assert len(rejected) == 1
     assert rejected[0].risk_context_decision_id == "rctx_test_neg"
     assert "negative_news_context" in rejected[0].risk_context_tags
@@ -226,8 +255,10 @@ def test_risk_check_cli_accepts_inline_risk_context(tmp_path: Path) -> None:
         risk_app,
         [
             "check",
-            "--intent", str(intent_path),
-            "--risk-context", json.dumps(ctx.model_dump(mode="json")),
+            "--intent",
+            str(intent_path),
+            "--risk-context",
+            json.dumps(ctx.model_dump(mode="json")),
         ],
     )
     assert result.exit_code == 0, result.stdout
@@ -245,16 +276,16 @@ def test_risk_check_cli_accepts_risk_context_file(tmp_path: Path) -> None:
     intent_path.write_text(_intent().model_dump_json(), encoding="utf-8")
     ctx_path = tmp_path / "ctx.json"
     ctx = _negative_context()
-    ctx_path.write_text(
-        json.dumps(ctx.model_dump(mode="json")), encoding="utf-8"
-    )
+    ctx_path.write_text(json.dumps(ctx.model_dump(mode="json")), encoding="utf-8")
 
     result = CliRunner().invoke(
         risk_app,
         [
             "check",
-            "--intent", str(intent_path),
-            "--risk-context-file", str(ctx_path),
+            "--intent",
+            str(intent_path),
+            "--risk-context-file",
+            str(ctx_path),
         ],
     )
     assert result.exit_code == 0, result.stdout
@@ -272,9 +303,12 @@ def test_risk_check_cli_rejects_both_risk_context_options(tmp_path: Path) -> Non
         risk_app,
         [
             "check",
-            "--intent", str(intent_path),
-            "--risk-context", "{}",
-            "--risk-context-file", str(intent_path),
+            "--intent",
+            str(intent_path),
+            "--risk-context",
+            "{}",
+            "--risk-context-file",
+            str(intent_path),
         ],
     )
     assert result.exit_code != 0
@@ -292,8 +326,10 @@ def test_risk_check_cli_rejects_invalid_risk_context_json(tmp_path: Path) -> Non
         risk_app,
         [
             "check",
-            "--intent", str(intent_path),
-            "--risk-context", "not-json",
+            "--intent",
+            str(intent_path),
+            "--risk-context",
+            "not-json",
         ],
     )
     assert result.exit_code != 0
@@ -307,9 +343,7 @@ def test_risk_check_cli_no_context_omits_applied_line(tmp_path: Path) -> None:
     intent_path = tmp_path / "intent.json"
     intent_path.write_text(_intent().model_dump_json(), encoding="utf-8")
 
-    result = CliRunner().invoke(
-        risk_app, ["check", "--intent", str(intent_path)]
-    )
+    result = CliRunner().invoke(risk_app, ["check", "--intent", str(intent_path)])
     assert result.exit_code == 0, result.stdout
     assert "applied_risk_context" not in result.stdout
 
@@ -363,7 +397,7 @@ def test_api_risk_check_works_without_risk_context() -> None:
     assert body["approved"] is True
 
 
-def test_api_paper_orders_blocked_on_human_review() -> None:
+def test_api_paper_orders_blocked_on_human_review(tmp_path: Path) -> None:
     from alphabrief_api.main import app
     from alphabrief_api.routes.paper import _reset_broker
     from alphabrief_api.routes.risk import _reset_risk_gate
@@ -371,7 +405,9 @@ def test_api_paper_orders_blocked_on_human_review() -> None:
 
     _reset_risk_gate(_api_test_limits())
     _reset_broker()
+    _isolate_market_data_store(tmp_path)
     client = TestClient(app)
+    _load_btc_bars(client, tmp_path)
     ctx = _negative_context()
     resp = client.post(
         "/api/v1/paper/orders",
@@ -387,7 +423,7 @@ def test_api_paper_orders_blocked_on_human_review() -> None:
     assert "human review" in resp.json()["detail"].lower()
 
 
-def test_api_paper_orders_audit_records_risk_context() -> None:
+def test_api_paper_orders_audit_records_risk_context(tmp_path: Path) -> None:
     from alphabrief_api.main import app
     from alphabrief_api.routes.paper import _reset_broker
     from alphabrief_api.routes.risk import _reset_risk_gate
@@ -395,7 +431,9 @@ def test_api_paper_orders_audit_records_risk_context() -> None:
 
     _reset_risk_gate(_api_test_limits())
     _reset_broker()
+    _isolate_market_data_store(tmp_path)
     client = TestClient(app)
+    _load_btc_bars(client, tmp_path)
     ctx = RiskContextDecision(
         requires_human_review=False,
         risk_tags=("macro_high_risk",),
@@ -441,13 +479,9 @@ def test_paper_run_cli_blocks_on_human_review(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = _csv.writer(f)
-        writer.writerow(
-            ["timestamp", "open", "high", "low", "close", "volume"]
-        )
+        writer.writerow(["timestamp", "open", "high", "low", "close", "volume"])
         for i in range(5):
-            writer.writerow(
-                [f"2026-01-0{i + 1}T00:00:00Z", 100, 101, 99, 100, 1000]
-            )
+            writer.writerow([f"2026-01-0{i + 1}T00:00:00Z", 100, 101, 99, 100, 1000])
 
     spec_path = tmp_path / "spec.json"
     spec_path.write_text(
@@ -482,10 +516,14 @@ def test_paper_run_cli_blocks_on_human_review(tmp_path: Path) -> None:
         paper_app,
         [
             "run",
-            "--data", str(csv_path),
-            "--spec", str(spec_path),
-            "--price", "100",
-            "--risk-context", json.dumps(ctx.model_dump(mode="json")),
+            "--data",
+            str(csv_path),
+            "--spec",
+            str(spec_path),
+            "--price",
+            "100",
+            "--risk-context",
+            json.dumps(ctx.model_dump(mode="json")),
         ],
     )
     assert result.exit_code != 0
@@ -502,13 +540,9 @@ def test_paper_run_cli_with_neutral_context_executes(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = _csv.writer(f)
-        writer.writerow(
-            ["timestamp", "open", "high", "low", "close", "volume"]
-        )
+        writer.writerow(["timestamp", "open", "high", "low", "close", "volume"])
         for i in range(5):
-            writer.writerow(
-                [f"2026-01-0{i + 1}T00:00:00Z", 100, 101, 99, 100, 1000]
-            )
+            writer.writerow([f"2026-01-0{i + 1}T00:00:00Z", 100, 101, 99, 100, 1000])
 
     spec_path = tmp_path / "spec.json"
     spec_path.write_text(
@@ -550,10 +584,14 @@ def test_paper_run_cli_with_neutral_context_executes(tmp_path: Path) -> None:
         paper_app,
         [
             "run",
-            "--data", str(csv_path),
-            "--spec", str(spec_path),
-            "--price", "100",
-            "--risk-context", json.dumps(neutral_ctx.model_dump(mode="json")),
+            "--data",
+            str(csv_path),
+            "--spec",
+            str(spec_path),
+            "--price",
+            "100",
+            "--risk-context",
+            json.dumps(neutral_ctx.model_dump(mode="json")),
         ],
     )
     assert result.exit_code == 0, result.stdout + result.stderr

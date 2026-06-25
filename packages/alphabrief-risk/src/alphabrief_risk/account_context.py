@@ -50,15 +50,37 @@ class AccountExposureContext(BaseModel):
         positions (``sum(|qty| * mark_price)``). Always ``>= 0``.
     exposure_by_symbol
         Per-symbol gross notional, keyed by upper-cased symbol. Used
-        for audit / diagnostics; not required for the cap check but
-        cheap to carry.
+        for audit / diagnostics and for per-symbol / concentration
+        checks; not required for the total cap but cheap to carry.
     cash
         Account cash from the broker snapshot. May be negative; surfaced
-        for audit only (the exposure check does not gate on cash).
+        for audit and as the base of ``equity`` when the caller projects
+        it.
     account_id
         Stable broker account identifier.
     captured_at
         When the snapshot was taken. Must be timezone-aware.
+    equity
+        Optional account equity (``cash + sum(qty * mark)``) the caller
+        projected. Required only when a rule that needs it (e.g. max
+        leverage) is configured; the gate fails closed if it is missing.
+        Carried here rather than computed in the gate so the projection
+        stays in the execution layer (one-way dependency).
+    reference_mark_prices
+        Optional per-symbol live mark prices the caller supplied, keyed
+        by upper-cased symbol. Used by the price-deviation check to
+        compare the order's estimated price against the current market.
+    equity_high_water_mark
+        Optional peak equity seen so far (persisted across restarts by
+        the caller). Required when ``max_drawdown_floor_pct`` is
+        configured; the gate fails closed if it is missing.
+    day_start_equity
+        Optional equity at the start of the trading day. Required when
+        ``max_daily_loss_pct`` is configured; the gate fails closed if
+        it is missing.
+    day_realized_pnl
+        Optional realized P&L accumulated since day start. Surfaced for
+        audit/diagnostics only; not gated on (advisory).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -68,8 +90,21 @@ class AccountExposureContext(BaseModel):
     cash: Decimal
     account_id: str = Field(min_length=1)
     captured_at: datetime
+    equity: Decimal | None = Field(default=None, ge=0)
+    reference_mark_prices: dict[str, Decimal] = Field(default_factory=dict)
+    equity_high_water_mark: Decimal | None = Field(default=None, ge=0)
+    day_start_equity: Decimal | None = Field(default=None, ge=0)
+    day_realized_pnl: Decimal | None = Field(default=None)
 
-    @field_validator("current_total_exposure", "cash", mode="before")
+    @field_validator(
+        "current_total_exposure",
+        "cash",
+        "equity",
+        "equity_high_water_mark",
+        "day_start_equity",
+        "day_realized_pnl",
+        mode="before",
+    )
     @classmethod
     def _decimal_values_must_not_be_float(cls, value: Any) -> Any:
         return _reject_float(value)
@@ -77,6 +112,17 @@ class AccountExposureContext(BaseModel):
     @field_validator("exposure_by_symbol", mode="before")
     @classmethod
     def _exposure_by_symbol_must_not_contain_floats(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            for inner in value.values():
+                if isinstance(inner, float):
+                    raise ValueError(
+                        "account exposure decimal values must not be floats"
+                    )
+        return value
+
+    @field_validator("reference_mark_prices", mode="before")
+    @classmethod
+    def _reference_mark_prices_must_not_contain_floats(cls, value: Any) -> Any:
         if isinstance(value, dict):
             for inner in value.values():
                 if isinstance(inner, float):

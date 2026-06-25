@@ -297,9 +297,7 @@ class StrategySpecStore:
 
     def count(self) -> int:
         """Return the total number of stored specs."""
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM strategy_specs"
-        ).fetchone()
+        row = self._conn.execute("SELECT COUNT(*) FROM strategy_specs").fetchone()
         return int(row[0]) if row is not None else 0
 
     # ------------------------------------------------------------------
@@ -344,9 +342,7 @@ class StrategySpecStore:
             "reviewer_id": str(row[4]),
             "reviewed_at": str(row[5]),
             "evidence": evidence,
-            "supersedes_admission_id": (
-                str(row[7]) if row[7] is not None else None
-            ),
+            "supersedes_admission_id": (str(row[7]) if row[7] is not None else None),
             "created_at": str(row[8]),
         }
 

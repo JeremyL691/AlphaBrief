@@ -72,13 +72,16 @@ async def build_account_exposure_context(
     Calls ``adapter.get_positions()`` and ``adapter.get_account()``
     (both required by the :class:`BrokerAdapter` port) and sums gross
     notional across positions. See :func:`_exposure_from_positions`
-    for the mark-price fallback.
+    for the mark-price fallback. ``equity`` is projected as
+    ``cash + sum(qty * mark)`` and ``reference_mark_prices`` carries the
+    supplied marks through for the price-deviation check.
     """
     positions = await adapter.get_positions()
     account = await adapter.get_account()
-    total, by_symbol = _exposure_from_positions(
-        [(p.symbol, p.quantity, p.average_price) for p in positions],
-        mark_prices=mark_prices,
+    pos_tuples = [(p.symbol, p.quantity, p.average_price) for p in positions]
+    total, by_symbol = _exposure_from_positions(pos_tuples, mark_prices=mark_prices)
+    equity = account.cash + sum(
+        _signed_notional(sym, qty, avg, mark_prices) for sym, qty, avg in pos_tuples
     )
     return AccountExposureContext(
         current_total_exposure=total,
@@ -86,6 +89,8 @@ async def build_account_exposure_context(
         cash=account.cash,
         account_id=account.account_id,
         captured_at=account.captured_at,
+        equity=equity,
+        reference_mark_prices=dict(mark_prices) if mark_prices else {},
     )
 
 
@@ -103,11 +108,15 @@ def build_account_exposure_context_from_portfolio(
     :class:`PaperBroker` (no external adapter). The legacy
     :class:`PortfolioState` only holds non-negative quantities, so
     ``abs()`` is a no-op there but kept for parity with the adapter
-    variant.
+    variant. ``equity`` is ``cash + sum(qty * mark)`` and
+    ``reference_mark_prices`` carries the supplied marks through.
     """
-    total, by_symbol = _exposure_from_positions(
-        [(p.symbol, p.quantity, p.average_price) for p in portfolio.positions.values()],
-        mark_prices=mark_prices,
+    pos_tuples = [
+        (p.symbol, p.quantity, p.average_price) for p in portfolio.positions.values()
+    ]
+    total, by_symbol = _exposure_from_positions(pos_tuples, mark_prices=mark_prices)
+    equity = portfolio.cash + sum(
+        _signed_notional(sym, qty, avg, mark_prices) for sym, qty, avg in pos_tuples
     )
     return AccountExposureContext(
         current_total_exposure=total,
@@ -115,7 +124,26 @@ def build_account_exposure_context_from_portfolio(
         cash=portfolio.cash,
         account_id=account_id,
         captured_at=clock(),
+        equity=equity,
+        reference_mark_prices=dict(mark_prices) if mark_prices else {},
     )
+
+
+def _signed_notional(
+    symbol: str,
+    quantity: Decimal,
+    average_price: Decimal,
+    mark_prices: dict[str, Decimal] | None,
+) -> Decimal:
+    """Signed ``quantity * mark`` for equity projection (long-only >= 0)."""
+    if quantity == 0:
+        return Decimal("0")
+    mark = (
+        mark_prices[symbol]
+        if mark_prices is not None and symbol in mark_prices
+        else average_price
+    )
+    return quantity * mark
 
 
 __all__ = [

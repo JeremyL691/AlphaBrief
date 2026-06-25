@@ -113,9 +113,7 @@ def _build_provider(
     source: MacroSource, indicators: list[str]
 ) -> MockMacroProvider | FredMacroProvider:
     if source == "mock":
-        return MockMacroProvider(
-            seed_indicators=build_default_mock_macro(indicators)
-        )
+        return MockMacroProvider(seed_indicators=build_default_mock_macro(indicators))
     if source == "fred":
         return FredMacroProvider()
     raise HTTPException(

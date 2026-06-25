@@ -791,7 +791,35 @@ def test_paper_orders_with_status_filter() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_paper_submit_order_requires_human_review_by_default() -> None:
+def _load_spy_bars(tmp_path: Path, close: str = "90.0") -> None:
+    """Load a minimal SPY bar set so the paper route can resolve a mark price.
+
+    R21.1: the paper order route fails closed with ``missing_mark_price``
+    when no bars are stored for the symbol, so any test that submits a SPY
+    order must first seed stored bars. The OHLC values scale from the
+    chosen close so the ``Bar`` validator (low <= open/high/close) holds.
+    The default close ($90) sits under the $100/order policy cap so the
+    order-value check passes and downstream limits (human review, total
+    exposure) are the ones exercised.
+    """
+    c = Decimal(close)
+    csv_path = _write_csv(
+        tmp_path / "spy.csv",
+        (
+            "timestamp,open,high,low,close,volume\n"
+            f"2026-06-12T09:30:00,{c},{c + Decimal('5')},{c - Decimal('2')},"
+            f"{c},1000.0\n"
+        ),
+    )
+    resp = client.post(
+        "/api/v1/data/load",
+        json={"file_path": str(csv_path), "symbol": "SPY", "source": "test"},
+    )
+    assert resp.status_code == 201, resp.text
+
+
+def test_paper_submit_order_requires_human_review_by_default(tmp_path: Path) -> None:
+    _load_spy_bars(tmp_path)
     response = client.post(
         "/api/v1/paper/orders",
         json={
@@ -807,7 +835,8 @@ def test_paper_submit_order_requires_human_review_by_default() -> None:
     assert "human review" in response.json()["detail"].lower()
 
 
-def test_paper_submit_order_persists_audit_events() -> None:
+def test_paper_submit_order_persists_audit_events(tmp_path: Path) -> None:
+    _load_spy_bars(tmp_path)
     client.post(
         "/api/v1/paper/orders",
         json={
@@ -829,7 +858,8 @@ def test_paper_submit_order_persists_audit_events() -> None:
     assert "order_created" not in event_types
 
 
-def test_paper_submit_order_creates_portfolio_snapshot() -> None:
+def test_paper_submit_order_creates_portfolio_snapshot(tmp_path: Path) -> None:
+    _load_spy_bars(tmp_path)
     client.post(
         "/api/v1/paper/orders",
         json={
@@ -1810,8 +1840,9 @@ def _relaxed_exposure_gate(max_total_exposure: Decimal) -> None:
     )
 
 
-def test_paper_buy_under_cap_fills_and_records_account_exposure() -> None:
+def test_paper_buy_under_cap_fills_and_records_account_exposure(tmp_path: Path) -> None:
     _relaxed_exposure_gate(Decimal("250"))
+    _load_spy_bars(tmp_path, close="90.0")
     response = client.post(
         "/api/v1/paper/orders",
         json={
@@ -1835,12 +1866,21 @@ def test_paper_buy_under_cap_fills_and_records_account_exposure() -> None:
     details = route_event["details"]
     assert details["account_total_exposure"] == "0"
     assert details["max_total_exposure"] == "250"
+    # R21.1: the resolved mark price (real stored close, not a placeholder)
+    # is recorded on the risk-decision audit event. Compare by Decimal value
+    # — DuckDB quantizes the stored close to a high-precision Decimal.
+    assert Decimal(details["reference_price"]) == Decimal("90.0")
 
 
-def test_paper_buy_over_cap_is_rejected_with_max_total_exposure_tag() -> None:
-    # Cap 250. Two buys of 1 SPY @ 100 land (exposure 200), the third
-    # buy projects 300 > 250 -> rejected with the account-exposure tag.
+def test_paper_buy_over_cap_is_rejected_with_max_total_exposure_tag(
+    tmp_path: Path,
+) -> None:
+    # Cap 250. SPY mark = $90 (real stored close, not the old $100 fiction).
+    # Two buys of 1 SPY @ 90 land (exposure 180), the third buy projects
+    # 270 > 250 -> rejected with the account-exposure tag. Using a stored
+    # close different from $100 proves the caps bind against the real mark.
     _relaxed_exposure_gate(Decimal("250"))
+    _load_spy_bars(tmp_path, close="90.0")
     for _ in range(2):
         r = client.post(
             "/api/v1/paper/orders",
