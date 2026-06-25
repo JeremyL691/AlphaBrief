@@ -164,11 +164,7 @@ def _row_to_headline(row: tuple[object, ...]) -> NewsHeadline:
         published_at = datetime.fromisoformat(str(published_at))
 
     symbols_raw = row[2]
-    symbols = (
-        _decode_symbols(symbols_raw)
-        if isinstance(symbols_raw, str)
-        else []
-    )
+    symbols = _decode_symbols(symbols_raw) if isinstance(symbols_raw, str) else []
 
     return NewsHeadline(
         headline_id=str(row[0]),
@@ -180,9 +176,7 @@ def _row_to_headline(row: tuple[object, ...]) -> NewsHeadline:
         summary=str(row[6]),
         url=str(row[7]) if row[7] is not None else None,
         sentiment=(
-            cast("SentimentLabel | None", str(row[8]))
-            if row[8] is not None
-            else None
+            cast("SentimentLabel | None", str(row[8])) if row[8] is not None else None
         ),
         data_version=str(row[9]),
     )

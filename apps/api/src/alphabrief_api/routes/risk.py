@@ -53,6 +53,31 @@ _default_limits = RiskLimitConfig(
     max_total_exposure=_execution_policy.max_total_exposure,
     require_data_quality_passed=True,
     require_human_review=_execution_policy.require_human_review,
+    # R21.2: account-level stateless rules. Per-symbol exposure cap is
+    # set above the per-order notional so a single symbol cannot
+    # accumulate beyond it; concentration is a no-op while the allowlist
+    # is single-symbol (paper MVP); leverage is 1.0 (long-only, no
+    # margin); price deviation, signal staleness and duplicate-order
+    # detection use tight paper defaults. ``require_market_open`` stays
+    # off by default so the paper workbench allows manual out-of-session
+    # test orders; the automated scheduler path is the place to enforce
+    # the session. All tighten-only / fail-closed; ``None``/``False``
+    # preserves legacy behavior for any a caller does not configure.
+    max_symbol_exposure=_execution_policy.max_total_exposure,
+    max_concentration_pct=Decimal("1.0"),
+    max_leverage=Decimal("1.0"),
+    max_price_deviation_pct=Decimal("0.05"),
+    max_signal_age_seconds=300,
+    require_market_open=False,
+    session_policy=_execution_policy,
+    duplicate_order_window_seconds=30,
+    duplicate_order_max_count=1,
+    # R21.3: stateful account rules. Paper defaults are 5% daily loss
+    # and 10% drawdown. The paper route injects ``equity_high_water_mark``
+    # and ``day_start_equity`` from the persistent equity-snapshot store
+    # so these caps remain tighten-only across restarts.
+    max_daily_loss_pct=Decimal("0.05"),
+    max_drawdown_floor_pct=Decimal("0.10"),
 )
 _default_kill_switch = KillSwitch()
 _default_risk_gate = RiskGate(limits=_default_limits, kill_switch=_default_kill_switch)
@@ -89,6 +114,18 @@ class RiskConfigResponse(BaseModel):
     max_total_exposure: str | None
     require_data_quality_passed: bool
     require_human_review: bool
+    # R21.2 account-level rules (all tighten-only / fail-closed).
+    max_symbol_exposure: str | None
+    max_concentration_pct: str | None
+    max_leverage: str | None
+    max_price_deviation_pct: str | None
+    max_signal_age_seconds: int | None
+    require_market_open: bool
+    duplicate_order_window_seconds: int | None
+    duplicate_order_max_count: int
+    # R21.3 stateful account rules.
+    max_daily_loss_pct: str | None
+    max_drawdown_floor_pct: str | None
 
 
 class RiskDashboardResponse(BaseModel):
@@ -194,6 +231,38 @@ def get_risk_config() -> RiskConfigResponse:
         ),
         require_data_quality_passed=limits.require_data_quality_passed,
         require_human_review=limits.require_human_review,
+        max_symbol_exposure=(
+            str(limits.max_symbol_exposure)
+            if limits.max_symbol_exposure is not None
+            else None
+        ),
+        max_concentration_pct=(
+            str(limits.max_concentration_pct)
+            if limits.max_concentration_pct is not None
+            else None
+        ),
+        max_leverage=(
+            str(limits.max_leverage) if limits.max_leverage is not None else None
+        ),
+        max_price_deviation_pct=(
+            str(limits.max_price_deviation_pct)
+            if limits.max_price_deviation_pct is not None
+            else None
+        ),
+        max_signal_age_seconds=limits.max_signal_age_seconds,
+        require_market_open=limits.require_market_open,
+        duplicate_order_window_seconds=limits.duplicate_order_window_seconds,
+        duplicate_order_max_count=limits.duplicate_order_max_count,
+        max_daily_loss_pct=(
+            str(limits.max_daily_loss_pct)
+            if limits.max_daily_loss_pct is not None
+            else None
+        ),
+        max_drawdown_floor_pct=(
+            str(limits.max_drawdown_floor_pct)
+            if limits.max_drawdown_floor_pct is not None
+            else None
+        ),
     )
 
 

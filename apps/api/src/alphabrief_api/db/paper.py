@@ -8,6 +8,8 @@ was used before Phase 7 Round 4.
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -229,6 +231,100 @@ class PaperStore:
                 if e.get("details", {}).get("status") == status
             ]
         return self.get_audit_events(event_type="order_created")
+
+    # ------------------------------------------------------------------
+    # R21.3 account equity snapshots (daily-loss + drawdown)
+    # ------------------------------------------------------------------
+    #
+    # Append-only equity snapshots the paper route writes after each
+    # fill. The drawdown high-water mark is ``max(equity)`` across all
+    # snapshots; day-start equity is the earliest snapshot of the
+    # current calendar day (UTC). Both are read by the route before
+    # RiskGate evaluation so the gate stays pure (no DB import).
+
+    def save_equity_snapshot(
+        self,
+        account_id: str,
+        captured_at: datetime,
+        equity: Decimal,
+        realized_pnl_day: Decimal = Decimal("0"),
+    ) -> str:
+        """Persist an account equity snapshot and return its ID."""
+        snapshot_id = f"esnap_{uuid4().hex[:12]}"
+        self._conn.execute(
+            """
+            INSERT INTO account_equity_snapshots
+            (snapshot_id, account_id, captured_at, equity, realized_pnl_day)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                snapshot_id,
+                account_id,
+                captured_at,
+                str(equity),
+                str(realized_pnl_day),
+            ],
+        )
+        return snapshot_id
+
+    def get_high_water_mark(self, account_id: str) -> Decimal | None:
+        """Return the persisted peak equity (``max(equity)``), or ``None``.
+
+        Resilient across restarts: the peak is read from the
+        append-only table, so a process restart cannot reset it. This
+        keeps the drawdown floor tighten-only across restarts.
+        """
+        row = self._conn.execute(
+            """
+            SELECT MAX(CAST(equity AS DECIMAL(38, 18)))
+            FROM account_equity_snapshots
+            WHERE account_id = ?
+            """,
+            [account_id],
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return Decimal(str(row[0]))
+
+    def get_day_start_equity(self, account_id: str, day: date) -> Decimal | None:
+        """Return the earliest equity snapshot's equity on *day* (UTC), or ``None``.
+
+        *day* is compared against the ``captured_at`` UTC calendar date.
+        ``CAST(... AT TIME ZONE 'UTC' AS DATE)`` pins the cast to UTC;
+        DuckDB's default timestamp-to-date cast uses the session time
+        zone, which would mis-attribute snapshots across the day
+        boundary.
+        """
+        row = self._conn.execute(
+            """
+            SELECT CAST(equity AS DECIMAL(38, 18))
+            FROM account_equity_snapshots
+            WHERE account_id = ?
+              AND CAST(captured_at AT TIME ZONE 'UTC' AS DATE) = ?
+            ORDER BY captured_at ASC
+            LIMIT 1
+            """,
+            [account_id, day],
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return Decimal(str(row[0]))
+
+    def get_latest_equity(self, account_id: str) -> Decimal | None:
+        """Return the most recent snapshot's equity, or ``None``."""
+        row = self._conn.execute(
+            """
+            SELECT CAST(equity AS DECIMAL(38, 18))
+            FROM account_equity_snapshots
+            WHERE account_id = ?
+            ORDER BY captured_at DESC
+            LIMIT 1
+            """,
+            [account_id],
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return Decimal(str(row[0]))
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -296,9 +296,7 @@ def _isoformat_optional(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        dt: datetime = (
-            value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-        )
+        dt: datetime = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
         return dt.astimezone(UTC).isoformat()
     if isinstance(value, str):
         return value
@@ -308,9 +306,7 @@ def _isoformat_optional(value: Any) -> str | None:
 def _ensure_tz_aware(value: Any) -> str:
     """Return an ISO-formatted UTC string from a DuckDB timestamp."""
     if isinstance(value, datetime):
-        dt: datetime = (
-            value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-        )
+        dt: datetime = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
         return dt.astimezone(UTC).isoformat()
     return str(value)
 

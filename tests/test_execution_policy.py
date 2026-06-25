@@ -7,17 +7,29 @@ from alphabrief_core import OrderIntent, load_paper_execution_policy, load_setti
 from alphabrief_risk import AccountExposureContext
 from pydantic import ValidationError
 
-POLICY_NOW = datetime(2026, 6, 20, tzinfo=UTC)
+POLICY_NOW = datetime(2026, 6, 22, 14, 0, tzinfo=UTC)
+# A Monday 10:00 America/New_York moment — inside the policy trading
+# session, so the R21.2 ``require_market_open`` check does not reject.
+# Kept in sync with ``POLICY_NOW`` so signal-staleness also passes.
 
 
-def _empty_account_context() -> "AccountExposureContext":
+def _empty_account_context(
+    symbol: str = "SPY",
+    mark: Decimal = Decimal("100"),
+) -> "AccountExposureContext":
     """An AccountExposureContext with zero exposure.
 
     The Phase 19 default gate enforces the $300 total-exposure cap at
     runtime, so a buy without an account_context fails closed
-    (``account_context_required``). These tests exercise the symbol /
-    order-value / human-review boundaries, not the exposure cap, so they
-    supply a zero-exposure context to let those checks surface.
+    (``account_context_required``). R21.2 adds leverage (needs ``equity``)
+    and price-deviation (needs ``reference_mark_prices``) checks, both
+    fail-closed. R21.3 adds daily-loss (needs ``day_start_equity``) and
+    drawdown (needs ``equity_high_water_mark``), also fail-closed. These
+    tests exercise the symbol / order-value / human-review boundaries,
+    not those checks, so the helper supplies a zero-exposure context
+    with equity, mark, and HWM/day-start set to the current equity so
+    only the boundaries under test surface. ``symbol`` / ``mark`` let
+    each caller match the mark to its order price.
     """
     return AccountExposureContext(
         current_total_exposure=Decimal("0"),
@@ -25,6 +37,10 @@ def _empty_account_context() -> "AccountExposureContext":
         cash=Decimal("100000"),
         account_id="paper_local",
         captured_at=POLICY_NOW,
+        equity=Decimal("100000"),
+        reference_mark_prices={symbol: mark},
+        equity_high_water_mark=Decimal("100000"),
+        day_start_equity=Decimal("100000"),
     )
 
 
@@ -103,6 +119,7 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
 
     _reset_risk_gate()
     gate = _get_risk_gate()
+    gate.clock = lambda: POLICY_NOW  # session-in, fresh signal
     allowed = OrderIntent(
         intent_id="policy-spy",
         source="manual",
@@ -138,6 +155,7 @@ def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
 
     _reset_risk_gate()
     gate = _get_risk_gate()
+    gate.clock = lambda: POLICY_NOW  # session-in, fresh signal
     intent = OrderIntent(
         intent_id=f"policy-{symbol.lower()}",
         source="manual",
@@ -152,7 +170,7 @@ def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
     decision = gate.evaluate(
         intent,
         estimated_price=Decimal("50"),
-        account_context=_empty_account_context(),
+        account_context=_empty_account_context(symbol=symbol, mark=Decimal("50")),
     )
 
     assert decision.approved is True
