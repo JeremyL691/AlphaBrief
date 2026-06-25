@@ -582,12 +582,12 @@ canvas { display: block; width: 100%; height: 100%; }
 # ---------------------------------------------------------------------------
 
 _NAV_ITEMS: list[tuple[str, str, str]] = [
-    ("/dashboard",          "Main",       "main"),
-    ("/dashboard/news",     "News",       "news"),
-    ("/dashboard/macro",    "Macro",      "macro"),
-    ("/dashboard/brief",    "Briefs",     "brief"),
-    ("/dashboard/debate",   "Debate",     "debate"),
-    ("/dashboard/models",   "Models",     "models"),
+    ("/dashboard", "Main", "main"),
+    ("/dashboard/news", "News", "news"),
+    ("/dashboard/macro", "Macro", "macro"),
+    ("/dashboard/brief", "Briefs", "brief"),
+    ("/dashboard/debate", "Debate", "debate"),
+    ("/dashboard/models", "Models", "models"),
     ("/dashboard/strategies", "Strategies", "strategies"),
 ]
 
@@ -716,14 +716,14 @@ def _shell(
         "<main>\n"
         '<div class="page-head">\n'
         f"<div><h1>{title}</h1><p>{subtitle}</p></div>\n"
-        f"{('<div class=\"page-head__meta\">' + meta + '</div>') if meta else ''}"
+        f"{('<div class="page-head__meta">' + meta + '</div>') if meta else ''}"
         "</div>\n"
         f"{body}\n"
         "</main>\n"
         '<footer class="app-footer">\n'
         '<div class="app-footer__inner">\n'
         '<div class="app-footer__left">\n'
-        f'<span>AlphaBrief {_APP_VERSION}</span>\n'
+        f"<span>AlphaBrief {_APP_VERSION}</span>\n"
         '<span aria-hidden="true">·</span>\n'
         '<a href="/docs">API Docs</a>\n'
         '<span aria-hidden="true">·</span>\n'
@@ -1498,89 +1498,104 @@ loadStrategies();
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @router.get("/dashboard", response_class=HTMLResponse)
 def get_dashboard() -> HTMLResponse:
     """Serve the AlphaBrief web dashboard main page."""
-    return HTMLResponse(content=_shell(
-        active="main",
-        title="Main",
-        subtitle="Status, portfolio, recent activity and model health.",
-        body=_DASHBOARD_BODY,
-        scripts=_DASHBOARD_JS,
-        meta='<span class="pill pill--accent" id="env-pill">—</span>',
-    ))
+    return HTMLResponse(
+        content=_shell(
+            active="main",
+            title="Main",
+            subtitle="Status, portfolio, recent activity and model health.",
+            body=_DASHBOARD_BODY,
+            scripts=_DASHBOARD_JS,
+            meta='<span class="pill pill--accent" id="env-pill">—</span>',
+        )
+    )
 
 
 @router.get("/dashboard/news", response_class=HTMLResponse)
 def get_dashboard_news() -> HTMLResponse:
     """Serve the news dashboard page."""
-    return HTMLResponse(content=_shell(
-        active="news",
-        title="News",
-        subtitle="Latest news headlines stored in DuckDB.",
-        body=_NEWS_BODY,
-        scripts=_NEWS_JS,
-    ))
+    return HTMLResponse(
+        content=_shell(
+            active="news",
+            title="News",
+            subtitle="Latest news headlines stored in DuckDB.",
+            body=_NEWS_BODY,
+            scripts=_NEWS_JS,
+        )
+    )
 
 
 @router.get("/dashboard/macro", response_class=HTMLResponse)
 def get_dashboard_macro() -> HTMLResponse:
     """Serve the macro dashboard page."""
-    return HTMLResponse(content=_shell(
-        active="macro",
-        title="Macro Indicators",
-        subtitle="Latest macro indicators stored in DuckDB.",
-        body=_MACRO_BODY,
-        scripts=_MACRO_JS,
-    ))
+    return HTMLResponse(
+        content=_shell(
+            active="macro",
+            title="Macro Indicators",
+            subtitle="Latest macro indicators stored in DuckDB.",
+            body=_MACRO_BODY,
+            scripts=_MACRO_JS,
+        )
+    )
 
 
 @router.get("/dashboard/brief", response_class=HTMLResponse)
 def get_dashboard_brief() -> HTMLResponse:
     """Serve the brief dashboard page."""
-    return HTMLResponse(content=_shell(
-        active="brief",
-        title="Daily Briefs",
-        subtitle="Generated daily AlphaBrief history.",
-        body=_BRIEF_BODY,
-        scripts=_BRIEF_JS,
-    ))
+    return HTMLResponse(
+        content=_shell(
+            active="brief",
+            title="Daily Briefs",
+            subtitle="Generated daily AlphaBrief history.",
+            body=_BRIEF_BODY,
+            scripts=_BRIEF_JS,
+        )
+    )
 
 
 @router.get("/dashboard/debate", response_class=HTMLResponse)
 def get_dashboard_debate() -> HTMLResponse:
     """Serve the debate dashboard page."""
-    return HTMLResponse(content=_shell(
-        active="debate",
-        title="Research Debates",
-        subtitle="Multi-model research debate history.",
-        body=_DEBATE_BODY,
-        scripts=_DEBATE_JS,
-    ))
+    return HTMLResponse(
+        content=_shell(
+            active="debate",
+            title="Research Debates",
+            subtitle="Multi-model research debate history.",
+            body=_DEBATE_BODY,
+            scripts=_DEBATE_JS,
+        )
+    )
 
 
 @router.get("/dashboard/models", response_class=HTMLResponse)
 def get_dashboard_models() -> HTMLResponse:
     """Serve the model evaluation dashboard page."""
-    return HTMLResponse(content=_shell(
-        active="models",
-        title="Model Performance",
-        subtitle="Evaluation history across providers and task types.",
-        body=_MODELS_BODY,
-        scripts=_MODELS_JS,
-    ))
+    return HTMLResponse(
+        content=_shell(
+            active="models",
+            title="Model Performance",
+            subtitle="Evaluation history across providers and task types.",
+            body=_MODELS_BODY,
+            scripts=_MODELS_JS,
+        )
+    )
 
 
 @router.get("/dashboard/strategies", response_class=HTMLResponse)
 def get_dashboard_strategies() -> HTMLResponse:
     """Serve the strategy registry dashboard page."""
-    return HTMLResponse(content=_shell(
-        active="strategies",
-        title="Strategy Registry",
-        subtitle="Persisted StrategySpec objects and their advisory signal history.",
-        body=_STRATEGIES_BODY,
-        scripts=_STRATEGIES_JS,
-    ))
+    return HTMLResponse(
+        content=_shell(
+            active="strategies",
+            title="Strategy Registry",
+            subtitle="Persisted StrategySpec objects and their advisory signal history.",
+            body=_STRATEGIES_BODY,
+            scripts=_STRATEGIES_JS,
+        )
+    )
 
 
 __all__ = ["router"]

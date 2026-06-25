@@ -45,9 +45,7 @@ class AdmissionEvidence(BaseModel):
 
     @field_validator("risk_review_notes", "disabled_conditions")
     @classmethod
-    def list_items_must_not_be_blank(
-        cls, value: tuple[str, ...]
-    ) -> tuple[str, ...]:
+    def list_items_must_not_be_blank(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if any(item.strip() == "" for item in value):
             raise ValueError("evidence lists must not contain blank values")
         return value
@@ -139,9 +137,7 @@ def create_strategy_admission(
         if superseded is None:
             raise HTTPException(
                 status_code=404,
-                detail=(
-                    f"admission {body.supersedes_admission_id!r} not found"
-                ),
+                detail=(f"admission {body.supersedes_admission_id!r} not found"),
             )
         if superseded["strategy_id"] != body.strategy_id:
             raise HTTPException(

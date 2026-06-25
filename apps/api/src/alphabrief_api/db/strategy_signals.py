@@ -273,8 +273,7 @@ class StrategySignalStore:
     def list_strategy_ids(self) -> list[str]:
         """Return the distinct set of strategy_ids with at least one signal."""
         rows = self._conn.execute(
-            "SELECT DISTINCT strategy_id FROM strategy_signals "
-            "ORDER BY strategy_id ASC"
+            "SELECT DISTINCT strategy_id FROM strategy_signals ORDER BY strategy_id ASC"
         ).fetchall()
         return [str(r[0]) for r in rows]
 
@@ -290,9 +289,7 @@ class StrategySignalStore:
     ) -> dict[str, Any]:
         signal_raw = row[8]
         signal_obj: dict[str, Any] = (
-            signal_raw
-            if isinstance(signal_raw, dict)
-            else json.loads(str(signal_raw))
+            signal_raw if isinstance(signal_raw, dict) else json.loads(str(signal_raw))
         )
         result: dict[str, Any] = {
             "signal_id": row[0],

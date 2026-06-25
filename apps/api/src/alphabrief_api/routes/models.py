@@ -58,7 +58,11 @@ def _default_registry() -> ModelRegistry:
                 profile_id="fake_default",
                 provider_name="fake",
                 model_name="fake-model",
-                capabilities=["text_generation", "structured_output", "json_mode", ],
+                capabilities=[
+                    "text_generation",
+                    "structured_output",
+                    "json_mode",
+                ],
                 priority=100,
             ),
             ModelProfile(
@@ -100,9 +104,7 @@ def _build_evaluator(use_real: bool) -> ModelEvaluator:
     adapter = FakeProviderAdapter(
         provider_name="fake",
         model_name="fake-model",
-        output_text=json.dumps(
-            {"brief_id": "b1", "summary": "ok", "confidence": 0.8}
-        ),
+        output_text=json.dumps({"brief_id": "b1", "summary": "ok", "confidence": 0.8}),
         structured_output={
             "brief_id": "b1",
             "summary": "ok",
@@ -392,9 +394,7 @@ def list_evaluations(
     """Return recent evaluation records, optionally filtered."""
     store = _get_store()
     if model_id is not None or task_type is not None:
-        records = store.get_evaluations(
-            model_id=model_id, task_type=task_type
-        )
+        records = store.get_evaluations(model_id=model_id, task_type=task_type)
     else:
         records = store.list_evaluations(limit=limit, offset=0)
     summaries = [
@@ -414,14 +414,10 @@ def list_evaluations(
         )
         for r in records
     ]
-    return ModelEvaluationListResponse(
-        entries=summaries, total=len(summaries)
-    )
+    return ModelEvaluationListResponse(entries=summaries, total=len(summaries))
 
 
-@router.get(
-    "/evaluations/{eval_id}", response_model=ModelEvaluationSummary
-)
+@router.get("/evaluations/{eval_id}", response_model=ModelEvaluationSummary)
 def get_evaluation(eval_id: str) -> ModelEvaluationSummary:
     """Return a single evaluation record by id."""
     store = _get_store()
@@ -435,24 +431,16 @@ def get_evaluation(eval_id: str) -> ModelEvaluationSummary:
                 eval_dataset=str(record["eval_dataset"]),
                 json_valid_rate=_maybe_float(record.get("json_valid_rate")),
                 schema_pass_rate=_maybe_float(record.get("schema_pass_rate")),
-                hallucination_rate=_maybe_float(
-                    record.get("hallucination_rate")
-                ),
+                hallucination_rate=_maybe_float(record.get("hallucination_rate")),
                 avg_latency_ms=_maybe_int(record.get("avg_latency_ms")),
-                avg_cost_estimate=_maybe_float(
-                    record.get("avg_cost_estimate")
-                ),
+                avg_cost_estimate=_maybe_float(record.get("avg_cost_estimate")),
                 sample_count=int(record["sample_count"]),
                 evaluated_at=str(record["evaluated_at"]),
             )
-    raise HTTPException(
-        status_code=404, detail=f"evaluation {eval_id!r} not found"
-    )
+    raise HTTPException(status_code=404, detail=f"evaluation {eval_id!r} not found")
 
 
-@router.get(
-    "/performance/{model_id}", response_model=ModelPerformanceSummary
-)
+@router.get("/performance/{model_id}", response_model=ModelPerformanceSummary)
 def get_performance(model_id: str) -> ModelPerformanceSummary:
     """Return the latest evaluation per task_type for a model."""
     if not model_id or ":" not in model_id:
@@ -478,9 +466,7 @@ def get_performance(model_id: str) -> ModelPerformanceSummary:
             eval_dataset=str(record["eval_dataset"]),
             json_valid_rate=_maybe_float(record.get("json_valid_rate")),
             schema_pass_rate=_maybe_float(record.get("schema_pass_rate")),
-            hallucination_rate=_maybe_float(
-                record.get("hallucination_rate")
-            ),
+            hallucination_rate=_maybe_float(record.get("hallucination_rate")),
             avg_latency_ms=_maybe_int(record.get("avg_latency_ms")),
             avg_cost_estimate=_maybe_float(record.get("avg_cost_estimate")),
             sample_count=int(record["sample_count"]),
@@ -550,9 +536,7 @@ def compare_models(body: ModelCompareRequest) -> ModelCompareResponse:
                     schema_pass_rate=_maybe_float(record.get("schema_pass_rate")),
                     json_valid_rate=_maybe_float(record.get("json_valid_rate")),
                     avg_latency_ms=_maybe_int(record.get("avg_latency_ms")),
-                    avg_cost_estimate=_maybe_float(
-                        record.get("avg_cost_estimate")
-                    ),
+                    avg_cost_estimate=_maybe_float(record.get("avg_cost_estimate")),
                     sample_count=int(record["sample_count"]),
                     evaluated_at=str(record["evaluated_at"]),
                     has_data=True,

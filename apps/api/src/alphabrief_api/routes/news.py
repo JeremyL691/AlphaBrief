@@ -114,7 +114,8 @@ def _parse_iso_to_utc(value: str, *, field_name: str) -> datetime:
 
 
 def _build_provider(
-    source: NewsSource, symbols: list[str],
+    source: NewsSource,
+    symbols: list[str],
 ) -> (
     MockNewsProvider
     | RssNewsProvider

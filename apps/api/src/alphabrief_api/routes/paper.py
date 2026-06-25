@@ -34,6 +34,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphabrief_api.db import PaperStore
+from alphabrief_api.routes.data import _get_store as _get_market_data_store
 from alphabrief_api.routes.risk import _get_risk_gate
 
 # ---------------------------------------------------------------------------
@@ -52,10 +53,18 @@ def _get_paper_store() -> PaperStore:
 
 
 def _reset_paper_store() -> None:
-    """Clear the persistent paper store (for test isolation)."""
+    """Clear the persistent paper store (for test isolation).
+
+    Closes and drops the singleton (not just ``clear()``) so the next
+    access rebuilds it at the current ``ALPHABRIEF_DATA_DIR`` — matching
+    the MarketDataStore isolation pattern. R21.3 persists equity snapshots
+    across fills, so a stale singleton from a prior test would leak
+    drawdown/daily-loss state otherwise.
+    """
     global _paper_store
     if _paper_store is not None:
-        _paper_store.clear()
+        _paper_store.close()
+    _paper_store = None
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +92,42 @@ def _reset_broker() -> None:
         audit_log=ExecutionAuditLog(),
     )
     _reset_paper_store()
+
+
+class _MissingMarkPriceError(HTTPException):
+    """Fail-closed signal raised when no stored mark price can be resolved.
+
+    RiskGate's exposure and order-value checks only bind against a real
+    reference price. Validating them against a hardcoded placeholder
+    silently turns the $100/$300 caps into no-ops, so a missing price is
+    a hard rejection rather than a fallback to a fiction.
+    """
+
+
+def _resolve_reference_price(symbol: str) -> Decimal:
+    """Return the latest stored daily close for *symbol* as the mark price.
+
+    Reads bars from the shared ``MarketDataStore`` (ascending by timestamp,
+    so the last bar's close is the most recent). Fails closed with HTTP 422
+    and a ``missing_mark_price`` detail when no bars are stored for the
+    symbol — never falls back to a placeholder price.
+
+    ponytail:mark_price_source: the mark is the latest *daily* close held in
+    DuckDB, not a real-time quote. Ceiling: an intraday burst order is
+    priced at the prior session close, so a market-open spike is validated
+    against a stale mark. Upgrade path: a quote provider feeding the
+    ``mark_prices`` dict already accepted by the exposure helper.
+    """
+    bars = _get_market_data_store().get_bar_models(symbol)
+    if not bars:
+        raise _MissingMarkPriceError(
+            status_code=422,
+            detail=(
+                f"missing_mark_price: no stored bars for {symbol!r}; "
+                "load market data before submitting an order"
+            ),
+        )
+    return bars[-1].close
 
 
 # ---------------------------------------------------------------------------
@@ -264,18 +309,37 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
         created_at=now,
     )
 
-    reference_price = Decimal("100")
+    reference_price = _resolve_reference_price(intent.symbol)
 
     # Phase 19: project the in-memory PaperBroker portfolio into an
     # AccountExposureContext so RiskGate can enforce the runtime
-    # max_total_exposure cap ($300 from PaperExecutionPolicy). The
-    # legacy broker holds cost-basis (average_price) marks only — the
-    # projection falls back to average_price when no live mark exists
-    # (see the ponytail:mark_price_ceiling note in broker.exposure).
+    # max_total_exposure cap ($300 from PaperExecutionPolicy). The mark
+    # price resolved above (latest stored daily close) is fed in so the
+    # exposure projection uses mark — not cost-basis average_price — for
+    # the order symbol, and so the $100/$300 caps bind against reality.
     account_context = build_account_exposure_context_from_portfolio(
         broker.portfolio,
         account_id="paper_local",
         mark_prices={intent.symbol: reference_price},
+    )
+
+    # R21.3: enrich the context with the drawdown high-water mark and
+    # day-start equity read from the persistent equity-snapshot store so
+    # the daily-loss / drawdown rules are restart-safe (an in-memory HWM
+    # would reset on restart and silently widen the floor). The store may
+    # be empty on the first order; the gate fails closed on the missing
+    # inputs only when the corresponding rule is configured.
+    hwm = store.get_high_water_mark(account_context.account_id)
+    day_start = store.get_day_start_equity(account_context.account_id, now.date())
+    account_context = account_context.model_copy(
+        update={
+            "equity_high_water_mark": hwm
+            if hwm is not None
+            else account_context.equity,
+            "day_start_equity": (
+                day_start if day_start is not None else account_context.equity
+            ),
+        }
     )
 
     decision = gate.evaluate(
@@ -293,6 +357,7 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
             "approved": decision.approved,
             "reason": decision.reason,
             "message": "risk decision recorded",
+            "reference_price": str(reference_price),
             "risk_context_decision_id": (
                 body.risk_context.decision_id if body.risk_context is not None else None
             ),
@@ -330,7 +395,6 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
             ),
         )
 
-    reference_price = Decimal("100")  # Placeholder — will be fed from market data
     try:
         result = broker.submit(
             intent,
@@ -376,6 +440,23 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
         positions=positions_dict,
     )
 
+    # R21.3: persist an equity snapshot after the fill so the daily-loss
+    # and drawdown rules have restart-safe state. Equity is mark-based
+    # (cash + sum(qty * mark)); for symbols without a stored mark we fall
+    # back to cost basis (the exposure projection's ponytail ceiling).
+    post_fill_context = build_account_exposure_context_from_portfolio(
+        portfolio,
+        account_id="paper_local",
+        mark_prices={intent.symbol: reference_price},
+    )
+    if post_fill_context.equity is not None:
+        store.save_equity_snapshot(
+            account_id="paper_local",
+            captured_at=now,
+            equity=post_fill_context.equity,
+            realized_pnl_day=portfolio.realized_pnl,
+        )
+
     return {
         "order_id": result.order.order_id,
         "fill_id": result.fill.fill_id,
@@ -396,5 +477,6 @@ __all__ = [
     "OrderRequest",
     "PortfolioResponse",
     "_reset_broker",
+    "_resolve_reference_price",
     "router",
 ]
