@@ -67,6 +67,121 @@ def test_risk_status_prints_placeholder() -> None:
     assert "not yet implemented" in result.output
 
 
+# ---------------------------------------------------------------------------
+# Phase 21 R21.x — risk check CLI flags for the new account-context fields
+# ---------------------------------------------------------------------------
+
+
+def _intent_payload(tmp_path: Path) -> Path:
+    intent_path = tmp_path / "intent.json"
+    intent_path.write_text(
+        json.dumps(
+            {
+                "intent_id": "intent_cli_r21",
+                "source": "manual",
+                "symbol": "SPY",
+                "side": "buy",
+                "order_type": "market",
+                "quantity": "1",
+                "rationale": "r21 cli check",
+                "created_at": "2026-06-23T10:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return intent_path
+
+
+def test_risk_check_help_lists_phase21_flags() -> None:
+    """The Phase 21 R21.x flags must be present on ``risk check --help``
+    so operators discover them."""
+    result = runner.invoke(risk_app, ["check", "--help"])
+    assert result.exit_code == 0
+    for flag in (
+        "--equity",
+        "--reference-mark-prices",
+        "--equity-hwm",
+        "--day-start-equity",
+        "--day-realized-pnl",
+    ):
+        assert flag in result.output, f"missing flag {flag} in risk check --help"
+
+
+def test_risk_check_accepts_equity_flag(tmp_path: Path) -> None:
+    """Passing ``--equity`` alone must not error (the field is
+    forwarded into AccountExposureContext and reaches the gate)."""
+    intent_path = _intent_payload(tmp_path)
+    result = runner.invoke(
+        risk_app,
+        ["check", "--intent", str(intent_path), "--equity", "1000"],
+    )
+    assert result.exit_code == 0
+    assert "approved: True" in result.output
+
+
+def test_risk_check_accepts_reference_mark_prices_json(tmp_path: Path) -> None:
+    """``--reference-mark-prices`` takes a JSON object of symbol→price."""
+    intent_path = _intent_payload(tmp_path)
+    result = runner.invoke(
+        risk_app,
+        [
+            "check",
+            "--intent",
+            str(intent_path),
+            "--reference-mark-prices",
+            '{"SPY": "100"}',
+        ],
+    )
+    assert result.exit_code == 0
+
+
+def test_risk_check_rejects_invalid_mark_prices_json(tmp_path: Path) -> None:
+    intent_path = _intent_payload(tmp_path)
+    result = runner.invoke(
+        risk_app,
+        [
+            "check",
+            "--intent",
+            str(intent_path),
+            "--reference-mark-prices",
+            "not json",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "invalid JSON" in result.output
+
+
+def test_risk_check_accepts_hwm_and_day_start(tmp_path: Path) -> None:
+    """The drawdown + daily-loss rules' required inputs can be
+    supplied via the new flags."""
+    intent_path = _intent_payload(tmp_path)
+    result = runner.invoke(
+        risk_app,
+        [
+            "check",
+            "--intent",
+            str(intent_path),
+            "--equity",
+            "950",
+            "--equity-hwm",
+            "1000",
+            "--day-start-equity",
+            "1000",
+        ],
+    )
+    assert result.exit_code == 0
+
+
+def test_risk_check_rejects_invalid_decimal_flag(tmp_path: Path) -> None:
+    intent_path = _intent_payload(tmp_path)
+    result = runner.invoke(
+        risk_app,
+        ["check", "--intent", str(intent_path), "--equity", "not-a-number"],
+    )
+    assert result.exit_code == 1
+    assert "invalid decimal" in result.output
+
+
 def test_risk_context_with_no_inputs_returns_neutral_decision() -> None:
     result = runner.invoke(risk_app, ["context"])
 
