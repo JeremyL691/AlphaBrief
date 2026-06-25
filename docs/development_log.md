@@ -2383,3 +2383,226 @@ Validation for 0050:
    `RiskGate`, `PaperBroker`, and the live-trading lock are untouched.
    No API order-placement path was added. Live trading remains
    disabled by default; no provider SDK calls outside ModelGateway.
+
+## 0051 Quality-Gate Recovery
+
+Status: completed.
+
+Goal: restore the repository-wide quality gate so `pytest -q` collects
+cleanly (no collection error) before kicking off Phase 21 R21.x work,
+which adds more risk-layer tests on top of the existing 1090 baseline.
+
+### What was broken
+
+`tests/test_broker_api_live.py` was added in Phase 20 R20.2 and used
+`from tests._helpers import MockAlpacaServer`. With no `tests/__init__.py`
+and no rootdir package declaration, pytest could not resolve the
+`tests` package during collection:
+
+```text
+$ .venv/bin/pytest --collect-only
+ERROR collecting tests/test_broker_api_live.py
+ImportError: from tests._helpers import MockAlpacaServer
+ModuleNotFoundError: No module named 'tests'
+1160 tests collected, 1 error
+```
+
+The Phase 19 plan (0049) flagged this as a pre-existing
+`tests/_helpers/mock_alpaca_server.py` double-discovery issue but did
+not fix it; Phase 20's new live-path tests inherited the failure.
+
+### Fix (minimum-surface, no `tests/__init__.py`)
+
+1. New `tests/conftest.py` adds the absolute path of `tests/` to
+   `sys.path` at position 1, after the project `pythonpath` entries.
+   This is the pytest-recommended pattern for shared test helpers
+   (no `tests/__init__.py`, no rootdir package pollution).
+2. `tests/_helpers/__init__.py` — re-export switched from
+   `from tests._helpers.mock_alpaca_server import ...` to relative
+   `from .mock_alpaca_server import ...` so the helper package itself
+   no longer depends on `tests` being an importable package.
+3. `tests/test_broker_api_live.py` — import changed from
+   `from tests._helpers import MockAlpacaServer` to
+   `from _helpers.mock_alpaca_server import MockAlpacaServer`
+   (ruff --fix sorted the new import alphabetically).
+4. `pyproject.toml` — added `"tests"` to `[tool.mypy].mypy_path` so
+   mypy can resolve the `_helpers` import during strict checks.
+
+### Validation for 0051
+
+1. `.venv/bin/pytest -q` passed: 1165 tests (up from "1160 collected
+   + 1 collection error" = effectively broken). No collection errors,
+   no skips, no reordering.
+2. `.venv/bin/pytest --collect-only` clean — no errors.
+3. `.venv/bin/ruff check .` clean.
+4. `.venv/bin/ruff format --check` clean for the 4 files added or
+   modified in this round (1 reformatted by ruff, 3 already formatted).
+5. `.venv/bin/mypy packages apps tests` clean (214 source files, up
+   from 206 — the additional 8 come from `tests/_helpers/` and
+   `tests/conftest.py` now being in the mypy path).
+6. `git diff --check` passed.
+7. No application code touched. `RiskGate`, `PaperBroker`,
+   `BrokerAdapter`, `AlpacaPaperAdapter`, `OperationsScheduler`, and
+   the live-trading lock are all unchanged. Phase 21 R21.x code that
+   was previously implemented but uncommitted remains in the working
+   tree and is intentionally **not** delivered in this round — that is
+   Round 0052's scope.
+
+Files changed:
+
+- `tests/conftest.py` — new (sys.path injection)
+- `tests/_helpers/__init__.py` — relative import
+- `tests/test_broker_api_live.py` — import path fix
+- `pyproject.toml` — added `"tests"` to `mypy_path`
+- `docs/development_plans/0051-quality-gate-recovery.md` — new
+
+## 0052 Phase 21: Account-Level Risk Rules Hardening (R21.1–R21.4)
+
+Status: completed.
+
+Goal: close the loop on the Phase 21 account-level risk rules that
+were already implemented in code but uncommitted. Phase 19 R19.1
+delivered the runtime `max_total_exposure` cap. Phase 21 extends
+that to the full blueprint §6 surface — per-symbol exposure,
+concentration, leverage, price deviation, market-state,
+signal-staleness, duplicate-order, daily-loss, and drawdown-floor
+— by adding the test coverage, API/CLI surface, and documentation
+that were missing. HWM / day-start-equity persistence, market
+calendar, persistent dedup, and the 30–60-day external paper
+observation period remain explicitly out of scope (Phase 21.5+).
+
+### R21.1 — Test coverage for the existing 9 check methods
+
+The 9 new `RiskGate` check methods
+(`_check_symbol_exposure`, `_check_concentration`, `_check_leverage`,
+`_check_price_deviation`, `_check_market_open`, `_check_signal_age`,
+`_check_duplicate_order`, `_check_daily_loss`, `_check_drawdown`)
+were already implemented in
+`packages/alphabrief-risk/src/alphabrief_risk/gate.py` but had
+no test coverage. The pre-existing
+`tests/test_risk_account_rules.py` (29 cases) and
+`tests/test_risk_loss_drawdown.py` (12 cases) already covered the
+R21.2 stateless rules and the R21.3 stateful rules with boundary /
+fail-closed / audit cases. No new risk-gate test file was needed;
+the existing 41 tests are the canonical R21.1 coverage.
+
+### R21.2 — `AccountExposureContext` new fields + broker projection
+
+1. New `tests/test_account_exposure_phase21.py` (19 cases) exercises
+   the new `AccountExposureContext` fields:
+   `equity`, `reference_mark_prices`, `equity_high_water_mark`,
+   `day_start_equity`, `day_realized_pnl` — including Decimal-float
+   rejection, `Field(ge=0)` boundaries, and round-trip
+   reconstruction.
+2. `tests/test_broker_exposure.py` appended with 6 cases covering
+   `equity` and `reference_mark_prices` projection in both the async
+   `BrokerAdapter` variant and the sync `PortfolioState` variant.
+   The `ponytail:portfolio_equity_ceiling` semantic is locked in
+   by `test_sync_projection_equity_uses_average_price_when_no_marks_supplied`
+   — without `mark_prices` the legacy portfolio falls back to
+   cost-basis.
+3. No `broker/exposure.py` source change was needed — the projection
+   already projected `equity` and `reference_mark_prices`; the
+   missing piece was the test coverage that proves it.
+
+### R21.3 — API and CLI surface
+
+1. `apps/api/.../routes/risk.py` — `RiskConfigResponse` was already
+   exposing every R21.x field (it was added alongside the
+   `RiskLimitConfig` fields in the same code drop). The
+   `test_risk_config_returns_200` test was extended to assert the
+   paper-default values for `max_symbol_exposure`,
+   `max_concentration_pct`, `max_leverage`,
+   `max_price_deviation_pct`, `max_signal_age_seconds`,
+   `require_market_open`, `duplicate_order_window_seconds`,
+   `duplicate_order_max_count`, `max_daily_loss_pct`,
+   `max_drawdown_floor_pct`.
+2. `POST /api/v1/risk/check` already accepted
+   `account_context: AccountExposureContext | None` (Phase 19
+   R19.3); the new R21.x fields travel inside that object
+   automatically. 5 new tests in `tests/test_api_server.py` prove
+   the API transports `equity`, `reference_mark_prices`,
+   `equity_high_water_mark`, and `day_start_equity` end-to-end
+   without float coercion, and rejects `float` inputs at the
+   Pydantic boundary (HTTP 422).
+3. `apps/cli/.../risk_commands.py` — `risk check` gained five new
+   flags: `--equity`, `--reference-mark-prices` (JSON object),
+   `--equity-hwm`, `--day-start-equity`, `--day-realized-pnl`. The
+   CLI builds an `AccountExposureContext` from these and passes it
+   to `gate.evaluate(..., account_context=...)`. New helpers
+   `_parse_optional_decimal` and `_parse_reference_mark_prices`
+   mirror the API string-transport style and reject bad input
+   without bridging `float`.
+4. 6 new tests in `tests/test_risk_commands.py` lock in
+   `--help` discoverability, happy paths, JSON-decode failure,
+   Decimal-parse failure, and HWM/day-start-equity acceptance.
+
+### R21.4 — Documentation
+
+1. `docs/roadmap.md` — full Phase 21 chapter appended (R21.1–R21.4
+   + final quality gate). HWM persistence, market calendar,
+   persistent dedup, and 30–60-day external paper observation are
+   explicitly called out as Phase 21.5+ — no overclaim.
+2. `docs/architecture.md` — Phase 21 chapter with the rule surface
+   table, layer-discipline note, tighten-only / fail-closed
+   invariants, and the explicit list of Phase 21.5+ items.
+3. `docs/risk_model.md` — Phase 21 section documenting each
+   check's failure tag, required context input, the sell-bypass
+   rule, the duplicate-order ceiling, the missing market calendar,
+   and the caller-supplied-input model.
+4. `docs/development_plans/0052-phase-21-account-level-rules.md` —
+   this round's plan.
+
+### Files added
+
+- `tests/test_account_exposure_phase21.py` — 19 cases
+- `docs/development_plans/0052-phase-21-account-level-rules.md`
+
+### Files modified
+
+- `tests/test_broker_exposure.py` — 6 appended cases
+- `tests/test_api_server.py` — extended `test_risk_config_returns_200`
+  + 5 new R21.x risk-check cases
+- `tests/test_risk_commands.py` — 6 new CLI flag cases
+- `apps/cli/src/alphabrief_cli/risk_commands.py` — 5 new flags +
+  `_parse_optional_decimal` + `_parse_reference_mark_prices`
+- `docs/roadmap.md`, `docs/architecture.md`, `docs/risk_model.md`,
+  `docs/development_log.md` — this entry
+
+### Files not touched
+
+- `packages/alphabrief-risk/**` — `RiskGate` / `RiskLimitConfig` /
+  `AccountExposureContext` already carried the R21.x code from an
+  earlier in-tree change. This round only added test coverage.
+- `packages/alphabrief-execution/**` — `broker/exposure.py` already
+  projected `equity` and `reference_mark_prices`. No source change.
+- `apps/api/.../routes/paper.py` — already wires HWM / day-start
+  from the equity-snapshot store (R19.3).
+- `apps/api/.../routes/risk.py` — `RiskConfigResponse` already
+  surfaced every new field; no schema change.
+- `_reference_sources/**` — never opened, never imported.
+
+### Validation for 0052
+
+1. `.venv/bin/pytest -q` passed: 1202 tests (up from 1165 in 0051,
+   which had been 1160 collected + 1 error in the previous broken
+   state).
+2. `.venv/bin/pytest tests/test_risk_account_rules.py
+   tests/test_risk_loss_drawdown.py tests/test_account_exposure_phase21.py
+   tests/test_broker_exposure.py tests/test_api_server.py
+   tests/test_risk_commands.py` all pass.
+3. `.venv/bin/ruff check .` clean.
+4. `.venv/bin/ruff format --check` clean for every file added or
+   modified in this round.
+5. `.venv/bin/mypy packages apps tests` clean (215 source files,
+   up from 214 in 0051 — the new Phase 21 chapter of the docs
+   does not change source-file count; the +1 is from
+   `test_account_exposure_phase21.py` being in the mypy path
+   after 0051's `mypy_path` change).
+6. `git diff --check` passed.
+7. No risk / execution core relaxation: every new check is
+   tighten-only / fail-closed. The `RiskLimitConfig` defaults
+   remain permissive; production deployments must opt in by
+   configuring the new fields explicitly.
+8. Live trading remains disabled by default. No provider SDK
+   calls outside ModelGateway.

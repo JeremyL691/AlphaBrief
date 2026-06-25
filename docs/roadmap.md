@@ -1107,3 +1107,146 @@ a code deliverable of this phase.
       are untouched. No API order placement path was added.
 - [x] Live trading remains disabled by default. No provider SDK
       calls outside ModelGateway.
+
+## Phase 21: Account-Level Risk Rules Hardening
+
+Goal: extend the runtime account-exposure enforcement introduced in
+Phase 19 R19.1 with the full set of account-level risk checks called
+for in the blueprint §6 (per-symbol exposure, concentration, leverage,
+price deviation, market-state, signal-staleness, duplicate-order,
+daily-loss, drawdown-floor). All checks are **tighten-only** and
+**fail-closed** — they can only reject a `RiskDecision`, tag it, or
+reduce `max_quantity`. None can re-approve a rejected intent, lift
+the live-trading lock, or relax an existing limit.
+
+Status: implemented and locally verified. Rounds R21.1–R21.4 complete
+(plus the 0051 quality-gate recovery that unblocked the test
+collection). The 30–60-day external-paper observation period,
+HWM/day-start persistence, and live-mode code paths are explicitly
+**out of scope** for this phase.
+
+### R21.1 — `RiskGate` check methods + `RiskLimitConfig` fields
+
+1. New optional fields on `RiskLimitConfig`:
+   - `max_symbol_exposure`, `max_concentration_pct`, `max_leverage`,
+     `max_price_deviation_pct`, `max_signal_age_seconds`,
+     `require_market_open`, `session_policy`,
+     `duplicate_order_window_seconds`, `duplicate_order_max_count`,
+     `max_daily_loss_pct`, `max_drawdown_floor_pct`.
+2. New private check methods on `RiskGate`:
+   - `_check_symbol_exposure`, `_check_concentration`,
+     `_check_leverage`, `_check_price_deviation`,
+     `_check_market_open`, `_check_signal_age`,
+     `_check_duplicate_order`, `_check_daily_loss`, `_check_drawdown`.
+3. Each check is wired into `RiskGate.evaluate(...)` and follows the
+   same tighten-only / fail-closed contract as the existing
+   `_check_account_exposure`:
+   - **No-op** when its limit field is `None`/unset (legacy paths
+     unchanged).
+   - **Fail-closed** when a required context input is missing
+     (e.g. `account_context` is `None` while a cap is set).
+   - **Sells** bypass the per-symbol / leverage / daily-loss /
+     drawdown checks (they are protective, not aggressive).
+   - The per-symbol cap returns a `max_quantity` clamp that folds
+     into the existing tighten-only clamp composition (smaller bound
+     wins).
+4. `__post_init__` validates the new fields (positivity,
+   `(0, 1]` for `max_concentration_pct`, `[0, 1]` for the loss /
+   deviation / drawdown fields, `>= 1` for `duplicate_order_max_count`).
+
+### R21.2 — `AccountExposureContext` extended + broker projection
+
+1. New optional fields on `AccountExposureContext`:
+   - `equity` (`Field(ge=0)`), `reference_mark_prices` (dict of
+     Decimal), `equity_high_water_mark` (`Field(ge=0)`),
+     `day_start_equity` (`Field(ge=0)`),
+     `day_realized_pnl` (no `ge=0` — loss days produce a negative
+     value).
+2. The `field_validator(mode="before")` set was extended to reject
+   `float` on every new Decimal field (Decimal-first throughout).
+3. `build_account_exposure_context` (async, `BrokerAdapter`-driven)
+   now projects `AccountSnapshot.equity` and the supplied
+   `mark_prices` into the context.
+4. `build_account_exposure_context_from_portfolio` (sync,
+   `PortfolioState`-driven, used by the API paper route) computes
+   `equity = cash + sum(qty * mark)` and threads the marks through.
+   `ponytail:portfolio_equity_ceiling`: without `mark_prices` the
+   legacy `PortfolioState` falls back to `average_price`, so the
+   result is cost-basis equity, not live MTM. The paper route will
+   fail-closed for `max_leverage` / `max_daily_loss_pct` /
+   `max_drawdown_floor_pct` on a fresh server until a persistent
+   equity-snapshot store is wired in (Phase 21.5+).
+
+### R21.3 — API and CLI surface
+
+1. `RiskConfigResponse` exposes every new `RiskLimitConfig` field
+   (per-symbol exposure, concentration, leverage, price deviation,
+   signal age, market-open flag, duplicate-order window + count,
+   daily-loss pct, drawdown-floor pct). Stringified `Decimal` to
+   avoid float coercion (mirrors the R19.3 pattern).
+2. `POST /api/v1/risk/check` already accepted `account_context:
+   AccountExposureContext | None` from Phase 19; the new R21.x
+   fields travel inside that object (Pydantic handles them).
+3. `apps/cli/.../risk_commands.py` — `risk check` gained five new
+   flags: `--equity`, `--reference-mark-prices` (JSON object),
+   `--equity-hwm`, `--day-start-equity`, `--day-realized-pnl`.
+   The CLI builds an `AccountExposureContext` from these and
+   passes it to `gate.evaluate(..., account_context=...)`.
+4. `apps/cli/.../risk_commands.py` — `--help` lists every new flag
+   so operators discover them.
+5. `POST /api/v1/paper/orders` continues to use the R19.3 wiring:
+   the in-memory `PaperBroker` portfolio is projected via
+   `build_account_exposure_context_from_portfolio`, then enriched
+   with `equity_high_water_mark` and `day_start_equity` from the
+   persistent equity-snapshot store (when present). This makes the
+   daily-loss and drawdown rules restart-safe.
+
+### R21.4 — Documentation and quality gate
+
+1. This roadmap entry.
+2. `docs/development_log.md` — `0051` (quality-gate recovery) and
+   `0052` (Phase 21 R21.1–R21.4) entries appended.
+3. `docs/architecture.md` — Account-Level Risk Rules chapter.
+4. `docs/risk_model.md` — Phase 21 section describing each check's
+   failure tag and tighten-only / fail-closed invariant.
+5. `docs/development_plans/0051-quality-gate-recovery.md` and
+   `docs/development_plans/0052-phase-21-account-level-rules.md` —
+   round plans.
+
+### Out of scope (Phase 21.5+ and beyond)
+
+- Persistent HWM / day-start-equity store across restarts (today the
+  paper route reads them when present and falls back to current
+  `equity` when absent).
+- A market-calendar provider (the `require_market_open` check uses
+  the policy's `trading_days` + `session_start` / `session_end`).
+  `ponytail:no-holiday-calendar` — U.S. holidays are not respected.
+- Persistent duplicate-order dedup (today's deque is in-memory; a
+  restart loses dedup memory). `ponytail:duplicate_order_state`.
+- 30–60-day external paper observation period (FINAL_ACCEPTANCE_REPORT
+  §10).
+- Live trading — out of scope for this phase and the rest of the
+  paper MVP.
+
+### Final quality gate
+
+- [x] **74 new tests** across R21.1–R21.4: 41 pre-existing
+      `test_risk_account_rules.py` + `test_risk_loss_drawdown.py`
+      (R21.1 unit coverage), 19 in
+      `test_account_exposure_phase21.py` + appended
+      `test_broker_exposure.py` (R21.2), 6 in `test_api_server.py`
+      (R21.3 API), 6 in `test_risk_commands.py` (R21.3 CLI), plus
+      the 0051 quality-gate fix that turned 1160 collected + 1
+      collection error into a clean 1165 baseline. Net total: 1202
+      tests pass.
+- [x] `ruff check .` clean.
+- [x] `ruff format --check` clean on every modified or added file.
+- [x] `mypy packages apps tests` clean (215 source files).
+- [x] `git diff --check` clean.
+- [x] No files under `_reference_sources/` opened or imported.
+- [x] No risk / execution core relaxation: every new check is
+      tighten-only / fail-closed. The `RiskLimitConfig` defaults
+      remain permissive; production deployments must opt in by
+      configuring the new fields.
+- [x] Live trading remains disabled by default. No provider SDK
+      calls outside ModelGateway.

@@ -1113,3 +1113,82 @@ scheduler core.
 The scheduler never places orders. `RiskGate`, `PaperBroker`,
 `KillSwitch`, the Alpaca adapter, the recon store, and the
 reconciliation runner are unchanged.
+
+## Phase 21 — Account-Level Risk Rules (R21.x)
+
+Phase 19 R19.1 added the account-total-exposure cap. Phase 21 extends
+that runtime account-level enforcement with the full set of
+blueprint §6 rules: per-symbol exposure, concentration, leverage,
+price deviation, market-state, signal-staleness, duplicate-order,
+daily-loss, and drawdown-floor. Every new check follows the same
+**tighten-only** / **fail-closed** contract as `_check_account_exposure`.
+
+### Rule surface and failure tags
+
+| `RiskLimitConfig` field | `RiskGate` check | Failure tags |
+|---|---|---|
+| `max_symbol_exposure` | `_check_symbol_exposure` | `account_context_required`, `missing_price`, `max_symbol_exposure` |
+| `max_concentration_pct` | `_check_concentration` | `account_context_required`, `missing_price`, `max_concentration` |
+| `max_leverage` | `_check_leverage` | `account_context_required`, `missing_equity`, `missing_price`, `max_leverage` |
+| `max_price_deviation_pct` | `_check_price_deviation` | `missing_price`, `account_context_required`, `missing_mark_price`, `price_deviation` |
+| `require_market_open` + `session_policy` | `_check_market_open` | `market_closed` |
+| `max_signal_age_seconds` | `_check_signal_age` | `stale_signal` |
+| `duplicate_order_window_seconds` + `duplicate_order_max_count` | `_check_duplicate_order` | `duplicate_order` |
+| `max_daily_loss_pct` | `_check_daily_loss` | `account_context_required`, `missing_day_start_equity`, `missing_equity`, `max_daily_loss` |
+| `max_drawdown_floor_pct` | `_check_drawdown` | `account_context_required`, `missing_equity_hwm`, `missing_equity`, `max_drawdown_floor` |
+
+All checks are no-ops when their limit field is unset; the existing
+48 risk-gate tests (Phase 12–19) continue to pass without
+modification.
+
+### Layer discipline (unchanged)
+
+`alphabrief-risk` still imports only `alphabrief-core`. The new
+`AccountExposureContext` fields (`equity`, `reference_mark_prices`,
+`equity_high_water_mark`, `day_start_equity`, `day_realized_pnl`) are
+caller-supplied inputs, computed by the execution-side projection
+helper. The dependency arrow remains one-way: execution → risk.
+
+The execution-side `build_account_exposure_context` (async, broker
+adapter driven) and `build_account_exposure_context_from_portfolio`
+(sync, `PortfolioState` driven) both now project `equity` and
+`reference_mark_prices` into the context. The legacy `PortfolioState`
+fallback computes `equity = cash + sum(qty * mark)`; without marks
+the helper falls back to `average_price` and the result is
+cost-basis equity (`ponytail:portfolio_equity_ceiling` — paper route
+will fail-closed for `max_leverage` / `max_daily_loss_pct` /
+`max_drawdown_floor_pct` until a persistent equity-snapshot store is
+wired in by Phase 21.5+).
+
+### Tighten-only / fail-closed invariant
+
+Every new check:
+
+- is a **no-op** when its `RiskLimitConfig` field is `None`/unset
+  (legacy paths unchanged);
+- **fails closed** when a required context input is missing
+  (`account_context`, `equity`, `equity_high_water_mark`,
+  `day_start_equity`, `reference_mark_prices`, `session_policy`).
+  A missing input is a rejection, never a silent skip;
+- can only **reject**, **tag**, or **reduce** `max_quantity`. None
+  of the new checks can re-approve a rejected intent, lift the
+  live-trading lock, relax the human-review flag, or raise
+  `max_quantity` above the configured per-order cap;
+- bypasses **sells** for the per-symbol, leverage, daily-loss, and
+  drawdown rules (a sell is the protective action when in loss or
+  drawdown — the check must not block it).
+
+### Out of scope (Phase 21.5+)
+
+- Persistent HWM / day-start equity across restarts. Today the paper
+  route reads them from the equity-snapshot store when present and
+  falls back to current `equity` when absent.
+- A market-calendar provider. The `require_market_open` check uses
+  the policy's `trading_days` + `session_start` / `session_end`
+  (no U.S. holiday calendar; `ponytail:no-holiday-calendar`).
+- Persistent duplicate-order dedup. Today's deque is in-memory
+  (`ponytail:duplicate_order_state`); a restart loses dedup memory.
+- 30–60-day external paper observation period
+  (FINAL_ACCEPTANCE_REPORT §10).
+- Live trading — out of scope for this phase and the rest of the
+  paper MVP.

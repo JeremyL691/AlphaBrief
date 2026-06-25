@@ -912,6 +912,17 @@ def test_risk_config_returns_200() -> None:
     # Phase 19: the runtime account-exposure cap from PaperExecutionPolicy.
     assert body["max_total_exposure"] == "300"
     assert body["require_human_review"] is True
+    # Phase 21 R21.2/R21.3 fields are surfaced with paper defaults.
+    assert body["max_symbol_exposure"] == "300"
+    assert body["max_concentration_pct"] == "1.0"
+    assert body["max_leverage"] == "1.0"
+    assert body["max_price_deviation_pct"] == "0.05"
+    assert body["max_signal_age_seconds"] == 300
+    assert body["require_market_open"] is False
+    assert body["duplicate_order_window_seconds"] == 30
+    assert body["duplicate_order_max_count"] == 1
+    assert body["max_daily_loss_pct"] == "0.05"
+    assert body["max_drawdown_floor_pct"] == "0.10"
 
 
 # ---------------------------------------------------------------------------
@@ -1978,3 +1989,114 @@ def test_risk_check_fail_closed_when_account_context_omitted() -> None:
     body = response.json()
     assert body["approved"] is False
     assert "account_context_required" in body["risk_tags"]
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/risk/check — Phase 21 R21.x account_context fields
+# ---------------------------------------------------------------------------
+
+
+def _r21_intent(symbol: str = "SPY") -> dict[str, object]:
+    return {
+        "intent_id": "intent_r21",
+        "source": "manual",
+        "symbol": symbol,
+        "side": "buy",
+        "order_type": "market",
+        "quantity": "1",
+        "rationale": "r21.x risk check",
+        "created_at": "2026-06-23T10:00:00+00:00",
+    }
+
+
+def _r21_base_account_ctx() -> dict[str, object]:
+    return {
+        "current_total_exposure": "0",
+        "exposure_by_symbol": {},
+        "cash": "1000",
+        "account_id": "acct_r21_api",
+        "captured_at": "2026-06-23T10:00:00+00:00",
+    }
+
+
+def test_risk_check_accepts_equity_in_account_context() -> None:
+    """``equity`` is part of ``AccountExposureContext`` and is
+    transported end-to-end through the API without coercion to float."""
+    response = client.post(
+        "/api/v1/risk/check",
+        json={
+            "intent": _r21_intent(),
+            "estimated_price": "100",
+            "account_context": {
+                **_r21_base_account_ctx(),
+                "equity": "1000",
+            },
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_risk_check_accepts_reference_mark_prices_in_account_context() -> None:
+    """``reference_mark_prices`` carries live marks for the
+    price-deviation check; transported as a dict of Decimal strings."""
+    response = client.post(
+        "/api/v1/risk/check",
+        json={
+            "intent": _r21_intent(),
+            "estimated_price": "100",
+            "account_context": {
+                **_r21_base_account_ctx(),
+                "reference_mark_prices": {"SPY": "100"},
+            },
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_risk_check_accepts_equity_hwm_in_account_context() -> None:
+    response = client.post(
+        "/api/v1/risk/check",
+        json={
+            "intent": _r21_intent(),
+            "estimated_price": "100",
+            "account_context": {
+                **_r21_base_account_ctx(),
+                "equity": "1000",
+                "equity_high_water_mark": "1200",
+            },
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_risk_check_accepts_day_start_equity_in_account_context() -> None:
+    response = client.post(
+        "/api/v1/risk/check",
+        json={
+            "intent": _r21_intent(),
+            "estimated_price": "100",
+            "account_context": {
+                **_r21_base_account_ctx(),
+                "equity": "950",
+                "day_start_equity": "1000",
+            },
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_risk_check_account_context_rejects_float_equity() -> None:
+    """``AccountExposureContext`` rejects ``float`` decimal inputs at
+    the Pydantic boundary; the API must surface this as a 422."""
+    response = client.post(
+        "/api/v1/risk/check",
+        json={
+            "intent": _r21_intent(),
+            "estimated_price": "100",
+            "account_context": {
+                **_r21_base_account_ctx(),
+                "equity": 1000.0,
+            },
+        },
+    )
+    assert response.status_code == 422

@@ -222,3 +222,105 @@ def test_sync_projection_accepts_mark_prices() -> None:
         portfolio, mark_prices={"SPY": Decimal("120")}, clock=lambda: CAPTURED
     )
     assert ctx.current_total_exposure == Decimal("240")
+
+
+# ---------------------------------------------------------------------------
+# Phase 21 R21.2 — equity / reference_mark_prices projection
+# ---------------------------------------------------------------------------
+
+
+def test_async_projection_carries_equity_from_account_snapshot() -> None:
+    """``equity`` is taken from ``AccountSnapshot.equity`` directly
+    (the broker reports it as cash + unrealized mark-to-market)."""
+    adapter = _FakeAdapter(
+        positions=[_pos("SPY", Decimal("2"), Decimal("100"))],
+        account=AccountSnapshot(
+            account_id="acct-fake",
+            cash=Decimal("750"),
+            equity=Decimal("950"),
+            buying_power=Decimal("2000"),
+            currency="USD",
+            captured_at=CAPTURED,
+        ),
+    )
+    ctx = _run(build_account_exposure_context(adapter))
+    assert ctx.equity == Decimal("950")
+
+
+def test_async_projection_carries_reference_mark_prices() -> None:
+    """``reference_mark_prices`` is the dict the caller passed in
+    (consumed by the price-deviation check)."""
+    adapter = _FakeAdapter(
+        positions=[_pos("SPY", Decimal("2"), Decimal("100"))],
+        account=_account(),
+    )
+    marks = {"SPY": Decimal("105"), "QQQ": Decimal("55")}
+    ctx = _run(build_account_exposure_context(adapter, mark_prices=marks))
+    assert ctx.reference_mark_prices == marks
+
+
+def test_async_projection_reference_mark_prices_empty_when_omitted() -> None:
+    adapter = _FakeAdapter(positions=[], account=_account())
+    ctx = _run(build_account_exposure_context(adapter))
+    assert ctx.reference_mark_prices == {}
+
+
+def test_sync_projection_computes_equity_when_mark_prices_supplied() -> None:
+    """For the legacy ``PortfolioState`` path the broker doesn't supply
+    an ``equity`` field directly, so the projection computes it as
+    ``cash + sum(qty * mark)`` when ``mark_prices`` is supplied.
+    ``ponytail:portfolio_equity_ceiling`` — without marks, equity is
+    ``None`` (paper route will fail-closed for leverage / drawdown /
+    daily-loss until Phase 21.4 introduces a persistent HWM store)."""
+    portfolio = PortfolioState(
+        cash=Decimal("900"),
+        positions={
+            "SPY": PortfolioPosition(
+                symbol="SPY", quantity=Decimal("2"), average_price=Decimal("100")
+            )
+        },
+    )
+    ctx = build_account_exposure_context_from_portfolio(
+        portfolio,
+        mark_prices={"SPY": Decimal("120")},
+        clock=lambda: CAPTURED,
+    )
+    # 900 + 2*120 = 1140
+    assert ctx.equity == Decimal("1140")
+
+
+def test_sync_projection_equity_uses_average_price_when_no_marks_supplied() -> None:
+    """Without ``mark_prices`` the projection uses ``average_price`` as
+    the mark (legacy ``PortfolioState`` has no separate equity field).
+    The result is cost-basis equity, not live MTM — callers wanting
+    MTM must pass ``mark_prices`` explicitly."""
+    portfolio = PortfolioState(
+        cash=Decimal("900"),
+        positions={
+            "SPY": PortfolioPosition(
+                symbol="SPY", quantity=Decimal("2"), average_price=Decimal("100")
+            )
+        },
+    )
+    ctx = build_account_exposure_context_from_portfolio(
+        portfolio, clock=lambda: CAPTURED
+    )
+    # 900 + 2*100 = 1100 (cost-basis)
+    assert ctx.equity == Decimal("1100")
+
+
+def test_sync_projection_carries_reference_mark_prices() -> None:
+    portfolio = PortfolioState(
+        cash=Decimal("900"),
+        positions={
+            "SPY": PortfolioPosition(
+                symbol="SPY", quantity=Decimal("1"), average_price=Decimal("100")
+            )
+        },
+    )
+    ctx = build_account_exposure_context_from_portfolio(
+        portfolio,
+        mark_prices={"SPY": Decimal("120")},
+        clock=lambda: CAPTURED,
+    )
+    assert ctx.reference_mark_prices == {"SPY": Decimal("120")}

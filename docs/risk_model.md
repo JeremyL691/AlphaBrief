@@ -111,3 +111,73 @@ An explicit empty `enabled_strategies` set denies all strategy-originated
 orders. `None` retains the legacy unconfigured behavior. Strategy registry
 activation and strategy-admission records are audit-only and never modify this
 allowlist or otherwise relax a RiskDecision.
+
+## Account-Level Risk Rules (Phase 21)
+
+Phase 19 R19.1 added the runtime total-exposure cap.
+Phase 21 R21.x extends account-level enforcement with the rest of
+the blueprint §6 rule surface. Every new check is **tighten-only**
+(can only reject, tag, or reduce `max_quantity`) and **fail-closed**
+(a missing required input is a rejection, never a silent skip).
+None can re-approve a rejected intent, lift the live-trading lock,
+relax the human-review flag, or raise `max_quantity` above the
+configured per-order cap.
+
+| `RiskLimitConfig` field | Failure tag | Required context input |
+|---|---|---|
+| `max_symbol_exposure` | `max_symbol_exposure` | `account_context` + `estimated_price` |
+| `max_concentration_pct` | `max_concentration` | `account_context` + `estimated_price` |
+| `max_leverage` | `max_leverage` | `account_context.equity` + `estimated_price` |
+| `max_price_deviation_pct` | `price_deviation` | `account_context.reference_mark_prices[symbol]` + `estimated_price` |
+| `require_market_open` + `session_policy` | `market_closed` | `session_policy` |
+| `max_signal_age_seconds` | `stale_signal` | `intent.created_at` |
+| `duplicate_order_window_seconds` + `duplicate_order_max_count` | `duplicate_order` | (none beyond the intent itself) |
+| `max_daily_loss_pct` | `max_daily_loss` | `account_context.day_start_equity` + `account_context.equity` |
+| `max_drawdown_floor_pct` | `max_drawdown_floor` | `account_context.equity_high_water_mark` + `account_context.equity` |
+
+A check that requires an input which is missing tags the intent with
+the corresponding `*_required` failure tag (`account_context_required`,
+`missing_equity`, `missing_day_start_equity`, `missing_equity_hwm`,
+`missing_mark_price`, `missing_price`, or `market_closed` when the
+session policy is not wired).
+
+**Sells** bypass the per-symbol, leverage, daily-loss, and drawdown
+checks because a sell is the protective action when in loss or
+drawdown — the check must not block it. The other checks
+(concentration, price deviation, signal age, duplicate order, market
+open) apply equally to buys and sells.
+
+The duplicate-order detector uses an in-memory deque on the
+`RiskGate` instance (`ponytail:duplicate_order_state`). A process
+restart loses dedup memory; an immediate resubmit will not be
+caught. Acceptable for paper; the upgrade path is a persistent
+recent-intent store (Phase 21.5+).
+
+The market-open check uses the policy's `trading_days`,
+`session_start`, `session_end`, and `timezone`. It does not consult
+a market-calendar provider, so U.S. holidays are not respected
+(`ponytail:no-holiday-calendar`).
+
+### Caller-supplied inputs
+
+The R21.x checks consume new optional fields on
+`AccountExposureContext`:
+
+- `equity` (`Field(ge=0)`) — for `max_leverage`, `max_daily_loss_pct`,
+  and `max_drawdown_floor_pct`. The execution-side projection
+  helper computes it as `cash + sum(qty * mark)`; without
+  `mark_prices` the legacy `PortfolioState` falls back to
+  `average_price` (`ponytail:portfolio_equity_ceiling`).
+- `reference_mark_prices` (dict of Decimal) — for
+  `max_price_deviation_pct`. Without it the check rejects with
+  `missing_mark_price`.
+- `equity_high_water_mark` (`Field(ge=0)`) — for
+  `max_drawdown_floor_pct`. Must be supplied by the caller from a
+  persistent snapshot store so a restart cannot reset the peak and
+  silently widen the floor. The paper route reads this from the
+  equity-snapshot store when present; without it, the check
+  rejects.
+- `day_start_equity` (`Field(ge=0)`) — for `max_daily_loss_pct`.
+  Caller-supplied for the same restart-safety reason.
+- `day_realized_pnl` — surfaced for audit / diagnostics only; not
+  gated on. Loss days produce a negative value.
