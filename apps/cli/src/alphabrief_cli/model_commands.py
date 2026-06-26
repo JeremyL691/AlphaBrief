@@ -9,9 +9,14 @@ from pathlib import Path
 from typing import get_args
 
 import typer
+from alphabrief_data import load_ohlcv_csv
 from alphabrief_models import (
     BUNDLED_DATASET_SPECS,
+    DeterministicKronosRuntime,
     FakeProviderAdapter,
+    KronosForecastAdapter,
+    KronosForecastReport,
+    KronosForecastRequest,
     ModelEvaluator,
     ModelGateway,
     ModelProfile,
@@ -22,6 +27,8 @@ from alphabrief_models import (
     OllamaProviderAdapter,
     ProviderAdapter,
     ProviderConfig,
+    build_kronos_evidence,
+    build_kronos_model_request,
     get_dataset_by_id,
 )
 
@@ -99,6 +106,7 @@ def _default_registry() -> ModelRegistry:
             ProviderConfig(provider_name="fake", enabled=True),
             ProviderConfig(provider_name="openai", enabled=True),
             ProviderConfig(provider_name="anthropic", enabled=True),
+            ProviderConfig(provider_name="kronos", enabled=True),
         ],
         profiles=[
             ModelProfile(
@@ -133,17 +141,122 @@ def _default_registry() -> ModelRegistry:
                 ],
                 priority=5,
             ),
+            ModelProfile(
+                profile_id="kronos_mini_forecast",
+                provider_name="kronos",
+                model_name="NeoQuasar/Kronos-mini",
+                capabilities=["structured_output", "time_series_forecasting"],
+                priority=20,
+            ),
         ],
     )
+
+
+@model_app.command("kronos-forecast")
+def kronos_forecast_cmd(
+    input_csv: Path = typer.Option(  # noqa: B008
+        ...,
+        "--input-csv",
+        exists=True,
+        readable=True,
+        help="CSV file containing timestamp,open,high,low,close,volume columns.",
+    ),
+    symbol: str = typer.Option(  # noqa: B008
+        ...,
+        "--symbol",
+        help="Symbol represented by the CSV bars.",
+    ),
+    prediction_length: int = typer.Option(  # noqa: B008
+        3,
+        "--prediction-length",
+        min=1,
+        max=512,
+        help="Number of future OHLCV bars to forecast.",
+    ),
+    source: str = typer.Option(  # noqa: B008
+        "csv",
+        "--source",
+        help="Source label attached to loaded bars.",
+    ),
+    data_version: str = typer.Option(  # noqa: B008
+        "manual",
+        "--data-version",
+        help="Data version label attached to loaded bars.",
+    ),
+    runtime: str = typer.Option(  # noqa: B008
+        "deterministic",
+        "--runtime",
+        help="Runtime mode: 'deterministic' or 'configured'.",
+    ),
+    pretty: bool = typer.Option(  # noqa: B008
+        True,
+        "--pretty/--compact",
+        help="Pretty-print the JSON output.",
+    ),
+) -> None:
+    """Run an advisory Kronos forecast through ModelGateway."""
+    if runtime not in {"deterministic", "configured"}:
+        print(
+            "error: --runtime must be 'deterministic' or 'configured'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        bars = load_ohlcv_csv(
+            input_csv,
+            symbol=symbol,
+            source=source,
+            data_version=data_version,
+        )
+        forecast_request = KronosForecastRequest(
+            request_id=f"cli_kronos_forecast_{symbol}",
+            symbol=symbol,
+            bars=bars,
+            prediction_length=prediction_length,
+        )
+    except Exception as exc:
+        print(f"error: failed to build Kronos request: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    kronos_runtime = (
+        DeterministicKronosRuntime() if runtime == "deterministic" else None
+    )
+    gateway = ModelGateway([KronosForecastAdapter(runtime=kronos_runtime)])
+    result = gateway.invoke(build_kronos_model_request(forecast_request))
+    if result.response is None:
+        print(
+            f"error: Kronos forecast failed: {result.record.error_type or 'unknown'}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        report = KronosForecastReport.model_validate(result.response.structured_output)
+    except Exception as exc:
+        print(f"error: invalid Kronos forecast payload: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    payload = {
+        "report": report.model_dump(mode="json"),
+        "evidence": build_kronos_evidence(report).model_dump(mode="json"),
+        "model_call": {
+            "status": result.record.status,
+            "provider": result.record.provider,
+            "model": result.record.model,
+            "error_type": result.record.error_type,
+        },
+    }
+    indent = 2 if pretty else None
+    json.dump(payload, sys.stdout, indent=indent, sort_keys=True)
+    sys.stdout.write("\n")
 
 
 def _build_evaluator() -> ModelEvaluator:
     adapter = FakeProviderAdapter(
         provider_name="fake",
         model_name="fake-model",
-        output_text=json.dumps(
-            {"brief_id": "b1", "summary": "ok", "confidence": 0.8}
-        ),
+        output_text=json.dumps({"brief_id": "b1", "summary": "ok", "confidence": 0.8}),
         structured_output={"brief_id": "b1", "summary": "ok", "confidence": 0.8},
     )
     return ModelEvaluator(ModelGateway([adapter]))
@@ -281,9 +394,7 @@ def performance_cmd(
 
     try:
         if task_type is not None:
-            records = store.get_evaluations(
-                model_id=model_id, task_type=task_type
-            )
+            records = store.get_evaluations(model_id=model_id, task_type=task_type)
         else:
             per_task = store.get_latest_per_task_for_model(model_id)
             records = list(per_task.values())
@@ -423,9 +534,7 @@ def compare_cmd(
         for mid in ids:
             rec = store.get_latest_evaluation(mid, task_type)
             if rec is None:
-                rows.append(
-                    {"model_id": mid, "has_data": False}
-                )
+                rows.append({"model_id": mid, "has_data": False})
             else:
                 rows.append(
                     {

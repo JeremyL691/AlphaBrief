@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from alphabrief_api.main import app
-from alphabrief_api.routes.models import _clear_store
+from alphabrief_api.routes.models import _clear_store, _set_kronos_runtime
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
@@ -18,8 +18,10 @@ client = TestClient(app)
 def _isolate(tmp_path: Path) -> Generator[None, None, None]:
     os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
     _clear_store()
+    _set_kronos_runtime(None)
     yield
     _clear_store()
+    _set_kronos_runtime(None)
 
 
 def test_list_datasets_returns_bundled() -> None:
@@ -219,9 +221,7 @@ def test_route_returns_decision_with_performance() -> None:
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["profile_id"] in (
-        "fake_default", "openai_default", "anthropic_strong"
-    )
+    assert body["profile_id"] in ("fake_default", "openai_default", "anthropic_strong")
     assert body["candidates"]
 
 
@@ -236,9 +236,7 @@ def test_route_falls_back_without_performance() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["used_performance_data"] is False
-    assert body["profile_id"] in (
-        "fake_default", "openai_default", "anthropic_strong"
-    )
+    assert body["profile_id"] in ("fake_default", "openai_default", "anthropic_strong")
 
 
 def test_route_rejects_empty_capabilities() -> None:
@@ -319,3 +317,74 @@ def test_compare_rejects_single_model() -> None:
         },
     )
     assert resp.status_code == 422
+
+
+def _kronos_bars() -> list[dict[str, str]]:
+    return [
+        {
+            "symbol": "SPY",
+            "timestamp": "2026-06-01T13:30:00+00:00",
+            "open": "100",
+            "high": "101",
+            "low": "99",
+            "close": "100",
+            "volume": "1000",
+            "source": "unit",
+            "data_version": "v1",
+        },
+        {
+            "symbol": "SPY",
+            "timestamp": "2026-06-02T13:30:00+00:00",
+            "open": "101",
+            "high": "102",
+            "low": "100",
+            "close": "101",
+            "volume": "1000",
+            "source": "unit",
+            "data_version": "v1",
+        },
+        {
+            "symbol": "SPY",
+            "timestamp": "2026-06-03T13:30:00+00:00",
+            "open": "102",
+            "high": "103",
+            "low": "101",
+            "close": "102",
+            "volume": "1000",
+            "source": "unit",
+            "data_version": "v1",
+        },
+    ]
+
+
+def test_kronos_forecast_endpoint_runs_deterministic_runtime() -> None:
+    resp = client.post(
+        "/api/v1/models/kronos/forecast",
+        json={
+            "request_id": "api_req_1",
+            "symbol": "SPY",
+            "bars": _kronos_bars(),
+            "prediction_length": 2,
+            "runtime_mode": "deterministic",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["report"]["symbol"] == "SPY"
+    assert body["report"]["prediction_length"] == 2
+    assert body["report"]["advisory_only"] is True
+    assert body["evidence"]["advisory_only"] is True
+    assert body["model_call_provider"] == "kronos"
+
+
+def test_kronos_forecast_endpoint_fails_when_runtime_unconfigured() -> None:
+    resp = client.post(
+        "/api/v1/models/kronos/forecast",
+        json={
+            "symbol": "SPY",
+            "bars": _kronos_bars(),
+            "prediction_length": 2,
+        },
+    )
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error"] == "kronos_forecast_unavailable"

@@ -12,15 +12,24 @@ import json
 from collections.abc import Callable
 from typing import Any, Literal
 
+from alphabrief_core import Bar
 from alphabrief_models import (
     BUNDLED_DATASET_SPECS,
+    DeterministicKronosRuntime,
     FakeProviderAdapter,
+    KronosForecastAdapter,
+    KronosForecastEvidence,
+    KronosForecastReport,
+    KronosForecastRequest,
+    KronosRuntime,
     ModelEvaluator,
     ModelGateway,
     ModelProfile,
     ModelRegistry,
     ModelRouter,
     ProviderConfig,
+    build_kronos_evidence,
+    build_kronos_model_request,
     get_dataset_by_id,
 )
 from fastapi import APIRouter, HTTPException, Query
@@ -44,6 +53,7 @@ def _clear_store() -> None:
 
 
 _store: ModelEvalStore | None = None
+_kronos_runtime: KronosRuntime | None = None
 
 
 def _default_registry() -> ModelRegistry:
@@ -52,6 +62,7 @@ def _default_registry() -> ModelRegistry:
             ProviderConfig(provider_name="fake", enabled=True),
             ProviderConfig(provider_name="openai", enabled=True),
             ProviderConfig(provider_name="anthropic", enabled=True),
+            ProviderConfig(provider_name="kronos", enabled=True),
         ],
         profiles=[
             ModelProfile(
@@ -89,6 +100,16 @@ def _default_registry() -> ModelRegistry:
                     "strong_reasoning",
                 ],
                 priority=5,
+            ),
+            ModelProfile(
+                profile_id="kronos_mini_forecast",
+                provider_name="kronos",
+                model_name="NeoQuasar/Kronos-mini",
+                capabilities=[
+                    "structured_output",
+                    "time_series_forecasting",
+                ],
+                priority=20,
             ),
         ],
     )
@@ -134,6 +155,7 @@ def _is_structured_task(task_type: str) -> bool:
         "symbol_research",
         "risk_review",
         "market_summary",
+        "market_forecast",
     }
 
 
@@ -147,6 +169,7 @@ TaskTypeLiteral = Literal[
     "risk_review",
     "strategy_review",
     "daily_brief",
+    "market_forecast",
     "test",
 ]
 
@@ -277,6 +300,35 @@ class ModelCompareResponse(BaseModel):
 
     task_type: str
     rows: list[ModelCompareRow]
+
+
+RuntimeModeLiteral = Literal["configured", "deterministic"]
+
+
+class KronosForecastApiRequest(BaseModel):
+    """Request body for POST /api/v1/models/kronos/forecast."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_id: str = Field(default="api_kronos_forecast", min_length=1)
+    symbol: str = Field(min_length=1)
+    bars: list[Bar] = Field(min_length=2)
+    prediction_length: int = Field(default=3, ge=1, le=512)
+    model_name: str = Field(default="NeoQuasar/Kronos-mini", min_length=1)
+    tokenizer_name: str = Field(default="NeoQuasar/Kronos-Tokenizer-base", min_length=1)
+    runtime_mode: RuntimeModeLiteral = "configured"
+
+
+class KronosForecastApiResponse(BaseModel):
+    """Response body for a successful Kronos forecast."""
+
+    model_config = ConfigDict(frozen=True)
+
+    report: KronosForecastReport
+    evidence: KronosForecastEvidence
+    model_call_status: str
+    model_call_provider: str
+    model_call_model: str
 
 
 class DatasetSummary(BaseModel):
@@ -545,6 +597,63 @@ def compare_models(body: ModelCompareRequest) -> ModelCompareResponse:
     return ModelCompareResponse(task_type=body.task_type, rows=rows)
 
 
+@router.post("/kronos/forecast", response_model=KronosForecastApiResponse)
+def run_kronos_forecast(
+    body: KronosForecastApiRequest,
+) -> KronosForecastApiResponse:
+    """Run an advisory Kronos OHLCV forecast through ModelGateway."""
+
+    try:
+        forecast_request = KronosForecastRequest(
+            request_id=body.request_id,
+            symbol=body.symbol,
+            bars=body.bars,
+            prediction_length=body.prediction_length,
+            model_name=body.model_name,
+            tokenizer_name=body.tokenizer_name,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    runtime = _select_kronos_runtime(body.runtime_mode)
+    gateway = ModelGateway(
+        [
+            KronosForecastAdapter(
+                runtime=runtime,
+                model_name=body.model_name,
+                tokenizer_name=body.tokenizer_name,
+            )
+        ]
+    )
+    result = gateway.invoke(build_kronos_model_request(forecast_request))
+    if result.response is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "kronos_forecast_unavailable",
+                "kind": result.record.error_type or "unknown",
+            },
+        )
+    try:
+        report = KronosForecastReport.model_validate(result.response.structured_output)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "kronos_forecast_invalid",
+                "kind": type(exc).__name__,
+            },
+        ) from exc
+    evidence = build_kronos_evidence(report)
+    return KronosForecastApiResponse(
+        report=report,
+        evidence=evidence,
+        model_call_status=result.record.status,
+        model_call_provider=result.record.provider,
+        model_call_model=result.record.model,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -572,6 +681,17 @@ def _maybe_int(value: object) -> int | None:
     return None
 
 
+def _select_kronos_runtime(mode: RuntimeModeLiteral) -> KronosRuntime | None:
+    if mode == "deterministic":
+        return DeterministicKronosRuntime()
+    return _kronos_runtime
+
+
+def _set_kronos_runtime(runtime: KronosRuntime | None) -> None:
+    global _kronos_runtime  # noqa: PLW0603
+    _kronos_runtime = runtime
+
+
 def _build_evaluator_with_callback(  # pragma: no cover - test seam
     callback: Callable[[dict[str, Any]], ModelEvaluator],
 ) -> Callable[[bool], ModelEvaluator]:
@@ -584,6 +704,8 @@ __all__ = [
     "ModelCompareRequest",
     "ModelCompareResponse",
     "ModelCompareRow",
+    "KronosForecastApiRequest",
+    "KronosForecastApiResponse",
     "ModelEvaluationListResponse",
     "ModelEvaluationRequest",
     "ModelEvaluationResponse",
@@ -595,5 +717,6 @@ __all__ = [
     "_build_router",
     "_clear_store",
     "_get_store",
+    "_set_kronos_runtime",
     "router",
 ]
