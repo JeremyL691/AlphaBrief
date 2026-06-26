@@ -2687,3 +2687,52 @@ paper-first boundaries.
    apps/cli/src/alphabrief_cli/model_commands.py
    tests/test_kronos_integration.py tests/test_model_gateway.py
    tests/test_models_api.py tests/test_model_cli.py` passed.
+
+## 0054 Final Acceptance Closeout
+
+### Goal
+
+Add a read-only project acceptance verifier and refresh the final
+acceptance evidence for the current Phase 23 checkout.
+
+### Implementation
+
+1. Added `packages/alphabrief-acceptance/src/alphabrief_acceptance`
+   with `build_acceptance_report`, `AcceptanceReport`, and
+   `AcceptanceCheck`.
+2. The verifier checks required documents, runtime package imports,
+   paper-only default settings, paper execution policy, RiskGate's
+   live-trading lock, advisory-only Kronos forecasts through
+   `ModelGateway`, reference-source isolation, provider SDK boundaries,
+   final report freshness, and quality-tooling configuration.
+3. Added `alphabrief acceptance verify` for local and automation use.
+4. Added `GET /api/v1/acceptance/verify` for a read-only API surface.
+5. Added acceptance tests for the verifier, CLI, and API route.
+6. Updated README, architecture, roadmap, and final acceptance report.
+
+### Safety Boundaries
+
+1. The verifier is side-effect free and never calls brokers, model
+   providers, data providers, or live endpoints.
+2. No execution, scheduling, reconciliation, risk-production, or
+   dashboard behavior is changed.
+3. Live trading remains disabled by default and locked by `RiskGate`.
+4. External 30-60 day paper-account observation remains an operational
+   acceptance gate requiring credentials and time.
+
+### Validation
+
+1. `.venv/bin/pytest tests/test_acceptance_verifier.py
+   tests/test_acceptance_api_cli.py tests/test_broker_cli.py
+   tests/test_scheduler_cli.py tests/test_api_server.py::test_api_status_body -q`
+   passed: 22 tests.
+2. `.venv/bin/alphabrief acceptance verify --compact` passed:
+   10 acceptance checks, 0 failures.
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages apps tests` passed:
+   223 source files.
+5. `git diff --check` passed.
+6. Sandboxed `.venv/bin/pytest -q` reached 1204 passing tests; 12
+   localhost mock-broker tests were blocked by sandbox
+   `PermissionError` while binding `127.0.0.1`. The blocked tests are
+   in `tests/test_alpaca_adapter.py` and `tests/test_broker_api_live.py`.

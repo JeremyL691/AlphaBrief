@@ -11,7 +11,7 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-Phases 1–22 are implemented and locally verified. The project remains
+Phases 1–23 are implemented and locally verified. The project remains
 paper-only: external broker credentials and a long-running external-paper
 observation period are separate acceptance gates, and live trading stays
 locked.
@@ -101,6 +101,14 @@ locked.
   `market_forecast` and `time_series_forecasting`. Forecasts are
   structured and advisory only; they never create signals, order
   intents, risk decisions, orders, or broker activity.
+- **Phase 23 — Project acceptance closeout.** A read-only
+  `alphabrief_acceptance` package verifies the project-level safety and
+  delivery invariants. The verifier is exposed through
+  `alphabrief acceptance verify` and `GET /api/v1/acceptance/verify`,
+  and it checks required docs, importable runtime packages, paper-only
+  defaults, RiskGate's live lock, advisory-only Kronos forecasts,
+  reference-source isolation, provider SDK boundaries, and quality
+  tooling configuration.
 
 ## Safety Boundary
 
@@ -143,6 +151,7 @@ Runtime packages under `packages/*/src`:
 - `alphabrief_execution`
 - `alphabrief_gym`
 - `alphabrief_review`
+- `alphabrief_acceptance`
 
 ## Local Setup
 
@@ -164,9 +173,14 @@ Run all checks before committing:
 .venv/bin/python -m pytest
 .venv/bin/ruff check .
 .venv/bin/mypy
+alphabrief acceptance verify
 ```
 
-Current result: 1077 tests pass, Ruff is clean, and strict Mypy is clean. The
+Current result: Phase 23 targeted acceptance and CLI coverage passes;
+the sandboxed full pytest run reaches 1204 passing tests, with 12
+localhost mock-broker tests blocked by sandbox socket permissions. Ruff
+is clean, strict Mypy is clean across 223 source files, and the project
+acceptance verifier is green. The
 development log records the latest verified run and its environment
 constraints.
 

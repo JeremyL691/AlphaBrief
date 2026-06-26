@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import typer
 
+from alphabrief_cli.acceptance_commands import acceptance_app
 from alphabrief_cli.audit_commands import audit_app
 from alphabrief_cli.backtest_commands import backtest_app
 from alphabrief_cli.brief_commands import brief_app
@@ -47,6 +48,7 @@ app.add_typer(strategy_app, name="strategy")
 app.add_typer(broker_app, name="broker")
 app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(serve_app, name="serve")
+app.add_typer(acceptance_app, name="acceptance")
 
 
 __all__ = ["app"]

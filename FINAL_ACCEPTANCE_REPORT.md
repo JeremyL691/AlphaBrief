@@ -1,276 +1,202 @@
-# AlphaBrief 项目总体验收报告与最终交付路线图
+# AlphaBrief Final Acceptance Report
 
-**审计日期：** 2026-06-24（Asia/Shanghai）
-**审计对象：** 当前 `main` 工作区与其运行时代码
-**基线提交：** `3f6015b` - `phase-18-scheduler-surface: wire operations scheduler into CLI and API`，外加待提交的 Phase 19 风控与质量门禁修复。
+**Audit date:** 2026-06-26 (Asia/Shanghai)
+**Audit object:** Current `main` checkout after Phase 23 project
+acceptance closeout.
+**Baseline:** Phase 22 Kronos forecast integration plus the Phase 23
+read-only acceptance verifier.
 
-> 本文档既是当前代码基线的验收报告，也是项目走向“外部模拟盘长期运行，再到受控全自动实盘”的主路线图。文中所有“未来”内容都是待开发和待验证的准入条件，不是已实现能力。
+This report is both the final local code acceptance summary and the
+remaining operational gate list. It does not claim completion of
+external account operations that require broker credentials and elapsed
+time.
 
-## 1. 执行结论
+## 1. Executive Conclusion
 
-### 当前状态
+AlphaBrief is locally complete as a paper-first research, backtesting,
+risk, execution-simulation, broker-paper integration, and review
+workbench. The current checkout includes:
 
-- **本地 MVP 验收：通过，仍限 paper-only。** 核心研究、回测、仿真、内部模拟成交、风控、审计、持久化、API、CLI 和只读 Dashboard 已实现；本地严格质量门禁已恢复。
-- **外部券商模拟盘：实现已本地验证，运行验收未完成。** 项目已有 `BrokerAdapter` port、Alpaca paper adapter、订单映射、对账存储、冻结机制和调度控制面；尚无用户提供的外部凭据、真实账户演练或长期运行证据。
-- **自动实盘：未实现且不得开启。** 运行时代码没有 live-mode broker adapter；`RiskGate` 在 `live_trading_enabled=True` 时明确拒绝订单。项目蓝图也规定实盘必须在模拟盘稳定运行至少 30-60 天后，经额外人工授权才能进入。
+- core market data, news, macro, model, strategy, backtest, gym,
+  research, review, risk, execution, API, CLI, and dashboard surfaces;
+- external paper-broker adapter boundaries, reconciliation storage,
+  scheduler operations controls, and account-level risk checks;
+- optional Kronos market forecasts through `ModelGateway`, structured
+  and advisory only;
+- Phase 23 `alphabrief_acceptance` verifier exposed through
+  `alphabrief acceptance verify` and
+  `GET /api/v1/acceptance/verify`.
 
-因此，AlphaBrief 现在是一个**可本地验证的研究与 paper-trading 工作台**。它具备外部 paper 接入的代码边界，但尚未完成外部账户运营验收，更不是可全自动实盘的系统。
+The project remains paper-only. Live trading is disabled by default and
+locked by `RiskGate` when `live_trading_enabled=True`. There is no
+completed 30-60 day external paper-account observation record in this
+repository, because that gate requires user-provided broker credentials,
+an external paper account, and elapsed operating time.
 
-## 2. 本次验收范围与证据
+## 2. Evidence Summary
 
-本报告检查了产品蓝图、路线图、架构、风险模型、重写策略、代码结构与当前工作区质量门禁。没有使用或读取 `_reference_sources/`。
-
-| 验证项 | 结果 | 证据 |
+| Verification item | Status | Evidence |
 |---|---|---|
-| 全量测试 | 通过 | 全部 **1077** 项测试通过；本轮定向 broker/scheduler 测试 40 项也通过 |
-| 代码风格 | 通过 | `.venv/bin/ruff check .` 输出 `All checks passed!` |
-| 类型检查 | 通过 | `.venv/bin/mypy packages apps tests` 输出 `Success: no issues found in 203 source files` |
-| 实盘默认锁定 | 通过 | `RiskLimitConfig.live_trading_enabled=False`；开启该标志时 `RiskGate` 返回 `live_trading_locked` 拒绝结果 |
-| 风控先于执行 | 通过 | `PaperBroker.submit()` 先接收 `RiskDecision`，拒绝人工复核、缺失或不批准的决定，再创建订单和模拟成交 |
-| 参考代码隔离 | 通过本次静态核对 | 运行时代码未发现从 `_reference_sources/` 导入；项目测试亦覆盖参考目录隔离 |
-| 外部模拟盘端到端运行 | 未通过 | adapter、对账与冻结实现已具备；缺少真实账户凭据、服务商演练和可检索运行证据 |
-| 自动实盘运行 | 未通过 | 无实盘 adapter，且 MVP 风控逻辑明确拒绝实盘开关 |
+| Phase 22 quality baseline | Passed | 1212 tests passed after Kronos integration; Ruff and strict Mypy were clean |
+| Phase 23 acceptance verifier | Implemented | `alphabrief_acceptance.build_acceptance_report` with CLI and API surfaces |
+| Phase 23 targeted tests | Passed | Acceptance/API/CLI/status and broker/scheduler CLI subsets passed: 22 tests |
+| Phase 23 sandbox full pytest | Environment-limited | 1204 tests passed; 12 localhost mock-broker tests failed with sandbox `PermissionError` while binding `127.0.0.1` |
+| Static quality gates | Passed | `ruff check .`, `mypy packages apps tests` across 223 source files, and `git diff --check` passed |
+| Default live trading lock | Passed | `load_settings({}).live_trading_enabled` remains false |
+| Execution policy | Passed | `config/paper_execution_policy.yaml` remains paper-mode, human-review, no-automation |
+| RiskGate live lock | Passed | Acceptance check verifies `live_trading_locked` rejection when live mode is forced on |
+| Kronos boundary | Passed | Forecasts run through `ModelGateway` and validate as `advisory_only=True` |
+| Reference-source isolation | Passed locally | Acceptance verifier scans runtime imports under `apps/` and `packages/` |
+| Provider SDK boundary | Passed locally | Acceptance verifier scans runtime business imports for direct SDK use |
+| External paper-account operations | Not completed | Adapter code exists, but user credentials and long-running evidence are not present |
+| Live trading | Not implemented and locked | No live adapter is delivered; RiskGate rejects live-mode configurations |
 
-### 工作区说明
+The final Phase 23 quality gate is tracked in `docs/roadmap.md` and
+`docs/development_log.md`. This report intentionally separates local
+code acceptance, sandbox-limited test execution, and broker-account
+operating evidence.
 
-验收在未提交的工作区上执行，质量门禁结果包含这些改动。审计前已存在的相关业务文件改动包括：
+## 3. Implemented Product Scope
 
-- `apps/cli/src/alphabrief_cli/strategy_commands.py`
-- `apps/cli/src/alphabrief_cli/api_client.py`
+### Data and Research
 
-本报告不修改这些业务代码，也不为它们创建提交。`.codebase-memory/` 是本次代码图谱索引产生的本地辅助产物，不属于 AlphaBrief 的功能交付。
+- CSV and Parquet OHLCV loading, DuckDB persistence, data quality
+  checks, and no-lookahead feature helpers.
+- Yahoo Finance, Binance, Alpha Vantage, RSS/Atom, SEC EDGAR, FRED, and
+  simulated sentiment provider boundaries with retry and test seams.
+- `ModelGateway`, provider adapter contracts, model registry, prompt
+  versioning, structured output parsing, model evaluation, model
+  performance persistence, and routing advice.
+- Local Ollama adapter, fake providers for tests, MarketBrief,
+  SymbolBrief, DailyAlphaBrief, multi-model debate, and consensus
+  aggregation.
+- Kronos market forecasts as advisory research artifacts only.
 
-## 3. 最终项目的 Definition of Done
+### Strategy, Backtest, and Simulation
 
-AlphaBrief 的最终完成不以“能够发出一笔订单”或“某段回测盈利”为标准，而以研究、风控、执行和运营形成可证明闭环为标准。下表是最终项目级验收清单。
+- `StrategySpec`, strategy interfaces, moving-average sample strategy,
+  external evidence declarations, and signal evidence.
+- Persistent strategy specifications and signal history.
+- Vectorized long/flat backtesting with fees, slippage, equity curves,
+  trades, returns, drawdown, trade count, and win rate.
+- Gym-style trading environments with discrete and continuous actions,
+  multi-asset support, optional shorting, leverage, borrow costs,
+  liquidity limits, market impact, and pluggable rewards.
 
-| 最终能力 | 最终验收标准 | 当前状态 |
+### Risk and Execution
+
+- Mandatory `OrderIntent -> RiskGate -> RiskDecision -> broker`
+  boundary.
+- Risk checks for trading enabled flag, live lock, strategy and symbol
+  allowlists, quantity, order notional, data quality, manual review,
+  kill switch, total account exposure, per-symbol exposure,
+  concentration, leverage, price deviation, market-open state, signal
+  age, duplicate orders, daily loss, and drawdown floor.
+- Checks are fail-closed when configured context is missing and
+  tighten-only when they compute a `max_quantity` clamp.
+- Internal paper broker, order router, fill simulator, portfolio state,
+  execution audit log, and persistent paper route.
+- Paper-only Alpaca adapter boundary, order mapping, account and
+  position reads, reconciliation storage, scheduler heartbeat, alerts,
+  freeze controls, and CLI/API observation surfaces.
+
+### Product Surfaces
+
+- FastAPI routes for health, status, data, backtest, research, models,
+  strategy, risk, internal paper trading, broker observation, scheduler,
+  review, dashboard, and acceptance verification.
+- Typer CLI commands for data, backtest, briefs, debate, model
+  evaluation/routing/Kronos forecast, strategy management, risk checks,
+  broker observation, scheduler operations, serving, and acceptance
+  verification.
+- Read-only dashboard pages for local observation. The dashboard does
+  not unlock live trading or bypass `RiskGate`.
+
+## 4. Project-Level Definition of Done
+
+| Capability | Local status | Remaining operational gate |
 |---|---|---|
-| 可复现研究 | 市场、新闻、宏观、模型和策略输入均有来源、版本、时间和审计记录 | 部分具备 |
-| 策略准入 | 每个自动策略具有版本化 Spec、无未来函数证据、样本外结果、成本假设、风险批准和人工准入记录 | 部分具备 |
-| 回测可信度 | 支持完整风险和基准指标、walk-forward、数据质量和过拟合审计 | 未完成 |
-| 模型可靠性 | 结构化输出、模型评测、失败降级、成本和预算控制、外部内容安全处理 | 部分具备 |
-| 外部模拟盘 | 可与一个真实 paper account 完成下单、撤单、成交回报、账户同步和日终对账 | 未完成 |
-| 自动模拟盘运营 | 可长期调度运行，具备数据陈旧防护、故障恢复、告警、审计和策略自动冻结 | 未完成 |
-| 账户级风控 | 限额外还覆盖日亏损、回撤、杠杆、集中度、重复订单、信号时效和价格偏离 | 未完成 |
-| 安全与运维 | 密钥隔离、认证授权、监控告警、备份恢复、灾难演练和审计防篡改措施有证据通过 | 未完成 |
-| 受控自动实盘 | 在独立 live adapter、最小权限、二次确认、独立 Kill Switch 和外部模拟盘观察期后，按小规模灰度启用 | 未完成且禁止启用 |
-
-### 最终硬性原则
-
-1. 任何自动化只允许把经过批准的策略信号转换为 `OrderIntent`，并且每一笔都必须经过确定性的 `RiskGate`。
-2. 模型不是交易执行者。模型可以研究、解释、提出候选意图，但不能授权、放宽或直接发送订单。
-3. 外部 paper account 是实盘前的运行验证环境，不是“风险为零”的演示环境。订单、网络、数据和账户对账都必须按生产标准处理。
-4. 实盘开关、凭据、风险阈值和 Kill Switch 不得由自然语言、Dashboard、模型输出或策略注册表自动改变。
-5. 实盘验收看稳定性、对账完整性、风险事件处理和可停止性，不以短期收益作为单一门槛。
-
-## 4. 从当前基线到最终目标的开发路线
-
-项目当前 Phase 1-19 已实现，形成了研究、内部模拟、策略生命周期、paper-broker adapter、调度控制面和账户总暴露风控的基础。后续工作必须以外部账户演练和运行证据为主，避免把执行风险、数据风险和策略风险堆叠在一起。
-
-> 状态说明：下方的阶段细节保留了原始设计目标和退出门槛。Phase 16-19
-> 的实现状态以本节表格和 `docs/roadmap.md` 为准；它们不再表示“尚未开始”。
-
-| 阶段 | 目标 | 可交付物 | 阶段退出条件 |
-|---|---|---|---|
-| Phase 16 | 确定运行边界和策略准入 | 首个市场与 broker 选择、paper-only 执行政策、策略准入记录、完整回测补强方案 | 项目 owner 批准市场、标的、订单类型、名义限额和交易时段；当前工作树完成审查并冻结基线 |
-| Phase 17 | 外部模拟盘 adapter | 已交付 broker-neutral port、Alpaca paper adapter、订单映射、对账存储和冻结机制 | 真实账户的提交、查询、撤单、成交和重启演练仍需服务商凭据 |
-| Phase 18 | 调度运营控制面 | 已交付 scheduler、心跳、告警、CLI 与只读 API | 在真实外部账户中持续运行与故障演练仍待验证 |
-| Phase 19 | 账户级风控 | 已交付 `$300` 总暴露的 fail-closed、tighten-only 检查 | 日亏损、回撤、杠杆、集中度、重复订单和信号时效仍待后续阶段 |
-| Phase 20 | API broker 观察面 + 外部模拟盘观察期 | 只读观察子集已本地交付：API 端 adapter 单例、实时只读账户/持仓、无凭据 null 退化、503 失败语义 | 下单/撤单/成交/对账闭环与 30-60 天外部观察期仍待后续阶段与外部账户证据 |
-| Phase 21 | 受控实盘准备和灰度 | 独立 live adapter、凭据最小权限、实盘审批、独立 Kill Switch、低风险灰度策略 | 通过独立安全、运营和人工审查后，才允许极低金额、有限标的的实盘灰度 |
-
-### Phase 16 - 运行边界与策略准入
-
-这是下一步最值得做的阶段。它不是直接写 broker SDK，而是把后续所有执行决策固定为可测试的规则。
-
-- 明确首个市场，只选一个。例如美股和 ETF，或一个加密货币现货市场，不能同时铺开。
-- 选择一个明确提供模拟账户的服务商，并确认其 API、账户限制、交易时段、行情权限和使用条款。
-- 形成 paper-only `ExecutionPolicy`：允许的标的、订单类型、最大单笔名义金额、最大总敞口、交易频率和人工复核条件。
-- 补齐策略准入的最低证据：版本化 `StrategySpec`、样本内和样本外报告、成本和数据版本、禁用条件及人工批准记录。
-- 决定运行形态：本机受控常驻服务或云端受控服务。没有该决定，就不能可靠地设计密钥、调度、监控和恢复方案。
-
-**Phase 16 验收：** 以上选择写入配置和文档，默认值仍是 paper-only；无策略能因“已启用”状态而绕过 RiskGate；相关单元测试和质量门禁通过。
-
-### Phase 17 - 外部模拟盘 Adapter
-
-目标是在保持现有 `PaperBroker` 作为内部测试双的同时，增加真正与一个 paper account 交互的执行边界。
-
-- 定义 AlphaBrief 自有的 broker port，不向策略或研究模块泄漏服务商 SDK 类型。
-- 实现一个只连接 paper endpoint 的 adapter。live endpoint、live token 和 live 开关不在这个阶段出现。
-- 覆盖提交、查询、撤单、订单更新、部分成交、拒单、持仓、现金和健康检查。
-- 使用稳定客户端订单 id，保存内部订单 id 与外部订单 id 的映射；所有重试都必须幂等。
-- 每次启动、每个周期和每天收盘后对账订单、成交、现金和持仓。未解释差异会冻结自动下单。
-
-**Phase 17 验收：** 在 provider 的模拟账户中完成成功、拒单、撤单、部分成交、重试、网络中断和服务重启演练，并保留可检索的审计证据。
-
-### Phase 18 - 自动模拟盘运行控制面
-
-只有外部订单状态能可靠对账后，才可让系统自动运行。
-
-- 实现有明确时限和重试上限的任务调度：行情刷新、数据质量、特征、信号、风险评估、订单、对账和日报。
-- 每个周期先验证市场状态、数据新鲜度、价格偏离和上次对账结果，再决定是否允许新订单。
-- 发生数据中断、API 限流、订单状态未知、对账差异或异常连续失败时，自动冻结新订单并告警。
-- 建立运行日志、指标、错误预算、告警通知、重启恢复和最小化手工干预流程。
-
-**Phase 18 验收：** 用可控测试环境演练断网、重复消息、陈旧数据、价格跳变、provider 5xx 和重启，证明没有重复下单或绕过风控的路径。
-
-### Phase 19 - 风控与研究可信度硬化
-
-该阶段把现有的订单级检查扩展为账户级、策略级和运行级控制。
-
-- RiskGate 增加日亏损、组合回撤、杠杆、集中度、持仓上限、重复订单、信号时效、价格偏离和市场状态规则。
-- 所有限制均采用“默认拒绝、只能收紧”的组合规则，并对失败原因生成稳定审计标签。
-- 补齐回测的 benchmark、CAGR、Sharpe、Sortino、turnover、exposure、walk-forward 和过拟合预警。
-- 实现从“回测合格”到“人工批准”再到“允许运行”的策略生命周期。策略注册表的展示性开关不能充当风控授权。
-- 完善模型的 fallback、重试、成本上限和 provider 降级策略，但模型失败必须导致研究降级或停止，不得导致交易绕过检查。
-
-**Phase 19 验收：** 所有新增风险条件具有通过、拒绝、边界、异常、审计和回归测试；模型、策略或 UI 不能放宽任何风险限制。
-
-### Phase 20 - 30 至 60 天外部模拟盘观察期
-
-这是业务和运维验收阶段，不应被“继续加功能”打断。目标是验证真实运行中的完整性，而非追求收益。
-
-- 每日形成数据质量、订单、成交、现金、持仓、净值、风险拒绝和对账报告。
-- 每周复盘策略假设、滑点偏差、模型表现、风控事件、系统故障和手工干预。
-- 对每个策略记录预期成本与实际 paper 成本偏差，判断回测是否仍可信。
-- 演练 Kill Switch、恢复、provider 故障和人工暂停。任何未解释账户差异或风险绕过都重置观察期。
-
-**Phase 20 验收：** 在锁定的策略、市场和风险限额内连续稳定运行至少 30-60 天，零未解释对账差异，全部高严重度事件有处置记录和复盘结论。
-
-### Phase 21 - 受控实盘准备与灰度
-
-这不是自动批准实盘，而是把是否允许实盘变成一个可拒绝的人工决策门。
-
-- live adapter 与 paper adapter 逻辑隔离，并使用最小权限的独立凭据和受限网络权限。
-- 实盘启用需要独立配置、二次人工确认、变更审计和预定义回退步骤。
-- 先只允许极低名义金额、少量标的、有限订单类型和有限交易时段；逐级放量需要新的验收证据。
-- Kill Switch 必须独立可用，且不依赖模型、策略运行器或 Dashboard；触发后立即阻止新订单并进入对账流程。
-
-**Phase 21 验收：** 仅在项目 owner 完成安全、合规、服务商条款和运营审查后启动。任何收益表现都不能替代这些安全门槛。
-
-## 5. 已实现的功能
-
-### 5.1 数据与研究
-
-- CSV / Parquet OHLCV 导入、DuckDB 持久化、数据质量检查和无未来函数特征。
-- Yahoo Finance、Binance、Alpha Vantage 的 OHLCV 获取接口，含重试策略和可测试的 HTTP 边界。
-- RSS、SEC EDGAR、FRED、模拟情绪等新闻与宏观输入，带外部内容不可信标识与质量检查。
-- `ModelGateway`、Provider Adapter 边界、模型注册表、提示词版本化、结构化输出校验和模型调用记录。
-- 本地 Ollama adapter、FakeProvider、MarketBrief、SymbolBrief、DailyAlphaBrief，以及多模型辩论和共识聚合。
-- 模型评估、模型表现持久化、基于能力与性能的建议式路由和模型对比页面。
-
-### 5.2 策略、回测和仿真
-
-- `StrategySpec`、策略接口、均线趋势示例策略、外部证据声明和信号证据结构。
-- 策略规格和信号历史的 DuckDB 持久化，并通过 CLI、API 和 Dashboard 查询。策略的 `enabled` 标记是**仅供参考**的状态，不会授予下单权限。
-- 向量化 long/flat 回测，包含手续费、滑点、净值曲线、交易列表、总收益、最大回撤、交易次数和胜率。
-- 初代交易环境和多资产 Env V2：连续目标权重、可选做空、杠杆、借券成本、流动性限制、市场冲击和可插拔 reward。
-- 随机策略、买入持有基线与策略比较报告。
-
-### 5.3 内部模拟交易与确定性风控
-
-- `OrderIntent -> RiskGate -> RiskDecision -> PaperBroker` 的强制链路。
-- `RiskGate` 已覆盖：交易总开关、实盘锁、策略和标的 allowlist、最大数量、最大订单金额、数据质量、人工复核、Kill Switch。
-- Phase 19 还在配置总暴露上限时要求 `AccountExposureContext`，缺失上下文即拒绝；该检查只能拒绝或收紧数量。
-- 新闻和宏观风险上下文只能收紧限制：可增加风险标签、强制人工复核或降低最大数量，不能批准原本被拒绝的订单。
-- `PaperBroker`、`OrderRouter`、`FillSimulator`、`PortfolioState` 和 `ExecutionAuditLog` 已完成内部纸面订单、成交、组合更新和审计事件记录。
-- API 的 paper 路由将订单、成交、组合快照及审计事件写入 DuckDB。
-
-### 5.4 产品交付面
-
-- FastAPI 服务覆盖健康检查、数据、回测、研究、模型、策略、风险、模拟订单、审计和复盘接口。
-- CLI 覆盖数据抓取、回测、日报、辩论、模型评测、策略管理、风险检查、内部模拟单次执行和服务启动。
-- Dashboard 已包含总览、新闻、宏观、日报、辩论、模型和策略页面。页面是只读展示，不会直接调用模型或经由 UI 解锁实盘。
-- DuckDB 持久化覆盖市场数据、回测报告、研究摘要、模拟订单与审计、策略规格、策略信号、模型评估和复盘数据。
-
-## 6. 未实现或仅部分实现的能力
-
-下表以最终蓝图为参照。"部分实现"表示有可用的 MVP 边界，但不应被误认为生产级交易能力。
-
-| 领域 | 状态 | 当前缺口 |
-|---|---|---|
-| 外部模拟盘 adapter | 本地已实现 | Alpaca paper adapter、订单状态、撤单、成交读取与账户/持仓读取已有本地测试；缺少真实账户演练与凭据配置 |
-| 持续自动运行 | 控制面已实现 | scheduler、心跳、告警、冻结和 CLI 已具备；缺少受控外部账户的长期运行、实时行情触发和故障恢复证据 |
-| 成交与账户对账 | 本地已实现 | 订单 id 映射、幂等提交、成交读取和 reconciliation 存储已有；缺少日终外部账户对账证据 |
-| 实盘交易 | 未实现且锁定 | 没有 live-mode broker adapter；实盘标志会被 `RiskGate` 拒绝 |
-| 风控完整度 | 部分实现 | 已有账户总暴露上限；仍缺日亏损、组合回撤、杠杆、集中度、重复订单、信号时效、模型置信度阈值等系统级硬限制 |
-| 回测完整度 | 部分实现 | 向量化回测只有基础指标；尚无 benchmark 对比、CAGR、Sharpe、Sortino、turnover、exposure、自动 walk-forward 和完整过拟合审计 |
-| 实盘级数据处理 | 部分实现 | 尚无市场日历、公司行为处理、实时数据流、异常值治理、行情延迟监控和断线补数机制 |
-| 模型调用韧性 | 部分实现 | Gateway 选择首个能力匹配 provider 并记录失败，但没有实现 provider 级 fallback、重试、预算熔断或云 provider 生产接入 |
-| 运行与安全运维 | 未实现 | 尚无部署拓扑、认证和授权、密钥轮换、监控告警、运行日志汇聚、备份恢复、灾难演练或篡改可检测的审计留存 |
-| 自动化策略准入 | 未实现 | 已持久化策略和信号，但尚无把“回测合格 -> 人工批准 -> paper 运行”串联起来的可审计准入工作流 |
-
-## 7. 关键边界的代码核验
-
-1. `RiskGate.evaluate()` 当前在实盘标志为真时加入 `live_trading_locked` 失败标签，并返回不批准的 `RiskDecision`。
-2. `RiskLimitConfig` 已包含账户总暴露上限；配置该上限时，`RiskGate` 要求账户上下文并 fail-closed。其他蓝图级账户风险限制仍未实现。
-3. `PaperBroker.submit()` 在立即模拟成交前记录风险决定；若要求人工复核则终止自动执行。成功路径随后记录订单创建、成交和组合更新事件。这是可靠的内部模拟边界，但不是外部订单生命周期。
-4. `ModelGateway.invoke()` 选择第一个能力匹配的 provider，调用失败后记录失败结果。它没有轮换到下一个 provider，因此不能宣称已具备 fallback。
-5. 代码图谱没有发现运行时 `BrokerAdapter` 类或实现，只有产品蓝图中的未来接口说明。
-
-## 8. 外部模拟盘接入前的准入条件
-
-以下是**下一阶段的开发与验收清单**，不是当前已经满足的声明。建议先选定资产类别、市场、交易时段和一个仅限模拟盘的服务商，再实施最小 adapter。
-
-### 8.1 必须先实现
-
-- Broker-neutral adapter 协议和一个只允许 paper endpoint 的具体实现。实盘 endpoint、凭据和开关不得被该阶段引入。
-- 订单生命周期：提交、查询、撤单、部分成交、拒单、重试、客户端幂等键和 provider 订单 id 映射。
-- 账户同步和对账：启动时、周期性和日终核对订单、成交、现金、持仓和净值；发现差异时自动冻结自动下单并发出告警。
-- 受控调度：数据刷新、信号计算、风险评估、下单、对账的可观测周期任务。每个任务需要超时、重试上限、断点恢复和审计事件。
-- 最小运维闭环：健康检查、结构化日志、告警通知、配置和密钥隔离、重启流程、数据库备份和恢复演练。
-- 纸面运营风险规则：日亏损、回撤、最大杠杆、集中度、单标的暴露、重复订单、信号过期、价格偏离、市场关闭和数据陈旧检查。
-
-### 8.2 外部模拟盘验收门槛
-
-在接入后，至少应验证以下结果，且保留可复查的运行证据：
-
-- 订单仅在 `RiskDecision.approved=True` 且不要求人工复核时发送。
-- Kill Switch 能在一个可预先约定的时间窗口内停止新订单，并留下可检索审计记录。
-- 连续运行期间，每日完成订单、成交、现金和持仓对账；任何无法解释的差异自动停止自动下单。
-- 服务重启或网络中断后，不重复发送订单，并能恢复到与外部账户一致的状态。
-- 真实行情、数据延迟、价格跳变、API 限流和 provider 故障都经过演练。
-- 每个策略都有版本化的参数、样本外结果、费用假设、风险批准记录和 paper 运行实例。
-- 至少连续稳定运行 **30-60 天**。这是项目蓝图已经定义的实盘前最低观察期；在此期间应按日和按周复盘，而不是只看累计收益。
-
-## 9. 实盘自动化的最终准入门槛
-
-实盘不是把 paper endpoint 换成 live endpoint。它必须作为独立、高风险阶段重新计划、实现、测试和人工验收。至少需要满足：
-
-- 第 6 节的外部模拟盘门槛全部有证据通过，且 30-60 天运行记录显示系统稳定、可对账、可停止。
-- 所有缺失的账户级风险规则完成实现并有拒绝、边界、故障和审计测试。
-- 实盘 adapter 独立审查，默认关闭，凭据和网络权限隔离；上线必须有显式配置、二次人工确认和受限账户权限。
-- Kill Switch 独立于模型、策略、Dashboard 和 broker SDK 调用路径；应有人工和自动两种触发方式。
-- 不允许模型、自然语言输入、策略注册表状态或 Dashboard 绕过风险边界。模型只能生成研究结论、策略草案或 `OrderIntent`。
-- 完成安全、合规、服务商条款、税务和当地监管要求的人工审查。AlphaBrief 不能替代持牌投资建议或合规意见。
-- 实盘先以极低金额、严格资产范围、逐日复核和可随时回退的方式灰度运行。扩大范围必须再次人工批准。
-
-## 10. 建议的下一轮小目标
-
-**建议目标：** 实现 API 端的 paper-broker adapter 单例与只读账户/持仓观察面，然后在一个用户确认的模拟盘账户中演练已有闭环。
-
-**本轮已完成子集（Phase 20 R20.1–R20.4，本地验收通过）：** API 端 `BrokerAdapter` 单例（`apps/api/src/alphabrief_api/broker_adapter.py`）已接入；`GET /api/v1/broker/positions` 与 `GET /api/v1/broker/account` 由 Phase 19 的 stub 改为对 Alpaca Paper 的实时只读读取；无凭据时退化为 null adapter，API 仍可启动；适配器调用失败返回 HTTP 503 结构化错误，不会静默回退到 stub；CLI `broker positions` / `account` 经由同一 API 路径生效。该接入严格只读：API 不经此单例下单、撤单或查询订单，下单仍由调度器在 `RiskDecision` 之后进行，账户级暴露执行仍归 `RiskGate`。
-
-**仍待后续阶段（不声称已交付）：** 在用户确认的模拟盘账户中演练下单、查询、撤单、成交与持仓对账的完整闭环；每日对账与复盘；锁定范围后稳定运行 30-60 天、零未解释对账差异、无风控绕过。这些属于外部账户运营验收，需要真实凭据与长期运行证据，不是本轮代码交付。
-
-**可变更文件范围：** 新的 execution adapter、配置、API/CLI 接入、对账存储、测试和文档。
-**明确不触碰：** 任何 live endpoint、实盘密钥、实盘订单、模型直接下单逻辑。
-**完成标准：** 能在外部模拟账户完成下单、查询、撤单、成交和持仓对账；失败时自动停止下单；测试、Ruff、Mypy 和纸面端到端演练全部通过。本轮已交付其中的只读观察子集；下单与对账闭环仍待后续阶段。
-
-开始这一轮前，需要项目 owner 明确选择：
-
-1. 首个市场和资产类别，例如美股、加密货币或 ETF。
-2. 模拟盘服务商及账户类型。
-3. 初始标的范围、最大名义金额、交易时段和允许的订单类型。
-4. 运行环境是本机长期服务还是受控云环境。
-
-## 11. 最终判定
-
-| 目标 | 验收判定 |
-|---|---|
-| 本地 AI 量化研究与内部模拟交易 MVP | **通过，paper-only** |
-| 外部 broker 模拟盘长期运行 | **未通过，代码已具备但缺外部运行证据** |
-| 全自动实盘 | **未通过，功能尚未实现且必须继续锁定** |
-
-**开放风险：** 本次证据主要来自本地代码、测试和静态质量检查。没有外部账户、真实行情权限、模型凭据、长期服务运行记录或生产运维环境可供验收，因此这些方面不能由本报告替代实际运行验证。
+| Reproducible research | Implemented locally | Production data/version governance still needs operator policy |
+| Strategy admission | Partially implemented | Full audited workflow from backtest approval to paper deployment remains a future gate |
+| Backtest credibility | Partially implemented | Benchmark, CAGR, Sharpe, Sortino, turnover, exposure, walk-forward, and overfit audit are still future hardening |
+| Model reliability | Implemented as local gateway boundary | Production provider fallback, budgets, and cloud credentials remain operator-controlled |
+| External paper adapter | Implemented locally | Real account submit/query/cancel/fill/reconcile exercise still needs credentials |
+| Automated paper operations | Control plane implemented | 30-60 day continuous external paper observation still not complete |
+| Account-level risk | Implemented locally | Production limits must be configured and reviewed per deployment |
+| Security and operations | Partially implemented | Auth, secret rotation, backup, monitoring, and disaster drills need deployment evidence |
+| Controlled live trading | Not implemented | Requires separate plan, credentials, review, kill switch, and external paper evidence |
+
+## 5. Hard Safety Principles
+
+1. Models are research tools, not execution authorities.
+2. All model calls must go through `ModelGateway`.
+3. Model output, UI state, natural-language input, and strategy
+   registry flags cannot approve or relax risk.
+4. Every order intent must pass deterministic `RiskGate` checks before
+   paper execution.
+5. Risk checks can reject, require review, or reduce size. They cannot
+   unlock live trading.
+6. External paper accounts are operating validation environments, not
+   proof that live trading is safe.
+7. Live trading requires a separate implementation and manual
+   acceptance round after stable external paper operations.
+
+## 6. Phase 23 Acceptance Verifier
+
+The acceptance verifier is deliberately read-only. It inspects local
+files and deterministic in-process contracts:
+
+- required documents exist;
+- runtime package surfaces import;
+- default settings are paper-only;
+- paper execution policy remains locked;
+- `RiskGate` rejects live-mode configuration;
+- Kronos forecast reports are structured and advisory-only through
+  `ModelGateway`;
+- runtime code does not import `_reference_sources`;
+- runtime business code does not import provider SDKs directly;
+- final acceptance evidence mentions the current Phase 23/Kronos
+  boundary;
+- pytest, Ruff, Mypy, and the acceptance package are configured.
+
+It never calls brokers, broker SDKs, external market-data providers,
+model providers, model weights, order routes, scheduler execution, or
+live endpoints.
+
+Run it locally with:
+
+```bash
+alphabrief acceptance verify --compact
+```
+
+Or through the API:
+
+```text
+GET /api/v1/acceptance/verify
+```
+
+## 7. Not Claimed As Complete
+
+The following remain outside the local code closeout:
+
+- broker-account credentials and external paper-account operation;
+- real submit/query/cancel/fill/reconcile drills against a user-owned
+  paper account;
+- daily and weekly operating reports from a continuous 30-60 day paper
+  observation window;
+- production authentication, deployment, alerting, backup, and secret
+  rotation evidence;
+- live trading adapter, live credentials, live endpoint access, or live
+  order routing.
+
+These are not small code leftovers. They are operational acceptance
+gates that require a real environment and time.
+
+## 8. Final Recommendation
+
+Treat the current AlphaBrief checkout as ready for local paper-first
+research and controlled external paper-account onboarding. The next real
+gate is operational: configure a paper broker account, run the existing
+adapter and scheduler under explicit limits, retain daily reconciliation
+evidence, and only after 30-60 stable days consider a separate live
+trading design review.

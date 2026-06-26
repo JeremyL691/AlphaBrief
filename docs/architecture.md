@@ -1250,3 +1250,52 @@ Out of scope:
   paper/live execution from a Kronos forecast.
 - Backtest acceptance of Kronos-derived signals without the existing
   AlphaBrief costs, slippage, data-version, and out-of-sample rules.
+
+## Phase 23 — Project Acceptance Verifier
+
+AlphaBrief now has a read-only project acceptance surface in
+`alphabrief_acceptance`. It turns the final paper-first safety
+boundary into executable checks that can be run locally, through the
+CLI, or through the read-only API.
+
+```
+docs + config + runtime imports
+    │
+    ▼
+build_acceptance_report(project_root)
+    │
+    ├── required project documents
+    ├── importable runtime packages
+    ├── default paper-only settings
+    ├── locked paper execution policy
+    ├── RiskGate live-trading rejection
+    ├── advisory-only Kronos forecast via ModelGateway
+    ├── no runtime imports from _reference_sources
+    ├── no direct provider SDK imports in runtime business code
+    ├── current final acceptance evidence
+    └── pytest / ruff / mypy / acceptance package configuration
+```
+
+Surfaces:
+
+1. `alphabrief acceptance verify` emits the structured report as JSON
+   and exits non-zero if any check fails.
+2. `GET /api/v1/acceptance/verify` returns the same report for local
+   operations dashboards and automation.
+3. `/api/status` includes `alphabrief_acceptance` in the runtime package
+   inventory.
+
+The verifier is intentionally side-effect free. It does not call
+brokers, external data providers, model providers, local model weights,
+cloud APIs, order routes, or live endpoints. Its deterministic checks
+exercise only local contracts: configuration parsing, import boundaries,
+RiskGate rejection behavior, and the deterministic Kronos runtime behind
+`ModelGateway`.
+
+Out of scope:
+
+- Replacing unit, integration, Ruff, Mypy, or operational paper-account
+  testing.
+- Claiming completion of the external 30-60 day paper-account
+  observation period.
+- Enabling live trading or providing any order execution path.

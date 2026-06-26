@@ -1300,3 +1300,83 @@ HWM/day-start persistence, and live-mode code paths are explicitly
       configuring the new fields.
 - [x] Live trading remains disabled by default. No provider SDK
       calls outside ModelGateway.
+
+## Phase 23 — Project Acceptance Closeout
+
+Status: implemented locally as a read-only acceptance surface.
+
+Phase 23 converts the final project-level delivery and safety boundary
+into executable checks. It does not add trading capability. It gives
+operators and agents one command and one API route that answer whether
+the current AlphaBrief checkout satisfies the local paper-first
+acceptance contract.
+
+### R23.1 — Acceptance package
+
+1. Added `alphabrief_acceptance` under
+   `packages/alphabrief-acceptance/src`.
+2. `build_acceptance_report(project_root)` returns a structured
+   Pydantic report with pass/fail counts and per-check evidence.
+3. The verifier checks:
+   - required project documents;
+   - importable runtime package surfaces;
+   - default settings keep `live_trading_enabled=False`;
+   - `config/paper_execution_policy.yaml` remains paper-mode,
+     human-review, no-automation;
+   - `RiskGate` rejects `live_trading_enabled=True` with
+     `live_trading_locked`;
+   - Kronos forecasts run through `ModelGateway` and remain
+     `advisory_only=True`;
+   - runtime code under `apps/` and `packages/` does not import
+     `_reference_sources`;
+   - runtime business code does not import provider SDKs directly;
+   - final project evidence mentions Phase 23 and the Kronos/acceptance
+     boundary;
+   - pytest, Ruff, Mypy, and the acceptance package are configured.
+
+### R23.2 — CLI and API surface
+
+1. `alphabrief acceptance verify` emits the structured report as JSON.
+2. The command exits with code 1 when any check fails, so it can be used
+   in local automation and release scripts.
+3. `GET /api/v1/acceptance/verify` exposes the same read-only report.
+4. `/api/status` includes `alphabrief_acceptance` in the runtime package
+   list.
+
+### R23.3 — Documentation and evidence
+
+1. `README.md` now lists Phase 23 and the acceptance verifier command.
+2. `docs/architecture.md` documents the verifier's side-effect-free
+   architecture and scope.
+3. `FINAL_ACCEPTANCE_REPORT.md` is updated from the old Phase 18/19
+   baseline to the current Phase 23 closeout view.
+4. `docs/development_log.md` and
+   `docs/development_plans/0054-final-acceptance-closeout.md` record the
+   round.
+
+### Out of scope
+
+- External paper account credentials and provider-specific operations.
+- 30-60 days of continuous external paper-account observation.
+- Live trading, live adapter implementation, or any live endpoint.
+- Treating model, UI, or natural-language output as authorization to
+  place or approve trades.
+
+### Final quality gate
+
+- [x] Targeted acceptance/API/CLI/status tests pass:
+      `tests/test_acceptance_verifier.py`,
+      `tests/test_acceptance_api_cli.py`,
+      `tests/test_api_server.py::test_api_status_body`.
+- [x] Broker/scheduler CLI regression subset passes:
+      `tests/test_broker_cli.py tests/test_scheduler_cli.py`.
+- [x] Sandboxed full pytest run reaches 1204 passing tests; the
+      remaining 12 failures are environment-blocked localhost mock
+      broker tests (`PermissionError` binding `127.0.0.1`) in
+      `tests/test_alpaca_adapter.py` and `tests/test_broker_api_live.py`.
+- [x] Ruff passes: `.venv/bin/ruff check .`.
+- [x] Mypy passes: `.venv/bin/mypy packages apps tests`
+      (`223 source files`).
+- [x] Project acceptance verifier passes:
+      `.venv/bin/alphabrief acceptance verify --compact`.
+- [x] `git diff --check` passes.
