@@ -1,32 +1,32 @@
 # AlphaBrief Development Cadence
 
-> 本文档定义 AlphaBrief 的长期开发节奏、每轮 Vibe Coding 工作方式、任务拆分原则、验收标准和复盘流程。  
-> 它应该与 `ALPHABRIEF_PRODUCT_BLUEPRINT.md`、`AGENTS.md`、`docs/architecture.md`、`docs/risk_model.md`、`docs/rewrite_policy.md` 一起放在项目中，作为每轮开发前必须读取的指导文件。
+> This document defines AlphaBrief's long-term development cadence, the per-round Vibe Coding workflow, task-splitting principles, acceptance criteria, and review process.  
+> It should sit alongside `ALPHABRIEF_PRODUCT_BLUEPRINT.md`, `AGENTS.md`, `docs/architecture.md`, `docs/risk_model.md`, `docs/rewrite_policy.md` as a required read-before-each-round guide.
 
 ---
 
-## 1. 文档目标
+## 1. Document Goal
 
-AlphaBrief 是一个长期迭代的 AI 原生量化研究与模拟交易系统，不应该用“一次性生成整个项目”的方式开发。
+AlphaBrief is a long-iteration, AI-native quantitative research and simulated-trading system. It should NOT be built with a "generate the whole project at once" approach.
 
-本项目采用 **小步计划、小步实现、小步测试、小步复盘** 的开发节奏。
+This project follows a **small plan, small implementation, small test, small review** cadence.
 
-每一轮开发都必须做到：
+Every round of development must:
 
-1. 先进入 Plan mode。
-2. 先阅读项目蓝图和工程规则。
-3. 每轮只解决一个明确问题。
-4. 不做无关扩展。
-5. 不复制参考源码。
-6. 新增行为必须有测试。
-7. 涉及交易、订单、仓位、模型输出时必须遵守风控边界。
-8. 每轮结束都要总结修改内容、测试结果和下一轮建议。
+1. Enter Plan mode first.
+2. Read the project blueprint and engineering rules first.
+3. Solve only one clearly-scoped problem per round.
+4. Make no out-of-scope expansions.
+5. Never copy reference source code.
+6. Add tests for every new behavior.
+7. Respect risk-control boundaries whenever trades, orders, positions, or model outputs are involved.
+8. Summarize changes, test results, and next-round proposals at the end of every round.
 
 ---
 
-## 2. 项目根目录建议
+## 2. Recommended Project Root Layout
 
-推荐结构：
+Recommended structure:
 
 ```text
 alphabrief/
@@ -53,19 +53,19 @@ alphabrief/
 └── scripts/
 ```
 
-其中：
+Where:
 
-- `ALPHABRIEF_PRODUCT_BLUEPRINT.md`：最高级产品蓝图。
-- `ALPHABRIEF_DEVELOPMENT_CADENCE.md`：本文件，定义开发节奏。
-- `AGENTS.md`：Vibe Coding 工具每轮必须遵守的工程规则。
-- `docs/rewrite_policy.md`：约束参考源码的使用方式。
-- `_reference_sources/`：仅用于架构参考，不得 import、复制、迁移或改名复用其中代码。
+- `ALPHABRIEF_PRODUCT_BLUEPRINT.md`: the highest-level product blueprint.
+- `ALPHABRIEF_DEVELOPMENT_CADENCE.md`: this file, defining the development cadence.
+- `AGENTS.md`: the engineering rules every Vibe Coding tool must follow each round.
+- `docs/rewrite_policy.md`: constrains how reference source code may be used.
+- `_reference_sources/`: used only for architectural reference. Do NOT import, copy, port, or rename-reuse any code from it.
 
 ---
 
-## 3. 每轮开发固定流程
+## 3. Fixed Per-Round Development Flow
 
-每轮开发必须遵守以下流程：
+Every round must follow this flow:
 
 ```text
 Plan
@@ -87,9 +87,9 @@ Next Task Proposal
 
 ### 3.1 Plan
 
-每轮开始时，先让 Vibe Coding 工具进入 Plan mode。
+At the start of each round, first put the Vibe Coding tool into Plan mode.
 
-它必须先阅读：
+It must first read:
 
 ```text
 ALPHABRIEF_PRODUCT_BLUEPRINT.md
@@ -99,65 +99,65 @@ docs/architecture.md
 docs/roadmap.md
 docs/risk_model.md
 docs/rewrite_policy.md
-当前代码结构
+current code structure
 ```
 
-然后输出：
+Then output:
 
-1. 本轮目标理解。
-2. 当前相关代码概览。
-3. 计划新增或修改的文件。
-4. 明确不会触碰的模块。
-5. 实现步骤。
-6. 测试计划。
-7. 风险点。
-8. 完成标准。
+1. This round's goal understanding.
+2. Overview of currently relevant code.
+3. Files to be added or modified.
+4. Modules that will explicitly NOT be touched.
+5. Implementation steps.
+6. Test plan.
+7. Risk points.
+8. Completion criteria.
 
-在计划确认前，不允许写代码。
+No code may be written until the plan is confirmed.
 
-重要添加：加一个文件夹把每轮已经实施的计划用.md的格式记录下来，这样切换到不同的工具都知道上一轮和之前都干了什么
+Important addition: add a folder to record each round's already-implemented plan as `.md` files, so that switching between different tools keeps everyone aware of what the previous round and earlier rounds did.
 
 ### 3.2 Review Plan
 
-你作为项目 owner 要检查计划是否符合：
+As the project owner, you must check whether the plan meets:
 
-1. 是否只做一个小任务。
-2. 是否越界实现了未来阶段功能。
-3. 是否可能绕过 RiskGate。
-4. 是否可能复制 `_reference_sources/` 中的代码。
-5. 是否包含测试。
-6. 是否包含文档更新。
-7. 是否能在一次开发会话内完成。
+1. Is it only doing one small task?
+2. Is it crossing into implementing future-stage features?
+3. Could it bypass RiskGate?
+4. Could it copy code from `_reference_sources/`?
+5. Does it include tests?
+6. Does it include documentation updates?
+7. Can it be completed in a single development session?
 
-如果计划过大，必须要求拆小。
+If the plan is too large, it must be split into smaller pieces.
 
 ### 3.3 Implement
 
-实现阶段只允许做计划中列出的文件变更。
+The implementation phase may only make the file changes listed in the plan.
 
-禁止：
+Forbidden:
 
-1. 顺手重构无关模块。
-2. 顺手添加未要求功能。
-3. 顺手接入真实交易。
-4. 顺手加入复杂依赖。
-5. 从 `_reference_sources/` 复制代码。
-6. 把参考项目的文件逐行翻译成 AlphaBrief 文件。
+1. Drive-by refactoring of unrelated modules.
+2. Drive-by adding unrequested features.
+3. Drive-by wiring in real trading.
+4. Drive-by adding complex dependencies.
+5. Copying code from `_reference_sources/`.
+6. Line-by-line translating reference-project files into AlphaBrief files.
 
-允许：
+Allowed:
 
-1. 新增必要类型。
-2. 新增接口。
-3. 新增最小实现。
-4. 新增测试。
-5. 更新相关文档。
-6. 在必要时添加 TODO，但必须说明原因。
+1. Adding necessary types.
+2. Adding interfaces.
+3. Adding the minimum implementation.
+4. Adding tests.
+5. Updating relevant documentation.
+6. Adding TODOs when necessary, but always with a stated reason.
 
 ### 3.4 Test
 
-每轮都必须运行与本轮相关的测试。
+Each round must run the tests relevant to that round.
 
-推荐命令：
+Recommended commands:
 
 ```bash
 pytest
@@ -165,40 +165,40 @@ ruff check .
 mypy packages apps
 ```
 
-如果项目初期还没有完整工具链，可以先使用：
+If the project is early and does not yet have a complete toolchain, you may start with:
 
 ```bash
 pytest tests/<related_test_file>.py
 ```
 
-每轮结束时必须报告：
+At the end of each round, you must report:
 
 ```text
-运行了哪些测试
-哪些测试通过
-哪些测试失败
-失败原因是什么
-是否有未覆盖风险
+Which tests were run
+Which tests passed
+Which tests failed
+Why they failed
+Whether any risks are uncovered
 ```
 
 ### 3.5 Self Review
 
-实现完成后，要求 Vibe Coding 工具自查：
+After implementation is complete, require the Vibe Coding tool to self-check:
 
-1. 是否符合本轮计划。
-2. 是否修改了计划外文件。
-3. 是否新增了未要求功能。
-4. 是否有安全边界问题。
-5. 是否有风控绕过风险。
-6. 是否有参考源码相似性风险。
-7. 是否有未来维护隐患。
-8. 是否需要更新文档。
+1. Does it match this round's plan?
+2. Did it modify any files outside the plan?
+3. Did it add any unrequested features?
+4. Are there security-boundary issues?
+5. Are there risk-control bypass risks?
+6. Are there reference-source-code similarity risks?
+7. Are there future-maintenance hazards?
+8. Does documentation need updating?
 
 ### 3.6 Document
 
-每轮涉及架构、接口、模块边界、风控逻辑、模型调用逻辑时，必须更新文档。
+Whenever a round touches architecture, interfaces, module boundaries, risk-control logic, or model-call logic, documentation MUST be updated.
 
-常见文档位置：
+Common documentation locations:
 
 ```text
 docs/architecture.md
@@ -211,9 +211,9 @@ docs/development_log.md
 
 ### 3.7 Commit
 
-每轮结束后建议提交一次小 commit。
+At the end of each round, a small commit is recommended.
 
-提交信息建议格式：
+Suggested commit message format:
 
 ```text
 phase-1-core: add domain models
@@ -223,27 +223,27 @@ phase-3-models: add model provider interface
 phase-3-agents: add AgentBrief schema
 ```
 
-不要把多个阶段混在一个 commit 中。
+Do NOT mix multiple phases into one commit.
 
 ### 3.8 Next Task Proposal
 
-每轮结束时，要求工具给出 1 到 3 个下一轮建议。
+At the end of each round, require the tool to propose 1 to 3 next-round candidates.
 
-但下一轮必须仍然由你决定。
+But the next round is still YOUR decision.
 
 ---
 
-## 4. 每轮标准 Prompt
+## 4. Standard Per-Round Prompt
 
-每次开始一轮开发，可以使用以下模板：
+To start each development round, you can use the template below:
 
 ```text
-请进入 Plan mode。
+Please enter Plan mode.
 
-本轮目标：
-[在这里填写一个非常小的目标]
+This round's goal:
+[Fill in a very small goal here]
 
-请先阅读：
+Please read first:
 - ALPHABRIEF_PRODUCT_BLUEPRINT.md
 - ALPHABRIEF_DEVELOPMENT_CADENCE.md
 - AGENTS.md
@@ -251,100 +251,100 @@ phase-3-agents: add AgentBrief schema
 - docs/roadmap.md
 - docs/risk_model.md
 - docs/rewrite_policy.md
-- 当前代码结构
+- current code structure
 
-重要约束：
-- 本轮只做指定目标
-- 不要实现未要求的模块
-- 不要复制 `_reference_sources/` 中任何代码
-- 不要从 `_reference_sources/` import
-- 不要逐文件翻译参考项目
-- 只能提取行为级 specification
-- 所有新增行为必须有测试
-- 如果涉及交易意图，必须经过 RiskGate
-- 如果涉及模型调用，必须通过 Model Gateway
-- 如果涉及订单、仓位、账户、成交、组合状态，必须写审计日志或预留审计接口
-- 不允许默认启用 live trading
+Important constraints:
+- This round only does the specified goal
+- Do not implement unrequested modules
+- Do not copy any code from `_reference_sources/`
+- Do not import from `_reference_sources/`
+- Do not translate the reference project file by file
+- Only extract behavior-level specifications
+- Every new behavior must have a test
+- If trade intent is involved, it must pass through RiskGate
+- If model calls are involved, they must go through Model Gateway
+- If orders, positions, accounts, fills, or portfolio state are involved, write audit logs or reserve audit interfaces
+- Do not enable live trading by default
 
-请先输出计划，包括：
-1. 本轮目标理解
-2. 当前相关文件
-3. 计划新增或修改文件
-4. 不会触碰的模块
-5. 实现步骤
-6. 测试计划
-7. 风险点
-8. 完成标准
+Please first output the plan, including:
+1. This round's goal understanding
+2. Currently relevant files
+3. Files to add or modify
+4. Modules that will NOT be touched
+5. Implementation steps
+6. Test plan
+7. Risk points
+8. Completion criteria
 
-在我确认之前，不要写代码。
+Do not write code until I confirm.
 ```
 
 ---
 
-## 5. 每轮实现后的总结 Prompt
+## 5. Post-Implementation Summary Prompt
 
-实现完成后，使用以下模板要求工具复盘：
+After implementation is complete, use the template below to require the tool to review:
 
 ```text
-请总结本轮开发结果。
+Please summarize this round's development result.
 
-请输出：
-1. 完成了什么
-2. 修改了哪些文件
-3. 新增了哪些测试
-4. 运行了哪些命令
-5. 测试结果
-6. 是否有失败测试
-7. 是否有未完成 TODO
-8. 是否修改了计划外文件
-9. 是否存在风控、安全、参考源码相似性风险
-10. 下一轮建议
+Please output:
+1. What was completed
+2. Which files were modified
+3. Which tests were added
+4. Which commands were run
+5. Test results
+6. Are there any failing tests
+7. Are there any unfinished TODOs
+8. Were any out-of-plan files modified
+9. Are there any risk-control, security, or reference-source similarity risks
+10. Next-round proposals
 ```
 
 ---
 
-## 6. 任务拆分原则
+## 6. Task-Splitting Principles
 
-AlphaBrief 任务必须拆到足够小。
+AlphaBrief tasks must be split small enough.
 
-### 6.1 好任务示例
-
-```text
-实现 core domain model：Bar、Signal、OrderIntent、RiskDecision
-实现 MarketDataProvider interface
-实现 CSV OHLCV loader
-实现 Strategy interface
-实现 vectorized backtester 的最小版本
-实现 backtest metrics：return、max drawdown、Sharpe
-实现 RiskGate 的 max order value 检查
-实现 PaperBroker 的 market order 模拟成交
-实现 AgentBrief Pydantic schema
-实现 ModelProvider interface
-实现 OpenAI-compatible ProviderAdapter
-实现 DailyBriefReport schema
-```
-
-### 6.2 坏任务示例
+### 6.1 Examples of good tasks
 
 ```text
-开发完整 AlphaBrief
-重写 QuantDinger
-重写 TradingGym
-重写 TradingAgents
-做一个完整 AI 自动交易系统
-实现所有 broker 接入
-实现完整 dashboard
-把参考项目代码改成我们的项目
-把这个文件翻译成我们的代码风格
+Implement core domain models: Bar, Signal, OrderIntent, RiskDecision
+Implement MarketDataProvider interface
+Implement CSV OHLCV loader
+Implement Strategy interface
+Implement a minimum version of the vectorized backtester
+Implement backtest metrics: return, max drawdown, Sharpe
+Implement RiskGate's max order value check
+Implement PaperBroker's market-order simulated fill
+Implement AgentBrief Pydantic schema
+Implement ModelProvider interface
+Implement OpenAI-compatible ProviderAdapter
+Implement DailyBriefReport schema
 ```
 
-坏任务的问题是：范围太大、边界不清、容易复制、容易引入风控漏洞。
+### 6.2 Examples of bad tasks
+
+```text
+Build the complete AlphaBrief
+Rewrite QuantDinger
+Rewrite TradingGym
+Rewrite TradingAgents
+Build a complete AI auto-trading system
+Implement all broker integrations
+Implement the complete dashboard
+Convert the reference project code into our project
+Translate this file into our code style
+```
+
+The problems with bad tasks: scope is too large, boundaries are unclear, easy to copy, easy to introduce risk-control holes.
 
 ---
 
-## 10. 分支与提交策略
+## 10. Branch and Commit Strategy
 
-建议使用小分支：
+Recommended: use small branches.
 
 ```text
 feat/core-domain-models
@@ -356,25 +356,25 @@ feat/model-gateway-interface
 feat/agent-brief-schema
 ```
 
-每个分支只做一个目标。
+Each branch only does one goal.
 
-合并前检查：
+Pre-merge checks:
 
 ```text
-测试是否通过
-lint 是否通过
-type check 是否通过
-文档是否更新
-是否没有计划外文件变更
-是否没有参考源码复制风险
-是否没有绕过 RiskGate
+Tests pass
+Lint passes
+Type check passes
+Documentation updated
+No out-of-plan file changes
+No reference-source-copy risk
+No RiskGate bypass
 ```
 
 ---
 
-## 11. 参考源码使用节奏
+## 11. Reference-Source Usage Cadence
 
-当需要参考 `_reference_sources/` 中的项目时，必须使用 clean-room 节奏：
+When you need to reference projects in `_reference_sources/`, you must use a clean-room cadence:
 
 ```text
 Read Reference
@@ -390,33 +390,33 @@ Write AlphaBrief Tests
 Similarity Review
 ```
 
-禁止：
+Forbidden:
 
 ```text
-打开参考文件后直接让工具改写
-逐函数翻译
-保留类名函数名
-保留目录结构
-复制注释
-复制测试用例
-复制配置文件
+Open reference files and let the tool rewrite directly
+Translate function by function
+Keep class/function names
+Keep directory structure
+Copy comments
+Copy test cases
+Copy config files
 ```
 
-允许：
+Allowed:
 
 ```text
-总结它解决了什么问题
-总结它有什么用户流程
-总结它有什么抽象边界
-总结它的测试场景
-用 AlphaBrief 自己的模型和命名重新实现
+Summarize what problem it solves
+Summarize its user flows
+Summarize its abstraction boundaries
+Summarize its test scenarios
+Re-implement using AlphaBrief's own models and naming
 ```
 
 ---
 
-## 12. 风控相关开发节奏
+## 12. Risk-Control Development Cadence
 
-任何涉及以下内容的任务必须单独成轮：
+Any task involving the following must be its own round:
 
 ```text
 OrderIntent
@@ -433,25 +433,25 @@ BrokerAdapter
 LiveTradingLock
 ```
 
-风控相关任务禁止与 UI、模型调用、策略生成混在同一轮。
+Risk-control tasks MUST NOT be mixed with UI, model calls, or strategy generation in the same round.
 
-每个风控任务必须至少包含：
+Each risk-control task must at minimum include:
 
 ```text
-正常通过测试
-拒绝测试
-边界条件测试
-非法输入测试
-审计日志测试或审计接口预留
+Normal-pass tests
+Rejection tests
+Boundary-condition tests
+Invalid-input tests
+Audit-log tests or audit-interface reservations
 ```
 
 ---
 
-## 13. 模型接入开发节奏
+## 13. Model-Integration Development Cadence
 
-AlphaBrief 是模型无关系统。
+AlphaBrief is model-agnostic.
 
-所有模型厂商接入必须通过：
+All model-vendor integrations must go through:
 
 ```text
 Model Gateway
@@ -461,127 +461,126 @@ ModelRegistry
 UsageTracker
 ```
 
-禁止：
+Forbidden:
 
 ```text
-在 agent 中直接调用某个厂商 SDK
-在策略中直接调用模型 API
-在执行模块中直接调用模型 API
-让模型输出直接变成 Order
-让模型绕过 RiskGate
+Calling a vendor SDK directly inside an agent
+Calling model APIs directly inside a strategy
+Calling model APIs directly inside an execution module
+Letting model output become an Order directly
+Letting models bypass RiskGate
 ```
 
-模型接入任务建议顺序：
+Suggested order for model-integration tasks:
 
 ```text
-1. 定义统一 request/response schema
-2. 定义 provider interface
-3. 定义 registry
-4. 实现一个最小 adapter
-5. 实现 mock provider
-6. 写测试
-7. 再接入真实 provider
+1. Define unified request/response schema
+2. Define provider interface
+3. Define registry
+4. Implement one minimal adapter
+5. Implement mock provider
+6. Write tests
+7. Then integrate the real provider
 ```
 
 ---
 
-## 14. Dashboard 开发节奏
+## 14. Dashboard Development Cadence
 
-Dashboard 必须最后做，不要一开始沉迷前端。
+Dashboard must come LAST. Do NOT sink into the frontend from the start.
 
-推荐顺序：
+Recommended order:
 
 ```text
-CLI 可用
-API 可用
-数据结构稳定
-报告结构稳定
-再做 dashboard
+CLI works
+API works
+Data structures are stable
+Report structures are stable
+Then build dashboard
 ```
 
-Dashboard 初版只需要显示：
+The first version of Dashboard only needs to display:
 
 ```text
-策略列表
-回测报告
-净值曲线
-paper portfolio
+Strategy list
+Backtest reports
+Equity curve
+Paper portfolio
 AgentBrief
-风险日志
+Risk log
 ```
 
-不要一开始做：
+Do NOT start by building:
 
 ```text
-复杂拖拽策略编辑器
-完整权限系统
-多用户 SaaS
-真实交易操作台
-策略市场
-社交功能
+Complex drag-and-drop strategy editor
+Full permission system
+Multi-user SaaS
+Real-trading console
+Strategy marketplace
+Social features
 ```
 
 ---
 
-## 15. 每轮验收清单
+## 15. Per-Round Acceptance Checklist
 
-每轮结束前必须检查：
+Before each round ends, you must check:
 
 ```text
-[ ] 是否只完成了本轮目标
-[ ] 是否没有实现无关功能
-[ ] 是否没有复制参考源码
-[ ] 是否没有 import `_reference_sources/`
-[ ] 是否新增或更新测试
-[ ] 是否运行了相关测试
-[ ] 是否更新了必要文档
-[ ] 是否没有绕过 RiskGate
-[ ] 是否没有默认启用 live trading
-[ ] 是否模型调用都通过 Model Gateway
-[ ] 是否提交信息清晰
-[ ] 是否记录了下一轮建议
+[ ] Did it only complete this round's goal
+[ ] Did it not implement unrelated features
+[ ] Did it not copy reference source code
+[ ] Did it not import from `_reference_sources/`
+[ ] Did it add or update tests
+[ ] Did it run the relevant tests
+[ ] Did it update the necessary documentation
+[ ] Did it not bypass RiskGate
+[ ] Did it not enable live trading by default
+[ ] Are all model calls going through Model Gateway
+[ ] Is the commit message clear
+[ ] Did it record next-round proposals
 ```
 
 ---
 
-## 16. 停止条件
+## 16. Stop Conditions
 
-如果出现以下情况，必须停止实现，回到 Plan mode：
+If any of the following occurs, you must stop implementation and return to Plan mode:
 
 ```text
-任务范围变大
-需要改动超过预期模块
-测试大量失败且原因不明
-发现架构冲突
-发现风控边界不清
-发现参考源码相似性风险
-发现需要新增重大依赖
-发现需求不明确
+Task scope grows
+Need to change more modules than expected
+Many tests fail for unknown reasons
+Architecture conflict discovered
+Risk-control boundaries are unclear
+Reference-source similarity risk discovered
+A major new dependency is needed
+Requirements are unclear
 ```
 
-停止不是失败，而是防止项目失控。
+Stopping is not failure; it prevents the project from going out of control.
 
 ---
 
-## 17. 项目长期原则
+## 17. Long-Term Project Principles
 
-AlphaBrief 的长期开发原则：
+AlphaBrief's long-term development principles:
 
 ```text
-先研究，后交易
-先 paper，后 live
-先确定性风控，后 AI 决策辅助
-先 CLI，后 dashboard
-先单资产，后多资产
-先简单策略，后复杂策略
-先 mock provider，后真实 provider
-先可测试，后智能化
-先复盘，后优化
+Research first, trade later
+Paper first, live later
+Deterministic risk control first, AI decision-assist later
+CLI first, dashboard later
+Single-asset first, multi-asset later
+Simple strategies first, complex strategies later
+Mock provider first, real provider later
+Testability first, intelligence later
+Review first, optimize later
 ```
 
 ---
 
-## 18. 一句话原则
+## 18. One-Sentence Principle
 
-> 每一轮都让系统变得更清晰、更安全、更可测试，而不是更复杂。
-
+> Every round should make the system clearer, safer, and more testable — never more complex.

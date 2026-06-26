@@ -1,324 +1,324 @@
-# AlphaBrief 产品最终蓝图
+# AlphaBrief Product Blueprint
 
-> **文件用途**：本文件是 AlphaBrief 项目的长期产品、架构、模型接入、开发、风控和复盘指导文档。  
-> **放置位置建议**：项目根目录：`ALPHABRIEF_PRODUCT_BLUEPRINT.md`。  
-> **最高原则**：AlphaBrief 是一个自有架构、自有代码、自有风控的 AI 原生量化研究与模拟交易系统。外部开源项目只能作为需求与架构参考，不能成为实现来源。  
-> **构建方式说明**：vibe coding 工具只是开发系统时使用的工程辅助工具，不是 AlphaBrief 的产品能力、运行依赖或用户卖点。本蓝图只定义 AlphaBrief 产品本身。
-
----
-
-## 0. 项目一句话定义
-
-**AlphaBrief 是一个模型无关、本地优先、以研究、回测、仿真、模拟交易、风控审计和复盘为核心的 AI 量化研究工作台。**
-
-它帮助用户完成：
-
-```text
-市场数据接入 → 多模型研究分析 → 交易假设生成 → 策略规格化 → 回测验证 → 仿真训练 → paper trading → 风险审计 → 复盘改进
-```
-
-AlphaBrief 的核心价值不是“让 AI 自动替用户赚钱”，而是：
-
-> **让个人交易者像一个小型量化研究团队一样，系统地产生、验证、执行、审计和复盘交易想法。**
-
-AlphaBrief 的 AI 能力来自统一的 **Model Gateway**，可接入不同厂商、不同模型、不同推理能力的 API。系统不绑定任何单一模型厂商，也不把某个开发工具当作产品能力。
+> **File Purpose**: This file is the long-term product, architecture, model integration, development, risk control, and review guide for the AlphaBrief project.
+> **Suggested Location**: Project root: `ALPHABRIEF_PRODUCT_BLUEPRINT.md`.
+> **Highest Principle**: AlphaBrief is an AI-native quantitative research and paper-trading system with its own architecture, its own code, and its own risk controls. External open-source projects may only serve as requirements and architecture references — they must never become the source of implementation.
+> **Build Method Note**: vibe coding tools are only engineering aids used when developing the system; they are not an AlphaBrief product capability, runtime dependency, or user-facing selling point. This blueprint defines only the AlphaBrief product itself.
 
 ---
 
-## 1. 产品北极星
+## 0. One-Line Project Definition
 
-### 1.1 AlphaBrief 要成为用户的什么
+**AlphaBrief is a model-agnostic, local-first AI quantitative research workbench centered on research, backtesting, simulation, paper trading, risk auditing, and post-trade review.**
 
-AlphaBrief 要成为用户的：
-
-```text
-AI 市场研究员
-多模型研究委员会
-策略实验室
-回测实验室
-交易仿真环境
-paper trading 沙盒
-风险官
-审计系统
-复盘日志系统
-个人交易知识库
-```
-
-最终产品形态：
-
-> **AI-Native Quant Research & Paper-Trading Workbench**  
-> **AI 原生量化研究与模拟交易工作台**
-
-### 1.2 用户每天如何使用 AlphaBrief
-
-用户每天打开 AlphaBrief 后，应当看到：
+It helps users complete:
 
 ```text
-1. 今日市场摘要
-2. 关注标的的技术结构
-3. 新闻 / 宏观 / 情绪变化
-4. 多模型研究结论
-5. 多空论证摘要
-6. 策略信号和候选观察清单
-7. 风险官提醒
-8. paper trading 仓位、订单、成交、净值
-9. 历史决策复盘
-10. 下一步研究任务
+Market data ingestion → Multi-model research and analysis → Trading hypothesis generation → Strategy formalization → Backtest validation → Simulation training → Paper trading → Risk auditing → Review and improvement
 ```
 
-用户可以输入自然语言：
+AlphaBrief's core value is not "letting AI make money for the user automatically," but rather:
 
-```text
-研究 NVDA 未来 5 个交易日的多空机会。
-把这个交易想法整理成可回测的 StrategySpec。
-检查这个策略假设是否存在未来函数风险。
-比较多个模型对 BTC 本周走势的判断差异。
-生成今天的 AlphaBrief 日报。
-解释昨天 paper trading 亏损的主要来源。
-```
+> **Letting individual traders, like a small quantitative research team, systematically generate, validate, execute, audit, and review their trading ideas.**
 
-系统输出的不是“盲目交易指令”，而是：
-
-```text
-结构化研究报告
-多模型观点对比
-可审计策略规格
-回测报告
-风险审查结果
-模拟交易记录
-复盘总结
-```
+AlphaBrief's AI capability comes from a unified **Model Gateway**, which can connect to APIs from different vendors, with different models, and different inference capabilities. The system is not tied to any single model vendor, and does not treat any development tool as a product capability.
 
 ---
 
-## 2. 产品边界：AlphaBrief 是什么，不是什么
+## 1. Product North Star
 
-### 2.1 AlphaBrief 是什么
+### 1.1 What AlphaBrief Should Become for the User
 
-AlphaBrief 是：
+AlphaBrief should become the user's:
 
 ```text
-1. 个人量化研究系统
-2. 多模型金融研究工作台
-3. 策略假设验证平台
-4. 回测与仿真系统
-5. paper trading 系统
-6. 风控审计系统
-7. 交易复盘系统
-8. 个人研究知识库
+AI market researcher
+Multi-model research committee
+Strategy laboratory
+Backtest laboratory
+Trading simulation environment
+Paper trading sandbox
+Risk officer
+Audit system
+Trade review journal
+Personal trading knowledge base
 ```
 
-### 2.2 AlphaBrief 不是什么
+Final product form:
 
-AlphaBrief 不是：
+> **AI-Native Quant Research & Paper-Trading Workbench**
+> **AI-Native Quantitative Research and Paper-Trading Workbench**
+
+### 1.2 How Users Will Use AlphaBrief Daily
+
+When a user opens AlphaBrief each day, they should see:
 
 ```text
-1. AI 自动炒股机器人
-2. 高频交易系统
-3. 一键暴富策略生成器
-4. 三个 GitHub 项目的代码拼接
-5. 某个模型厂商的壳应用
-6. 某个开发工具的产品化包装
-7. 默认接入真实资金的自动下单系统
-8. 不经审计就让模型修改交易逻辑的系统
+1. Today's market summary
+2. Technical structure of watched symbols
+3. News / macro / sentiment changes
+4. Multi-model research conclusions
+5. Bull/bear argument summaries
+6. Strategy signals and candidate watchlist
+7. Risk officer alerts
+8. Paper trading positions, orders, fills, equity
+9. Historical decision review
+10. Next research tasks
 ```
 
-### 2.3 MVP 明确不做
-
-MVP 不做：
+Users can input natural language:
 
 ```text
-1. 默认 live trading
-2. 杠杆自动交易
-3. 高频交易
-4. 模型直接下单
-5. 模型自主加仓
-6. 自动策略直接上实盘
-7. 未审计 broker adapter
-8. 无交易成本的虚假回测
-9. 不可复现的研究流程
-10. 不可追溯的模型输出
+Research NVDA's bull/bear opportunities for the next 5 trading days.
+Turn this trading idea into a backtestable StrategySpec.
+Check whether this strategy hypothesis has look-ahead bias.
+Compare multiple models' views on BTC's movement this week.
+Generate today's AlphaBrief daily report.
+Explain the main sources of yesterday's paper-trading loss.
+```
+
+What the system outputs is not "blind trading instructions," but:
+
+```text
+Structured research reports
+Multi-model viewpoint comparison
+Auditable strategy specs
+Backtest reports
+Risk review results
+Paper trading records
+Post-trade review summaries
 ```
 
 ---
 
-## 3. 三个参考项目在 AlphaBrief 中的角色
+## 2. Product Boundaries: What AlphaBrief Is and Is Not
 
-本项目会把三个 GitHub 项目的源码放入项目文件夹中作为**参考资料**。它们只用于理解产品形态、模块边界、交互模式、测试场景和架构思想。
+### 2.1 What AlphaBrief Is
 
-AlphaBrief 不复制、不改名重用、不直接迁移其源码，也不使用其代码作为实现基础。
+AlphaBrief is:
 
-| 参考项目 | 在 AlphaBrief 中的参考价值 | 不允许做的事 |
+```text
+1. A personal quantitative research system
+2. A multi-model financial research workbench
+3. A strategy hypothesis validation platform
+4. A backtest and simulation system
+5. A paper trading system
+6. A risk control and audit system
+7. A trade review system
+8. A personal research knowledge base
+```
+
+### 2.2 What AlphaBrief Is Not
+
+AlphaBrief is not:
+
+```text
+1. An AI auto-trading robot
+2. A high-frequency trading system
+3. A one-click "get rich quick" strategy generator
+4. Code stitched together from three GitHub projects
+5. A wrapper app for some model vendor
+6. A productized wrapper around some development tool
+7. A system that defaults to live-money auto-ordering
+8. A system that lets models modify trading logic without audit
+```
+
+### 2.3 What MVP Explicitly Does Not Do
+
+MVP does not include:
+
+```text
+1. Default live trading
+2. Leveraged auto-trading
+3. High-frequency trading
+4. Models placing orders directly
+5. Models autonomously adding to positions
+6. Auto-strategies going straight to live trading
+7. Unaudited broker adapters
+8. Backtests without transaction costs
+9. Non-reproducible research workflows
+10. Untraceable model outputs
+```
+
+---
+
+## 3. Role of the Three Reference Projects in AlphaBrief
+
+This project will place the source code of three GitHub projects into the project folder as **reference material**. They are used only to understand the product form, module boundaries, interaction patterns, test scenarios, and architectural ideas.
+
+AlphaBrief does not copy, repurpose under renamed files, directly migrate, or use their code as an implementation foundation.
+
+| Reference Project | Reference Value in AlphaBrief | What Is Not Allowed |
 |---|---|---|
-| QuantDinger | 本地优先量化平台、策略开发、回测、执行、产品外壳、审计日志 | 不复制后端、前端、broker adapter、UI、命名和业务代码 |
-| TradingGym | Gym/Gymnasium 风格交易仿真环境、reward、episode、action/observation 设计 | 不复制 env 实现、reward 实现、训练脚本 |
-| TradingAgents | 多智能体研究流程、分析师 / 研究员 / 风控 / 交易员角色分工 | 不复制 agent prompt、工作流实现、类结构、工具调用代码 |
+| QuantDinger | Local-first quant platform, strategy development, backtesting, execution, product shell, audit logs | Do not copy backend, frontend, broker adapter, UI, naming, or business code |
+| TradingGym | Gym/Gymnasium-style trading simulation environment, reward, episode, action/observation design | Do not copy env implementation, reward implementation, or training scripts |
+| TradingAgents | Multi-agent research workflow, analyst / researcher / risk / trader role division | Do not copy agent prompts, workflow implementation, class structures, or tool-calling code |
 
-### 3.1 参考源码目录规则
+### 3.1 Reference Source Directory Rules
 
-推荐目录：
+Recommended directory:
 
 ```text
 alphabrief/
 ├── _reference_sources/
-│   ├── QuantDinger/        # 只读参考源码
-│   ├── TradingGym/         # 只读参考源码
-│   └── TradingAgents/      # 只读参考源码
+│   ├── QuantDinger/        # Read-only reference source
+│   ├── TradingGym/         # Read-only reference source
+│   └── TradingAgents/      # Read-only reference source
 ├── docs/
 ├── packages/
 ├── apps/
 └── PROJECT_RULES.md
 ```
 
-`_reference_sources/` 必须遵守以下规则：
+`_reference_sources/` must follow these rules:
 
 ```text
-1. 不纳入 AlphaBrief package import path。
-2. 不允许 AlphaBrief 代码 import 其中任何模块。
-3. 不允许从参考源码复制函数、类、文件、注释、prompt、配置或测试。
-4. 不允许把参考源码中的文件改名后放入 AlphaBrief。
-5. 不允许在开发任务中要求“迁移这个文件”“照这个类改写”“按这个实现重构”。
-6. 只允许提取：产品需求、模块边界、行为描述、测试场景、交互模式。
-7. 任何从参考项目得到的灵感必须先转化为自然语言 spec，再从 spec 实现。
-8. 如果参考项目许可证与 AlphaBrief 目标冲突，以 AlphaBrief 自有实现为准。
+1. It is not included in the AlphaBrief package import path.
+2. AlphaBrief code may not import any module from it.
+3. Functions, classes, files, comments, prompts, configs, or tests may not be copied from the reference sources.
+4. Files from the reference sources may not be renamed and placed into AlphaBrief.
+5. Development tasks may not request "migrate this file," "rewrite based on this class," or "refactor according to this implementation."
+6. Only the following may be extracted: product requirements, module boundaries, behavior descriptions, test scenarios, interaction patterns.
+7. Any inspiration drawn from the reference projects must first be turned into a natural-language spec, then implemented from that spec.
+8. If a reference project's license conflicts with AlphaBrief's goals, AlphaBrief's own implementation takes precedence.
 ```
 
-### 3.2 最安全的重写流程
+### 3.2 The Safest Rewrite Process
 
-推荐采用“规格提取 → 隔离实现 → 相似性审查”的流程：
+We recommend the "spec extraction → isolated implementation → similarity audit" process:
 
 ```text
-Phase A: 参考分析
-1. AI 工程辅助工具阅读 _reference_sources。
-2. 只输出 docs/reference_notes/*.md。
-3. reference_notes 只能写自然语言需求、接口想法、行为约束、测试场景。
-4. 不允许包含原项目代码片段。
-5. 不允许保留原项目的类名、函数名、prompt 文案或文件结构。
+Phase A: Reference Analysis
+1. The AI engineering assistant reads _reference_sources.
+2. Only outputs docs/reference_notes/*.md.
+3. reference_notes may only contain natural-language requirements, interface ideas, behavior constraints, and test scenarios.
+4. Original project code snippets are not allowed.
+5. Class names, function names, prompt text, and file structures from the original projects may not be preserved.
 
-Phase B: 实现隔离
-1. 关闭、移出或忽略 _reference_sources。
-2. 只基于 blueprint、PROJECT_RULES.md、reference_notes、issues 实现 AlphaBrief。
-3. 每个模块必须有自有接口、自有命名、自有测试。
-4. 实现时禁止打开参考项目文件逐行对照。
+Phase B: Implementation Isolation
+1. Close, move, or ignore _reference_sources.
+2. Implement AlphaBrief only from blueprint, PROJECT_RULES.md, reference_notes, and issues.
+3. Every module must have its own interface, its own naming, and its own tests.
+4. During implementation, opening reference project files for line-by-line comparison is forbidden.
 
-Phase C: 相似性审查
-1. 检查是否存在大段相似代码。
-2. 检查是否存在同名类 / 同名函数 / 同结构文件。
-3. 检查是否存在复制的 prompt、注释、README 文案。
-4. 检查许可证和 NOTICE。
-5. 审查通过后才允许合并到主干。
+Phase C: Similarity Audit
+1. Check for large blocks of similar code.
+2. Check for same-named classes / same-named functions / same-structure files.
+3. Check for copied prompts, comments, or README text.
+4. Check licenses and NOTICE.
+5. Only after passing review may changes be merged to main.
 ```
 
-如果 vibe coding 工具不支持忽略目录，建议在真正实现阶段把 `_reference_sources/` 暂时移动到 repo 外。
+If the vibe coding tool does not support ignoring directories, it is recommended to temporarily move `_reference_sources/` outside the repo during the actual implementation phase.
 
 ---
 
-## 4. 产品核心原则
+## 4. Core Product Principles
 
 ### 4.1 Research-first
 
-AlphaBrief 的第一性原则是研究，而不是交易。
+AlphaBrief's first principle is research, not trading.
 
-所有交易动作都必须可追溯到：
+Every trading action must be traceable back to:
 
 ```text
-研究假设
-数据证据
-策略逻辑
-回测结果
-风险审查
-用户授权
+Research hypothesis
+Data evidence
+Strategy logic
+Backtest results
+Risk review
+User authorization
 ```
 
 ### 4.2 Paper-first
 
-MVP 只允许 paper trading。
+MVP only allows paper trading.
 
-真实交易必须满足：
+Live trading must satisfy:
 
 ```text
-1. 显式配置打开
-2. 明确 broker adapter 解锁
-3. 用户二次确认
-4. 风控阈值完整
-5. 审计日志开启
-6. kill switch 可用
-7. paper trading 稳定运行至少 30-60 天
+1. Explicit configuration enabling it
+2. Clear broker adapter unlocking
+3. User secondary confirmation
+4. Complete risk thresholds
+5. Audit logging enabled
+6. Kill switch available
+7. Paper trading has run stably for at least 30-60 days
 ```
 
-### 4.3 Model-as-researcher, not trader
+### 4.3 Model-as-researcher, Not Trader
 
-模型只能生成：
+Models may only generate:
 
 ```text
-研究报告
-多空观点
-证据摘要
-风险解释
-策略规格草案
+Research reports
+Bull/bear views
+Evidence summaries
+Risk explanations
+Strategy spec drafts
 OrderIntent
-复盘总结
+Post-trade review summaries
 ```
 
-模型不能直接执行：
+Models may not directly execute:
 
 ```text
-真实下单
-绕过风控
-修改 broker adapter
-关闭审计日志
-改变 live trading 开关
-自动提高杠杆
-自动提高仓位上限
+Live orders
+Bypassing risk controls
+Modifying broker adapters
+Disabling audit logs
+Changing the live trading switch
+Automatically increasing leverage
+Automatically raising position caps
 ```
 
-### 4.4 Deterministic risk before execution
+### 4.4 Deterministic Risk Before Execution
 
-任何交易意图必须经过：
+Every trading intent must go through:
 
 ```text
 OrderIntent → RiskGate → RiskDecision → PaperBroker / BrokerAdapter
 ```
 
-没有 RiskDecision，不得生成 Order。
+Without a RiskDecision, no Order may be generated.
 
 ### 4.5 Model-agnostic
 
-AlphaBrief 必须模型无关。
+AlphaBrief must be model-agnostic.
 
 ```text
-1. 不绑定任何单一模型厂商。
-2. 不把模型名字写死在业务逻辑里。
-3. 所有模型调用必须经过 Model Gateway。
-4. 不同模型可以承担不同角色。
-5. 模型输出必须结构化、可验证、可审计。
-6. 模型失败时系统必须可降级运行。
+1. Not tied to any single model vendor.
+2. Model names may not be hard-coded in business logic.
+3. All model calls must go through the Model Gateway.
+4. Different models may take on different roles.
+5. Model outputs must be structured, verifiable, and auditable.
+6. The system must be able to degrade gracefully when a model fails.
 ```
 
-### 4.6 Audit everything
+### 4.6 Audit Everything
 
-必须记录：
+The following must be recorded:
 
 ```text
-模型输入
-模型输出
-模型版本 / provider / 参数
-研究结论
-策略信号
+Model inputs
+Model outputs
+Model version / provider / parameters
+Research conclusions
+Strategy signals
 OrderIntent
 RiskDecision
-订单
-成交
-仓位变化
-用户操作
-配置变化
+Orders
+Fills
+Position changes
+User actions
+Configuration changes
 ```
 
 ---
 
-## 5. 总体系统架构
+## 5. Overall System Architecture
 
-### 5.1 分层架构
+### 5.1 Layered Architecture
 
 ```text
 AlphaBrief
@@ -383,7 +383,7 @@ AlphaBrief
     └── Decision Archive
 ```
 
-### 5.2 核心数据流
+### 5.2 Core Data Flow
 
 ```text
 Market Data / News / Macro
@@ -411,27 +411,27 @@ Review / Daily AlphaBrief / Knowledge Base
 
 ---
 
-## 6. 多模型接入蓝图：Model Gateway
+## 6. Multi-Model Integration Blueprint: Model Gateway
 
-AlphaBrief 的 AI 能力必须由统一的 **Model Gateway** 提供。业务模块不得直接调用任何模型厂商 API。
+AlphaBrief's AI capability must be provided by a unified **Model Gateway**. Business modules may not directly call any model vendor API.
 
-### 6.1 Model Gateway 的职责
+### 6.1 Responsibilities of the Model Gateway
 
 ```text
-1. 统一不同厂商 API 的调用方式
-2. 管理 provider、model、capability、价格、上下文窗口、限流
-3. 支持文本、结构化输出、工具调用、长上下文、视觉、多模态等能力标记
-4. 根据任务类型选择模型
-5. 支持 fallback 和 retry
-6. 记录输入、输出、成本、延迟、错误
-7. 校验模型输出是否符合 schema
-8. 管理 prompt template 和版本
-9. 支持模型评测和 A/B 对比
+1. Unify how different vendor APIs are invoked
+2. Manage providers, models, capabilities, pricing, context windows, and rate limits
+3. Support capability flags for text, structured output, tool calling, long context, vision, multimodal, etc.
+4. Select models based on task type
+5. Support fallback and retry
+6. Record inputs, outputs, cost, latency, and errors
+7. Validate whether model outputs conform to the schema
+8. Manage prompt templates and versions
+9. Support model evaluation and A/B comparison
 ```
 
 ### 6.2 Provider Adapter
 
-每个模型厂商都必须通过 Provider Adapter 接入：
+Every model vendor must integrate through a Provider Adapter:
 
 ```text
 ModelGateway
@@ -448,11 +448,11 @@ ModelGateway
     └── LocalVLLMAdapter
 ```
 
-注意：以上只是可选接入方向，不代表 MVP 必须全部实现。
+Note: The above are only optional integration directions; they do not mean the MVP must implement all of them.
 
-### 6.3 模型能力抽象
+### 6.3 Model Capability Abstraction
 
-模型不能只用名字管理，必须用 capability 管理。
+Models must not be managed only by name; they must be managed by capability.
 
 ```text
 ModelCapability
@@ -471,73 +471,73 @@ ModelCapability
 └── reranking
 ```
 
-业务模块只能声明需求：
+Business modules may only state requirements:
 
 ```text
-我需要：strong_reasoning + structured_output + long_context
-我需要：low_cost + summarization
-我需要：json_mode + tool_calling
+I need: strong_reasoning + structured_output + long_context
+I need: low_cost + summarization
+I need: json_mode + tool_calling
 ```
 
-不能写死：
+They may not hard-code:
 
 ```text
-必须用某个具体模型
-必须用某个具体厂商
+Must use some specific model
+Must use some specific vendor
 ```
 
-### 6.4 推荐的模型任务路由
+### 6.4 Recommended Model Task Routing
 
 ```text
-市场摘要：低成本长上下文模型
-新闻整理：低成本摘要模型
-复杂推理：强推理模型
-多空辩论：不同模型交叉验证
-结构化输出：JSON 稳定模型
-代码解释：代码能力强的模型
-风险审查：强推理 + 结构化输出模型
-复盘总结：长上下文 + 中文表达强的模型
+Market summary: low-cost long-context model
+News digest: low-cost summarization model
+Complex reasoning: strong-reasoning model
+Bull/bear debate: different models for cross-validation
+Structured output: model with stable JSON
+Code explanation: model with strong code capability
+Risk review: strong-reasoning + structured-output model
+Review summaries: long-context + strong Chinese-expressiveness model
 ```
 
-### 6.5 多模型研究委员会
+### 6.5 Multi-Model Research Committee
 
-AlphaBrief 应支持多个模型对同一问题给出独立判断。
+AlphaBrief should support multiple models giving independent judgments on the same question.
 
 ```text
-Question: 未来 5 个交易日 NVDA 是否值得进入观察清单？
+Question: Is NVDA worth adding to the watchlist for the next 5 trading days?
 
-Model A: 技术面分析
-Model B: 新闻与财报摘要
-Model C: 风险反方观点
-Model D: 综合裁判
+Model A: Technical analysis
+Model B: News and earnings summary
+Model C: Bear-case risk view
+Model D: Synthesizing adjudicator
 
-输出：
-1. 共识观点
-2. 分歧点
-3. 关键证据
-4. 不确定性
-5. 建议观察条件
-6. 禁止执行的条件
+Output:
+1. Consensus view
+2. Points of disagreement
+3. Key evidence
+4. Uncertainty
+5. Suggested observation conditions
+6. Conditions that prohibit execution
 ```
 
-### 6.6 模型输出必须结构化
+### 6.6 Model Outputs Must Be Structured
 
-所有关键模型输出必须符合 schema。
+All key model outputs must conform to a schema.
 
-禁止：
+Forbidden:
 
 ```text
-模型返回一段自由文本，然后系统直接相信。
+The model returns a free-text blob, and the system trusts it directly.
 ```
 
-必须：
+Required:
 
 ```text
-模型返回 JSON / Pydantic 可验证结构。
-验证失败则拒绝进入下一阶段。
+The model returns JSON / a Pydantic-verifiable structure.
+If validation fails, it is rejected from proceeding to the next stage.
 ```
 
-示例：
+Example:
 
 ```json
 {
@@ -556,61 +556,61 @@ Model D: 综合裁判
 
 ---
 
-## 7. 核心模块定义
+## 7. Core Module Definitions
 
 ## 7.1 Data Layer
 
-Data Layer 负责所有数据接入、清洗、存储和质量检查。
+The Data Layer is responsible for all data ingestion, cleaning, storage, and quality checks.
 
-### 目标
+### Goals
 
 ```text
-1. 接入 OHLCV 数据
-2. 接入新闻 / 宏观 / 情绪数据
-3. 标准化 symbol、timezone、calendar
-4. 生成特征
-5. 检查数据缺失、重复、异常值
-6. 保存可复现数据快照
+1. Ingest OHLCV data
+2. Ingest news / macro / sentiment data
+3. Standardize symbol, timezone, and calendar
+4. Generate features
+5. Check for missing data, duplicates, and outliers
+6. Save reproducible data snapshots
 ```
 
-### MVP 数据源
+### MVP Data Sources
 
 ```text
 1. CSV / Parquet
-2. 手动上传数据
-3. 开放 API 数据源
-4. 模拟新闻输入
+2. Manually uploaded data
+3. Open API data sources
+4. Simulated news inputs
 ```
 
-### 后续数据源
+### Future Data Sources
 
 ```text
-1. 股票行情
-2. 加密货币行情
-3. ETF 数据
-4. 财报 / filings
-5. 新闻 API
-6. 社交情绪
-7. 宏观数据
-8. 链上数据
+1. Stock quotes
+2. Crypto quotes
+3. ETF data
+4. Earnings / filings
+5. News APIs
+6. Social sentiment
+7. Macro data
+8. On-chain data
 ```
 
-### 不可妥协要求
+### Non-Negotiable Requirements
 
 ```text
-1. 所有回测必须记录数据版本。
-2. 所有特征必须避免未来函数。
-3. 所有时间戳必须带 timezone 或明确 calendar。
-4. 数据质量不通过，策略不得进入 backtest。
+1. Every backtest must record the data version.
+2. All features must avoid look-ahead bias.
+3. Every timestamp must carry a timezone or an explicit calendar.
+4. If data quality fails, the strategy may not enter backtest.
 ```
 
 ---
 
 ## 7.2 Research Layer
 
-Research Layer 负责生成 AlphaBrief 的研究内容。
+The Research Layer is responsible for generating AlphaBrief's research content.
 
-### 输出对象
+### Output Objects
 
 ```text
 MarketBrief
@@ -621,21 +621,21 @@ ModelDebateReport
 DailyAlphaBrief
 ```
 
-### 核心功能
+### Core Capabilities
 
 ```text
-1. 总结市场环境
-2. 总结新闻和宏观变化
-3. 解释价格结构
-4. 发现异常波动
-5. 生成多空假设
-6. 组织多个模型进行交叉评估
-7. 形成可追溯研究报告
+1. Summarize the market environment
+2. Summarize news and macro changes
+3. Explain price structure
+4. Detect abnormal volatility
+5. Generate bull/bear hypotheses
+6. Organize multiple models for cross-evaluation
+7. Produce traceable research reports
 ```
 
-### 研究结论不得直接变成订单
+### Research Conclusions May Not Directly Become Orders
 
-Research Layer 最多输出：
+The Research Layer may output at most:
 
 ```text
 watchlist
@@ -644,7 +644,7 @@ strategy_hypothesis
 order_intent_candidate
 ```
 
-不得输出：
+It may not output:
 
 ```text
 approved_order
@@ -656,11 +656,11 @@ live_order
 
 ## 7.3 Strategy Layer
 
-Strategy Layer 负责把交易想法变成可验证的策略规格。
+The Strategy Layer is responsible for turning trading ideas into verifiable strategy specs.
 
 ### StrategySpec
 
-AlphaBrief 中的策略首先应该是 spec，而不是代码。
+A strategy in AlphaBrief should first be a spec, not code.
 
 ```yaml
 strategy_id: ema_trend_v1
@@ -683,120 +683,120 @@ evaluation:
   test_period: 2024-01-01:2025-12-31
 ```
 
-### 策略实现原则
+### Strategy Implementation Principles
 
 ```text
-1. 策略必须先有 StrategySpec。
-2. 策略实现必须可测试。
-3. 策略不得直接访问 broker。
-4. 策略只能输出 Signal 或 OrderIntent。
-5. 策略不得绕过 RiskGate。
-6. 策略必须记录参数和版本。
+1. A strategy must have a StrategySpec first.
+2. Strategy implementations must be testable.
+3. Strategies may not directly access the broker.
+4. Strategies may only emit Signals or OrderIntents.
+5. Strategies may not bypass the RiskGate.
+6. Strategies must record their parameters and version.
 ```
 
-### 策略代码生成边界
+### Strategy Code Generation Boundaries
 
-AlphaBrief 可以使用模型辅助生成：
+AlphaBrief may use model assistance to generate:
 
 ```text
-1. 策略规格草案
-2. 策略逻辑解释
-3. 测试用例建议
-4. 伪代码
-5. 风险检查清单
+1. Strategy spec drafts
+2. Strategy logic explanations
+3. Test case suggestions
+4. Pseudocode
+5. Risk checklist
 ```
 
-但生产级策略实现必须满足：
+But production-grade strategy implementations must satisfy:
 
 ```text
-1. 通过单元测试
-2. 通过回测一致性测试
-3. 通过未来函数检查
-4. 通过人工 review
-5. 通过风控 review
-6. 明确版本号
+1. Pass unit tests
+2. Pass backtest-consistency tests
+3. Pass look-ahead bias checks
+4. Pass human review
+5. Pass risk-control review
+6. Have an explicit version number
 ```
 
-模型输出不能自动进入实盘路径。
+Model output may not automatically enter the live-trading path.
 
 ---
 
 ## 7.4 Backtest Layer
 
-Backtest Layer 是 AlphaBrief 可信度的核心。
+The Backtest Layer is the core of AlphaBrief's credibility.
 
-### 必须支持
+### Must Support
 
 ```text
-1. 手续费
-2. 滑点
-3. 资金曲线
-4. benchmark 对比
+1. Fees
+2. Slippage
+3. Equity curve
+4. Benchmark comparison
 5. CAGR
 6. Sharpe
 7. Sortino
-8. max drawdown
-9. win rate
-10. turnover
-11. exposure
-12. trade list
-13. strategy parameter snapshot
-14. data version snapshot
+8. Max drawdown
+9. Win rate
+10. Turnover
+11. Exposure
+12. Trade list
+13. Strategy parameter snapshot
+14. Data version snapshot
 ```
 
-### 回测报告必须包含
+### Backtest Reports Must Include
 
 ```text
-1. 策略 ID
-2. 策略参数
-3. 数据范围
-4. 数据来源
-5. 交易成本假设
-6. 样本内表现
-7. 样本外表现
-8. 最大回撤
-9. 最差交易
-10. 是否可能过拟合
-11. 是否通过未来函数检查
-12. 是否允许进入 paper trading
+1. Strategy ID
+2. Strategy parameters
+3. Data range
+4. Data source
+5. Transaction cost assumptions
+6. In-sample performance
+7. Out-of-sample performance
+8. Maximum drawdown
+9. Worst trade
+10. Whether overfitting is possible
+11. Whether look-ahead bias check passed
+12. Whether allowed to enter paper trading
 ```
 
-### 禁止接受的回测
+### Backtests That Are Rejected
 
 ```text
-1. 没有手续费
-2. 没有滑点
-3. 没有样本外
-4. 没有 benchmark
-5. 没有数据版本
-6. 没有策略参数
-7. 没有未来函数检查
-8. 只展示收益不展示风险
+1. No fees
+2. No slippage
+3. No out-of-sample period
+4. No benchmark
+5. No data version
+6. No strategy parameters
+7. No look-ahead bias check
+8. Shows returns but no risk
 ```
 
 ---
 
 ## 7.5 Simulation / Trading Environment Layer
 
-Simulation Layer 负责交易环境、强化学习接口和策略仿真。
+The Simulation Layer is responsible for the trading environment, RL interface, and strategy simulation.
 
-### 目标
+### Goals
 
 ```text
-1. 提供 Gymnasium 风格交易环境
-2. 支持 action / observation / reward 抽象
-3. 支持手续费和滑点
-4. 支持多种 reward function
-5. 支持随机策略、规则策略、RL 策略对比
-6. 支持 episode 级别评估
+1. Provide a Gymnasium-style trading environment
+2. Support action / observation / reward abstractions
+3. Support fees and slippage
+4. Support multiple reward functions
+5. Support comparison among random, rule-based, and RL strategies
+6. Support episode-level evaluation
 ```
 
-### MVP 环境
+### MVP Environment
 
 ```text
 AlphaBriefTradingEnv
-├── 单资产
-├── OHLCV 输入
+├── Single asset
+├── OHLCV input
 ├── Discrete action
 │   ├── 0 hold
 │   ├── 1 half long
@@ -807,38 +807,38 @@ AlphaBriefTradingEnv
 └── episode metrics
 ```
 
-### 后续扩展
+### Future Extensions
 
 ```text
-1. 多资产 allocation
-2. continuous action
-3. shorting
-4. leverage simulation
-5. liquidity constraints
-6. borrow cost
-7. market impact
-8. regime-aware rewards
+1. Multi-asset allocation
+2. Continuous action
+3. Shorting
+4. Leverage simulation
+5. Liquidity constraints
+6. Borrow cost
+7. Market impact
+8. Regime-aware rewards
 ```
 
-### 注意事项
+### Cautions
 
-仿真环境的目标不是证明策略赚钱，而是证明：
+The goal of the simulation environment is not to prove a strategy makes money, but to prove:
 
 ```text
-1. 环境定义正确
-2. 交易成本真实
-3. reward 没有泄漏未来
-4. 训练 / 测试分离
-5. 策略可以公平比较
+1. The environment is defined correctly
+2. Transaction costs are realistic
+3. The reward does not leak the future
+4. Train / test separation
+5. Strategies can be compared fairly
 ```
 
 ---
 
 ## 7.6 Risk Layer
 
-Risk Layer 是 AlphaBrief 的核心安全边界。
+The Risk Layer is AlphaBrief's core safety boundary.
 
-### RiskGate 必须检查
+### RiskGate Must Check
 
 ```text
 1. trading_enabled
@@ -860,7 +860,7 @@ Risk Layer 是 AlphaBrief 的核心安全边界。
 
 ### RiskDecision
 
-RiskGate 输出：
+RiskGate outputs:
 
 ```json
 {
@@ -872,24 +872,24 @@ RiskGate 输出：
 }
 ```
 
-### 硬规则
+### Hard Rules
 
 ```text
-1. 没有 RiskDecision，不得生成 Order。
-2. RiskDecision 必须写入 audit log。
-3. 模型不能覆盖 RiskDecision。
-4. 用户不能通过自然语言绕过 RiskGate。
-5. live trading 必须有独立开关。
-6. kill switch 触发后所有策略停止。
+1. Without a RiskDecision, no Order may be generated.
+2. RiskDecisions must be written to the audit log.
+3. Models may not override a RiskDecision.
+4. Users may not bypass the RiskGate via natural language.
+5. Live trading must have an independent switch.
+6. After the kill switch is triggered, all strategies stop.
 ```
 
 ---
 
 ## 7.7 Execution Layer
 
-Execution Layer 负责 paper trading 和未来真实 broker 接入。
+The Execution Layer is responsible for paper trading and future real-broker integration.
 
-### MVP 只实现 PaperBroker
+### MVP Only Implements PaperBroker
 
 ```text
 PaperBroker
@@ -904,7 +904,7 @@ PaperBroker
 
 ### BrokerAdapter Interface
 
-未来可扩展真实 broker，但必须遵守统一接口：
+Real brokers may be added later, but must follow a unified interface:
 
 ```text
 BrokerAdapter
@@ -919,41 +919,41 @@ BrokerAdapter
 └── health_check
 ```
 
-### Live trading 禁止默认开启
+### Live Trading Is Forbidden From Defaulting On
 
 ```text
-1. 默认没有任何 live broker adapter 被启用。
-2. 配置文件中 live_trading_enabled 默认 false。
-3. 环境变量中 live trading 默认 false。
-4. UI 必须显示 live trading 状态。
-5. 第一次启用必须二次确认。
-6. 所有 live order 必须独立审计。
+1. By default, no live broker adapter is enabled.
+2. live_trading_enabled defaults to false in the config file.
+3. Live trading defaults to false in environment variables.
+4. The UI must show live-trading status.
+5. First-time enabling requires secondary confirmation.
+6. All live orders must be audited independently.
 ```
 
 ---
 
 ## 7.8 Audit & Review Layer
 
-AlphaBrief 的长期价值来自复盘。
+AlphaBrief's long-term value comes from review.
 
-### 必须记录
+### Must Record
 
 ```text
-1. 每次研究任务
-2. 每次模型调用
-3. 每次策略参数变更
-4. 每次回测
-5. 每次信号
-6. 每次 OrderIntent
-7. 每次 RiskDecision
-8. 每次 paper order
-9. 每次成交
-10. 每次仓位变化
-11. 每次用户确认
-12. 每次异常和失败
+1. Every research task
+2. Every model call
+3. Every strategy parameter change
+4. Every backtest
+5. Every signal
+6. Every OrderIntent
+7. Every RiskDecision
+8. Every paper order
+9. Every fill
+10. Every position change
+11. Every user confirmation
+12. Every exception and failure
 ```
 
-### 复盘输出
+### Review Outputs
 
 ```text
 DailyReview
@@ -964,22 +964,22 @@ RiskReview
 PostTradeReview
 ```
 
-### 长期知识库
+### Long-Term Knowledge Base
 
-所有研究、回测、交易和复盘都应该沉淀为：
+All research, backtests, trading, and reviews should accumulate into:
 
 ```text
-1. 策略知识库
-2. 失败案例库
-3. 风险案例库
-4. 模型表现库
-5. 市场 regime 记录
-6. 用户交易偏差记录
+1. Strategy knowledge base
+2. Failure case library
+3. Risk case library
+4. Model performance library
+5. Market regime records
+6. User trading-bias records
 ```
 
 ---
 
-## 8. 核心领域模型
+## 8. Core Domain Models
 
 ### 8.1 Market Data
 
@@ -1092,7 +1092,7 @@ class Order:
 
 ---
 
-## 9. 推荐仓库结构
+## 9. Recommended Repository Structure
 
 ```text
 alphabrief/
@@ -1151,11 +1151,11 @@ alphabrief/
 
 ---
 
-## 10. 模块职责边界
+## 10. Module Responsibility Boundaries
 
 ### 10.1 alphabrief-core
 
-负责：
+Responsible for:
 
 ```text
 domain models
@@ -1166,18 +1166,18 @@ time utilities
 symbol utilities
 ```
 
-不得负责：
+Not responsible for:
 
 ```text
-模型调用
-broker 调用
+model calls
+broker calls
 UI
-外部数据抓取
+external data fetching
 ```
 
 ### 10.2 alphabrief-models
 
-负责：
+Responsible for:
 
 ```text
 Model Gateway
@@ -1189,18 +1189,18 @@ model call logging
 model evaluation
 ```
 
-不得负责：
+Not responsible for:
 
 ```text
-交易执行
-仓位修改
-风控绕过
-策略直接启停
+trade execution
+position modification
+risk bypass
+strategy start/stop directly
 ```
 
 ### 10.3 alphabrief-research
 
-负责：
+Responsible for:
 
 ```text
 market brief
@@ -1210,17 +1210,17 @@ risk narrative
 daily AlphaBrief report
 ```
 
-不得负责：
+Not responsible for:
 
 ```text
-生成 Order
-调用 broker
-修改 portfolio
+generating Orders
+calling brokers
+modifying portfolio
 ```
 
 ### 10.4 alphabrief-strategy
 
-负责：
+Responsible for:
 
 ```text
 StrategySpec
@@ -1230,17 +1230,17 @@ strategy registry
 parameter management
 ```
 
-不得负责：
+Not responsible for:
 
 ```text
-直接下单
-读取 live broker 状态后偷偷调整订单
-关闭风控
+placing orders directly
+sneakily adjusting orders after reading live broker state
+disabling risk controls
 ```
 
 ### 10.5 alphabrief-backtest
 
-负责：
+Responsible for:
 
 ```text
 vectorized backtest
@@ -1250,17 +1250,17 @@ backtest reports
 walk-forward validation
 ```
 
-不得负责：
+Not responsible for:
 
 ```text
 live execution
-模型调用
-用户界面
+model calls
+user interface
 ```
 
 ### 10.6 alphabrief-risk
 
-负责：
+Responsible for:
 
 ```text
 RiskGate
@@ -1271,11 +1271,11 @@ kill switch
 risk reports
 ```
 
-不得被任何模块绕过。
+It may not be bypassed by any module.
 
 ### 10.7 alphabrief-execution
 
-负责：
+Responsible for:
 
 ```text
 PaperBroker
@@ -1285,19 +1285,19 @@ FillSimulator
 execution logs
 ```
 
-必须依赖：
+Must depend on:
 
 ```text
 RiskDecision
 ```
 
-没有 RiskDecision，不允许提交订单。
+Without a RiskDecision, submitting orders is not allowed.
 
 ---
 
-## 11. 技术栈建议
+## 11. Tech Stack Recommendations
 
-### 11.1 MVP 技术栈
+### 11.1 MVP Tech Stack
 
 ```text
 Language: Python 3.12+
@@ -1311,11 +1311,11 @@ Lint: ruff
 Type Check: mypy / pyright
 CLI: typer
 Scheduler: APScheduler / Celery / RQ / Arq
-Frontend MVP: Streamlit 或 Next.js
+Frontend MVP: Streamlit or Next.js
 Charts: Plotly / lightweight-charts
 ```
 
-### 11.2 后续技术栈
+### 11.2 Future Tech Stack
 
 ```text
 DB: PostgreSQL
@@ -1328,121 +1328,121 @@ Deployment: Docker Compose → Kubernetes
 Model Serving: Ollama / vLLM / hosted API
 ```
 
-### 11.3 配置原则
+### 11.3 Configuration Principles
 
 ```text
-1. 所有密钥通过环境变量或 secret manager 管理。
-2. 不允许把 API key 写入代码。
-3. 不允许把 API key 写入 prompt。
-4. 不允许把 API key 写入日志。
-5. provider 配置与业务逻辑分离。
-6. live trading 配置与 research 配置分离。
+1. All secrets are managed through environment variables or a secret manager.
+2. API keys may not be written into code.
+3. API keys may not be written into prompts.
+4. API keys may not be written into logs.
+5. Provider configuration is separated from business logic.
+6. Live-trading configuration is separated from research configuration.
 ```
 
 ---
 
-## 12. 开发方式：vibe coding 作为工程辅助工具
+## 12. Development Method: Vibe Coding as an Engineering Assistant
 
-vibe coding 工具用于加速工程开发，但 AlphaBrief 的质量标准必须由测试、架构边界、风控规则和审查流程决定。
+vibe coding tools are used to accelerate engineering development, but AlphaBrief's quality bar must be determined by tests, architectural boundaries, risk-control rules, and review workflows.
 
-### 12.1 工具定位
+### 12.1 Tool Positioning
 
-vibe coding 工具可以辅助：
-
-```text
-1. 生成模块草案
-2. 重构代码
-3. 补充测试
-4. 总结参考源码行为
-5. 生成文档
-6. 检查类型错误
-7. 修复测试失败
-8. 生成迁移脚本
-9. 写接口适配器
-```
-
-vibe coding 工具不可以：
+vibe coding tools may assist with:
 
 ```text
-1. 复制参考源码实现
-2. 绕过项目架构
-3. 跳过测试
-4. 跳过风控
-5. 自动合并高风险代码
-6. 直接生成 live trading 默认开启逻辑
-7. 在没有 spec 的情况下随意写交易逻辑
+1. Generating module drafts
+2. Refactoring code
+3. Supplementing tests
+4. Summarizing reference source behavior
+5. Generating documentation
+6. Checking type errors
+7. Fixing failing tests
+8. Generating migration scripts
+9. Writing interface adapters
 ```
 
-### 12.2 每个开发任务的标准格式
-
-每个任务必须包含：
+vibe coding tools may not:
 
 ```text
-Goal: 要实现什么
-Context: 相关模块和文档
-Inputs: 输入数据 / schema / config
-Outputs: 输出对象 / 文件 / API
-Constraints: 禁止事项和边界
-Tests: 必须新增或通过的测试
-Done When: 完成标准
+1. Copy reference source implementations
+2. Bypass the project's architecture
+3. Skip tests
+4. Skip risk controls
+5. Auto-merge high-risk code
+6. Generate logic that defaults live trading on
+7. Casually write trading logic without a spec
 ```
 
-### 12.3 开发任务示例
+### 12.2 Standard Format for Every Development Task
+
+Every task must contain:
+
+```text
+Goal: What to implement
+Context: Related modules and docs
+Inputs: Input data / schema / config
+Outputs: Output objects / files / APIs
+Constraints: Prohibitions and boundaries
+Tests: Tests that must be added or passed
+Done When: Definition of done
+```
+
+### 12.3 Development Task Example
 
 ```text
 Goal:
-实现 alphabrief-models 的 ModelGateway MVP。
+Implement the ModelGateway MVP for alphabrief-models.
 
 Context:
-阅读 ALPHABRIEF_PRODUCT_BLUEPRINT.md 和 docs/model_gateway.md。
-不要读取或复制 _reference_sources 里的实现代码。
+Read ALPHABRIEF_PRODUCT_BLUEPRINT.md and docs/model_gateway.md.
+Do not read or copy implementation code from _reference_sources.
 
 Inputs:
-ModelRequest, ModelTaskType, ModelCapability, ProviderConfig。
+ModelRequest, ModelTaskType, ModelCapability, ProviderConfig.
 
 Outputs:
-ModelResponse, ModelCallRecord, ProviderAdapter interface。
+ModelResponse, ModelCallRecord, ProviderAdapter interface.
 
 Constraints:
-- 不允许业务模块直接调用 provider SDK。
-- 不允许把 provider 名字写死在 research 模块。
-- 不实现真实交易相关能力。
-- 不记录 API key。
+- Business modules may not directly call provider SDKs.
+- Provider names may not be hard-coded in the research module.
+- Do not implement anything related to real trading.
+- Do not log API keys.
 
 Tests:
-- fake provider 可返回结构化结果。
-- provider 失败时 fallback 生效。
-- schema 校验失败时返回 rejected 状态。
-- model call record 不包含敏感信息。
+- A fake provider can return structured results.
+- Fallback takes effect when a provider fails.
+- Schema validation failure returns a rejected status.
+- ModelCallRecord contains no sensitive information.
 
 Done When:
-pytest 通过，类型检查通过，docs/model_gateway.md 更新。
+pytest passes, type checking passes, docs/model_gateway.md is updated.
 ```
 
-### 12.4 开发审查清单
+### 12.4 Development Review Checklist
 
-每个 PR / commit 必须检查：
+Every PR / commit must check:
 
 ```text
-1. 是否复制参考项目代码？
-2. 是否引入同名类、同名函数、同结构文件？
-3. 是否绕过 RiskGate？
-4. 是否让模型可以直接下单？
-5. 是否写入或泄露 API key？
-6. 是否缺少测试？
-7. 是否缺少审计日志？
-8. 是否引入未来函数风险？
-9. 是否默认启用 live trading？
-10. 是否破坏模型无关原则？
+1. Was reference project code copied?
+2. Are same-named classes, same-named functions, or same-structure files introduced?
+3. Is RiskGate being bypassed?
+4. Are models allowed to place orders directly?
+5. Are API keys being written or leaked?
+6. Are tests missing?
+7. Is audit logging missing?
+8. Is look-ahead bias risk being introduced?
+9. Is live trading enabled by default?
+10. Is the model-agnostic principle being broken?
 ```
 
 ---
 
-## 13. PROJECT_RULES.md 应包含的内容
+## 13. What PROJECT_RULES.md Should Contain
 
-项目根目录应创建 `PROJECT_RULES.md`，作为所有开发工具和贡献者必须遵守的规则。
+`PROJECT_RULES.md` should be created at the project root as the rule all development tools and contributors must follow.
 
-建议内容：
+Suggested contents:
 
 ```text
 # AlphaBrief Project Rules
@@ -1469,13 +1469,13 @@ pytest 通过，类型检查通过，docs/model_gateway.md 更新。
 
 ---
 
-## 14. MVP 路线图
+## 14. MVP Roadmap
 
 ## Phase 1: AlphaBrief Core
 
-目标：完成最小可运行研究与回测内核。
+Goal: Complete the minimum runnable research and backtest core.
 
-实现：
+Implementation:
 
 ```text
 1. repo scaffold
@@ -1490,29 +1490,29 @@ pytest 通过，类型检查通过，docs/model_gateway.md 更新。
 10. basic metrics
 ```
 
-完成标准：
+Done when:
 
 ```text
-1. 可以导入 OHLCV 数据。
-2. 可以运行一个均线策略。
-3. 可以输出 backtest_report.json。
-4. 回测包含手续费和滑点。
-5. 测试和类型检查通过。
+1. OHLCV data can be imported.
+2. A moving-average strategy can be run.
+3. backtest_report.json can be output.
+4. Backtest includes fees and slippage.
+5. Tests and type checking pass.
 ```
 
 ---
 
 ## Phase 2: Model Gateway + Research Brief
 
-目标：完成模型无关 AI 研究层。
+Goal: Complete the model-agnostic AI research layer.
 
-实现：
+Implementation:
 
 ```text
 1. ModelGateway
 2. ProviderAdapter interface
 3. FakeProvider for tests
-4. 至少一个真实 provider adapter
+4. At least one real provider adapter
 5. ModelRegistry
 6. PromptTemplate versioning
 7. Structured output parser
@@ -1521,23 +1521,23 @@ pytest 通过，类型检查通过，docs/model_gateway.md 更新。
 10. DailyAlphaBrief
 ```
 
-完成标准：
+Done when:
 
 ```text
-1. research 模块不直接调用任何 provider SDK。
-2. 可通过配置切换模型。
-3. 模型输出失败时可被拒绝。
-4. 每次模型调用都有 ModelCallRecord。
-5. 可以生成每日 AlphaBrief 日报。
+1. The research module does not directly call any provider SDK.
+2. Models can be switched via configuration.
+3. Model output failure can be rejected.
+4. Every model call has a ModelCallRecord.
+5. The daily AlphaBrief report can be generated.
 ```
 
 ---
 
 ## Phase 3: Risk + Paper Trading
 
-目标：完成安全模拟交易闭环。
+Goal: Complete the safe paper-trading loop.
 
-实现：
+Implementation:
 
 ```text
 1. OrderIntent
@@ -1551,23 +1551,23 @@ pytest 通过，类型检查通过，docs/model_gateway.md 更新。
 9. KillSwitch
 ```
 
-完成标准：
+Done when:
 
 ```text
-1. OrderIntent 必须经过 RiskGate。
-2. RiskDecision 被完整记录。
-3. PaperBroker 可以模拟订单和成交。
-4. kill switch 可阻止所有订单。
-5. live trading 完全关闭。
+1. OrderIntent must go through RiskGate.
+2. RiskDecision is fully recorded.
+3. PaperBroker can simulate orders and fills.
+4. The kill switch can block all orders.
+5. Live trading is completely off.
 ```
 
 ---
 
 ## Phase 4: Trading Environment
 
-目标：完成仿真环境。
+Goal: Complete the simulation environment.
 
-实现：
+Implementation:
 
 ```text
 1. AlphaBriefTradingEnv
@@ -1580,23 +1580,23 @@ pytest 通过，类型检查通过，docs/model_gateway.md 更新。
 8. strategy comparison report
 ```
 
-完成标准：
+Done when:
 
 ```text
-1. 环境 reset / step 正常。
-2. episode metrics 正常。
-3. reward 没有未来函数。
-4. 成本和滑点生效。
-5. baseline 可比较。
+1. Environment reset / step works normally.
+2. Episode metrics work normally.
+3. The reward contains no look-ahead.
+4. Costs and slippage take effect.
+5. A baseline is available for comparison.
 ```
 
 ---
 
 ## Phase 5: Dashboard + Review
 
-目标：完成用户日常使用界面。
+Goal: Complete the daily user interface.
 
-实现：
+Implementation:
 
 ```text
 1. strategy list
@@ -1609,19 +1609,19 @@ pytest 通过，类型检查通过，docs/model_gateway.md 更新。
 8. review journal
 ```
 
-完成标准：
+Done when:
 
 ```text
-1. 用户可以查看研究报告。
-2. 用户可以查看回测报告。
-3. 用户可以查看 paper trading 状态。
-4. 用户可以查看每次风险决策。
-5. 用户可以生成日/周复盘。
+1. Users can view research reports.
+2. Users can view backtest reports.
+3. Users can view paper-trading status.
+4. Users can view every risk decision.
+5. Users can generate daily / weekly reviews.
 ```
 
 ---
 
-## 15. 第一批 GitHub Issues
+## 15. First Batch of GitHub Issues
 
 ```text
 Issue 1: Create repository scaffold and PROJECT_RULES.md
@@ -1648,9 +1648,9 @@ Issue 20: Implement CLI commands for data, backtest, brief, paper
 
 ---
 
-## 16. CLI 设计
+## 16. CLI Design
 
-MVP 应优先支持 CLI，因为 CLI 更适合快速验证系统内核。
+MVP should prioritize the CLI because it is better suited for rapidly validating the system core.
 
 ```text
 alphabrief data import --file data/btc.csv --symbol BTC-USD
@@ -1667,7 +1667,7 @@ alphabrief review daily
 
 ---
 
-## 17. API 设计
+## 17. API Design
 
 ### 17.1 Research API
 
@@ -1726,9 +1726,9 @@ GET /audit/risk-decisions
 
 ---
 
-## 18. 数据存储设计
+## 18. Data Storage Design
 
-### 18.1 MVP 存储
+### 18.1 MVP Storage
 
 ```text
 DuckDB
@@ -1737,7 +1737,7 @@ JSONL audit logs
 local filesystem
 ```
 
-### 18.2 推荐表
+### 18.2 Recommended Tables
 
 ```text
 bars
@@ -1757,7 +1757,7 @@ portfolio_snapshots
 audit_events
 ```
 
-### 18.3 Audit Log 格式
+### 18.3 Audit Log Format
 
 ```json
 {
@@ -1778,9 +1778,9 @@ audit_events
 
 ---
 
-## 19. 测试标准
+## 19. Testing Standards
 
-### 19.1 必须测试
+### 19.1 Must Test
 
 ```text
 1. domain model validation
@@ -1800,181 +1800,181 @@ audit_events
 15. kill switch
 ```
 
-### 19.2 高风险测试
+### 19.2 High-Risk Tests
 
 ```text
-1. 模型返回恶意 JSON，不得下单。
-2. 模型要求提高仓位，不得绕过限额。
-3. 用户自然语言要求“忽略风控”，不得执行。
-4. 数据缺失时不得回测。
-5. 信号过期时不得下单。
-6. kill switch 开启时不得下单。
-7. live trading 未启用时不得连接真实 broker。
-8. provider API key 不得进入日志。
+1. If the model returns malicious JSON, no order may be placed.
+2. If the model requests increased position size, limits may not be bypassed.
+3. If the user says in natural language "ignore risk controls," it may not execute.
+4. If data is missing, backtest may not run.
+5. If the signal is stale, no order may be placed.
+6. If the kill switch is on, no order may be placed.
+7. If live trading is not enabled, no real broker may be connected.
+8. Provider API keys may not enter logs.
 ```
 
-### 19.3 未来函数检查
+### 19.3 Look-Ahead Bias Checks
 
-必须测试：
-
-```text
-1. 特征只使用当前及过去数据。
-2. 信号生成不得使用未来 bar。
-3. 回测成交价格不能使用不可获得价格。
-4. train / test period 严格分离。
-5. rolling features 不得 center 对齐。
-```
-
----
-
-## 20. 风险与合规边界
-
-### 20.1 产品声明
-
-AlphaBrief 应明确声明：
+Must test:
 
 ```text
-1. 本系统用于研究、模拟交易和个人决策辅助。
-2. 系统不提供投资建议。
-3. 模型输出可能错误、过时或不完整。
-4. 回测结果不代表未来收益。
-5. 用户必须自行承担交易风险。
-6. 真实交易能力如果未来启用，必须单独授权和审计。
-```
-
-### 20.2 模型风险
-
-模型可能：
-
-```text
-1. 编造事实
-2. 忽略重要风险
-3. 对近期新闻理解错误
-4. 过度自信
-5. 生成不稳定 JSON
-6. 对同一问题前后不一致
-7. 受 prompt 注入影响
-```
-
-系统必须通过以下方式降低风险：
-
-```text
-1. 结构化输出校验
-2. 多模型交叉验证
-3. 引用和数据来源记录
-4. 风险反方角色
-5. 人工确认
-6. 风控硬规则
-7. 审计日志
-```
-
-### 20.3 Prompt 注入防护
-
-外部新闻、网页、报告、社交内容中可能包含恶意指令。
-
-系统规则：
-
-```text
-1. 外部内容一律视为 untrusted data。
-2. 外部内容不得改变系统规则。
-3. 外部内容不得请求 API key。
-4. 外部内容不得触发交易执行。
-5. 模型读取外部内容时必须使用安全模板。
-6. 任何外部内容生成的 OrderIntent 都必须经过 RiskGate。
+1. Features only use current and past data.
+2. Signal generation may not use future bars.
+3. Backtest fill prices may not use prices that would not have been obtainable.
+4. train / test periods are strictly separated.
+5. Rolling features may not be center-aligned.
 ```
 
 ---
 
-## 21. 模型评测体系
+## 20. Risk and Compliance Boundaries
 
-AlphaBrief 不只是接入模型，还要评估模型。
+### 20.1 Product Disclaimers
 
-### 21.1 评测维度
+AlphaBrief should explicitly state:
 
 ```text
-1. JSON 有效率
-2. schema 通过率
-3. 幻觉率
-4. 引用准确率
-5. 风险识别能力
-6. 推理一致性
-7. 延迟
-8. 成本
-9. 中文表达质量
-10. 对交易结果的后验贡献
+1. This system is for research, paper trading, and personal decision support.
+2. The system does not provide investment advice.
+3. Model output may be wrong, outdated, or incomplete.
+4. Backtest results do not represent future returns.
+5. Users must bear trading risk themselves.
+6. If real-trading capability is enabled in the future, it must be separately authorized and audited.
 ```
 
-### 21.2 模型表现库
+### 20.2 Model Risk
 
-每个模型的任务表现应该被记录：
+Models may:
+
+```text
+1. Fabricate facts
+2. Ignore important risks
+3. Misunderstand recent news
+4. Be overconfident
+5. Produce unstable JSON
+6. Be inconsistent on the same question
+7. Be influenced by prompt injection
+```
+
+The system must mitigate risk through:
+
+```text
+1. Structured output validation
+2. Multi-model cross-validation
+3. Citation and source-of-data recording
+4. A risk bear-case role
+5. Human confirmation
+6. Hard risk-control rules
+7. Audit logs
+```
+
+### 20.3 Prompt Injection Defense
+
+External news, web pages, reports, and social content may contain malicious instructions.
+
+System rules:
+
+```text
+1. External content is always treated as untrusted data.
+2. External content may not change system rules.
+3. External content may not request API keys.
+4. External content may not trigger trade execution.
+5. When models read external content, they must use a safe template.
+6. Any OrderIntent generated from external content must still pass the RiskGate.
+```
+
+---
+
+## 21. Model Evaluation System
+
+AlphaBrief doesn't just integrate models; it also evaluates them.
+
+### 21.1 Evaluation Dimensions
+
+```text
+1. JSON validity rate
+2. Schema pass rate
+3. Hallucination rate
+4. Citation accuracy
+5. Risk-identification ability
+6. Reasoning consistency
+7. Latency
+8. Cost
+9. Chinese expression quality
+10. Ex-post contribution to trading results
+```
+
+### 21.2 Model Performance Library
+
+Every model's task performance should be recorded:
 
 ```text
 model_id
 provider
 capability
-任务类型
-成功率
-失败率
-平均延迟
-平均成本
-schema 失败率
-人工评分
-后验表现
+task type
+success rate
+failure rate
+average latency
+average cost
+schema failure rate
+human rating
+ex-post performance
 ```
 
-### 21.3 模型选择策略
+### 21.3 Model Selection Strategy
 
-模型路由不应只看“哪个最强”，而应看：
+Model routing should not only ask "which is the strongest," but:
 
 ```text
-1. 这个任务需要什么能力？
-2. 这个任务是否高风险？
-3. 是否需要低延迟？
-4. 是否需要低成本？
-5. 是否需要长上下文？
-6. 是否需要中文表达？
-7. 是否需要结构化输出稳定？
+1. What capabilities does this task need?
+2. Is this task high-risk?
+3. Is low latency required?
+4. Is low cost required?
+5. Is long context required?
+6. Is Chinese expression required?
+7. Is stable structured output required?
 ```
 
 ---
 
-## 22. Dashboard 蓝图
+## 22. Dashboard Blueprint
 
-Dashboard 应包含：
+The dashboard should include:
 
 ```text
 1. Home
-   - 今日 AlphaBrief
-   - 关注标的
-   - 策略状态
-   - 风险提醒
+   - Today's AlphaBrief
+   - Watched symbols
+   - Strategy status
+   - Risk alerts
 
 2. Research
-   - 市场摘要
-   - 标的详情
-   - 多模型观点
-   - 多空辩论
-   - 引用和证据
+   - Market summary
+   - Symbol details
+   - Multi-model views
+   - Bull/bear debate
+   - Citations and evidence
 
 3. Strategies
-   - StrategySpec 列表
-   - 策略参数
-   - 信号历史
-   - 回测入口
+   - StrategySpec list
+   - Strategy parameters
+   - Signal history
+   - Backtest entry
 
 4. Backtests
-   - 净值曲线
-   - 指标
-   - 交易列表
-   - 样本内 / 样本外
-   - 成本分析
+   - Equity curve
+   - Metrics
+   - Trade list
+   - In-sample / out-of-sample
+   - Cost analysis
 
 5. Paper Trading
-   - 仓位
-   - 订单
-   - 成交
-   - 现金
-   - 净值
+   - Positions
+   - Orders
+   - Fills
+   - Cash
+   - Equity
 
 6. Risk
    - RiskDecision
@@ -1983,22 +1983,22 @@ Dashboard 应包含：
    - blocked orders
 
 7. Models
-   - provider 状态
-   - 模型调用历史
-   - 成本
-   - schema 失败率
-   - 模型表现对比
+   - provider status
+   - Model call history
+   - Cost
+   - Schema failure rate
+   - Model performance comparison
 
 8. Review
-   - 每日复盘
-   - 每周复盘
-   - 策略复盘
-   - 失败案例
+   - Daily review
+   - Weekly review
+   - Strategy review
+   - Failure cases
 ```
 
 ---
 
-## 23. AlphaBrief 日报格式
+## 23. AlphaBrief Daily Report Format
 
 ```markdown
 # AlphaBrief Daily Report
@@ -2044,62 +2044,62 @@ Universe: BTC-USD, ETH-USD, SPY, QQQ, NVDA
 
 ---
 
-## 24. AlphaBrief 的长期护城河
+## 24. AlphaBrief's Long-Term Moat
 
-AlphaBrief 的长期价值不在于接入了多少模型，而在于：
+AlphaBrief's long-term value lies not in how many models it integrates, but in:
 
 ```text
-1. 自有研究流程
-2. 自有策略规格体系
-3. 自有回测标准
-4. 自有风险体系
-5. 自有审计日志
-6. 自有模型评测数据
-7. 自有交易复盘知识库
-8. 自有 paper trading 后验表现
+1. Its own research workflow
+2. Its own strategy-spec system
+3. Its own backtest standards
+4. Its own risk system
+5. Its own audit logs
+6. Its own model evaluation data
+7. Its own trade review knowledge base
+8. Its own paper-trading ex-post performance
 ```
 
-模型是可替换的，数据和复盘体系才是资产。
+Models are replaceable; the data and review systems are the real assets.
 
 ---
 
-## 25. 最终验收标准
+## 25. Final Acceptance Criteria
 
-AlphaBrief MVP 完成时，必须做到：
+When the AlphaBrief MVP is done, it must achieve:
 
 ```text
-1. 可以导入市场数据。
-2. 可以运行至少一个策略回测。
-3. 回测包含成本、滑点、风险指标。
-4. 可以通过 ModelGateway 调用至少一个模型 provider。
-5. 模型输出必须结构化并可验证。
-6. 可以生成 Daily AlphaBrief。
-7. 可以生成 OrderIntent。
-8. OrderIntent 必须经过 RiskGate。
-9. 可以完成 paper trading 模拟订单和成交。
-10. 所有关键行为都有 audit log。
-11. live trading 默认关闭。
-12. 没有任何模块直接复制参考项目代码。
-13. 测试通过。
-14. 类型检查通过。
-15. README 和项目规则完整。
+1. Market data can be imported.
+2. At least one strategy backtest can be run.
+3. Backtests include costs, slippage, and risk metrics.
+4. At least one model provider can be called via ModelGateway.
+5. Model outputs must be structured and verifiable.
+6. Daily AlphaBrief can be generated.
+7. OrderIntent can be generated.
+8. OrderIntent must go through RiskGate.
+9. Paper-trading simulated orders and fills can complete.
+10. All key behaviors have audit logs.
+11. Live trading is off by default.
+12. No module has directly copied reference project code.
+13. Tests pass.
+14. Type checking passes.
+15. README and project rules are complete.
 ```
 
 ---
 
-## 26. 贯穿整个项目的最终原则
+## 26. Final Principles Spanning the Whole Project
 
 ```text
-研究优先，不是交易优先。
-模拟优先，不是真实资金优先。
-风控优先，不是收益曲线优先。
-结构化输出优先，不是自由文本优先。
-多模型可替换，不绑定单一厂商。
-审计优先，不是黑箱自动化优先。
-自有实现优先，不复制参考项目代码。
-长期复盘优先，不追求短期 demo。
+Research first, not trading first.
+Simulation first, not real money first.
+Risk control first, not equity curve first.
+Structured output first, not free text first.
+Multi-model replaceable, not locked to one vendor.
+Audit first, not black-box automation first.
+Own implementation first, no copying reference project code.
+Long-term review first, not short-term demo chasing.
 ```
 
-AlphaBrief 的最终目标是成为一个可长期迭代的个人 AI 量化研究系统：
+AlphaBrief's ultimate goal is to become a personal AI quantitative research system that can be iterated over the long term:
 
-> **它不替用户赌博，而是帮助用户把交易研究变成一套可验证、可审计、可复盘、可持续优化的工程系统。**
+> **It does not gamble for the user; it helps the user turn trading research into an engineering system that is verifiable, auditable, reviewable, and sustainably improvable.**
