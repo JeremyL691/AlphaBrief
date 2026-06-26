@@ -2606,3 +2606,84 @@ the existing 41 tests are the canonical R21.1 coverage.
    configuring the new fields explicitly.
 8. Live trading remains disabled by default. No provider SDK
    calls outside ModelGateway.
+
+## 0053 Kronos Forecast Integration
+
+### Goal
+
+Integrate the external Kronos financial-markets foundation-model
+project as an optional AlphaBrief market-forecasting provider, while
+preserving AlphaBrief's model-gateway, advisory-research, risk, and
+paper-first boundaries.
+
+### Implementation
+
+1. `packages/alphabrief-models/src/alphabrief_models/gateway.py`
+   gained:
+   - `ModelTaskType="market_forecast"`
+   - `ModelCapability="time_series_forecasting"`
+2. New `packages/alphabrief-models/src/alphabrief_models/kronos.py`
+   defines:
+   - `KronosForecastRequest`
+   - `KronosForecastPoint`
+   - `KronosForecastReport`
+   - `KronosForecastEvidence`
+   - `KronosRuntime`
+   - `UnavailableKronosRuntime`
+   - `DeterministicKronosRuntime`
+   - `PredictorKronosRuntime`
+   - `KronosForecastAdapter`
+   - helpers to build gateway requests and evidence summaries
+3. `alphabrief_models.__init__` exports the Kronos integration
+   objects.
+4. `evaluation_datasets.py` gained `market_forecast_v1`.
+5. API default registry gained `kronos_mini_forecast`, and
+   `/api/v1/models/kronos/forecast` runs advisory forecasts through
+   `ModelGateway`.
+6. CLI default registry gained `kronos_mini_forecast`, and
+   `alphabrief model kronos-forecast` loads local OHLCV CSV bars and
+   runs the same gateway path.
+7. `pyproject.toml` gained an optional `kronos` extra for heavyweight
+   runtime dependencies.
+
+### Safety Boundaries
+
+1. Forecasts are always `advisory_only=True`.
+2. The Kronos integration never creates `Signal`, `OrderIntent`,
+   `RiskDecision`, `Order`, fills, positions, broker calls, or live
+   trading behavior.
+3. `runtime_mode="configured"` fails closed when no runtime has been
+   injected.
+4. `DeterministicKronosRuntime` is explicitly for CI and smoke tests,
+   not model-backed research.
+5. `PredictorKronosRuntime` wraps an already-initialized external
+   predictor and imports optional dependencies lazily.
+6. No files under `_reference_sources/` were opened or imported, and
+   no Kronos source code was copied into AlphaBrief.
+
+### Tests
+
+1. Added `tests/test_kronos_integration.py` with schema, gateway,
+   unavailable-runtime, and evidence coverage.
+2. Extended `tests/test_model_gateway.py` for
+   `time_series_forecasting`.
+3. Extended `tests/test_models_api.py` for the Kronos forecast API
+   success and fail-closed paths.
+4. Extended `tests/test_model_cli.py` for Kronos routing and CLI
+   forecast success / fail-closed paths.
+
+### Validation
+
+1. `.venv/bin/pytest tests/test_kronos_integration.py
+   tests/test_model_gateway.py tests/test_models_api.py
+   tests/test_model_cli.py` passed: 51 tests.
+2. `.venv/bin/ruff check packages/alphabrief-models/src/alphabrief_models
+   apps/api/src/alphabrief_api/routes/models.py
+   apps/cli/src/alphabrief_cli/model_commands.py
+   tests/test_kronos_integration.py tests/test_model_gateway.py
+   tests/test_models_api.py tests/test_model_cli.py` passed.
+3. `.venv/bin/mypy packages/alphabrief-models/src
+   apps/api/src/alphabrief_api/routes/models.py
+   apps/cli/src/alphabrief_cli/model_commands.py
+   tests/test_kronos_integration.py tests/test_model_gateway.py
+   tests/test_models_api.py tests/test_model_cli.py` passed.

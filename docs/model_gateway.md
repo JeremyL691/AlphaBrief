@@ -62,6 +62,21 @@ Current objects:
     and rendering a specific template version.
 22. `RenderedPrompt`: rendered input text plus stable prompt version metadata
     for `ModelRequest`.
+23. `KronosForecastRequest`: validated OHLCV forecast input for the optional
+    Kronos runtime.
+24. `KronosForecastAdapter`: `ProviderAdapter` implementation for
+    `task_type="market_forecast"` and capability
+    `time_series_forecasting`.
+25. `KronosForecastReport`: structured advisory forecast output with
+    predicted OHLCV points and `advisory_only=True`.
+26. `KronosForecastEvidence`: compact evidence summary for research or
+    strategy metadata. It is advisory only and never grants execution
+    authority.
+27. `DeterministicKronosRuntime`: deterministic CI / smoke-test runtime that
+    proves the AlphaBrief integration path without heavyweight optional model
+    dependencies.
+28. `PredictorKronosRuntime`: wrapper for an already-initialized external
+    Kronos predictor object. It imports optional dependencies lazily.
 
 Current behavior:
 
@@ -92,6 +107,15 @@ Current behavior:
     extra, blank, duplicate, or invalid variables.
 15. `OllamaProviderAdapter` posts to `/api/generate`, requests non-streaming
     responses, and maps provider failures to `ModelProviderError`.
+16. `KronosForecastAdapter` accepts serialized `KronosForecastRequest` payloads
+    through `ModelRequest.input_text`, runs the configured `KronosRuntime`, and
+    returns a structured `KronosForecastReport`.
+17. `market_forecast` is a first-class model task type. Routing can select the
+    `kronos_mini_forecast` profile when callers require
+    `time_series_forecasting`.
+18. API and CLI forecast calls surface the gateway call status and keep the
+    forecast report advisory. They do not create `Signal`, `OrderIntent`,
+    `RiskDecision`, `Order`, or broker activity.
 
 ## Current Non-Goals
 
@@ -101,8 +125,8 @@ Current behavior:
    template storage is implemented.
 4. No environment variable loading or automatic provider adapter instantiation is
    implemented.
-5. No agent runtime, strategy generation, order generation, or
-   execution behavior is implemented.
+5. No agent runtime, strategy generation, order generation, or execution
+   behavior is implemented.
 6. The structured output parser does not perform retries, side effects, or
    provider calls. It is a pure validation utility.
 7. DailyAlphaBrief generation does not implement multi-model debate, retries,
@@ -111,3 +135,8 @@ Current behavior:
    variables.
 9. The Ollama adapter assumes a user-managed local Ollama server when used
    outside tests.
+10. AlphaBrief does not vendor the external Kronos repository. Real Kronos
+    inference requires an operator-supplied predictor/runtime and optional
+    dependencies from the `kronos` extra.
+11. The deterministic Kronos runtime is for tests and local smoke checks only;
+    it is not treated as a model-backed forecast.

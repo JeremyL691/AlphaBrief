@@ -1192,3 +1192,61 @@ Every new check:
   (FINAL_ACCEPTANCE_REPORT §10).
 - Live trading — out of scope for this phase and the rest of the
   paper MVP.
+
+## Phase 22 — Kronos Forecast Integration
+
+AlphaBrief now integrates the external Kronos financial-markets
+foundation-model project as an optional market-forecasting provider.
+The integration is owned by AlphaBrief and lives in
+`alphabrief_models.kronos`; no code is copied from the external
+repository and no files under `_reference_sources/` are imported.
+
+```
+KronosForecastRequest
+    │  OHLCV Bar list, symbol, prediction_length, model/tokenizer names
+    ▼
+ModelRequest(task_type="market_forecast",
+             required_capabilities=["structured_output",
+                                    "time_series_forecasting"])
+    ▼
+ModelGateway
+    ▼
+KronosForecastAdapter
+    ▼
+KronosRuntime
+    │   DeterministicKronosRuntime for CI / smoke tests
+    │   PredictorKronosRuntime for an operator-injected external predictor
+    ▼
+KronosForecastReport + KronosForecastEvidence
+```
+
+Key contracts:
+
+1. `market_forecast` is a first-class `ModelTaskType`, and
+   `time_series_forecasting` is a first-class `ModelCapability`.
+2. `KronosForecastReport` is structured, Pydantic-validated, and
+   always `advisory_only=True`.
+3. `KronosForecastEvidence` summarizes direction bias, confidence,
+   and expected return for research or strategy metadata only.
+4. The adapter never emits `Signal`, `OrderIntent`, `RiskDecision`,
+   `Order`, fill, position, or broker activity.
+5. `PredictorKronosRuntime` imports optional dependencies lazily so
+   AlphaBrief's core install remains lightweight. The `kronos` extra
+   declares heavyweight runtime dependencies for operators that want
+   real local inference.
+6. `POST /api/v1/models/kronos/forecast` and
+   `alphabrief model kronos-forecast` run through `ModelGateway` and
+   surface the gateway call status.
+7. `runtime_mode="configured"` fails closed with an unavailable-runtime
+   error when no external runtime has been injected. `deterministic`
+   mode exists for tests and local smoke checks and is explicitly
+   labeled in the report notes.
+
+Out of scope:
+
+- Vendoring or copying the external Kronos repository.
+- Installing model weights automatically.
+- Strategy generation, signal generation, order-intent generation, or
+  paper/live execution from a Kronos forecast.
+- Backtest acceptance of Kronos-derived signals without the existing
+  AlphaBrief costs, slippage, data-version, and out-of-sample rules.

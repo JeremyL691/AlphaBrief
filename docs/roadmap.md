@@ -661,6 +661,56 @@ Status: complete. Rounds 15.1–15.7 complete.
 - [x] Live trading remains disabled by default. No provider SDK
       calls outside ModelGateway.
 
+## Phase 22: Kronos Forecast Integration
+
+Goal: integrate the external Kronos financial-markets foundation-model
+project as an optional AlphaBrief forecasting provider that strengthens
+research and strategy evidence without touching execution authority.
+
+Status: implemented and locally verified.
+
+Completed:
+
+1. Added `market_forecast` as a `ModelTaskType` and
+   `time_series_forecasting` as a `ModelCapability`.
+2. Added `alphabrief_models.kronos` with:
+   - `KronosForecastRequest`
+   - `KronosForecastPoint`
+   - `KronosForecastReport`
+   - `KronosForecastEvidence`
+   - `KronosForecastAdapter`
+   - `KronosRuntime` protocol
+   - `UnavailableKronosRuntime`
+   - `DeterministicKronosRuntime`
+   - `PredictorKronosRuntime`
+3. Added a `market_forecast_v1` bundled evaluation dataset and a
+   `kronos_mini_forecast` profile to API/CLI default registries.
+4. Added `POST /api/v1/models/kronos/forecast`.
+5. Added `alphabrief model kronos-forecast`.
+6. Added optional `kronos` dependencies in `pyproject.toml` for
+   operator-managed local inference.
+7. Added 12 tests across model gateway, Kronos integration, API, and
+   CLI surfaces.
+
+Hard constraints:
+
+1. Kronos forecasts are advisory only.
+2. No forecast can create signals, order intents, orders, fills,
+   broker calls, or risk decisions.
+3. Real external Kronos inference is optional and runtime-injected.
+4. The deterministic runtime is only for CI and smoke tests.
+5. No code was copied from the external Kronos repository.
+6. Live trading remains disabled by default.
+
+Validation:
+
+- `.venv/bin/pytest tests/test_kronos_integration.py
+  tests/test_model_gateway.py tests/test_models_api.py
+  tests/test_model_cli.py` passed: 51 tests.
+- `.venv/bin/ruff check ...` passed on all changed source/test files.
+- `.venv/bin/mypy ...` passed on the changed model/API/CLI/test
+  surfaces.
+
 ## Phase 16: Controlled Operating Boundary and Strategy Admission
 
 Status: implemented and locally verified; no external broker connection is

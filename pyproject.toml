@@ -26,6 +26,12 @@ dev = [
     "ruff>=0.5",
     "types-PyYAML>=6.0",
 ]
+kronos = [
+    "huggingface_hub>=0.24",
+    "pandas>=2.2",
+    "safetensors>=0.4",
+    "torch>=2.2",
+]
 
 [project.scripts]
 alphabrief = "alphabrief_cli.main:app"
