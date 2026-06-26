@@ -30,10 +30,14 @@ def test_evaluate_runs_and_prints_json() -> None:
         model_app,
         [
             "evaluate",
-            "--model-id", "fake:fake-model",
-            "--task", "daily_brief",
-            "--dataset", "daily_brief_v1",
-            "--sample-count", "2",
+            "--model-id",
+            "fake:fake-model",
+            "--task",
+            "daily_brief",
+            "--dataset",
+            "daily_brief_v1",
+            "--sample-count",
+            "2",
             "--compact",
         ],
     )
@@ -50,8 +54,10 @@ def test_evaluate_rejects_malformed_model_id() -> None:
         model_app,
         [
             "evaluate",
-            "--model-id", "no-colon",
-            "--task", "daily_brief",
+            "--model-id",
+            "no-colon",
+            "--task",
+            "daily_brief",
         ],
     )
     assert result.exit_code != 0
@@ -64,9 +70,12 @@ def test_evaluate_rejects_unknown_dataset() -> None:
         model_app,
         [
             "evaluate",
-            "--model-id", "fake:fake-model",
-            "--task", "daily_brief",
-            "--dataset", "nonexistent",
+            "--model-id",
+            "fake:fake-model",
+            "--task",
+            "daily_brief",
+            "--dataset",
+            "nonexistent",
         ],
     )
     assert result.exit_code != 0
@@ -79,9 +88,12 @@ def test_evaluate_rejects_task_type_mismatch() -> None:
         model_app,
         [
             "evaluate",
-            "--model-id", "fake:fake-model",
-            "--task", "risk_review",
-            "--dataset", "daily_brief_v1",
+            "--model-id",
+            "fake:fake-model",
+            "--task",
+            "risk_review",
+            "--dataset",
+            "daily_brief_v1",
         ],
     )
     assert result.exit_code != 0
@@ -94,10 +106,14 @@ def test_evaluate_persists_to_db(tmp_path: Path) -> None:
         model_app,
         [
             "evaluate",
-            "--model-id", "fake:fake-model",
-            "--task", "daily_brief",
-            "--dataset", "daily_brief_v1",
-            "--sample-count", "1",
+            "--model-id",
+            "fake:fake-model",
+            "--task",
+            "daily_brief",
+            "--dataset",
+            "daily_brief_v1",
+            "--sample-count",
+            "1",
             "--compact",
         ],
     )
@@ -118,9 +134,7 @@ def test_evaluate_persists_to_db(tmp_path: Path) -> None:
 
 def test_performance_empty_exits_nonzero() -> None:
     runner = CliRunner()
-    result = runner.invoke(
-        model_app, ["performance", "--model-id", "fake:fake-model"]
-    )
+    result = runner.invoke(model_app, ["performance", "--model-id", "fake:fake-model"])
     assert result.exit_code != 0
     assert "no evaluations" in result.stderr
 
@@ -152,8 +166,10 @@ def test_performance_returns_records(tmp_path: Path) -> None:
         model_app,
         [
             "performance",
-            "--model-id", "fake:fake-model",
-            "--task", "daily_brief",
+            "--model-id",
+            "fake:fake-model",
+            "--task",
+            "daily_brief",
             "--compact",
         ],
     )
@@ -174,8 +190,10 @@ def test_route_capability_only() -> None:
         model_app,
         [
             "route",
-            "--task", "test",
-            "--capabilities", "text_generation",
+            "--task",
+            "test",
+            "--capabilities",
+            "text_generation",
             "--compact",
         ],
     )
@@ -205,14 +223,34 @@ def test_route_uses_performance_data(tmp_path: Path) -> None:
         model_app,
         [
             "route",
-            "--task", "daily_brief",
-            "--capabilities", "text_generation,structured_output",
+            "--task",
+            "daily_brief",
+            "--capabilities",
+            "text_generation,structured_output",
             "--compact",
         ],
     )
     assert result.exit_code == 0, result.stdout
     body = json.loads(result.stdout.strip())
     assert body["used_performance_data"] is True
+
+
+def test_route_can_select_kronos_forecast_profile() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        model_app,
+        [
+            "route",
+            "--task",
+            "market_forecast",
+            "--capabilities",
+            "structured_output,time_series_forecasting",
+            "--compact",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout.strip())
+    assert body["profile_id"] == "kronos_mini_forecast"
 
 
 def test_route_rejects_empty_capabilities() -> None:
@@ -222,6 +260,77 @@ def test_route_rejects_empty_capabilities() -> None:
         ["route", "--task", "test", "--capabilities", ""],
     )
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# model kronos-forecast
+# ---------------------------------------------------------------------------
+
+
+def test_kronos_forecast_cli_runs_deterministic_runtime(tmp_path: Path) -> None:
+    csv_path = tmp_path / "spy.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "timestamp,open,high,low,close,volume",
+                "2026-06-01T13:30:00+00:00,100,101,99,100,1000",
+                "2026-06-02T13:30:00+00:00,101,102,100,101,1000",
+                "2026-06-03T13:30:00+00:00,102,103,101,102,1000",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        model_app,
+        [
+            "kronos-forecast",
+            "--input-csv",
+            str(csv_path),
+            "--symbol",
+            "SPY",
+            "--prediction-length",
+            "2",
+            "--runtime",
+            "deterministic",
+            "--compact",
+        ],
+    )
+    assert result.exit_code == 0, result.stderr
+    body = json.loads(result.stdout.strip())
+    assert body["report"]["symbol"] == "SPY"
+    assert body["report"]["advisory_only"] is True
+    assert body["evidence"]["advisory_only"] is True
+    assert body["model_call"]["provider"] == "kronos"
+
+
+def test_kronos_forecast_cli_fails_when_runtime_unconfigured(tmp_path: Path) -> None:
+    csv_path = tmp_path / "spy.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "timestamp,open,high,low,close,volume",
+                "2026-06-01T13:30:00+00:00,100,101,99,100,1000",
+                "2026-06-02T13:30:00+00:00,101,102,100,101,1000",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        model_app,
+        [
+            "kronos-forecast",
+            "--input-csv",
+            str(csv_path),
+            "--symbol",
+            "SPY",
+            "--runtime",
+            "configured",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Kronos forecast failed" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -249,8 +358,10 @@ def test_compare_prints_rows(tmp_path: Path) -> None:
         model_app,
         [
             "compare",
-            "--model-ids", "fake:fake-model,anthropic:claude-3",
-            "--task", "daily_brief",
+            "--model-ids",
+            "fake:fake-model,anthropic:claude-3",
+            "--task",
+            "daily_brief",
             "--compact",
         ],
     )
@@ -268,8 +379,10 @@ def test_compare_rejects_single_model() -> None:
         model_app,
         [
             "compare",
-            "--model-ids", "fake:fake-model",
-            "--task", "daily_brief",
+            "--model-ids",
+            "fake:fake-model",
+            "--task",
+            "daily_brief",
         ],
     )
     assert result.exit_code != 0
@@ -281,8 +394,10 @@ def test_compare_rejects_malformed_model_id() -> None:
         model_app,
         [
             "compare",
-            "--model-ids", "fake:fake-model,nocolon",
-            "--task", "daily_brief",
+            "--model-ids",
+            "fake:fake-model,nocolon",
+            "--task",
+            "daily_brief",
         ],
     )
     assert result.exit_code != 0

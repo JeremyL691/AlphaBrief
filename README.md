@@ -11,7 +11,7 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-Phases 1–19 are implemented and locally verified. The project remains
+Phases 1–22 are implemented and locally verified. The project remains
 paper-only: external broker credentials and a long-running external-paper
 observation period are separate acceptance gates, and live trading stays
 locked.
@@ -89,6 +89,18 @@ locked.
   reconciliation store, scheduler operations surface, and account-level
   exposure guard are implemented. The exposure guard is fail-closed and
   tighten-only: it cannot relax an existing RiskGate decision.
+- **Phase 20 — API-side broker observability.** The API process can
+  expose read-only paper-broker positions and account snapshots through
+  the broker adapter singleton. The surface never submits orders.
+- **Phase 21 — Account-level risk hardening.** Runtime risk checks now
+  cover per-symbol exposure, concentration, leverage, price deviation,
+  market-open state, signal age, duplicate orders, daily loss, and
+  drawdown floor. These checks are fail-closed and tighten-only.
+- **Phase 22 — Kronos forecast integration.** Kronos is available as
+  an optional market-forecasting provider through `ModelGateway` via
+  `market_forecast` and `time_series_forecasting`. Forecasts are
+  structured and advisory only; they never create signals, order
+  intents, risk decisions, orders, or broker activity.
 
 ## Safety Boundary
 

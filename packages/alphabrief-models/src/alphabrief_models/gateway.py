@@ -29,6 +29,7 @@ ModelCapability = Literal[
     "vision",
     "embeddings",
     "reranking",
+    "time_series_forecasting",
 ]
 ModelTaskType = Literal[
     "market_summary",
@@ -36,6 +37,7 @@ ModelTaskType = Literal[
     "risk_review",
     "strategy_review",
     "daily_brief",
+    "market_forecast",
     "test",
 ]
 ModelResponseStatus = Literal["succeeded", "failed"]
@@ -78,9 +80,7 @@ class ModelRequest(AlphaBriefModelSchema):
 
     @field_validator("metadata")
     @classmethod
-    def metadata_must_not_use_secret_keys(
-        cls, value: dict[str, str]
-    ) -> dict[str, str]:
+    def metadata_must_not_use_secret_keys(cls, value: dict[str, str]) -> dict[str, str]:
         secret_markers = ("api_key", "secret", "token", "password")
         for key in value:
             normalized = key.lower()
@@ -164,9 +164,7 @@ class FakeProviderAdapter:
         self.model_name = model_name
         default_capabilities: Sequence[ModelCapability] = ("text_generation",)
         selected_capabilities = capabilities or default_capabilities
-        self.capabilities: frozenset[ModelCapability] = frozenset(
-            selected_capabilities
-        )
+        self.capabilities: frozenset[ModelCapability] = frozenset(selected_capabilities)
         self.output_text = output_text
         self.structured_output = structured_output
         self.fail = fail

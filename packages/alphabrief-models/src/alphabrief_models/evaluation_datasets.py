@@ -53,6 +53,19 @@ def _debate_response_schema() -> dict[str, object]:
     }
 
 
+def _market_forecast_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "required": ["forecast_id", "symbol", "points", "advisory_only"],
+        "properties": {
+            "forecast_id": {"type": "string"},
+            "symbol": {"type": "string"},
+            "advisory_only": {"type": "boolean"},
+            "points": {"type": "array", "items": {"type": "object"}},
+        },
+    }
+
+
 MARKET_SUMMARY_V1_SPEC: Final[EvalDatasetSpec] = EvalDatasetSpec(
     dataset_id="market_summary_v1",
     task_type="market_summary",
@@ -140,8 +153,29 @@ KNOWLEDGE_V1_SPEC: Final[EvalDatasetSpec] = EvalDatasetSpec(
 )
 
 
+MARKET_FORECAST_V1_SPEC: Final[EvalDatasetSpec] = EvalDatasetSpec(
+    dataset_id="market_forecast_v1",
+    task_type="market_forecast",
+    required_capabilities=("structured_output", "time_series_forecasting"),
+    description="Schema-pass dataset for advisory OHLCV market forecasts.",
+    samples=[
+        EvalSample(
+            prompt=(
+                "Forecast the next 3 OHLCV bars for SPY as advisory evidence only."
+            ),
+            target_schema=_market_forecast_schema(),
+        ),
+        EvalSample(
+            prompt="Return a structured forecast report with advisory_only=true.",
+            target_schema=_market_forecast_schema(),
+        ),
+    ],
+)
+
+
 BUNDLED_DATASETS: Final[tuple[EvalDataset, ...]] = (
     MARKET_SUMMARY_V1_SPEC._as_dataset(),
+    MARKET_FORECAST_V1_SPEC._as_dataset(),
     DAILY_BRIEF_V1_SPEC._as_dataset(),
     DEBATE_RESPONSE_V1_SPEC._as_dataset(),
     KNOWLEDGE_V1_SPEC._as_dataset(),
@@ -150,6 +184,7 @@ BUNDLED_DATASETS: Final[tuple[EvalDataset, ...]] = (
 
 BUNDLED_DATASET_SPECS: Final[tuple[EvalDatasetSpec, ...]] = (
     MARKET_SUMMARY_V1_SPEC,
+    MARKET_FORECAST_V1_SPEC,
     DAILY_BRIEF_V1_SPEC,
     DEBATE_RESPONSE_V1_SPEC,
     KNOWLEDGE_V1_SPEC,
@@ -170,6 +205,7 @@ __all__ = [
     "DAILY_BRIEF_V1_SPEC",
     "DEBATE_RESPONSE_V1_SPEC",
     "KNOWLEDGE_V1_SPEC",
+    "MARKET_FORECAST_V1_SPEC",
     "MARKET_SUMMARY_V1_SPEC",
     "get_dataset_by_id",
 ]
