@@ -612,7 +612,7 @@ def _nav(active: str) -> str:
 # Common scripts
 # ---------------------------------------------------------------------------
 
-_COMMON_SCRIPTS = """
+_COMMON_SCRIPTS = r"""
 async function fetchJSON(url) {
   try {
     const res = await fetch(url);
