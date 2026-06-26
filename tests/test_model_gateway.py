@@ -84,6 +84,30 @@ def test_gateway_selects_provider_by_required_capability() -> None:
     assert result.record.provider == "reasoning"
 
 
+def test_gateway_accepts_time_series_forecasting_capability() -> None:
+    provider = FakeProviderAdapter(
+        provider_name="forecast",
+        model_name="forecast-model",
+        capabilities=["structured_output", "time_series_forecasting"],
+        structured_output={"ok": True},
+    )
+    gateway = ModelGateway(
+        [provider], clock=lambda: NOW, call_id_factory=lambda: "call_1"
+    )
+    request = ModelRequest(
+        request_id="request_1",
+        task_type="market_forecast",
+        prompt_version="forecast_v1",
+        input_text="{}",
+        required_capabilities=["time_series_forecasting"],
+    )
+
+    result = gateway.invoke(request)
+
+    assert result.response is not None
+    assert result.record.provider == "forecast"
+
+
 def test_gateway_rejects_when_no_provider_matches_capabilities() -> None:
     provider = FakeProviderAdapter(capabilities=["text_generation"])
     gateway = ModelGateway(
