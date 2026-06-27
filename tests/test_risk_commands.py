@@ -64,7 +64,13 @@ def test_risk_status_prints_placeholder() -> None:
     result = runner.invoke(risk_app, ["status"])
 
     assert result.exit_code == 0
-    assert "not yet implemented" in result.output
+    # ponytail: ``risk status`` now reports real RiskGate / KillSwitch
+    # state, not a placeholder string. The output is JSON with the
+    # expected shape.
+    payload = json.loads(result.output)
+    assert payload["trading_enabled"] is True
+    assert payload["live_trading_enabled"] is False
+    assert payload["kill_switch_active"] is False
 
 
 # ---------------------------------------------------------------------------

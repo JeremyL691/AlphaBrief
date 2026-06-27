@@ -38,7 +38,87 @@ model_app = typer.Typer(help="Manage model profiles, providers, and call records
 @model_app.command("list")
 def list_cmd() -> None:
     """List configured model profiles and providers."""
-    print("model list: not yet implemented")
+    # ponytail: wire to the same default registry the API uses, but in
+    # CLI-side form. Mirrors apps/api/src/alphabrief_api/routes/models.py.
+    registry = ModelRegistry(
+        providers=[
+            ProviderConfig(provider_name="fake", enabled=True),
+            ProviderConfig(provider_name="openai", enabled=True),
+            ProviderConfig(provider_name="anthropic", enabled=True),
+            ProviderConfig(provider_name="kronos", enabled=True),
+        ],
+        profiles=[
+            ModelProfile(
+                profile_id="fake_default",
+                provider_name="fake",
+                model_name="fake-model",
+                capabilities=[
+                    "text_generation",
+                    "structured_output",
+                    "json_mode",
+                ],
+                priority=100,
+            ),
+            ModelProfile(
+                profile_id="openai_default",
+                provider_name="openai",
+                model_name="gpt-4o-mini",
+                capabilities=[
+                    "text_generation",
+                    "structured_output",
+                    "json_mode",
+                    "low_cost",
+                    "low_latency",
+                ],
+                priority=10,
+            ),
+            ModelProfile(
+                profile_id="anthropic_strong",
+                provider_name="anthropic",
+                model_name="claude-3",
+                capabilities=[
+                    "text_generation",
+                    "structured_output",
+                    "json_mode",
+                    "strong_reasoning",
+                ],
+                priority=5,
+            ),
+            ModelProfile(
+                profile_id="kronos_mini_forecast",
+                provider_name="kronos",
+                model_name="NeoQuasar/Kronos-mini",
+                capabilities=[
+                    "structured_output",
+                    "time_series_forecasting",
+                ],
+                priority=20,
+            ),
+        ],
+    )
+    payload = {
+        "providers": [
+            {
+                "provider_name": p.provider_name,
+                "enabled": p.enabled,
+                "api_key_env_var": p.api_key_env_var,
+                "base_url_env_var": p.base_url_env_var,
+            }
+            for p in registry.providers
+        ],
+        "profiles": [
+            {
+                "profile_id": p.profile_id,
+                "provider_name": p.provider_name,
+                "model_name": p.model_name,
+                "capabilities": list(p.capabilities),
+                "priority": p.priority,
+            }
+            for p in registry.profiles
+        ],
+    }
+    json.dump(payload, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
 
 
 @model_app.command("test")
