@@ -2736,3 +2736,73 @@ acceptance evidence for the current Phase 23 checkout.
    localhost mock-broker tests were blocked by sandbox
    `PermissionError` while binding `127.0.0.1`. The blocked tests are
    in `tests/test_alpaca_adapter.py` and `tests/test_broker_api_live.py`.
+
+## 0055 Paper-Broker Pre-Flight Closeout
+
+### Goal
+
+Close the documentation and verifier gaps that block the operator
+from attaching AlphaBrief to an external paper broker and running
+the 30-day observation. No new trading behavior; no SDKs; no live
+trading. The audit identified four critical gaps and three important
+ones; this round closes all of them.
+
+### Implementation
+
+1. Added `docs/paper_broker_setup.md`: single-source-of-truth operator
+   runbook. Covers Alpaca signup, `.env` setup, five-command
+   pre-flight, scheduler invocation, daily/weekly observation
+   checkpoints, freeze handling, end-of-run reporting, and the hard
+   safety reminders.
+2. Updated `.env.example` with a clearly labeled Alpaca section
+   (commented-out placeholders so a `cp .env.example .env` does not
+   write blank keys).
+3. Added `_paper_preflight_ready` to the acceptance verifier. The
+   check verifies the runbook exists, `.env.example` documents both
+   Alpaca env-var names, the paper execution policy is still locked,
+   the alpaca paper config loads, and the env-var names match
+   between code and `.env.example` (drift guard).
+4. Added `build_preflight_report(scope=...)` to
+   `alphabrief_acceptance`. `build_acceptance_report(...)` now
+   delegates to the scope-aware version with `scope="full"`.
+5. Added `alphabrief acceptance preflight --paper` CLI subcommand and
+   `GET /api/v1/acceptance/preflight?scope=paper` API route.
+6. Updated `README.md` with a "Paper Broker Setup" section, an
+   expanded Phase 23 bullet, and the runbook in the Documentation
+   listing.
+7. Added tests in `tests/test_acceptance_verifier.py` (preflight pass,
+   runbook-missing, env-var-name-missing, paper-policy-missing,
+   unknown-scope) and `tests/test_acceptance_api_cli.py` (preflight
+   API + CLI).
+8. Captured the pre-flight run to
+   `reports/pre_flight_check_2026-06-26.md`.
+
+### Safety Boundaries
+
+1. The new check is read-only and side-effect free.
+2. The new CLI/API surface never invokes a broker, model provider,
+   external data source, or live endpoint.
+3. The drift guard fails closed: if a developer renames an env var in
+   code without updating `.env.example`, the pre-flight reports the
+   drift and refuses to call the run "ready".
+4. Live trading remains disabled by default and locked by `RiskGate`.
+   The scheduler still refuses to start with
+   `ALPHABRIEF_LIVE_TRADING_ENABLED=true` and exits 3.
+5. The new check does not validate operator-supplied credentials. It
+   only verifies the project-side wiring. Validating credentials
+   happens at broker runtime via `read_alpaca_credentials()`.
+
+### Validation
+
+1. `.venv/bin/pytest tests/test_acceptance_verifier.py
+   tests/test_acceptance_api_cli.py -q` passed: 11 tests.
+2. `.venv/bin/pytest --ignore=tests/test_alpaca_adapter.py
+   --ignore=tests/test_broker_api_live.py -q` passed: 1206 tests.
+3. `.venv/bin/alphabrief acceptance verify --compact` passed:
+   11/11 acceptance checks (10 existing + 1 new `paper.preflight`).
+4. `.venv/bin/alphabrief acceptance preflight --paper` passed:
+   1/1 check.
+5. `.venv/bin/ruff check .` passed.
+6. `.venv/bin/mypy packages apps tests` passed:
+   223 source files, strict mode.
+7. `reports/pre_flight_check_2026-06-26.md` records the run.

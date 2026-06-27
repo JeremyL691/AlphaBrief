@@ -1380,3 +1380,63 @@ acceptance contract.
 - [x] Project acceptance verifier passes:
       `.venv/bin/alphabrief acceptance verify --compact`.
 - [x] `git diff --check` passes.
+
+## Phase 24 — Paper-Broker Pre-Flight Closeout
+
+Status: implemented locally. The 30-day observation runbook and a
+scoped pre-flight check are wired; the project is ready to attach to
+an external Alpaca paper account.
+
+### R24.1 — Operator runbook
+
+1. Added `docs/paper_broker_setup.md` covering Alpaca signup, `.env`
+   setup, the five-command pre-flight, scheduler invocation, daily
+   and weekly observation checkpoints, freeze handling, end-of-run
+   reporting, and the hard safety reminders.
+2. The runbook is the single source of truth for the operator. It
+   assumes code is already installed locally.
+
+### R24.2 — Environment wiring
+
+1. `.env.example` gained a clearly labeled Alpaca section with
+   commented-out placeholders (`ALPHABRIEF_ALPACA_KEY`,
+   `ALPHABRIEF_ALPACA_SECRET`) and the signup URL.
+2. The acceptance verifier checks that the runbook exists and that
+   the env-var names in code match the names in `.env.example`
+   (drift guard).
+
+### R24.3 — Acceptance verifier and pre-flight CLI
+
+1. Added `paper.preflight` to the verifier. Checks runbook presence,
+   env-var-name documentation, paper policy lock, alpaca paper config
+   loadability, and code-vs-config drift.
+2. Added `build_preflight_report(scope=...)`. `build_acceptance_report`
+   delegates to it with `scope="full"` and reports 11/11 (was 10/10).
+3. Added `alphabrief acceptance preflight --paper` and
+   `GET /api/v1/acceptance/preflight?scope=paper`. Both run only the
+   paper-readiness check and exit non-zero on failure.
+
+### R24.4 — README and documentation
+
+1. README: Phase 23 bullet expanded with the pre-flight command; new
+   "Paper Broker Setup" section after Quality Gates; the runbook is
+   listed under Documentation.
+2. `docs/development_log.md` and this entry record the round.
+
+### Out of scope
+
+- External paper account credentials and 30-day observation itself
+  (requires operator-supplied credentials and elapsed time).
+- Live trading, live adapter, or any live endpoint.
+- LICENSE / SECURITY / CONTRIBUTING (separate decision).
+- Backtest credibility hardening (Phase 25+).
+- Production deployment, auth, secret rotation, backup, monitoring.
+
+### Final quality gate
+
+- [x] `pytest` (excluding sandbox-blocked files): 1206 passed.
+- [x] `ruff check .`: clean.
+- [x] `mypy packages apps tests`: 223 source files clean.
+- [x] `alphabrief acceptance verify --compact`: 11/11.
+- [x] `alphabrief acceptance preflight --paper`: 1/1.
+- [x] `git diff --check`: clean.
