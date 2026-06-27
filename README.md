@@ -108,7 +108,12 @@ locked.
   and it checks required docs, importable runtime packages, paper-only
   defaults, RiskGate's live lock, advisory-only Kronos forecasts,
   reference-source isolation, provider SDK boundaries, and quality
-  tooling configuration.
+  tooling configuration. The same package ships a scoped paper-broker
+  pre-flight check via `alphabrief acceptance preflight --paper`
+  and `GET /api/v1/acceptance/preflight?scope=paper`; it confirms the
+  30-day observation runbook (`docs/paper_broker_setup.md`) is in place
+  and that the Alpaca env-var names, paper execution policy, and
+  broker config files are wired up.
 
 ## Safety Boundary
 
@@ -184,6 +189,35 @@ acceptance verifier is green. The
 development log records the latest verified run and its environment
 constraints.
 
+## Paper Broker Setup
+
+The external paper-trading adapter (Alpaca) and the 30-day observation
+runbook are wired and ready to use. To attach AlphaBrief to a paper
+account:
+
+1. Read the runbook: [`docs/paper_broker_setup.md`](docs/paper_broker_setup.md).
+2. Sign up at <https://app.alpaca.markets/signup> (Paper mode).
+3. Copy `.env.example` to `.env` and fill in `ALPHABRIEF_ALPACA_KEY`
+   and `ALPHABRIEF_ALPACA_SECRET` (placeholders in `.env.example`).
+4. Run the pre-flight:
+
+   ```bash
+   .venv/bin/alphabrief acceptance preflight --paper
+   .venv/bin/alphabrief broker status
+   .venv/bin/alphabrief scheduler status
+   ```
+
+5. Start the 30-day run:
+
+   ```bash
+   .venv/bin/alphabrief scheduler run --reconcile-interval 60
+   ```
+
+The runbook covers daily and weekly observation checkpoints, freeze
+handling, and end-of-run reporting. Live trading remains disabled by
+default and locked by `RiskGate`; the scheduler refuses to start with
+`ALPHABRIEF_LIVE_TRADING_ENABLED=true`.
+
 ## Reference Source Policy
 
 Reference projects under `_reference_sources/` are local-only research
@@ -228,6 +262,7 @@ ALPHABRIEF_AUDIT_LOG_DIR=reports/audit
 - `docs/roadmap.md`
 - `docs/model_gateway.md`
 - `docs/risk_model.md`
+- `docs/paper_broker_setup.md`
 - `docs/development_log.md`
 
 ## Availability
