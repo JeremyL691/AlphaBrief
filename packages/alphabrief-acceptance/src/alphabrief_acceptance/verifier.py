@@ -8,6 +8,7 @@ models, provider SDKs, external services, or live endpoints.
 from __future__ import annotations
 
 import ast
+import inspect
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -21,6 +22,9 @@ from alphabrief_core import (
     load_paper_execution_policy,
     load_settings,
 )
+from alphabrief_execution import ENV_KEY as ALPACA_ENV_KEY
+from alphabrief_execution import ENV_SECRET as ALPACA_ENV_SECRET
+from alphabrief_execution import load_alpaca_paper_config
 from alphabrief_models import (
     DeterministicKronosRuntime,
     KronosForecastAdapter,
@@ -107,18 +111,58 @@ def build_acceptance_report(project_root: Path | str | None = None) -> Acceptanc
 
     root = Path.cwd() if project_root is None else Path(project_root)
     root = root.resolve()
-    checks = [
-        _required_docs_present(root),
-        _runtime_modules_importable(),
-        _default_settings_are_paper_only(),
-        _paper_execution_policy_is_locked(root),
-        _risk_gate_rejects_live_trading(),
-        _kronos_forecast_is_advisory(),
-        _runtime_code_does_not_import_reference_sources(root),
-        _runtime_code_does_not_import_provider_sdks(root),
-        _final_report_mentions_latest_phase(root),
-        _tooling_configured(root),
-    ]
+    return _build_report(root, scope="full")
+
+
+def build_preflight_report(
+    project_root: Path | str | None = None,
+    *,
+    scope: str = "full",
+) -> AcceptanceReport:
+    """Run a scoped subset of acceptance checks.
+
+    Supported scopes:
+
+    - ``"full"`` (default): identical to :func:`build_acceptance_report`.
+    - ``"paper"``: only the paper-broker pre-flight check
+      (``paper.preflight``).
+    """
+
+    root = Path.cwd() if project_root is None else Path(project_root)
+    root = root.resolve()
+    return _build_report(root, scope=scope)
+
+
+def _build_report(root: Path, *, scope: str) -> AcceptanceReport:
+    if scope == "paper":
+        check_factories: tuple[Callable[..., AcceptanceCheck], ...] = (
+            _paper_preflight_ready,
+        )
+    elif scope == "full":
+        check_factories = (
+            _required_docs_present,
+            _runtime_modules_importable,
+            _default_settings_are_paper_only,
+            _paper_execution_policy_is_locked,
+            _risk_gate_rejects_live_trading,
+            _kronos_forecast_is_advisory,
+            _runtime_code_does_not_import_reference_sources,
+            _runtime_code_does_not_import_provider_sdks,
+            _final_report_mentions_latest_phase,
+            _tooling_configured,
+            _paper_preflight_ready,
+        )
+    else:
+        raise ValueError(
+            f"unknown acceptance scope: {scope!r} (expected 'full' or 'paper')"
+        )
+
+    checks: list[AcceptanceCheck] = []
+    for factory in check_factories:
+        if inspect.signature(factory).parameters:
+            checks.append(factory(root))
+        else:
+            checks.append(factory())
     failed_count = sum(1 for check in checks if check.status == "failed")
     warning_count = sum(1 for check in checks if check.status == "warning")
     passed_count = sum(1 for check in checks if check.status == "passed")
@@ -396,6 +440,77 @@ def _tooling_configured(root: Path) -> AcceptanceCheck:
     return _check(
         check_id="quality.tooling_configured",
         title="Quality tooling is configured",
+        run=run,
+    )
+
+
+def _paper_preflight_ready(root: Path) -> AcceptanceCheck:
+    """Confirm everything the paper-broker runbook needs is in place."""
+
+    def run() -> tuple[AcceptanceStatus, str, str | None]:
+        problems: list[str] = []
+
+        runbook = root / "docs/paper_broker_setup.md"
+        if not runbook.is_file():
+            problems.append("docs/paper_broker_setup.md is missing")
+
+        env_example = root / ".env.example"
+        if not env_example.is_file():
+            problems.append(".env.example is missing")
+        else:
+            env_text = env_example.read_text(encoding="utf-8")
+            if ALPACA_ENV_KEY not in env_text:
+                problems.append(
+                    f".env.example does not document {ALPACA_ENV_KEY}"
+                )
+            if ALPACA_ENV_SECRET not in env_text:
+                problems.append(
+                    f".env.example does not document {ALPACA_ENV_SECRET}"
+                )
+
+        try:
+            policy = load_paper_execution_policy(
+                root / "config/paper_execution_policy.yaml"
+            )
+            if policy.mode != "paper":
+                problems.append(
+                    f"paper_execution_policy.mode is {policy.mode!r}"
+                )
+            if policy.automated_execution is not False:
+                problems.append(
+                    "paper_execution_policy.automated_execution is not False"
+                )
+            if not policy.require_human_review:
+                problems.append(
+                    "paper_execution_policy.require_human_review is False"
+                )
+        except FileNotFoundError as exc:
+            problems.append(f"paper_execution_policy.yaml missing: {exc}")
+        except (ValueError, TypeError) as exc:
+            problems.append(f"paper_execution_policy.yaml invalid: {exc}")
+
+        try:
+            load_alpaca_paper_config(root / "config/alpaca_paper.yaml")
+        except FileNotFoundError as exc:
+            problems.append(f"alpaca_paper.yaml missing: {exc}")
+        except (ValueError, TypeError) as exc:
+            problems.append(f"alpaca_paper.yaml invalid: {exc}")
+
+        if problems:
+            return (
+                "failed",
+                "paper-broker pre-flight is not ready",
+                "; ".join(problems),
+            )
+        return (
+            "passed",
+            "runbook, env wiring, and broker configs are ready",
+            None,
+        )
+
+    return _check(
+        check_id="paper.preflight",
+        title="Paper-broker pre-flight is ready",
         run=run,
     )
 

@@ -41,3 +41,41 @@ def test_acceptance_cli_returns_report() -> None:
     body = json.loads(result.stdout)
     assert body["passed"] is True
     assert body["failed_count"] == 0
+
+
+def test_preflight_api_returns_paper_report() -> None:
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/acceptance/preflight",
+        params={"project_root": str(ROOT), "scope": "paper"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["passed"] is True
+    assert body["failed_count"] == 0
+    assert {check["check_id"] for check in body["checks"]} == {"paper.preflight"}
+
+
+def test_preflight_cli_returns_paper_report() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli_app,
+        [
+            "acceptance",
+            "preflight",
+            "--project-root",
+            str(ROOT),
+            "--scope",
+            "paper",
+            "--compact",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["passed"] is True
+    assert body["failed_count"] == 0
+    assert {check["check_id"] for check in body["checks"]} == {"paper.preflight"}
