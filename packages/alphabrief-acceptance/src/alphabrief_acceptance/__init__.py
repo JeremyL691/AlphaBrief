@@ -5,6 +5,7 @@ from alphabrief_acceptance.verifier import (
     AcceptanceReport,
     AcceptanceStatus,
     build_acceptance_report,
+    build_preflight_report,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "AcceptanceReport",
     "AcceptanceStatus",
     "build_acceptance_report",
+    "build_preflight_report",
 ]
