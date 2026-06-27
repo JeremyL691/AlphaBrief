@@ -26,7 +26,33 @@ risk_app = typer.Typer(help="Inspect risk decisions and KillSwitch state.")
 @risk_app.command("status")
 def status_cmd() -> None:
     """Show the current RiskGate and KillSwitch status."""
-    print("risk status: not yet implemented")
+    # ponytail: report on a permissive paper-default RiskGate (the same
+    # shape the paper CLI builds). CLI risk commands are read-only and
+    # do not mutate the API-side gate.
+    gate = RiskGate(
+        limits=RiskLimitConfig(trading_enabled=True),
+    )
+    kill_switch_active = gate.kill_switch.active
+    payload = {
+        "trading_enabled": gate.limits.trading_enabled,
+        "live_trading_enabled": gate.limits.live_trading_enabled,
+        "symbol_allowlist": sorted(gate.limits.symbol_allowlist),
+        "max_order_value": (
+            str(gate.limits.max_order_value)
+            if gate.limits.max_order_value is not None
+            else None
+        ),
+        "max_total_exposure": (
+            str(gate.limits.max_total_exposure)
+            if gate.limits.max_total_exposure is not None
+            else None
+        ),
+        "require_human_review": gate.limits.require_human_review,
+        "kill_switch_active": kill_switch_active,
+        "kill_switch_reason": gate.kill_switch.reason,
+    }
+    json.dump(payload, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
 
 
 def _parse_risk_context(

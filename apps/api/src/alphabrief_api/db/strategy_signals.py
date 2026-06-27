@@ -128,8 +128,14 @@ class StrategySignalStore:
             raise ValueError("signal.symbol must be a non-empty string")
 
         timestamp = signal.get("timestamp")
+        # ponytail: accept either an ISO-8601 string or a tz-aware datetime
+        # (PyYAML parses naked ISO timestamps into datetimes). Coerce to
+        # string so the DB column type and the JSON payload stay consistent.
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.isoformat()
         if not isinstance(timestamp, str) or timestamp.strip() == "":
             raise ValueError("signal.timestamp must be an ISO-8601 string")
+        signal["timestamp"] = timestamp
 
         direction = signal.get("direction")
         if not isinstance(direction, str) or direction.strip() == "":

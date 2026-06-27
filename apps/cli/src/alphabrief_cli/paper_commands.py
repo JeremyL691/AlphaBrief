@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -10,6 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import typer
+from alphabrief_api.db import PaperStore
 from alphabrief_core import OrderIntent
 from alphabrief_data import MarketDataLoadError, load_ohlcv_csv
 from alphabrief_execution import (
@@ -22,6 +24,8 @@ from alphabrief_execution import (
 from alphabrief_risk import RiskContextDecision, RiskGate, RiskLimitConfig
 from alphabrief_strategy.spec import StrategySpec
 
+from alphabrief_cli.api_client import is_api_running
+
 paper_app = typer.Typer(
     help="Run paper-trading sessions against the broker simulator."
 )
@@ -30,6 +34,16 @@ paper_app = typer.Typer(
 def _exit_error(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
     sys.exit(1)
+
+
+def _open_paper_store() -> PaperStore:
+    """Return a store rooted at ``$ALPHABRIEF_DATA_DIR`` (if set)."""
+    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
+    if db_dir_str:
+        db_dir = Path(db_dir_str)
+        db_dir.mkdir(parents=True, exist_ok=True)
+        return PaperStore(db_path=db_dir / "alphabrief.db")
+    return PaperStore()
 
 
 def _parse_risk_context(
@@ -201,7 +215,40 @@ def run_cmd(
 @paper_app.command("status")
 def status_cmd() -> None:
     """Show the current paper portfolio status."""
-    print("Paper portfolio status not yet persisted. Run 'paper run' first.")
+    # ponytail: read from PaperStore when no API is running. The CLI
+    # ``paper run`` path is in-memory only, so status will reflect
+    # persistent snapshots produced by the API or scheduler paths.
+    if is_api_running():
+        print(
+            "paper status via API: not yet wired; "
+            "use GET /api/v1/paper/portfolio instead",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    store = _open_paper_store()
+    try:
+        snap = store.get_latest_portfolio_snapshot()
+    finally:
+        store.close()
+
+    if snap is None:
+        print("Paper portfolio status not yet persisted. Run 'paper run' first.")
+        return
+
+    print(f"snapshot_id: {snap.get('snapshot_id', '')}")
+    print(f"captured_at: {snap.get('captured_at', '')}")
+    print(f"Portfolio Cash: {snap.get('cash', '0')}")
+    print(f"Realized PnL: {snap.get('realized_pnl', '0')}")
+    positions = snap.get("positions") or []
+    if positions:
+        for pos in positions:
+            sym = pos.get("symbol", "?")
+            qty = pos.get("quantity", "?")
+            avg = pos.get("average_price", "?")
+            print(f"Position: {sym} qty={qty} avg_price={avg}")
+    else:
+        print("Positions: (none)")
 
 
 __all__ = ["paper_app"]

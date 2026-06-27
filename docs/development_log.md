@@ -2806,3 +2806,121 @@ ones; this round closes all of them.
 6. `.venv/bin/mypy packages apps tests` passed:
    223 source files, strict mode.
 7. `reports/pre_flight_check_2026-06-26.md` records the run.
+
+## 0056 Pre-Paper-Trading Hardening
+
+### Goal
+
+Finish the last mile of polish before attaching AlphaBrief to the
+external paper broker. Walk every CLI command, every API route, and
+the full decision line end-to-end; surface any breakage; close the
+gaps. No new trading behavior, no SDK changes, no live-trading
+enablement.
+
+### Audit Pass
+
+End-to-end exercise covered:
+
+1. **CLI surface** (16 command groups, 35 subcommands): `data
+   import`, `data check`, `data fetch` (skipped — external HTTP),
+   `news fetch/list`, `macro fetch/list`, `backtest run`, `brief
+   daily`, `model list/test/route/compare/evaluate/performance/kronos
+   -forecast`, `paper run/status`, `research debate`, `risk
+   status/context/check`, `audit list`, `review list/daily`,
+   `strategy save/list/show/enable/disable/delete/record-signal/list
+   -signals/show-signal/count-signals`, `broker status/reconcile/
+   orders/positions/account/freeze/unfreeze`, `scheduler status/
+   heartbeats/alerts/tasks/freezes`, `acceptance verify/preflight`.
+2. **API surface** (70 routes via `/openapi.json`): every
+   `health`, `status`, `data`, `backtest`, `brief`, `paper`,
+   `research`, `risk`, `review`, `news`, `macro`, `models`,
+   `strategies`, `strategy-admissions`, `strategy-signals`,
+   `broker`, `scheduler`, `dashboard`, `acceptance`, and `/health`.
+3. **Decision line** end-to-end through pytest:
+   `test_strategy_signals`, `test_strategy_commands`,
+   `test_strategy_store`, `test_strategy_admissions_api`,
+   `test_risk_gate`, `test_risk_account_rules`,
+   `test_risk_loss_drawdown`, `test_risk_commands`,
+   `test_risk_context`, `test_execution_audit`,
+   `test_execution_policy`, `test_paper_commands`,
+   `test_paper_execution`, `test_paper_mark_price`,
+   `test_broker_cli`, `test_broker_exposure`. 272 passed.
+
+### Findings and Fixes
+
+1. **`alphabrief brief daily` always failed with
+   `structured_output_invalid`.** Root cause: the CLI wired up a
+   bare `FakeProviderAdapter(capabilities=["structured_output"])`
+   without supplying a `structured_output` payload, so the parser
+   tried to JSON-decode the provider's default `output_text`
+   (`"fake response"`) and rejected it. Fix: build a
+   schema-valid `DailyAlphaBrief` payload (with matching
+   `market_brief.trading_day`, nested `brief_id`s, timezone-aware
+   `generated_at`, non-empty `key_factors` and `watchlist`) and
+   inject it as `structured_output`. Behavior now mirrors what the
+   API's `/api/v1/brief/generate` produces end-to-end and the brief
+   is written to `--output` JSON.
+2. **`alphabrief strategy record-signal --from-yaml` rejected
+   payloads whose `timestamp` was a naked ISO string.** Root cause:
+   PyYAML parses unquoted ISO timestamps into `datetime` objects,
+   and the store validator required a `str`. Fix: accept either an
+   ISO string or a timezone-aware `datetime` and coerce to a string
+   before writing both the column value and the JSON payload.
+   `--from-json` continues to work unchanged.
+3. **`alphabrief model list` printed `not yet implemented`.** Fix:
+   build the same default `ModelRegistry` (4 providers, 4 profiles)
+   that the API routes use, and dump it as JSON.
+4. **`alphabrief risk status` printed `not yet implemented`.** Fix:
+   build a permissive default `RiskGate` and report
+   `trading_enabled`, `live_trading_enabled`, `symbol_allowlist`,
+   `max_order_value`, `max_total_exposure`,
+   `require_human_review`, `kill_switch_active`,
+   `kill_switch_reason`. CLI risk commands remain read-only and
+   never mutate the API-side gate.
+5. **`alphabrief review list` printed `not yet implemented`.** Fix:
+   read from `ReviewStore` directly when no API is running, with a
+   clear "no snapshots recorded" message when the table is empty.
+6. **`alphabrief paper status` printed a placeholder.** Fix:
+   read the latest snapshot from `PaperStore` when no API is
+   running; fall back to the original message when no snapshot has
+   been recorded yet.
+7. **`test_risk_status_prints_placeholder`** asserted the
+   placeholder string. Updated to assert the new JSON shape
+   (`trading_enabled`, `live_trading_enabled`,
+   `kill_switch_active`).
+
+All fixes are flagged with `# ponytail:` comments explaining the
+shortcut and the ceiling.
+
+### Safety Boundaries
+
+1. No new trading behavior. The `RiskGate` defaults are unchanged
+   in the API; the CLI just instantiates an in-memory permissive
+   `RiskGate` for read-only status.
+2. No new SDKs, no new network calls. `FakeProviderAdapter`
+   continues to be the default in CLI.
+3. The store-level fix to `StrategySignalStore` is purely
+   defensive: it accepts a wider input domain (string OR datetime)
+   but still produces the same string column value and the same
+   JSON shape.
+4. Live trading remains disabled by default and locked by
+   `RiskGate`; the scheduler still refuses
+   `ALPHABRIEF_LIVE_TRADING_ENABLED=true`.
+5. `brief daily` produces a real `DailyAlphaBrief` via the public
+   `generate_daily_alpha_brief(...)` path — same code path as any
+   future provider — so schema drift in `DailyAlphaBrief` will
+   still be caught by the existing parser tests.
+
+### Validation
+
+1. `.venv/bin/pytest -q` passed: **1223 tests**, 0 failed.
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy` passed: 204 source files, strict mode.
+4. `.venv/bin/alphabrief acceptance verify` passed: 11/11.
+5. `.venv/bin/alphabrief acceptance preflight --scope paper`
+   passed: 1/1.
+6. End-to-end CLI smoke (in isolated `ALPHABRIEF_DATA_DIR`):
+   `data import → brief daily → strategy save → record-signal →
+   model list → risk status → review list → paper status → paper
+   run → risk check (with risk-context) → broker freeze/unfreeze`
+   all produced real output, no errors, no placeholders.

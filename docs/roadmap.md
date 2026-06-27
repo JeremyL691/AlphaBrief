@@ -1440,3 +1440,92 @@ an external Alpaca paper account.
 - [x] `alphabrief acceptance verify --compact`: 11/11.
 - [x] `alphabrief acceptance preflight --paper`: 1/1.
 - [x] `git diff --check`: clean.
+
+## Phase 25 — Pre-Paper-Trading Hardening
+
+Phase 24 closed the documentation / verifier gaps so an operator can
+attach a paper broker. Phase 25 walks every CLI command (16 groups,
+35 subcommands) and every API route (70 endpoints) end-to-end,
+fixes any breakage found, and locks the project to a clean
+4-gate baseline right before the 30-day observation begins. No
+new trading behavior; no SDK changes; no live-trading enablement.
+
+### R25.1 — End-to-end audit pass
+
+1. CLI surface exercised under an isolated `ALPHABRIEF_DATA_DIR`:
+   `data import/check`, `news fetch/list`, `macro fetch/list`,
+   `backtest run`, `brief daily`, `model list/test/route/compare
+   /evaluate/performance/kronos-forecast`, `paper run/status`,
+   `research debate`, `risk status/context/check`, `audit list`,
+   `review list/daily`, `strategy save/list/show/enable/disable
+   /delete/record-signal/list-signals/show-signal/count-signals`,
+   `broker status/reconcile/orders/positions/account/freeze
+   /unfreeze`, `scheduler status/heartbeats/alerts/tasks/freezes`,
+   `acceptance verify/preflight`.
+2. API surface exercised against a local `serve` instance on
+   `127.0.0.1:8765`. Every route returned either a real payload
+   or a documented error.
+3. Decision line (data → strategy → signal → risk → paper →
+   broker reconcile) verified via the targeted test cluster
+   (272 tests across 16 files).
+
+### R25.2 — Fixes from the audit
+
+1. **`brief daily` always failed at the parser.** Fix: provide
+   `FakeProviderAdapter` with a schema-valid `DailyAlphaBrief`
+   `structured_output` payload (matching nested
+   `market_brief.trading_day`, timezone-aware `generated_at`,
+   non-empty `key_factors` / `watchlist`). `brief daily` now
+   produces a real brief and writes it to `--output`.
+2. **`strategy record-signal --from-yaml` rejected ISO
+   timestamps.** PyYAML coerces naked ISO strings to
+   `datetime`; the store validator required `str`. Fix:
+   `StrategySignalStore.save_signal` accepts either form and
+   coerces to string before writing both the column and the
+   JSON payload. JSON payloads are unaffected.
+3. **`model list` placeholder.** Fix: emit the same default
+   `ModelRegistry` (4 providers, 4 profiles) that the API routes
+   use, dumped as JSON.
+4. **`risk status` placeholder.** Fix: build a permissive
+   in-memory `RiskGate` + `KillSwitch` and dump
+   `trading_enabled`, `live_trading_enabled`,
+   `symbol_allowlist`, `max_order_value`, `max_total_exposure`,
+   `require_human_review`, `kill_switch_active`,
+   `kill_switch_reason`. CLI risk commands remain read-only.
+5. **`review list` placeholder.** Fix: read from `ReviewStore`
+   directly when no API is running, with a clear "no snapshots
+   recorded" message when the table is empty.
+6. **`paper status` placeholder.** Fix: read the latest snapshot
+   from `PaperStore` when no API is running; fall back to the
+   original "not yet persisted" message when no snapshot exists.
+7. **`test_risk_status_prints_placeholder`** updated to assert
+   the new JSON shape.
+
+All fixes carry a `# ponytail:` comment explaining the shortcut
+and the ceiling.
+
+### Safety boundaries
+
+1. No new trading behavior. The API-side `RiskGate` defaults are
+   unchanged.
+2. No new SDKs, no new network calls. `FakeProviderAdapter` is
+   still the CLI default.
+3. The store-level timestamp coercion is widen-only: the same
+   string column type, the same JSON shape, the same validation
+   error messages on genuinely invalid input.
+4. Live trading remains disabled by default and locked by
+   `RiskGate`.
+5. `brief daily` still goes through the public
+   `generate_daily_alpha_brief(...)` path, so any future
+   `DailyAlphaBrief` schema drift still trips the existing
+   parser tests.
+
+### Final quality gate
+
+- [x] `pytest`: 1223 passed.
+- [x] `ruff check .`: clean.
+- [x] `mypy`: 204 source files clean (strict mode).
+- [x] `alphabrief acceptance verify`: 11/11.
+- [x] `alphabrief acceptance preflight --scope paper`: 1/1.
+- [x] End-to-end CLI smoke (isolated `ALPHABRIEF_DATA_DIR`): all
+  commands produced real output, no placeholders, no errors.
