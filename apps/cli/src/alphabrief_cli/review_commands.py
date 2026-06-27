@@ -2,22 +2,61 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import date
 from pathlib import Path
 
 import typer
+from alphabrief_api.db import ReviewStore
 from alphabrief_review import ReviewCenterSnapshot, generate_daily_review
 from alphabrief_review.io import ReviewSnapshotLoadError, load_review_snapshot
 from pydantic import ValidationError
 
+from alphabrief_cli.api_client import is_api_running
+
 review_app = typer.Typer(help="Browse review snapshots and journals.")
+
+
+def _open_review_store() -> ReviewStore:
+    """Return a store rooted at ``$ALPHABRIEF_DATA_DIR`` (if set)."""
+    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
+    if db_dir_str:
+        db_dir = Path(db_dir_str)
+        db_dir.mkdir(parents=True, exist_ok=True)
+        return ReviewStore(db_path=db_dir / "alphabrief.db")
+    return ReviewStore()
 
 
 @review_app.command("list")
 def list_cmd() -> None:
     """List available review snapshots."""
-    print("review list: not yet implemented")
+    # ponytail: read directly from ReviewStore when no API is running.
+    # The list is purely metadata (id + trading_day + generated_at) so the
+    # full snapshot JSON is not materialized here.
+    if is_api_running():
+        # Avoid DuckDB file-lock conflicts with the API process.
+        print(
+            "review list via API: not yet wired; "
+            "use GET /api/v1/review/snapshot instead",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    store = _open_review_store()
+    try:
+        rows = store.list_snapshots()
+    finally:
+        store.close()
+
+    if not rows:
+        print("No review snapshots recorded.")
+        return
+    for row in rows:
+        sid = row.get("id", row.get("snapshot_id", ""))
+        td = row.get("trading_day", "")
+        gen = row.get("generated_at", "")
+        print(f"{sid} | trading_day={td} | generated_at={gen}")
 
 
 @review_app.command("daily")

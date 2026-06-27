@@ -11,7 +11,7 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-Phases 1–23 are implemented and locally verified. The project remains
+Phases 1–24 are implemented and locally verified. The project remains
 paper-only: external broker credentials and a long-running external-paper
 observation period are separate acceptance gates, and live trading stays
 locked.
@@ -114,6 +114,21 @@ locked.
   30-day observation runbook (`docs/paper_broker_setup.md`) is in place
   and that the Alpaca env-var names, paper execution policy, and
   broker config files are wired up.
+- **Phase 24 — Pre-paper-trading hardening.** Every CLI command
+  (16 groups, 35 subcommands) and every API route (70 endpoints)
+  was exercised end-to-end. Six real defects were found and fixed
+  in this round: `brief daily` was emitting no structured payload
+  and always failing at the parser; `strategy record-signal
+  --from-yaml` rejected YAML-parsed ISO timestamps because PyYAML
+  coerced them to `datetime`; `model list`, `risk status`, `review
+  list`, and `paper status` were `not yet implemented` placeholders
+  even though the data sources they would consume already exist.
+  All four CLI surfaces now read from the real stores / registry
+  they shadow. The store-level timestamp coercion in
+  `StrategySignalStore` is documented and widen-only (no schema
+  change, no relaxed validation). 1223 tests pass; no behavior
+  change to `RiskGate`, the paper execution policy, or any
+  read-only broker adapter.
 
 ## Safety Boundary
 
@@ -181,13 +196,12 @@ Run all checks before committing:
 alphabrief acceptance verify
 ```
 
-Current result: Phase 23 targeted acceptance and CLI coverage passes;
-the sandboxed full pytest run reaches 1204 passing tests, with 12
-localhost mock-broker tests blocked by sandbox socket permissions. Ruff
-is clean, strict Mypy is clean across 223 source files, and the project
-acceptance verifier is green. The
-development log records the latest verified run and its environment
-constraints.
+Current result: Phase 24 pre-paper-trading hardening passes;
+the full pytest run reaches 1223 passing tests. Ruff is clean,
+strict Mypy is clean across 204 source files, and the project
+acceptance verifier is green (`verify` 11/11, `preflight
+--scope paper` 1/1). The development log records the latest
+verified run and its environment constraints.
 
 ## Paper Broker Setup
 
