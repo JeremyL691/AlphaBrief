@@ -135,6 +135,7 @@ def test_api_status_body(monkeypatch: pytest.MonkeyPatch) -> None:
             "alphabrief_gym",
             "alphabrief_review",
             "alphabrief_acceptance",
+            "alphabrief_trader",
         ],
     }
 
