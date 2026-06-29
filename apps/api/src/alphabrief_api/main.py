@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from alphabrief_api.routes.acceptance import router as acceptance_router
+from alphabrief_api.routes.ai_trading import router as ai_trading_router
 from alphabrief_api.routes.backtest import router as backtest_router
 from alphabrief_api.routes.brief import router as brief_router
 from alphabrief_api.routes.broker import router as broker_router
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     api_app.include_router(scheduler_router)
     api_app.include_router(dashboard_router)
     api_app.include_router(acceptance_router)
+    api_app.include_router(ai_trading_router)
     return api_app
 
 

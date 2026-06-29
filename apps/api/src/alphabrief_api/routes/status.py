@@ -17,6 +17,7 @@ _PACKAGES_LOADED = [
     "alphabrief_gym",
     "alphabrief_review",
     "alphabrief_acceptance",
+    "alphabrief_trader",
 ]
 
 

@@ -1,0 +1,120 @@
+"""DuckDB schema helpers owned by the AI trading package.
+
+The API-wide schema also creates these tables when the FastAPI data layer is
+initialized. The package store keeps a local copy of the AI-only DDL so
+``alphabrief_trader`` can be imported and tested without importing
+``alphabrief_api`` and triggering the application router graph.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+CREATE_AI_DAILY_CYCLES_TABLE = """
+CREATE TABLE IF NOT EXISTS ai_daily_cycles (
+    cycle_id              TEXT PRIMARY KEY,
+    trading_day           TEXT NOT NULL,
+    symbols_json          JSON NOT NULL,
+    outcome               TEXT NOT NULL,
+    enabled               BOOLEAN NOT NULL,
+    live_trading_enabled  BOOLEAN NOT NULL,
+    summary               TEXT NOT NULL,
+    cycle_json            JSON NOT NULL,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_AI_DAILY_CYCLES_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_ai_daily_cycles_day
+    ON ai_daily_cycles (trading_day, created_at DESC)
+"""
+
+CREATE_AI_COMMITTEE_VOTES_TABLE = """
+CREATE TABLE IF NOT EXISTS ai_committee_votes (
+    cycle_id              TEXT NOT NULL,
+    vote_index            INTEGER NOT NULL,
+    role                  TEXT NOT NULL,
+    model_name            TEXT NOT NULL,
+    view                  TEXT NOT NULL,
+    confidence            DOUBLE NOT NULL,
+    suggested_action      TEXT NOT NULL,
+    target_position_pct   TEXT NOT NULL,
+    veto                  BOOLEAN NOT NULL,
+    needs_human_review    BOOLEAN NOT NULL,
+    vote_json             JSON NOT NULL,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (cycle_id, vote_index)
+)
+"""
+
+CREATE_AI_COMMITTEE_VOTES_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_ai_committee_votes_role_created
+    ON ai_committee_votes (role, created_at DESC)
+"""
+
+CREATE_AI_ORDER_ATTEMPTS_TABLE = """
+CREATE TABLE IF NOT EXISTS ai_order_attempts (
+    cycle_id                TEXT NOT NULL,
+    intent_id               TEXT NOT NULL,
+    outcome                 TEXT NOT NULL,
+    approved                BOOLEAN NOT NULL,
+    requires_human_review   BOOLEAN NOT NULL,
+    filled                  BOOLEAN NOT NULL,
+    order_id                TEXT,
+    attempt_json            JSON NOT NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (cycle_id, intent_id)
+)
+"""
+
+CREATE_AI_ORDER_ATTEMPTS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_ai_order_attempts_cycle
+    ON ai_order_attempts (cycle_id, created_at DESC)
+"""
+
+CREATE_AI_DISCIPLINE_CONFIG_TABLE = """
+CREATE TABLE IF NOT EXISTS ai_discipline_config (
+    snapshot_id   TEXT PRIMARY KEY,
+    config_json   JSON NOT NULL,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+_AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    CREATE_AI_DAILY_CYCLES_TABLE,
+    CREATE_AI_DAILY_CYCLES_INDEX,
+    CREATE_AI_COMMITTEE_VOTES_TABLE,
+    CREATE_AI_COMMITTEE_VOTES_INDEX,
+    CREATE_AI_ORDER_ATTEMPTS_TABLE,
+    CREATE_AI_ORDER_ATTEMPTS_INDEX,
+    CREATE_AI_DISCIPLINE_CONFIG_TABLE,
+)
+
+
+def apply_ai_trading_schema(connection: Any) -> None:
+    """Create the AI trading tables and indexes on ``connection``."""
+
+    for statement in _AI_SCHEMA_STATEMENTS:
+        connection.execute(statement)
+
+
+def drop_ai_trading_schema(connection: Any) -> None:
+    """Drop only AI trading tables, leaving the rest of the DB intact."""
+
+    connection.execute("DROP TABLE IF EXISTS ai_order_attempts")
+    connection.execute("DROP TABLE IF EXISTS ai_committee_votes")
+    connection.execute("DROP TABLE IF EXISTS ai_daily_cycles")
+    connection.execute("DROP TABLE IF EXISTS ai_discipline_config")
+
+
+__all__ = [
+    "CREATE_AI_COMMITTEE_VOTES_INDEX",
+    "CREATE_AI_COMMITTEE_VOTES_TABLE",
+    "CREATE_AI_DAILY_CYCLES_INDEX",
+    "CREATE_AI_DAILY_CYCLES_TABLE",
+    "CREATE_AI_DISCIPLINE_CONFIG_TABLE",
+    "CREATE_AI_ORDER_ATTEMPTS_INDEX",
+    "CREATE_AI_ORDER_ATTEMPTS_TABLE",
+    "apply_ai_trading_schema",
+    "drop_ai_trading_schema",
+]
