@@ -1,7 +1,7 @@
 """Broker adapter package.
 
 Contains the broker-neutral :mod:`alphabrief_execution.broker.port`
-plus concrete paper-only adapters (currently Alpaca).
+plus concrete paper-only adapters (currently Alpaca and OANDA).
 
 The legacy deterministic :class:`PaperBroker` lives in
 :mod:`alphabrief_execution.broker.legacy` and is re-exported here
@@ -22,6 +22,7 @@ from alphabrief_execution.broker.legacy import (
     PaperBrokerError,
     PaperBrokerResult,
 )
+from alphabrief_execution.broker.oanda import OandaPaperAdapter
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -48,6 +49,7 @@ __all__ = [
     "BrokerTimeInForce",
     "CancelResult",
     "Fill",
+    "OandaPaperAdapter",
     "OrderState",
     "PaperBroker",
     "PaperBrokerError",
