@@ -334,18 +334,59 @@ class _NullBrokerAdapter(BrokerAdapter):
         )
 
 
+def _oanda_is_configured() -> bool:
+    """Return True when both OANDA credentials are present in the environment."""
+    return bool(
+        os.environ.get("ALPHABRIEF_OANDA_TOKEN")
+        and os.environ.get("ALPHABRIEF_OANDA_ACCOUNT_ID")
+    )
+
+
+def _alpaca_is_configured() -> bool:
+    """Return True when both Alpaca credentials are present in the environment."""
+    return bool(
+        os.environ.get("ALPHABRIEF_ALPACA_KEY")
+        and os.environ.get("ALPHABRIEF_ALPACA_SECRET")
+    )
+
+
 def _build_adapter() -> BrokerAdapter:
     """Pick the appropriate broker adapter for the runtime environment.
 
-    When both ``ALPHABRIEF_ALPACA_KEY`` and ``ALPHABRIEF_ALPACA_SECRET``
-    are set, build a real :class:`AlpacaPaperAdapter` with the default
-    config. Otherwise fall back to :class:`_NullBrokerAdapter`, which
-    is a no-op adapter that lets the scheduler run in dev / CI without
-    a live broker connection.
+    OANDA credentials win over Alpaca credentials so non-US operators can
+    use the OANDA demo account without unsetting Alpaca keys. If neither
+    credential set is present, fall back to :class:`_NullBrokerAdapter`,
+    which lets the scheduler run in dev / CI without a live broker
+    connection.
     """
-    if os.environ.get("ALPHABRIEF_ALPACA_KEY") and os.environ.get(
-        "ALPHABRIEF_ALPACA_SECRET"
-    ):
+    if _oanda_is_configured():
+        from pathlib import Path as _Path
+
+        from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+        from alphabrief_execution.broker.oanda.client import OandaHttpClient
+        from alphabrief_execution.broker.oanda.config import (
+            DEFAULT_BASE_URL,
+            DEFAULT_MAX_RETRIES,
+            DEFAULT_RETRY_BACKOFF_SECONDS,
+            DEFAULT_TIMEOUT_SECONDS,
+            OandaPaperConfig,
+            load_oanda_paper_config,
+        )
+
+        config_path = _Path("config/oanda_paper.yaml")
+        if config_path.exists():
+            oanda_config = load_oanda_paper_config(config_path)
+        else:
+            oanda_config = OandaPaperConfig(
+                base_url=DEFAULT_BASE_URL,
+                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                max_retries=DEFAULT_MAX_RETRIES,
+                retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
+            )
+        client = OandaHttpClient(config=oanda_config)
+        return OandaPaperAdapter(client=client)
+
+    if _alpaca_is_configured():
         # Local import so the CLI doesn't require Alpaca config to be
         # present at module import time. The config file is loaded
         # from the default path; tests that exercise the live path
@@ -359,6 +400,11 @@ def _build_adapter() -> BrokerAdapter:
             AlpacaHttpClient,
         )
         from alphabrief_execution.broker.alpaca.config import (
+            DEFAULT_BASE_URL,
+            DEFAULT_MAX_RETRIES,
+            DEFAULT_RETRY_BACKOFF_SECONDS,
+            DEFAULT_TIMEOUT_SECONDS,
+            AlpacaPaperConfig,
             load_alpaca_paper_config,
         )
 
@@ -369,15 +415,11 @@ def _build_adapter() -> BrokerAdapter:
             # Dev fallback: explicit defaults rather than a default
             # constructor because AlpacaPaperConfig fields are
             # required (no default values).
-            from alphabrief_execution.broker.alpaca.config import (
-                AlpacaPaperConfig,
-            )
-
             alpaca_config = AlpacaPaperConfig(
-                base_url="https://paper-api.alpaca.markets",
-                timeout_seconds=5.0,
-                max_retries=3,
-                retry_backoff_seconds=0.25,
+                base_url=DEFAULT_BASE_URL,
+                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                max_retries=DEFAULT_MAX_RETRIES,
+                retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
             )
         client = AlpacaHttpClient(config=alpaca_config)
         return AlpacaPaperAdapter(client=client)

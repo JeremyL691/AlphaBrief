@@ -2,7 +2,7 @@
 
 Phase 20 wires ONE :class:`BrokerAdapter` into the API process so the
 ``GET /api/v1/broker/positions`` and ``GET /api/v1/broker/account``
-routes can return live reads from the Alpaca Paper account instead of
+routes can return live reads from an external paper account instead of
 the Phase 19 stubs. The singleton is **read-only**: the API never calls
 ``submit`` / ``cancel`` / ``get_order`` / ``list_orders`` / ``list_fills``
 through it — order placement stays inside the operations scheduler and
@@ -11,8 +11,10 @@ already lives in :class:`alphabrief_risk.RiskGate`; this module closes
 the *observability* gap, not the enforcement path.
 
 Adapter selection reuses the same logic the CLI ``scheduler run`` command
-uses (``apps/cli/src/alphabrief_cli/scheduler_commands.py``): build a
-real :class:`AlpacaPaperAdapter` when ``ALPHABRIEF_ALPACA_KEY`` and
+uses (``apps/cli/src/alphabrief_cli/scheduler_commands.py``): prefer a
+real :class:`OandaPaperAdapter` when ``ALPHABRIEF_OANDA_TOKEN`` and
+``ALPHABRIEF_OANDA_ACCOUNT_ID`` are set, otherwise build
+:class:`AlpacaPaperAdapter` when ``ALPHABRIEF_ALPACA_KEY`` and
 ``ALPHABRIEF_ALPACA_SECRET`` are set, otherwise fall back to a
 :class:`_NullBrokerAdapter` so the API boots and tests pass without
 broker credentials. This selection logic is intentionally duplicated
@@ -55,6 +57,10 @@ from alphabrief_execution.broker.port import (
 # ---------------------------------------------------------------------------
 # Test / dev-only env override
 # ---------------------------------------------------------------------------
+
+#: When set, overrides the OANDA base URL used by the live adapter.
+#: Intended for tests that point the adapter at a mock OANDA server.
+ENV_OANDA_BASE_URL = "ALPHABRIEF_OANDA_BASE_URL"
 
 #: When set, overrides the Alpaca base URL used by the live adapter.
 #: Intended for tests that point the adapter at a mock Alpaca server
@@ -123,6 +129,14 @@ class _NullBrokerAdapter(BrokerAdapter):
 # ---------------------------------------------------------------------------
 
 
+def _oanda_is_configured() -> bool:
+    """Return True when both OANDA credentials are present in the environment."""
+    return bool(
+        os.environ.get("ALPHABRIEF_OANDA_TOKEN")
+        and os.environ.get("ALPHABRIEF_OANDA_ACCOUNT_ID")
+    )
+
+
 def _alpaca_is_configured() -> bool:
     """Return True when both Alpaca credentials are present in the environment."""
     return bool(
@@ -134,20 +148,64 @@ def _alpaca_is_configured() -> bool:
 def _build_broker_adapter() -> BrokerAdapter:
     """Build the appropriate broker adapter for the runtime environment.
 
-    When both ``ALPHABRIEF_ALPACA_KEY`` and ``ALPHABRIEF_ALPACA_SECRET``
-    are set, build a real :class:`AlpacaPaperAdapter`. Otherwise fall back
-    to :class:`_NullBrokerAdapter`. Mirrors the CLI
-    ``scheduler run`` ``_build_adapter`` selection (see module docstring
-    for the duplication note).
+    OANDA credentials win over Alpaca credentials so non-US operators can
+    use the OANDA demo account without unsetting Alpaca keys. If neither
+    credential set is present, fall back to :class:`_NullBrokerAdapter`.
 
-    A live base URL override may be supplied via
-    :data:`ENV_ALPACA_BASE_URL` for tests pointing at a mock server; an
+    Live base URL overrides may be supplied via :data:`ENV_OANDA_BASE_URL`
+    or :data:`ENV_ALPACA_BASE_URL` for tests pointing at mock servers; an
     ``http://`` scheme is permitted there (``allow_insecure_base_url``)
-    and must not contain ``live``.
+    and must not point at live trading.
     """
-    if not _alpaca_is_configured():
-        return _NullBrokerAdapter()
+    if _oanda_is_configured():
+        return _build_oanda_adapter()
+    if _alpaca_is_configured():
+        return _build_alpaca_adapter()
+    return _NullBrokerAdapter()
 
+
+def _build_oanda_adapter() -> BrokerAdapter:
+    """Build an OANDA paper adapter from env credentials and YAML config."""
+    from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+    from alphabrief_execution.broker.oanda.client import OandaHttpClient
+    from alphabrief_execution.broker.oanda.config import (
+        DEFAULT_BASE_URL,
+        DEFAULT_MAX_RETRIES,
+        DEFAULT_RETRY_BACKOFF_SECONDS,
+        DEFAULT_TIMEOUT_SECONDS,
+        OandaPaperConfig,
+        load_oanda_paper_config,
+    )
+
+    override = os.environ.get(ENV_OANDA_BASE_URL)
+    if override:
+        config = OandaPaperConfig(
+            base_url=override,
+            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            max_retries=DEFAULT_MAX_RETRIES,
+            retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
+            allow_insecure_base_url=True,
+        )
+    else:
+        config_path = Path("config/oanda_paper.yaml")
+        if config_path.exists():
+            config = load_oanda_paper_config(config_path)
+        else:
+            config = OandaPaperConfig(
+                base_url=DEFAULT_BASE_URL,
+                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                max_retries=DEFAULT_MAX_RETRIES,
+                retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
+            )
+    try:
+        client = OandaHttpClient(config=config)
+    except BrokerAuthError:
+        return _NullBrokerAdapter()
+    return OandaPaperAdapter(client=client)
+
+
+def _build_alpaca_adapter() -> BrokerAdapter:
+    """Build an Alpaca paper adapter from env credentials and YAML config."""
     # Local imports so the module imports cleanly without Alpaca config
     # present and without constructing the client (which reads creds) at
     # import time.
@@ -232,6 +290,7 @@ def _reset_broker_adapter() -> None:
 
 __all__ = [
     "ENV_ALPACA_BASE_URL",
+    "ENV_OANDA_BASE_URL",
     "get_broker_adapter",
     "has_live_broker",
 ]

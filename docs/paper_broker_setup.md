@@ -8,10 +8,10 @@ in `.venv`) and that all standard quality gates pass.
 
 ## 1. What This Is For
 
-A 30-day continuous observation against an Alpaca paper-trading account.
-The goal is **not** to prove that paper trading works in isolation — the
-internal paper broker already does that. The goal is to verify, in a real
-external environment, that:
+A 30-day continuous observation against an external paper-trading account
+(OANDA v20 demo/practice or Alpaca Paper). The goal is **not** to prove
+that paper trading works in isolation — the internal paper broker already
+does that. The goal is to verify, in a real external environment, that:
 
 - the reconciliation snapshot pipeline is stable over time,
 - `RiskGate` reject behavior matches what the unit tests assert,
@@ -22,10 +22,15 @@ external environment, that:
 ## 2. Prerequisites
 
 - Python 3.12+ with the project virtual environment installed.
-- An Alpaca paper-trading account. Sign up at
-  <https://app.alpaca.markets/signup> and stay in **Paper** mode.
-- Generated paper API key + secret: from the dashboard,
-  *View → API Keys → Generate Paper Key*.
+- One external paper-trading account:
+  - **OANDA v20 demo/practice** — sign up at <https://www.oanda.com/>,
+    create a demo account, generate a personal access token, and copy the
+    demo account ID. This is the recommended path when Alpaca identity
+    verification is unavailable.
+  - **Alpaca Paper** — sign up at <https://app.alpaca.markets/signup>,
+    stay in **Paper** mode, then generate a paper API key + secret from
+    *View → API Keys → Generate Paper Key*.
+- If both OANDA and Alpaca credentials are set, AlphaBrief prefers OANDA.
 - All standard quality gates green:
 
   ```bash
@@ -35,14 +40,22 @@ external environment, that:
 
 ## 3. One-Time Setup
 
-1. Copy the environment template and fill in the Alpaca section:
+1. Copy the environment template and fill in one broker section:
 
    ```bash
    cp .env.example .env
    ```
 
-   Then edit `.env`, uncomment the Alpaca block, and paste your paper
-   key and secret:
+   **OANDA demo/practice:** edit `.env`, uncomment the OANDA block, and
+   paste your personal access token and demo account ID:
+
+   ```bash
+   ALPHABRIEF_OANDA_TOKEN=your_oanda_token_here
+   ALPHABRIEF_OANDA_ACCOUNT_ID=your_demo_account_id_here
+   ```
+
+   **Alpaca Paper:** alternatively, uncomment the Alpaca block and paste
+   your paper key and secret:
 
    ```bash
    ALPHABRIEF_ALPACA_KEY=your_paper_key_here
@@ -50,7 +63,7 @@ external environment, that:
    ```
 
    **Never commit `.env`.** The project `.gitignore` already excludes
-   it. Never paste the secret into chat, screenshots, logs, or issues.
+   it. Never paste broker secrets into chat, screenshots, logs, or issues.
 
 2. Confirm the live-trading lock stays closed:
 
@@ -128,9 +141,10 @@ locked configs are still in place.
 ```
 
 Expected: payload includes `latest_snapshot` and `open_freeze_count: 0`.
-The factory picks `AlpacaPaperAdapter` (not `NullBrokerAdapter`)
-because `ALPHABRIEF_ALPACA_KEY` and `ALPHABRIEF_ALPACA_SECRET` are
-both set.
+The factory picks `OandaPaperAdapter` when both
+`ALPHABRIEF_OANDA_TOKEN` and `ALPHABRIEF_OANDA_ACCOUNT_ID` are set;
+otherwise it picks `AlpacaPaperAdapter` when both Alpaca credentials are
+set. With no broker credentials it falls back to `NullBrokerAdapter`.
 
 If the response shows `null` for `latest_snapshot`, no snapshot has
 been recorded yet — that is normal before the first scheduler cycle.
@@ -210,8 +224,8 @@ Once per week, aggregate:
   `alphabrief risk audit`.
 - Freeze event log: `alphabrief broker freezes`. Every freeze
   should have a reason and a corresponding investigation note.
-- Adapter health: still on `AlpacaPaperAdapter`, not silently
-  fell back to `NullBrokerAdapter`.
+- Adapter health: still on `OandaPaperAdapter` or `AlpacaPaperAdapter`,
+  not silently fell back to `NullBrokerAdapter`.
 
 Decide:
 
@@ -260,16 +274,18 @@ observation period.
 - **No live trading.** The scheduler exits `3` on
   `ALPHABRIEF_LIVE_TRADING_ENABLED=true`. `RiskGate` rejects every
   intent in that mode. The Alpaca adapter refuses URLs containing
-  `live` (only `https://paper-api.alpaca.markets` is accepted).
+  `live`; the OANDA adapter refuses live/`api-fxtrade` URLs and defaults
+  to `https://api-fxpractice.oanda.com`.
 - **No secrets in code, logs, prompts, screenshots, fixtures, or
   documentation.** The verifier scans runtime imports for direct
   provider SDK use. The alert sink scrubs `api_key`, `secret`,
   `password`, `token`, and `authorization` from outgoing payloads.
 - **No unfreeze without investigation.** Every freeze needs a
   reason that survives an audit.
-- **No provider SDK calls outside `AlpacaPaperAdapter`.** Any
-  import of `alpaca`, `alpaca_trade_api`, or `alpaca-py` into
-  runtime business code is rejected by the acceptance verifier.
+- **No provider SDK calls outside broker adapters.** Any import of
+  provider SDKs such as `alpaca`, `alpaca_trade_api`, `alpaca-py`, or an
+  OANDA SDK into runtime business code is rejected by the acceptance
+  verifier. The adapters use `urllib` directly.
 - **The 30 days are a minimum.** A shorter observation is not
   meaningful; longer is acceptable.
 
@@ -299,5 +315,5 @@ This runbook does **not** cover:
   disaster drills (production operations, separate plan).
 - Backtest credibility hardening (CAGR, Sharpe, Sortino, turnover,
   walk-forward, overfit audit — Phase 24+).
-- Migrating to a non-Alpaca broker (the adapter port supports it;
-  adding a new adapter is a separate round).
+- Migrating to a live broker (the adapter port is paper-only today;
+  live trading needs a separate design review).

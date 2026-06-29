@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 from alphabrief_api import broker_adapter
 from alphabrief_execution.broker.alpaca.adapter import AlpacaPaperAdapter
+from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +31,9 @@ def _reset_adapter() -> Iterator[None]:
 def test_no_credentials_returns_null_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
     adapter = broker_adapter.get_broker_adapter()
@@ -40,6 +44,10 @@ def test_no_credentials_returns_null_adapter(
 def test_credentials_set_returns_live_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Ensure OANDA credentials are not set, so Alpaca is selected.
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     # A mock base URL is required so the client does not dial the real
     # Alpaca endpoint; allow_insecure_base_url is applied by the factory.
     monkeypatch.setenv("ALPHABRIEF_ALPACA_KEY", "test-key")
@@ -49,10 +57,27 @@ def test_credentials_set_returns_live_adapter(
     assert isinstance(adapter, AlpacaPaperAdapter)
     assert broker_adapter.has_live_broker() is True
 
+def test_oanda_credentials_are_preferred_over_alpaca(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("ALPHABRIEF_ALPACA_KEY", "test-key")
+    monkeypatch.setenv("ALPHABRIEF_ALPACA_SECRET", "test-secret")
+    monkeypatch.setenv("ALPHABRIEF_ALPACA_BASE_URL", "http://127.0.0.1:1")
+    adapter = broker_adapter.get_broker_adapter()
+    assert isinstance(adapter, OandaPaperAdapter)
+    assert broker_adapter.has_live_broker() is True
+
 
 def test_reset_clears_cached_singleton(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Ensure OANDA credentials are not set, so Alpaca is selected.
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     monkeypatch.setenv("ALPHABRIEF_ALPACA_KEY", "test-key")
     monkeypatch.setenv("ALPHABRIEF_ALPACA_SECRET", "test-secret")
     monkeypatch.setenv("ALPHABRIEF_ALPACA_BASE_URL", "http://127.0.0.1:1")
@@ -60,6 +85,9 @@ def test_reset_clears_cached_singleton(
     assert isinstance(live, AlpacaPaperAdapter)
 
     # Drop credentials and reset; the next access rebuilds a null adapter.
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_BASE_URL", raising=False)
@@ -88,6 +116,9 @@ def test_module_imports_without_credentials(
 ) -> None:
     # Importing the module (and get_broker_adapter resolution) must not
     # raise when credentials are absent — the API has to boot in CI.
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
     broker_adapter._reset_broker_adapter()
