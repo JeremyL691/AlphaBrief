@@ -24,6 +24,7 @@ import json
 import os
 import signal
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -31,6 +32,12 @@ from pathlib import Path
 from typing import Any, cast
 
 import typer
+from alphabrief_execution import (
+    FillSimulator,
+    OrderRouter,
+    PaperBroker,
+    PortfolioState,
+)
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -52,6 +59,15 @@ from alphabrief_execution.operations.scheduler import (
     SchedulerConfig,
     SchedulerStartupBlockedError,
     build_default_tasks,
+)
+from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_risk import RiskGate, RiskLimitConfig
+from alphabrief_trader import (
+    DailyTradingCycle,
+    DisciplineConfig,
+    MarketSnapshot,
+    TradingCommittee,
+    is_ai_trading_enabled,
 )
 
 from alphabrief_cli.api_client import is_api_running
@@ -421,8 +437,8 @@ def _build_adapter() -> BrokerAdapter:
                 max_retries=DEFAULT_MAX_RETRIES,
                 retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
             )
-        client = AlpacaHttpClient(config=alpaca_config)
-        return AlpacaPaperAdapter(client=client)
+        alpaca_client = AlpacaHttpClient(config=alpaca_config)
+        return AlpacaPaperAdapter(client=alpaca_client)
     return _NullBrokerAdapter()
 
 
@@ -448,6 +464,98 @@ def _refuse_if_live_trading_unlocked() -> None:
             file=sys.stderr,
         )
         sys.exit(3)
+
+
+def _build_ai_committee() -> TradingCommittee:
+    """Build a deterministic AI committee for the scheduler."""
+    sample_response = {
+        "analysis": (
+            "Trend remains constructive on improving breadth; downside risks "
+            "centered on macro headlines and crowded positioning."
+        ),
+        "view": "bullish",
+        "confidence": 0.62,
+        "evidence": [
+            "EMA20 above EMA50 with rising volume",
+            "News tone modestly positive",
+        ],
+        "risks": ["Macro headline tail-risk", "Crowded long positioning"],
+        "suggested_action": "watch",
+        "target_position_pct": 0.10,
+        "veto": False,
+        "needs_human_review": True,
+    }
+    provider = FakeProviderAdapter(
+        provider_name="fake",
+        model_name="fake-ai-committee",
+        capabilities=["structured_output"],
+        structured_output=sample_response,
+    )
+    gateway = ModelGateway(providers=[provider])
+    return TradingCommittee(gateway=gateway, discipline=DisciplineConfig())
+
+
+_AI_SCHEDULER_UNIVERSE = ("SPY", "QQQ", "IVV")
+
+
+def _ai_cycle_factory(
+    *, db_path: Path
+) -> Callable[[], Awaitable[None]]:
+    """Build an ``on_ai_cycle`` coroutine bound to ``db_path``.
+
+    The cycle runs the AI Trading Committee for the operator-curated
+    paper universe. The handler is registered but disabled by default;
+    ``scheduler run`` enables the task only when
+    ``ALPHABRIEF_AI_TRADING_ENABLED`` is truthy.
+    """
+    from alphabrief_api.db import AiTradingStore as _Store
+
+    def _loader(symbol: str) -> MarketSnapshot | None:
+        if symbol not in _AI_SCHEDULER_UNIVERSE:
+            return None
+        return MarketSnapshot(
+            symbol=symbol,
+            reference_price=Decimal("100"),
+            recent_return_pct=Decimal("0"),
+            recent_volume=Decimal("1000"),
+            data_version="scheduler-runner-v1",
+            captured_at=datetime.now(UTC),
+        )
+
+    async def _handler() -> None:
+        # The store is opened and closed per-call so a long-running
+        # scheduler can survive a DuckDB single-writer lock between
+        # cycles (the AI store is currently the same DB as the broker
+        # recon store). ponytail:scheduler_ai_duckdb_lock — see
+        # upgrade path note in
+        # docs/development_plans/0057-phase-26-ai-trader-closeout.md.
+        store = _Store(db_path=db_path / "alphabrief.db")
+        try:
+            committee = _build_ai_committee()
+            broker = PaperBroker(
+                portfolio=PortfolioState(cash=Decimal("100000")),
+                router=OrderRouter(),
+                fill_simulator=FillSimulator(),
+            )
+            risk_gate = RiskGate(
+                limits=RiskLimitConfig(
+                    trading_enabled=True,
+                    symbol_allowlist=frozenset(_AI_SCHEDULER_UNIVERSE),
+                )
+            )
+            cycle = DailyTradingCycle(
+                committee=committee,
+                risk_gate=risk_gate,
+                broker=broker,
+                store=store,
+                snapshot_loader=_loader,
+                enabled=is_ai_trading_enabled(),
+            )
+            cycle.run(list(_AI_SCHEDULER_UNIVERSE))
+        finally:
+            store.close()
+
+    return _handler
 
 
 @scheduler_app.command("run")
@@ -478,10 +586,21 @@ def run_cmd(
         async def _on_reconcile(scope: str) -> None:
             await runner.reconcile(scope=scope)
 
-        tasks = build_default_tasks(on_reconcile=_on_reconcile)
+        db_dir_env = os.environ.get("ALPHABRIEF_DATA_DIR")
+        db_path = (
+            Path(db_dir_env)
+            if db_dir_env
+            else Path.home() / ".alphabrief" / "data"
+        )
+        ai_handler = _ai_cycle_factory(db_path=db_path)
+
+        tasks = build_default_tasks(
+            on_reconcile=_on_reconcile,
+            on_ai_cycle=ai_handler,
+        )
         # Override the reconcile task interval if the user asked for a
         # different value. This rebuilds the list so the rest of the
-        # default tasks (none today, but reserved) stay intact.
+        # default tasks (ai_daily_cycle) stay intact.
         tasks = [
             (
                 replace(task, interval_seconds=reconcile_interval_seconds)
@@ -490,6 +609,14 @@ def run_cmd(
             )
             for task in tasks
         ]
+        # Activate the AI cycle task only when the feature flag is on;
+        # otherwise it stays a registered-but-disabled entry so the
+        # operator can see the task in `scheduler tasks`.
+        if is_ai_trading_enabled():
+            tasks = [
+                replace(task, enabled=True) if task.name == "ai_daily_cycle" else task
+                for task in tasks
+            ]
 
         scheduler = OperationsScheduler(
             tasks=tasks,

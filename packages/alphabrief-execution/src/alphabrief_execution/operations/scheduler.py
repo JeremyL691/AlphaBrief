@@ -400,17 +400,25 @@ class SchedulerStartupBlockedError(RuntimeError):
 def build_default_tasks(
     *,
     on_reconcile: Callable[[str], Awaitable[None]],
+    on_ai_cycle: Callable[[], Awaitable[None]] | None = None,
 ) -> list[ScheduledTask]:
-    """Return the Phase 18 default task list.
+    """Return the default task list (Phase 18 reconcile + Phase 26 AI).
 
     ``on_reconcile(scope)`` is supplied by the application; it should
     call ``ReconciliationRunner.reconcile(scope=scope)``.
+
+    ``on_ai_cycle`` is optional. When supplied, the scheduler registers
+    a disabled-by-default ``ai_daily_cycle`` task — the operator enables
+    it by setting ``ALPHABRIEF_AI_TRADING_ENABLED=true`` in the
+    environment. The task itself stays a no-op until the application
+    flips ``ScheduledTask.enabled = True`` on the returned entry, so
+    the default remains paper + read-only.
     """
 
     async def reconcile_cycle() -> None:
         await on_reconcile("cycle")
 
-    return [
+    tasks: list[ScheduledTask] = [
         ScheduledTask(
             name="reconcile",
             interval_seconds=300.0,
@@ -419,6 +427,18 @@ def build_default_tasks(
             max_retries=1,
         ),
     ]
+    if on_ai_cycle is not None:
+        tasks.append(
+            ScheduledTask(
+                name="ai_daily_cycle",
+                interval_seconds=86_400.0,
+                handler=on_ai_cycle,
+                timeout_seconds=120.0,
+                max_retries=1,
+                enabled=False,  # gated by ALPHABRIEF_AI_TRADING_ENABLED
+            )
+        )
+    return tasks
 
 
 # ---------------------------------------------------------------------------
