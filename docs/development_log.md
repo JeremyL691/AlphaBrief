@@ -2924,3 +2924,54 @@ shortcut and the ceiling.
    model list → risk status → review list → paper status → paper
    run → risk check (with risk-context) → broker freeze/unfreeze`
    all produced real output, no errors, no placeholders.
+
+## 0057 Phase 26 AI Trader Closeout
+
+### Goal
+
+Close the current AI Trading Committee implementation so the new
+`alphabrief_trader` package, API routes, CLI commands, scheduler task,
+and DuckDB store are importable and verifiable.
+
+### Findings and Fixes
+
+1. **AI trader tests failed during collection.** Root cause:
+   `alphabrief_trader.db_store` imported `alphabrief_api.db.schema`,
+   which imported the API app and `ai_trading` route, which re-imported
+   `alphabrief_trader`. Fix: added a package-local AI schema helper and
+   made `AiTradingStore` create only its own tables.
+2. **Multi-symbol cycles collided in `ai_committee_votes`.** Root
+   cause: `(cycle_id, role)` is not unique when one cycle evaluates
+   several symbols. Fix: key votes by `(cycle_id, vote_index)`.
+3. **Cross-cycle attempt fixtures collided in `ai_order_attempts`.**
+   Fix: key attempts by `(cycle_id, intent_id)` instead of treating
+   `intent_id` as globally unique.
+4. **The local `alphabrief` entrypoint could not import
+   `alphabrief_trader`.** Root cause: the editable install metadata was
+   generated before the package existed. Fix: added the package to
+   tracked egg-info metadata and refreshed the local editable finder.
+5. **`/api/status` package inventory omitted the new runtime package in
+   its test expectation.** Fix: updated the test to include
+   `alphabrief_trader`.
+
+### Safety Boundaries
+
+1. No live trading was enabled.
+2. No provider SDK calls were added outside `ModelGateway`.
+3. AI committee output remains advisory until materialized as
+   `OrderIntent` and approved by `RiskGate`.
+4. Approved decisions requiring human review are still blocked before
+   `PaperBroker`.
+5. No files under `_reference_sources/` were opened or imported.
+
+### Validation
+
+1. Targeted AI trader cluster: **97 passed**.
+2. Broker/scheduler CLI regression subset plus API status: **18 passed**.
+3. `.venv/bin/ruff check .` passed.
+4. `.venv/bin/mypy packages apps tests` passed: 247 source files.
+5. `.venv/bin/alphabrief acceptance verify --compact` passed: 11/11.
+6. Full sandboxed `pytest`: **1310 passed**, 12 failed. The remaining
+   failures are the known localhost mock broker `PermissionError`
+   cases in `tests/test_alpaca_adapter.py` and
+   `tests/test_broker_api_live.py`.

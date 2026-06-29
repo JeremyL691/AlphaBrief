@@ -1529,3 +1529,63 @@ and the ceiling.
 - [x] `alphabrief acceptance preflight --scope paper`: 1/1.
 - [x] End-to-end CLI smoke (isolated `ALPHABRIEF_DATA_DIR`): all
   commands produced real output, no placeholders, no errors.
+
+## Phase 26 — AI Trading Committee Runtime
+
+Status: implemented locally for the paper-only runtime surface. The
+AI trading path is feature-flag gated and remains behind the existing
+`RiskGate` and `PaperBroker` boundaries.
+
+### R26.1 — Committee, daily cycle, API, CLI, scheduler
+
+1. Added `alphabrief_trader`, a paper-only AI Trading Committee package
+   with strict schemas, multi-role committee orchestration, deterministic
+   discipline rules, daily cycle execution records, and a DuckDB-backed
+   cycle store.
+2. Added `alphabrief ai {status,run,history,show,rules}` and
+   `/api/v1/ai/{status,run,history,cycles/{cycle_id},rules,attempts}`.
+3. Added an optional `ai_daily_cycle` scheduler task. It is registered
+   but disabled by default, and only enabled when
+   `ALPHABRIEF_AI_TRADING_ENABLED` is truthy.
+4. The default API/CLI/scheduler committee uses `FakeProviderAdapter`
+   and produces a conservative `watch` / human-review sample response,
+   so the default runtime records plans but does not auto-place paper
+   orders.
+5. The full order path exists for injected providers/tests: a buy/sell
+   committee plan becomes an `OrderIntent`, passes through `RiskGate`,
+   is blocked on rejection or human review, and only then reaches the
+   in-memory `PaperBroker`.
+
+### R26.2 — Closeout fixes
+
+1. Broke the circular import between `alphabrief_trader.db_store` and
+   `alphabrief_api.db.schema` by adding an AI-only package schema helper.
+2. Fixed AI store keys for multi-symbol cycles:
+   `ai_committee_votes` now keys by `(cycle_id, vote_index)` and
+   `ai_order_attempts` by `(cycle_id, intent_id)`.
+3. Added `alphabrief_trader` to runtime package metadata and
+   `/api/status` package inventory.
+4. Added `docs/development_plans/0057-phase-26-ai-trader-closeout.md`.
+
+### Safety boundaries
+
+1. Live trading remains disabled by default and explicitly refused by
+   the AI cycle when `ALPHABRIEF_LIVE_TRADING_ENABLED` is set.
+2. Models are called only through `ModelGateway`.
+3. The committee never emits an `Order`; it emits advisory
+   `TradePlan` objects that must become `OrderIntent` and pass
+   `RiskGate`.
+4. No imports from `_reference_sources/`.
+5. The scheduler AI task does not use external broker credentials and
+   does not bypass the existing reconciliation/freeze surface.
+
+### Final quality gate
+
+- [x] Targeted AI trader tests: 97 passed.
+- [x] Broker/scheduler CLI regression subset: 18 passed.
+- [x] `ruff check .`: clean.
+- [x] `mypy packages apps tests`: 247 source files clean.
+- [x] `alphabrief acceptance verify --compact`: 11/11.
+- [x] Full sandboxed `pytest`: 1310 passed; the remaining 12 failures
+      are the known localhost mock broker `PermissionError` cases in
+      `tests/test_alpaca_adapter.py` and `tests/test_broker_api_live.py`.

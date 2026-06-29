@@ -1299,3 +1299,65 @@ Out of scope:
 - Claiming completion of the external 30-60 day paper-account
   observation period.
 - Enabling live trading or providing any order execution path.
+
+## Phase 26 — AI Trading Committee
+
+`alphabrief_trader` adds the first paper-only AI trading runtime surface
+on top of the existing ModelGateway, RiskGate, PaperBroker, API, CLI,
+and scheduler layers. It is designed as an auditable automation shell,
+not a live-trading unlock.
+
+```
+MarketSnapshot
+    │  symbol, reference_price, optional untrusted context
+    ▼
+TradingCommittee
+    │  four ModelGateway calls: technical, fundamental, risk, manager
+    ▼
+TradePlan
+    │  deterministic DisciplineGate clamps / blocks / human-review flags
+    ▼
+DailyTradingCycle
+    │  materialize OrderIntent only when target_position_pct > 0
+    ▼
+RiskGate.evaluate(...)
+    │  rejected or human-review decisions stop here
+    ▼
+PaperBroker.submit(...)
+    │  paper fill only
+    ▼
+DailyCycleRecord persisted by AiTradingStore
+```
+
+Runtime surfaces:
+
+1. `alphabrief ai status/run/history/show/rules`
+2. `/api/v1/ai/status`, `/run`, `/history`, `/cycles/{cycle_id}`,
+   `/rules`, `/attempts`
+3. Scheduler `ai_daily_cycle`, registered by `build_default_tasks`
+   when an AI handler is supplied and enabled only by
+   `ALPHABRIEF_AI_TRADING_ENABLED=true`.
+
+Key invariants:
+
+1. The AI committee never places an order directly and never produces
+   `Order` objects.
+2. Every executable plan is converted into `OrderIntent` and must pass
+   `RiskGate`.
+3. Approved decisions that require human review are not submitted.
+4. `ALPHABRIEF_LIVE_TRADING_ENABLED=true` blocks the AI cycle.
+5. Model calls go through `ModelGateway`; the default runtime uses
+   `FakeProviderAdapter` and is conservative (`watch` plus human
+   review).
+6. The AI store owns only AI cycle tables. Its package-local schema
+   helper prevents `alphabrief_trader` from importing the API app and
+   keeps the package importable in isolation.
+
+Out of scope:
+
+- Live trading.
+- Direct external broker submission from the AI committee.
+- Provider-specific model wiring outside `ModelGateway`.
+- Persistent market snapshots from a live data provider.
+- Persistent scheduler duplicate-order state beyond the existing
+  risk/scheduler stores.
