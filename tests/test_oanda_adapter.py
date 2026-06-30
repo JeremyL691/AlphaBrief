@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from urllib.request import Request
 
 import pytest
@@ -44,7 +44,7 @@ def test_submit_maps_oanda_payload_and_is_idempotent() -> None:
     calls: list[dict[str, Any]] = []
 
     def send(request: Request, timeout: float) -> bytes:
-        body = request.data or b""
+        body = cast(bytes, request.data or b"")
         calls.append(
             {
                 "method": request.get_method(),

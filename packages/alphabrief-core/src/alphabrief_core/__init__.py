@@ -4,6 +4,7 @@ from alphabrief_core.config import (
     AlphaBriefEnv,
     AppSettings,
     LogLevel,
+    load_env_file,
     load_settings,
 )
 from alphabrief_core.domain import (
@@ -38,6 +39,7 @@ __all__ = [
     "Signal",
     "SignalDirection",
     "SignalEvidence",
+    "load_env_file",
     "load_paper_execution_policy",
     "load_settings",
 ]

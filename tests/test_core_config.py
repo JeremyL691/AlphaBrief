@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from alphabrief_core import AppSettings, load_settings
+from alphabrief_core import AppSettings, load_env_file, load_settings
 from pydantic import ValidationError
 
 
@@ -74,3 +74,50 @@ def test_unknown_environment_variables_are_not_attached_to_settings() -> None:
     assert not hasattr(settings, "api_key")
     assert not hasattr(settings, "provider_api_key")
     assert settings.live_trading_enabled is False
+
+
+# ---------------------------------------------------------------------------
+# .env auto-loading
+# ---------------------------------------------------------------------------
+
+
+def test_load_env_file_loads_explicit_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_path = tmp_path / "fixture.env"
+    env_path.write_text(
+        "ALPHABRIEF_LOG_LEVEL=WARNING\nEXTRA_IGNORED_KEY=1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("ALPHABRIEF_LOG_LEVEL", raising=False)
+
+    loaded = load_env_file(env_path)
+
+    assert loaded == env_path
+    import os
+
+    assert os.environ["ALPHABRIEF_LOG_LEVEL"] == "WARNING"
+
+
+def test_load_env_file_does_not_override_existing_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_path = tmp_path / "fixture.env"
+    env_path.write_text("ALPHABRIEF_LOG_LEVEL=WARNING\n", encoding="utf-8")
+    monkeypatch.setenv("ALPHABRIEF_LOG_LEVEL", "ERROR")
+
+    loaded = load_env_file(env_path)
+
+    import os
+
+    assert loaded == env_path
+    assert os.environ["ALPHABRIEF_LOG_LEVEL"] == "ERROR"
+
+
+def test_load_env_file_returns_none_when_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ``monkeypatch.chdir`` requires an existing directory.
+    monkeypatch.chdir(tmp_path)
+
+    assert load_env_file(tmp_path / "absent.env") is None

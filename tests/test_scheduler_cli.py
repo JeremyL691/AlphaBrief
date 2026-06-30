@@ -44,7 +44,22 @@ def _run_cli(
 
 @pytest.fixture
 def isolated_data_dir(tmp_path: Path) -> dict[str, str]:
-    return {"ALPHABRIEF_DATA_DIR": str(tmp_path)}
+    # Strip broker credentials from the parent process's environment so a
+    # developer's local ``.env`` (auto-loaded by the CLI/API entry
+    # point) does not leak into a subprocess scheduler run. The
+    # scheduler should exercise its null-broker path unless a test
+    # explicitly opts in.
+    env: dict[str, str] = {"ALPHABRIEF_DATA_DIR": str(tmp_path)}
+    for name in (
+        "ALPHABRIEF_OANDA_TOKEN",
+        "ALPHABRIEF_OANDA_ACCOUNT_ID",
+        "ALPHABRIEF_ALPACA_KEY",
+        "ALPHABRIEF_ALPACA_SECRET",
+        "ALPHABRIEF_AI_TRADING_ENABLED",
+        "ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED",
+    ):
+        env[name] = ""
+    return env
 
 
 # ---------------------------------------------------------------------------
