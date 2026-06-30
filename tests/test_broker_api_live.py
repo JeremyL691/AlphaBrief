@@ -39,6 +39,12 @@ def live_client(
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ALPHABRIEF_ALPACA_KEY", "test-key")
     monkeypatch.setenv("ALPHABRIEF_ALPACA_SECRET", "test-secret")
+    # The auto-load step in ``alphabrief_api.__init__`` may have
+    # populated OANDA creds from the developer's local ``.env``; clear
+    # them so the broker factory picks the mock Alpaca adapter (OANDA
+    # is preferred when both credential sets are present).
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
     _reset_broker_adapter()
     return TestClient(create_app())
 
@@ -153,6 +159,11 @@ def test_no_credentials_returns_null_shapes(
     monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
     monkeypatch.delenv("ALPHABRIEF_ALPACA_BASE_URL", raising=False)
+    # The auto-load step in ``alphabrief_api.__init__`` may have populated
+    # OANDA creds from the developer's local ``.env``; clear them too so
+    # the null-adapter path is exercised as documented.
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
     _reset_broker_adapter()
     client = TestClient(create_app())
 

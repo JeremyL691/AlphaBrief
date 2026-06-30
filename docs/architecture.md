@@ -1377,6 +1377,40 @@ assigned placeholder prices. API requests may still pass
 `reference_prices` as an explicit manual override for controlled dry
 runs.
 
+### AI model and pre-cycle ingestion wiring
+
+Scheduler, API, and CLI AI runs share
+`alphabrief_trader.model_factory.build_ai_trading_committee()`.
+
+1. `ALPHABRIEF_AI_MODEL_PROVIDER=auto` selects OpenAI when
+   `OPENAI_API_KEY` is present; otherwise it uses a conservative
+   `FakeProviderAdapter` that returns `watch` plus human review.
+2. `ALPHABRIEF_AI_MODEL_PROVIDER=openai` requires `OPENAI_API_KEY` and
+   uses `ALPHABRIEF_AI_MODEL_NAME` or `gpt-4o-mini`.
+3. `ALPHABRIEF_AI_MODEL_PROVIDER=ollama` uses the local Ollama adapter
+   with `ALPHABRIEF_AI_MODEL_NAME` or `llama3.1` and optional
+   `ALPHABRIEF_AI_MODEL_BASE_URL`.
+4. Every configured provider is exposed through `ModelGateway` with
+   structured-output capabilities.
+
+Before each scheduler `ai_daily_cycle`, the scheduler can refresh the
+same DuckDB stores consumed by `StoredMarketSnapshotBuilder`.
+
+1. `ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED=true` is the default for the
+   scheduler AI handler.
+2. `ALPHABRIEF_AI_SCHEDULER_UNIVERSE` defines the operator-curated
+   scheduler universe. It defaults to `SPY,QQQ,IVV` and is normalized to
+   uppercase.
+3. `ALPHABRIEF_AI_MARKET_DATA_SOURCE=yahoo` fetches daily OHLCV bars for
+   the scheduler universe; `alphavantage` is also supported when
+   `ALPHAVANTAGE_API_KEY` is configured. `none` disables market refresh.
+4. `ALPHABRIEF_AI_NEWS_SOURCE=rss` fetches allowed financial RSS feeds
+   and retags the broad market headlines to the AI universe so each
+   symbol snapshot receives the current market-news context.
+5. Provider failures are logged and swallowed; the cycle then uses any
+   previously persisted bars/headlines. If no price exists for a symbol,
+   that symbol is skipped.
+
 ### External AI paper execution bridge
 
 `DailyTradingCycle` now delegates its final approved-order hop to an
@@ -1393,6 +1427,9 @@ runs.
    idempotency protects retries and restarts.
 5. `OrderAttempt` persists broker metadata (`broker_order_id`,
    `broker_status`, `client_order_id`) in the cycle JSON.
+6. External AI paper execution refuses to start when the reviewed
+   `PaperExecutionPolicy.provider` disagrees with the broker credentials
+   selected by the scheduler (`alpaca_paper` vs `oanda_paper`).
 
 The bridge is paper-only and fail-closed. The live-trading lock,
 `RiskGate`, and human-review block all run before any broker submit.
@@ -1400,7 +1437,5 @@ The bridge is paper-only and fail-closed. The live-trading lock,
 Out of scope:
 
 - Live trading.
-- Provider-specific model wiring outside `ModelGateway`.
-- Automatic pre-cycle data ingestion from live providers.
 - Persistent scheduler duplicate-order state beyond the existing
   risk/scheduler stores.

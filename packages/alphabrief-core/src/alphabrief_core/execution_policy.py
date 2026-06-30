@@ -15,6 +15,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PaperOrderType = Literal["market", "limit"]
+PaperProvider = Literal["alpaca_paper", "oanda_paper"]
+PaperMarket = Literal["us_equity", "fx", "multi_asset"]
 TradingDay = Literal["mon", "tue", "wed", "thu", "fri"]
 
 
@@ -24,8 +26,8 @@ class PaperExecutionPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     mode: Literal["paper"]
-    provider: Literal["alpaca_paper"]
-    market: Literal["us_equity"]
+    provider: PaperProvider
+    market: PaperMarket
     symbols: tuple[str, ...] = Field(min_length=1)
     order_types: tuple[PaperOrderType, ...] = Field(min_length=1)
     timezone: Literal["America/New_York"]
@@ -77,9 +79,15 @@ class PaperExecutionPolicy(BaseModel):
 
 
 def load_paper_execution_policy(path: Path | str) -> PaperExecutionPolicy:
-    """Load one strict, paper-only execution policy from a YAML file."""
+    """Load one strict, paper-only execution policy from a YAML file.
 
-    policy_path = Path(path)
+    A relative path is resolved against the discovered project root
+    (the first ancestor containing ``pyproject.toml``), so the loader
+    keeps working when the caller runs from a different working
+    directory. Absolute paths are used verbatim.
+    """
+
+    policy_path = _resolve_policy_path(Path(path))
     try:
         raw = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -93,8 +101,28 @@ def load_paper_execution_policy(path: Path | str) -> PaperExecutionPolicy:
     return PaperExecutionPolicy.model_validate(raw)
 
 
+def _resolve_policy_path(path: Path) -> Path:
+    """Resolve a relative policy path against the discovered project root.
+
+    Discovery walks up from both ``Path.cwd()`` and ``__file__`` for the
+    first ancestor that contains ``pyproject.toml``. This works whether
+    the operator runs from the project root, from a sub-directory, or
+    from outside the checkout (e.g. via an editable install).
+    """
+
+    if path.is_absolute():
+        return path
+    parents = (*Path.cwd().parents, *Path(__file__).resolve().parents)
+    for directory in (Path.cwd(), *parents):
+        if (directory / "pyproject.toml").is_file():
+            return directory / path
+    return path
+
+
 __all__ = [
     "PaperExecutionPolicy",
+    "PaperProvider",
+    "PaperMarket",
     "PaperOrderType",
     "TradingDay",
     "load_paper_execution_policy",

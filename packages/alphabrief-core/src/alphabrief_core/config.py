@@ -88,3 +88,102 @@ def load_settings(environ: Mapping[str, str] | None = None) -> AppSettings:
         if env_name in source
     }
     return AppSettings(**values)
+
+
+# ---------------------------------------------------------------------------
+# .env file auto-loading
+# ---------------------------------------------------------------------------
+
+
+def load_env_file(
+    path: Path | str | None = None,
+    *,
+    override: bool = False,
+) -> Path | None:
+    """Load a dotenv file into ``os.environ``.
+
+    Args:
+        path: Absolute or relative path to a dotenv file. ``None`` walks up
+            from the current working directory to find a ``.env`` at a
+            project root (the first directory containing ``pyproject.toml``).
+        override: When ``True``, values from the dotenv file overwrite
+            existing environment variables. The default is ``False`` so
+            explicit shell exports always win.
+
+    Returns:
+        The resolved path to the dotenv file that was loaded, or ``None``
+        when no file was found or auto-load was suppressed.
+
+    Notes:
+        The auto-load path (when ``path is None``) is automatically
+        suppressed when ``PYTEST_CURRENT_TEST`` is set, so a project's
+        real ``.env`` cannot leak into unit-test processes. Tests that
+        explicitly want to load a dotenv file should pass ``path``
+        directly or set ``ALPHABRIEF_NO_AUTO_LOAD_ENV=1``.
+    """
+    if path is None and _auto_load_is_suppressed():
+        return None
+
+    resolved: Path | None = None
+    if path is None:
+        resolved = _discover_env_file()
+    else:
+        candidate = Path(path)
+        resolved = candidate if candidate.is_file() else None
+
+    if resolved is None:
+        return None
+
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return None
+
+    load_dotenv(resolved, override=override)
+    return resolved
+
+
+def _auto_load_is_suppressed() -> bool:
+    """Return ``True`` when the auto-load should be skipped.
+
+    Two conditions suppress the auto-load:
+
+    1. ``PYTEST_CURRENT_TEST`` — pytest sets this for every test, so a
+       real ``.env`` never leaks into unit tests.
+    2. ``ALPHABRIEF_NO_AUTO_LOAD_ENV=1`` — explicit operator override for
+       ad-hoc debugging or for sub-processes that must run with a clean
+       environment.
+    """
+    import os
+
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if os.environ.get("ALPHABRIEF_NO_AUTO_LOAD_ENV", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return True
+    return False
+
+
+def _discover_env_file() -> Path | None:
+    """Walk up from cwd and ``__file__`` to find the project's ``.env``.
+
+    Discovery happens in two passes:
+
+    1. ``Path.cwd()`` and its ancestors — for the common case where the
+       operator runs from the project root or a sub-directory.
+    2. This module's directory and its ancestors — so operators running
+       from outside the checkout (e.g. via an editable install invoked
+       from anywhere) still find the project's ``.env``.
+    """
+
+    search_roots: list[Path] = [Path.cwd(), *Path.cwd().parents]
+    search_roots.extend(Path(__file__).resolve().parents)
+    for directory in search_roots:
+        env_path = directory / ".env"
+        if env_path.is_file():
+            return env_path
+    return None

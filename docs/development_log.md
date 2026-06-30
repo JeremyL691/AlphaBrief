@@ -3109,3 +3109,172 @@ behavior.
    universe.
 4. Full localhost mock-broker tests need to be rerun outside this
    restricted sandbox.
+
+## 0060 Phase 29 AI Model Provider and Pre-Cycle Ingestion
+
+### Goal
+
+Make the AI trading entry points use a configurable structured-output
+model provider and make scheduler-run AI cycles refresh daily market
+data/news before committee snapshots are built.
+
+### Findings and Fixes
+
+1. **Scheduler/API/CLI AI paths still used fixed fake providers.** Fix:
+   added `alphabrief_trader.model_factory` and routed all three entry
+   points through `build_ai_trading_committee()`.
+2. **Real AI provider selection had no operator-facing switch.** Fix:
+   added `ALPHABRIEF_AI_MODEL_PROVIDER=auto|fake|openai|ollama`,
+   model name/base URL/timeout envs, and strict OpenAI key validation.
+3. **No-provider local smoke tests needed to stay safe.** Fix: `auto`
+   falls back to a conservative fake provider that suggests `watch` and
+   requires human review.
+4. **AI scheduler cycles consumed only preloaded stores.** Fix:
+   scheduler `ai_daily_cycle` now runs pre-cycle ingestion before
+   `StoredMarketSnapshotBuilder` reads bars/headlines.
+5. **Fresh broad financial RSS headlines were not visible to
+   per-symbol snapshots.** Fix: allowed RSS feed headlines are retagged
+   to the scheduler universe and persisted in `NewsStore`.
+6. **Live provider failures could destabilize a 30-day run.** Fix:
+   pre-cycle market/news provider failures are logged and swallowed, so
+   the cycle can use existing persisted data and still skip symbols with
+   no local price.
+7. **OANDA credentials could be preferred while the reviewed policy
+   still named Alpaca.** Fix: external AI paper execution now refuses
+   policy/provider mismatches before any broker submit.
+8. **The AI scheduler universe was hard-coded to ETFs.** Fix:
+   `ALPHABRIEF_AI_SCHEDULER_UNIVERSE` now configures the operator
+   universe and normalizes symbols to uppercase.
+
+### Safety Boundaries
+
+1. Live trading remains blocked by `ALPHABRIEF_LIVE_TRADING_ENABLED`.
+2. `ALPHABRIEF_AI_TRADING_ENABLED` is still required before the AI
+   scheduler task runs.
+3. `ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED` is still required before any
+   external paper broker submit.
+4. Human-review and rejected `RiskDecision` objects still stop before
+   execution.
+5. No dashboard/UI files were changed.
+
+### Validation
+
+1. AI trader/API/scheduler focused cluster:
+   **38 passed**, 1 pre-existing FastAPI/httpx deprecation warning.
+2. Focused `ruff check` on trader, CLI/API AI paths, and related tests
+   passed.
+3. Focused `mypy` on trader, CLI/API, and related tests passed:
+   **73 source files**, strict mode.
+
+### Remaining 30-day Paper-run Gaps
+
+1. `config/paper_execution_policy.yaml` remains Alpaca/us-equity by
+   default. OANDA paper operators must edit it to `oanda_paper` and set
+   `ALPHABRIEF_AI_SCHEDULER_UNIVERSE` to matching broker instruments.
+2. Full localhost mock-broker tests need to be rerun outside this
+   restricted sandbox.
+
+## 0061 Phase 30 Pre-30-Day-Run Hardening
+
+### Goal
+
+Close the final operator-ergonomics gaps so an operator can pick up
+the project, run `alphabrief scheduler run`, and let the AI daily
+cycle + OANDA paper reconciliation run unattended for 30 days without
+manually exporting environment variables.
+
+### Findings and Fixes
+
+1. **The project never auto-loaded `.env`.** The runbook told
+   operators to edit `.env`, but every CLI/API entry point read
+   `os.environ` directly, so OANDA credentials, `SSL_CERT_FILE`, and
+   the AI trading flags sat unused unless the operator manually
+   `export`ed them. Fix: added `alphabrief_core.load_env_file()` with
+   a project-root discovery (cwd + `__file__` ancestors) and wired it
+   into `apps/cli/src/alphabrief_cli/__init__.py` and
+   `apps/api/src/alphabrief_api/__init__.py`. The auto-load is
+   suppressed under `PYTEST_CURRENT_TEST` and when
+   `ALPHABRIEF_NO_AUTO_LOAD_ENV=1`, so a developer's local `.env` can
+   never leak into unit tests or sub-processes.
+2. **`paper_execution_policy.yaml` used a cwd-relative path.** The
+   loader would raise `FileNotFoundError` when the CLI was invoked
+   from outside the project root, even though the policy file was
+   shipped with the checkout. Fix: `load_paper_execution_policy` now
+   resolves relative paths against the discovered project root.
+3. **The Reuters RSS feed in the default feed list returned 404.**
+   `https://www.reutersagency.com/feed/?taxonomy=markets` has been
+   dead for an extended period. Fix: redirected the `reuters-rss`
+   allowlist entry to a working Bloomberg markets feed and added
+   `bloomberg-markets-rss` as an explicit alias. The default scheduler
+   feed list no longer logs an error on every cycle.
+4. **The scheduler was silent on healthy runs.** The default Python
+   `logging` configuration filtered out INFO traffic, so a 30-day run
+   gave the operator no visible signal. Fix: the CLI now calls a
+   `_configure_logging` helper before starting the asyncio loop, and
+   the scheduler emits a structured INFO line for every task start
+   and successful run, plus a startup banner showing the active
+   feature flags.
+5. **The runbook pointed operators at a non-existent command.**
+   Section 8 and 9 of `docs/paper_broker_setup.md` referenced
+   `alphabrief broker freezes`, but the actual command is
+   `alphabrief scheduler freezes`. Fix: runbook updated.
+6. **Operator `.env` was missing the AI trading flags.** The
+   checked-in `.env.example` already documented
+   `ALPHABRIEF_AI_TRADING_ENABLED` and the rest of the AI scheduler
+   knobs, but the operator's live `.env` predated Phase 29 and
+   contained only the OANDA + SSL knobs. Fix: filled in the AI
+   scheduler variables in the operator's `.env` (using the
+   conservative fake committee so the run is safe to start without a
+   real provider key).
+
+### Test Isolation Updates
+
+Auto-loading `.env` would have leaked the developer's broker
+credentials and AI trading flag into every test that previously
+assumed a clean environment. The following test files were updated to
+clear the relevant environment variables in their fixtures (each is a
+narrow, scoped change — no assertions, no schema, no test logic
+changed):
+
+- `tests/test_ai_trader_cli.py` — autouse fixture clears
+  `ALPHABRIEF_AI_TRADING_ENABLED`, `ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED`,
+  `ALPHABRIEF_AI_SCHEDULER_UNIVERSE`, `ALPHABRIEF_AI_MODEL_PROVIDER`,
+  and the OANDA / Alpaca broker credential sets.
+- `tests/test_ai_trader_scheduler.py` — autouse fixture clears the
+  same broker + AI env vars so the policy / broker mismatch check
+  exercises the test's intent, not the developer's local broker.
+- `tests/test_broker_api.py` — fixture clears OANDA env vars so the
+  "no credentials" path exercises `NullBrokerAdapter` as documented.
+- `tests/test_broker_api_live.py` — `live_client` fixture clears
+  OANDA env vars so the mock Alpaca server is actually used.
+- `tests/test_scheduler_cli.py` — `isolated_data_dir` fixture clears
+  broker + AI env vars in the subprocess scheduler run.
+
+### Safety Boundaries
+
+1. Live trading remains blocked by `ALPHABRIEF_LIVE_TRADING_ENABLED`.
+2. `ALPHABRIEF_AI_TRADING_ENABLED` is still required before the AI
+   scheduler task runs.
+3. `ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED` is still separately
+   required before any external paper broker submit.
+4. Human-review and rejected `RiskDecision` objects still stop before
+   execution.
+5. The auto-load never overrides a value already present in the
+   process environment, so explicit shell exports always win.
+6. No new provider SDK calls, no live-trading path was opened.
+
+### Validation
+
+1. Full sandboxed `pytest`: **1344 passed**, 0 failed.
+2. `.venv/bin/ruff check .` passed.
+3. `.venv/bin/mypy packages apps tests` passed: 253 source files,
+   strict mode.
+4. `.venv/bin/alphabrief acceptance verify --compact` passed: 11/11.
+5. `.venv/bin/alphabrief acceptance preflight --scope paper` passed:
+   1/1.
+6. End-to-end smoke (isolated `ALPHABRIEF_DATA_DIR`, copy of
+   `config/`): the scheduler started with `ai_trading=True,
+   external_paper=False, universe=SPY,QQQ,IVV`; OANDA reconciliation
+   completed; the AI daily cycle ran once, generated 3 plans, and
+   persisted a `DailyCycleRecord` to DuckDB. `alphabrief ai history`
+   read the cycle back without error.

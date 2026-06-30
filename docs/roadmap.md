@@ -1598,6 +1598,27 @@ AI trading path is feature-flag gated and remains behind the existing
    metadata.
 7. Added `docs/development_plans/0059-phase-28-external-ai-paper-bridge.md`.
 
+### R26.5 — Configured AI model and pre-cycle ingestion
+
+1. Scheduler, API, and CLI AI entry points now share a single model
+   factory backed by `ModelGateway`.
+2. `ALPHABRIEF_AI_MODEL_PROVIDER=auto` uses OpenAI when `OPENAI_API_KEY`
+   is set and otherwise falls back to a conservative fake provider.
+   Explicit `openai`, `ollama`, and `fake` modes are supported.
+3. Scheduler `ai_daily_cycle` now refreshes local market bars and broad
+   financial RSS headlines before snapshot construction when
+   `ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED` is truthy.
+4. Market refresh supports Yahoo Finance by default and Alpha Vantage
+   when `ALPHAVANTAGE_API_KEY` is configured.
+5. RSS headlines are retagged to the AI scheduler universe so symbol
+   snapshots include current broad-market news sentiment.
+6. Provider failures are fail-soft: they are logged, stale stored data
+   can still be used, and symbols with no local price remain skipped.
+7. `ALPHABRIEF_AI_SCHEDULER_UNIVERSE` lets operators align the AI
+   universe with the reviewed paper policy.
+8. External AI paper execution fails closed when broker credentials
+   select a different provider than `PaperExecutionPolicy.provider`.
+
 ### Safety boundaries
 
 1. Live trading remains disabled by default and explicitly refused by

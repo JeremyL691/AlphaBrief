@@ -25,7 +25,6 @@ from alphabrief_execution import (
     PaperBroker,
     PortfolioState,
 )
-from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
@@ -34,6 +33,7 @@ from alphabrief_trader import (
     SnapshotLoader,
     StoredMarketSnapshotBuilder,
     TradingCommittee,
+    build_ai_trading_committee,
     is_ai_trading_enabled,
     is_live_trading_unlocked,
 )
@@ -139,35 +139,8 @@ router = APIRouter(prefix="/api/v1/ai", tags=["ai-trading"])
 
 
 def _build_default_committee() -> TradingCommittee:
-    """Build a deterministic committee backed by ``FakeProviderAdapter``."""
-    sample_response = {
-        "analysis": (
-            "Trend remains constructive on improving breadth; downside risks "
-            "centered on macro headlines and crowded positioning."
-        ),
-        "view": "bullish",
-        "confidence": 0.62,
-        "evidence": [
-            "EMA20 above EMA50 with rising volume",
-            "News tone modestly positive",
-        ],
-        "risks": ["Macro headline tail-risk", "Crowded long positioning"],
-        "suggested_action": "watch",
-        "target_position_pct": 0.10,
-        "veto": False,
-        "needs_human_review": True,
-    }
-    provider = FakeProviderAdapter(
-        provider_name="fake",
-        model_name="fake-ai-committee",
-        capabilities=["structured_output"],
-        structured_output=sample_response,
-    )
-    gateway = ModelGateway(providers=[provider])
-    return TradingCommittee(
-        gateway=gateway,
-        discipline=DisciplineConfig(),
-    )
+    """Build the configured AI Trading Committee."""
+    return build_ai_trading_committee()
 
 
 def _build_paper_broker() -> PaperBroker:

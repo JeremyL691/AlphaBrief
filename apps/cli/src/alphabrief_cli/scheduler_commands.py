@@ -20,19 +20,24 @@ proxies through the API because that would block an API worker.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import signal
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
 import typer
-from alphabrief_core import load_paper_execution_policy, load_settings
+from alphabrief_core import (
+    PaperExecutionPolicy,
+    load_paper_execution_policy,
+    load_settings,
+)
 from alphabrief_execution import (
     FillSimulator,
     OrderRouter,
@@ -61,14 +66,13 @@ from alphabrief_execution.operations.scheduler import (
     SchedulerStartupBlockedError,
     build_default_tasks,
 )
-from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
-    DisciplineConfig,
     ExternalPaperExecutionBackend,
     StoredMarketSnapshotBuilder,
     TradingCommittee,
+    build_ai_trading_committee,
     is_ai_external_paper_enabled,
     is_ai_trading_enabled,
 )
@@ -469,36 +473,333 @@ def _refuse_if_live_trading_unlocked() -> None:
         sys.exit(3)
 
 
-def _build_ai_committee() -> TradingCommittee:
-    """Build a deterministic AI committee for the scheduler."""
-    sample_response = {
-        "analysis": (
-            "Trend remains constructive on improving breadth; downside risks "
-            "centered on macro headlines and crowded positioning."
-        ),
-        "view": "bullish",
-        "confidence": 0.62,
-        "evidence": [
-            "EMA20 above EMA50 with rising volume",
-            "News tone modestly positive",
-        ],
-        "risks": ["Macro headline tail-risk", "Crowded long positioning"],
-        "suggested_action": "watch",
-        "target_position_pct": 0.10,
-        "veto": False,
-        "needs_human_review": True,
-    }
-    provider = FakeProviderAdapter(
-        provider_name="fake",
-        model_name="fake-ai-committee",
-        capabilities=["structured_output"],
-        structured_output=sample_response,
+def _configure_logging() -> None:
+    """Wire the root logger to the operator's ``ALPHABRIEF_LOG_LEVEL``.
+
+    The scheduler run is intended to run under a process supervisor for
+    days at a time; the operator must be able to see at least INFO
+    traffic on stderr without configuring Python logging by hand. The
+    default level is INFO when ``ALPHABRIEF_LOG_LEVEL`` is unset or
+    invalid, which matches the runbook's "logs visible" expectation.
+    """
+    import logging
+
+    raw = os.environ.get("ALPHABRIEF_LOG_LEVEL", "INFO").upper().strip()
+    level = getattr(logging, raw, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        stream=sys.stderr,
     )
-    gateway = ModelGateway(providers=[provider])
-    return TradingCommittee(gateway=gateway, discipline=DisciplineConfig())
+
+
+def _build_ai_committee() -> TradingCommittee:
+    """Build the configured AI committee for the scheduler."""
+    return build_ai_trading_committee()
 
 
 _AI_SCHEDULER_UNIVERSE = ("SPY", "QQQ", "IVV")
+_AI_SCHEDULER_UNIVERSE_ENV = "ALPHABRIEF_AI_SCHEDULER_UNIVERSE"
+_AI_PRE_CYCLE_INGEST_ENV = "ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED"
+_AI_MARKET_DATA_SOURCE_ENV = "ALPHABRIEF_AI_MARKET_DATA_SOURCE"
+_AI_MARKET_DATA_INTERVAL_ENV = "ALPHABRIEF_AI_MARKET_DATA_INTERVAL"
+_AI_MARKET_DATA_LOOKBACK_DAYS_ENV = "ALPHABRIEF_AI_MARKET_DATA_LOOKBACK_DAYS"
+_AI_NEWS_SOURCE_ENV = "ALPHABRIEF_AI_NEWS_SOURCE"
+_AI_NEWS_FEEDS_ENV = "ALPHABRIEF_AI_NEWS_FEEDS"
+_AI_NEWS_LOOKBACK_HOURS_ENV = "ALPHABRIEF_AI_NEWS_LOOKBACK_HOURS"
+_AI_NEWS_LIMIT_ENV = "ALPHABRIEF_AI_NEWS_LIMIT"
+_AI_NEWS_DEFAULT_FEEDS = ("marketwatch-rss", "reuters-rss", "bloomberg-atom")
+
+
+def _env_bool(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, *, default: int, minimum: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        print(
+            f"scheduler: ignoring invalid {name}={raw!r}; expected integer",
+            file=sys.stderr,
+        )
+        return default
+    return max(minimum, value)
+
+
+def _is_ai_pre_cycle_ingest_enabled() -> bool:
+    """Return whether the AI cycle should refresh local data first."""
+
+    return _env_bool(_AI_PRE_CYCLE_INGEST_ENV, default=True)
+
+
+def _ai_scheduler_universe() -> tuple[str, ...]:
+    """Return the operator-curated AI universe for scheduler cycles."""
+
+    raw = os.environ.get(_AI_SCHEDULER_UNIVERSE_ENV)
+    if raw is None or raw.strip() == "":
+        return _AI_SCHEDULER_UNIVERSE
+    symbols = tuple(symbol.strip().upper() for symbol in raw.split(","))
+    symbols = tuple(symbol for symbol in symbols if symbol)
+    if not symbols:
+        return _AI_SCHEDULER_UNIVERSE
+    if len(set(symbols)) != len(symbols):
+        raise ValueError(f"{_AI_SCHEDULER_UNIVERSE_ENV} must not contain duplicates")
+    return symbols
+
+
+def _build_market_data_provider(source: str) -> Any:
+    """Build the configured provider for scheduler market-data refreshes."""
+
+    from alphabrief_data import AlphaVantageProvider, YahooFinanceProvider
+
+    if source == "yahoo":
+        return YahooFinanceProvider()
+    if source == "alphavantage":
+        return AlphaVantageProvider()
+    raise ValueError(
+        "ALPHABRIEF_AI_MARKET_DATA_SOURCE must be one of yahoo, "
+        "alphavantage, none"
+    )
+
+
+def _build_news_provider(source: str) -> Any:
+    """Build the configured provider for scheduler news refreshes."""
+
+    from alphabrief_news.providers import RssNewsProvider
+
+    if source == "rss":
+        return RssNewsProvider()
+    raise ValueError("ALPHABRIEF_AI_NEWS_SOURCE must be one of rss, none")
+
+
+def _run_ai_pre_cycle_ingestion(
+    *,
+    market_store: Any,
+    news_store: Any,
+    symbols: tuple[str, ...],
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """Refresh local market/news stores before building AI snapshots.
+
+    Provider failures are logged and swallowed so the daily AI cycle can
+    still use any previously persisted bars/headlines. A total lack of
+    local bars remains handled by ``StoredMarketSnapshotBuilder`` as a
+    symbol skip rather than a synthetic price.
+    """
+
+    if not _is_ai_pre_cycle_ingest_enabled():
+        return {"bars": 0, "headlines": 0}
+
+    captured_at = now or datetime.now(UTC)
+    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        captured_at = captured_at.replace(tzinfo=UTC)
+    else:
+        captured_at = captured_at.astimezone(UTC)
+
+    bars = _ingest_ai_market_data(
+        market_store=market_store,
+        symbols=symbols,
+        now=captured_at,
+    )
+    headlines = _ingest_ai_news(
+        news_store=news_store,
+        symbols=symbols,
+        now=captured_at,
+    )
+    return {"bars": bars, "headlines": headlines}
+
+
+def _ingest_ai_market_data(
+    *,
+    market_store: Any,
+    symbols: tuple[str, ...],
+    now: datetime,
+) -> int:
+    source = os.environ.get(_AI_MARKET_DATA_SOURCE_ENV, "yahoo").strip().lower()
+    if source in {"", "none", "off", "disabled"}:
+        return 0
+
+    interval = os.environ.get(_AI_MARKET_DATA_INTERVAL_ENV, "1d").strip() or "1d"
+    lookback_days = _env_int(
+        _AI_MARKET_DATA_LOOKBACK_DAYS_ENV,
+        default=10,
+        minimum=1,
+    )
+    start = now - timedelta(days=lookback_days)
+    data_version = f"ai-precycle-{source}-{interval}"
+
+    from alphabrief_data import MarketDataProviderError
+
+    try:
+        provider = _build_market_data_provider(source)
+    except (MarketDataProviderError, ValueError) as exc:
+        print(
+            f"scheduler: market data pre-cycle ingest disabled: {exc}",
+            file=sys.stderr,
+        )
+        return 0
+
+    inserted_total = 0
+    for symbol in symbols:
+        try:
+            bars = provider.fetch_ohlcv(
+                symbol=symbol,
+                start=start,
+                end=now,
+                interval=interval,
+            )
+        except MarketDataProviderError as exc:
+            print(
+                f"scheduler: market data pre-cycle ingest failed for "
+                f"{symbol}: [{exc.code}] {exc}",
+                file=sys.stderr,
+            )
+            continue
+        if not bars:
+            print(
+                f"scheduler: market data pre-cycle ingest returned 0 bars "
+                f"for {symbol}",
+                file=sys.stderr,
+            )
+            continue
+        inserted_total += int(
+            market_store.insert_bars(
+                bars,
+                source=getattr(provider, "provider_name", source),
+                data_version=data_version,
+            )
+        )
+    return inserted_total
+
+
+def _ingest_ai_news(
+    *,
+    news_store: Any,
+    symbols: tuple[str, ...],
+    now: datetime,
+) -> int:
+    source = os.environ.get(_AI_NEWS_SOURCE_ENV, "rss").strip().lower()
+    if source in {"", "none", "off", "disabled"}:
+        return 0
+
+    lookback_hours = _env_int(
+        _AI_NEWS_LOOKBACK_HOURS_ENV,
+        default=24,
+        minimum=1,
+    )
+    limit = _env_int(_AI_NEWS_LIMIT_ENV, default=30, minimum=1)
+    feeds = _configured_news_feeds()
+    start = now - timedelta(hours=lookback_hours)
+    data_version = f"ai-precycle-{source}-v1"
+
+    from alphabrief_news.providers import NewsProviderError
+    from alphabrief_news.types import NewsFetchQuery
+
+    try:
+        provider = _build_news_provider(source)
+    except (NewsProviderError, ValueError) as exc:
+        print(f"scheduler: news pre-cycle ingest disabled: {exc}", file=sys.stderr)
+        return 0
+
+    inserted_total = 0
+    for feed in feeds:
+        query = NewsFetchQuery(
+            symbols=[feed],
+            start=start,
+            end=now,
+            limit=limit,
+            data_version=data_version,
+        )
+        try:
+            headlines = provider.fetch_headlines(query)
+        except NewsProviderError as exc:
+            print(
+                f"scheduler: news pre-cycle ingest failed for {feed}: "
+                f"[{exc.code}] {exc}",
+                file=sys.stderr,
+            )
+            continue
+        tagged = [
+            _tag_ai_news_headline(
+                headline,
+                feed=feed,
+                symbols=symbols,
+                data_version=data_version,
+            )
+            for headline in headlines
+        ]
+        inserted_total += int(news_store.insert_headlines(tagged))
+    return inserted_total
+
+
+def _configured_news_feeds() -> tuple[str, ...]:
+    raw = os.environ.get(_AI_NEWS_FEEDS_ENV)
+    if raw is None or raw.strip() == "":
+        return _AI_NEWS_DEFAULT_FEEDS
+    feeds = tuple(feed.strip() for feed in raw.split(",") if feed.strip())
+    return feeds or _AI_NEWS_DEFAULT_FEEDS
+
+
+def _tag_ai_news_headline(
+    headline: Any,
+    *,
+    feed: str,
+    symbols: tuple[str, ...],
+    data_version: str,
+) -> Any:
+    from alphabrief_news.types import NewsHeadline
+
+    typed = cast(NewsHeadline, headline)
+    fingerprint = "|".join(
+        [
+            feed,
+            typed.url or "",
+            typed.title,
+            typed.published_at.astimezone(UTC).isoformat(),
+        ]
+    )
+    digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
+    return typed.model_copy(
+        update={
+            "headline_id": f"ai-precycle-{feed}-{digest}",
+            "symbols": list(symbols),
+            "data_version": data_version,
+        }
+    )
+
+
+def _configured_broker_provider_name() -> str | None:
+    if _oanda_is_configured():
+        return "oanda_paper"
+    if _alpaca_is_configured():
+        return "alpaca_paper"
+    return None
+
+
+def _assert_external_policy_matches_broker(
+    policy: PaperExecutionPolicy,
+) -> None:
+    """Fail closed when external AI paper config is internally inconsistent."""
+
+    configured = _configured_broker_provider_name()
+    if configured is None:
+        raise RuntimeError(
+            "ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED=true requires OANDA or "
+            "Alpaca paper credentials"
+        )
+    if policy.provider != configured:
+        raise RuntimeError(
+            "external AI paper policy/provider mismatch: "
+            f"policy provider is {policy.provider!r}, but configured broker "
+            f"credentials select {configured!r}"
+        )
 
 
 def _ai_cycle_factory(
@@ -533,6 +834,12 @@ def _ai_cycle_factory(
         market_store = _MarketDataStore(db_path=database)
         news_store = _NewsStore(db_path=database)
         try:
+            universe = _ai_scheduler_universe()
+            _run_ai_pre_cycle_ingestion(
+                market_store=market_store,
+                news_store=news_store,
+                symbols=universe,
+            )
             snapshot_builder = StoredMarketSnapshotBuilder(
                 bar_loader=market_store.get_bar_models,
                 headline_loader=lambda symbol, start, end, limit: (
@@ -553,10 +860,12 @@ def _ai_cycle_factory(
             policy = load_paper_execution_policy(
                 load_settings().execution_policy_file
             )
+            if is_ai_external_paper_enabled():
+                _assert_external_policy_matches_broker(policy)
             risk_gate = RiskGate(
                 limits=RiskLimitConfig(
                     trading_enabled=True,
-                    symbol_allowlist=frozenset(_AI_SCHEDULER_UNIVERSE),
+                    symbol_allowlist=frozenset(universe),
                     max_order_value=policy.max_order_notional,
                 )
             )
@@ -571,12 +880,12 @@ def _ai_cycle_factory(
                 broker=broker,
                 store=store,
                 snapshot_loader=lambda symbol: snapshot_builder.build(symbol)
-                if symbol in _AI_SCHEDULER_UNIVERSE
+                if symbol in universe
                 else None,
                 execution_backend=execution_backend,
                 enabled=is_ai_trading_enabled(),
             )
-            cycle.run(list(_AI_SCHEDULER_UNIVERSE))
+            cycle.run(list(universe))
         finally:
             news_store.close()
             market_store.close()
@@ -602,6 +911,19 @@ def run_cmd(
 ) -> None:
     """Start the scheduler as a foreground process (Ctrl-C to stop)."""
     _refuse_if_live_trading_unlocked()
+    _configure_logging()
+    import logging
+
+    _LOGGER = logging.getLogger(__name__)
+    _LOGGER.info(
+        "scheduler: starting (reconcile_interval=%.1fs, max_failures=%d, "
+        "ai_trading=%s, external_paper=%s, universe=%s)",
+        reconcile_interval_seconds,
+        max_consecutive_failures,
+        is_ai_trading_enabled(),
+        is_ai_external_paper_enabled(),
+        ",".join(_ai_scheduler_universe()),
+    )
 
     heartbeats = _open_heartbeat_store()
     recon_store = _open_recon_store()

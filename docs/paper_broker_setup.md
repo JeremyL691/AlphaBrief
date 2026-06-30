@@ -126,13 +126,14 @@ appears in the output.
 ### 4.3 Paper-broker pre-flight
 
 ```bash
-.venv/bin/alphabrief acceptance preflight --paper
+.venv/bin/alphabrief acceptance preflight --scope paper
 ```
 
 Expected: single check `paper.preflight` reported as `passed`, exit
-code `0`. This is the operator's one-shot "am I ready?" command — it
-verifies the runbook exists, the env-var names are wired up, and the
-locked configs are still in place.
+code `0`. (`--scope paper` is the default scope; `--scope full` runs
+the entire 11-check verifier.) This is the operator's one-shot "am I
+ready?" command — it verifies the runbook exists, the env-var names
+are wired up, and the locked configs are still in place.
 
 ### 4.4 Broker connectivity (live read)
 
@@ -180,6 +181,55 @@ export ALPHABRIEF_AI_TRADING_ENABLED=true
 This lets the scheduler run `ai_daily_cycle` and record committee
 cycles. By default, approved AI orders still use the local paper broker
 path.
+
+Set the AI scheduler universe to symbols that match the reviewed paper
+policy and broker adapter:
+
+```bash
+export ALPHABRIEF_AI_SCHEDULER_UNIVERSE=SPY,QQQ,IVV
+```
+
+For OANDA paper, first edit `config/paper_execution_policy.yaml` to use
+`provider: oanda_paper`, an appropriate `market` such as `fx`, and
+OANDA instrument names such as `EUR_USD`. Then set the same symbols in
+`ALPHABRIEF_AI_SCHEDULER_UNIVERSE`. If external AI paper is enabled and
+the policy provider does not match the configured broker credentials,
+the scheduler fails closed before submitting any order.
+
+Choose the committee model provider:
+
+```bash
+export ALPHABRIEF_AI_MODEL_PROVIDER=auto
+# Optional when using OpenAI:
+export OPENAI_API_KEY=your_key_here
+export ALPHABRIEF_AI_MODEL_NAME=gpt-4o-mini
+# Optional when using local Ollama instead:
+# export ALPHABRIEF_AI_MODEL_PROVIDER=ollama
+# export ALPHABRIEF_AI_MODEL_NAME=llama3.1
+# export ALPHABRIEF_AI_MODEL_BASE_URL=http://localhost:11434
+```
+
+`auto` uses OpenAI when `OPENAI_API_KEY` is present. Without a real
+provider key, it falls back to the conservative fake committee, which is
+useful for smoke tests but is not a production-like autonomous model.
+
+The scheduler refreshes local market/news stores before each AI cycle:
+
+```bash
+export ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED=true
+export ALPHABRIEF_AI_MARKET_DATA_SOURCE=yahoo
+export ALPHABRIEF_AI_MARKET_DATA_INTERVAL=1d
+export ALPHABRIEF_AI_MARKET_DATA_LOOKBACK_DAYS=10
+export ALPHABRIEF_AI_NEWS_SOURCE=rss
+export ALPHABRIEF_AI_NEWS_FEEDS=marketwatch-rss,reuters-rss,bloomberg-atom
+export ALPHABRIEF_AI_NEWS_LOOKBACK_HOURS=24
+export ALPHABRIEF_AI_NEWS_LIMIT=30
+```
+
+Yahoo and the RSS feeds are key-less. To use Alpha Vantage instead, set
+`ALPHABRIEF_AI_MARKET_DATA_SOURCE=alphavantage` and provide
+`ALPHAVANTAGE_API_KEY`. Provider failures are logged and the cycle falls
+back to already-stored data; a symbol with no local price is skipped.
 
 To submit AI-approved, non-human-review orders to the configured
 external paper broker, enable the second flag:
@@ -251,7 +301,7 @@ Once per week, aggregate:
 - Total recon snapshots taken vs. number of `all_match=false`.
 - RiskGate reject rate from `GET /api/v1/risk/audit` or
   `alphabrief risk audit`.
-- Freeze event log: `alphabrief broker freezes`. Every freeze
+- Freeze event log: `alphabrief scheduler freezes`. Every freeze
   should have a reason and a corresponding investigation note.
 - Adapter health: still on `OandaPaperAdapter` or `AlpacaPaperAdapter`,
   not silently fell back to `NullBrokerAdapter`.
@@ -267,7 +317,7 @@ Decide:
 1. List open freezes:
 
    ```bash
-   .venv/bin/alphabrief broker freezes
+   .venv/bin/alphabrief scheduler freezes
    ```
 
 2. Read the diff in the most recent snapshot:

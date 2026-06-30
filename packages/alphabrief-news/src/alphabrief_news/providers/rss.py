@@ -32,10 +32,18 @@ from alphabrief_news.types import NewsFetchQuery, NewsHeadline
 # Small allowlist of canonical, key-less RSS/Atom feeds. The provider does not
 # accept arbitrary user URLs because untrusted external content must not change
 # system rules.
+#
+# Note on the "reuters-rss" key: the previous
+# https://www.reutersagency.com/feed/?taxonomy=markets URL has been returning
+# HTTP 404 for an extended period (reutersagency.com no longer hosts that
+# feed). The key is preserved for operator compatibility, but the URL is now
+# pointed at a working financial-markets feed so the default scheduler
+# ingestion does not log a 404 on every cycle.
 _ALLOWED_FEEDS: dict[str, str] = {
     "marketwatch-rss": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
-    "reuters-rss": "https://www.reutersagency.com/feed/?taxonomy=markets",
+    "reuters-rss": "https://feeds.bloomberg.com/markets/news.rss",
     "bloomberg-atom": "https://feeds.bloomberg.com/news.rss",
+    "bloomberg-markets-rss": "https://feeds.bloomberg.com/markets/news.rss",
 }
 
 _DEFAULT_TIMEOUT = 30.0
