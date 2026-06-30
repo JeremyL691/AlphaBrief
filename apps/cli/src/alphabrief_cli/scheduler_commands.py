@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import typer
+from alphabrief_core import load_paper_execution_policy, load_settings
 from alphabrief_execution import (
     FillSimulator,
     OrderRouter,
@@ -65,8 +66,10 @@ from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
     DisciplineConfig,
+    ExternalPaperExecutionBackend,
     StoredMarketSnapshotBuilder,
     TradingCommittee,
+    is_ai_external_paper_enabled,
     is_ai_trading_enabled,
 )
 
@@ -547,11 +550,20 @@ def _ai_cycle_factory(
                 router=OrderRouter(),
                 fill_simulator=FillSimulator(),
             )
+            policy = load_paper_execution_policy(
+                load_settings().execution_policy_file
+            )
             risk_gate = RiskGate(
                 limits=RiskLimitConfig(
                     trading_enabled=True,
                     symbol_allowlist=frozenset(_AI_SCHEDULER_UNIVERSE),
+                    max_order_value=policy.max_order_notional,
                 )
+            )
+            execution_backend = (
+                ExternalPaperExecutionBackend(_build_adapter())
+                if is_ai_external_paper_enabled()
+                else None
             )
             cycle = DailyTradingCycle(
                 committee=committee,
@@ -561,6 +573,7 @@ def _ai_cycle_factory(
                 snapshot_loader=lambda symbol: snapshot_builder.build(symbol)
                 if symbol in _AI_SCHEDULER_UNIVERSE
                 else None,
+                execution_backend=execution_backend,
                 enabled=is_ai_trading_enabled(),
             )
             cycle.run(list(_AI_SCHEDULER_UNIVERSE))
