@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from alphabrief_api.db import AiTradingStore
+from alphabrief_cli.scheduler_commands import _ai_cycle_factory
 from alphabrief_execution import (
     FillSimulator,
     OrderRouter,
@@ -241,5 +242,27 @@ class TestSchedulerRunsAiTask:
             finally:
                 heartbeats.close()
                 recon_store.close()
+        finally:
+            store.close()
+
+    def test_ai_cycle_factory_skips_symbols_without_local_bars(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        handler = _ai_cycle_factory(db_path=isolated_data_dir)
+
+        async def _run_handler() -> None:
+            await handler()
+
+        asyncio.run(_run_handler())
+
+        store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
+        try:
+            latest = store.get_latest_cycle()
+            assert latest is not None
+            assert latest["outcome"] == "skipped_no_consensus"
+            assert latest["votes"] == []
+            assert latest["plans"] == []
+            assert latest["attempts"] == []
         finally:
             store.close()

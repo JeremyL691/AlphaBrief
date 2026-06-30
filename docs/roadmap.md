@@ -1567,6 +1567,21 @@ AI trading path is feature-flag gated and remains behind the existing
    `/api/status` package inventory.
 4. Added `docs/development_plans/0057-phase-26-ai-trader-closeout.md`.
 
+### R26.3 — Store-backed AI snapshots
+
+1. Added `StoredMarketSnapshotBuilder`, which turns local
+   `MarketDataStore` bars and `NewsStore` headlines into
+   `MarketSnapshot` inputs for the AI Trading Committee.
+2. Scheduler `ai_daily_cycle` now uses stored bars/headlines from
+   `alphabrief.db`; symbols without a local price source are skipped
+   instead of receiving a placeholder `$100` price.
+3. API `/api/v1/ai/run` uses the same store-backed builder while
+   preserving explicit `reference_prices` for controlled operator
+   dry-runs.
+4. News context includes deterministic sentiment counts and fills
+   missing headline sentiment via `RuleBasedSentimentAnalyzer`.
+5. Added `docs/development_plans/0058-phase-27-store-backed-ai-snapshots.md`.
+
 ### Safety boundaries
 
 1. Live trading remains disabled by default and explicitly refused by
@@ -1578,6 +1593,8 @@ AI trading path is feature-flag gated and remains behind the existing
 4. No imports from `_reference_sources/`.
 5. The scheduler AI task does not use external broker credentials and
    does not bypass the existing reconciliation/freeze surface.
+6. Store-backed snapshots are input context only; sentiment summaries
+   do not bypass `TradingCommittee`, `DisciplineGate`, or `RiskGate`.
 
 ### Final quality gate
 
@@ -1589,3 +1606,6 @@ AI trading path is feature-flag gated and remains behind the existing
 - [x] Full sandboxed `pytest`: 1310 passed; the remaining 12 failures
       are the known localhost mock broker `PermissionError` cases in
       `tests/test_alpaca_adapter.py` and `tests/test_broker_api_live.py`.
+- [x] Store-backed AI snapshot subset: 21 passed.
+- [x] Focused `ruff` and `mypy`: clean for trader, AI API, scheduler,
+      and related tests.

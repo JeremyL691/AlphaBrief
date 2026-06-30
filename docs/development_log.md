@@ -2975,3 +2975,65 @@ and DuckDB store are importable and verifiable.
    failures are the known localhost mock broker `PermissionError`
    cases in `tests/test_alpaca_adapter.py` and
    `tests/test_broker_api_live.py`.
+
+## 0058 Phase 27 Store-backed AI Trading Snapshots
+
+### Goal
+
+Remove the scheduler/API AI trading placeholder snapshot path and feed
+the AI Trading Committee with local, auditable market/news context.
+
+### Findings and Fixes
+
+1. **Scheduler AI snapshots were fixed placeholders.** The
+   `ai_daily_cycle` handler used `reference_price=100`,
+   `recent_return_pct=0`, and no news context for every configured
+   symbol. Fix: added `StoredMarketSnapshotBuilder` and wired the
+   scheduler to `MarketDataStore.get_bar_models(...)` and
+   `NewsStore.list_headlines(...)`.
+2. **API `/api/v1/ai/run` had the same placeholder path.** Fix: the API
+   now uses the same store-backed builder while preserving explicit
+   `reference_prices` as a controlled manual override.
+3. **News sentiment was not present in AI trading inputs.** Fix:
+   missing headline sentiment is filled with
+   `RuleBasedSentimentAnalyzer`, then summarized with
+   `sentiment_summary(...)` in `MarketSnapshot.news_context`.
+4. **Missing local price data could silently become a fake trade
+   context.** Fix: symbols without stored bars and without an explicit
+   API reference-price override are skipped.
+
+### Safety Boundaries
+
+1. No live trading was enabled.
+2. No provider SDK calls were added.
+3. Store-backed snapshots are input context only; they do not bypass the
+   AI committee, discipline gate, human-review block, or `RiskGate`.
+4. External paper broker submission remains a separate unfinished
+   bridge. The AI daily cycle still submits to the local `PaperBroker`.
+5. Dashboard/UI files were not modified because frontend changes require
+   design preference dials first.
+
+### Validation
+
+1. `tests/test_ai_trader_snapshot_builder.py`,
+   `tests/test_ai_trader_scheduler.py`, and
+   `tests/test_ai_trading_api.py`: **21 passed**.
+2. Focused `ruff check` on AI trader/API/scheduler/test files passed.
+3. Focused `mypy` on trader/API/CLI and related tests passed:
+   **70 source files**, strict mode.
+4. Full sandboxed `pytest`: **1314 passed**, 12 failed. The failures
+   are the known localhost mock-broker socket permission cases in
+   `tests/test_alpaca_adapter.py` and `tests/test_broker_api_live.py`.
+
+### Remaining 30-day Paper-run Gaps
+
+1. The default committee still uses `FakeProviderAdapter`; real
+   structured-output `ModelGateway` providers must be configured before
+   autonomous decisioning.
+2. The external paper `BrokerAdapter` bridge is not yet used by
+   `DailyTradingCycle`.
+3. `config/paper_execution_policy.yaml` remains locked to
+   `alpaca_paper` / `us_equity` and must be reconciled with the
+   operator's connected paper account before unattended operation.
+4. A pre-cycle daily ingestion task still needs to fetch market data and
+   news before `ai_daily_cycle`.

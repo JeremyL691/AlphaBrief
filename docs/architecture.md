@@ -1353,11 +1353,35 @@ Key invariants:
    helper prevents `alphabrief_trader` from importing the API app and
    keeps the package importable in isolation.
 
+### Store-backed AI snapshots
+
+`StoredMarketSnapshotBuilder` converts already-ingested local records
+into committee inputs. It is provider-neutral and accepts injected
+loader callables rather than opening DuckDB or calling HTTP providers.
+
+```
+MarketDataStore.get_bar_models(symbol)
+NewsStore.list_headlines(symbol, last_24h)
+        │
+        ▼
+StoredMarketSnapshotBuilder
+        │  latest close, recent return, recent volume,
+        │  sentiment-summary news context
+        ▼
+MarketSnapshot
+```
+
+The scheduler `ai_daily_cycle` and API `/api/v1/ai/run` now use this
+builder. Symbols with no local price source are skipped instead of being
+assigned placeholder prices. API requests may still pass
+`reference_prices` as an explicit manual override for controlled dry
+runs.
+
 Out of scope:
 
 - Live trading.
 - Direct external broker submission from the AI committee.
 - Provider-specific model wiring outside `ModelGateway`.
-- Persistent market snapshots from a live data provider.
+- Automatic pre-cycle data ingestion from live providers.
 - Persistent scheduler duplicate-order state beyond the existing
   risk/scheduler stores.
