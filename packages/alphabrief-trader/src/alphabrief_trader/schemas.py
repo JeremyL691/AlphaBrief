@@ -34,6 +34,7 @@ CommitteeRole = Literal["technical", "fundamental", "risk", "manager"]
 AnalystView = Literal["bullish", "bearish", "neutral", "uncertain"]
 AnalystAction = Literal["buy", "sell", "hold", "watch", "skip"]
 ConsensusLevel = Literal["unanimous", "majority", "split", "no_consensus"]
+ExecutionBackendName = Literal["local_paper", "external_paper"]
 CycleOutcome = Literal[
     "executed",
     "skipped_no_consensus",
@@ -262,10 +263,15 @@ class OrderAttempt(_CommitteeSchema):
     order_id: str | None = None
     fill_price: Decimal | None = None
     fill_quantity: Decimal | None = None
+    execution_backend: ExecutionBackendName | None = None
+    client_order_id: str | None = None
+    broker_order_id: str | None = None
+    broker_status: str | None = None
     outcome: CycleOutcome
     order_intent_json: dict[str, Any]
     risk_decision_json: dict[str, Any] | None = None
     fill_json: dict[str, Any] | None = None
+    broker_result_json: dict[str, Any] | None = None
     created_at: datetime
 
     @field_validator("created_at")

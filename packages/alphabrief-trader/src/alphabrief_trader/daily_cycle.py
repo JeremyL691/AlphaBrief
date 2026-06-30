@@ -45,13 +45,17 @@ from uuid import uuid4
 from alphabrief_core import OrderIntent, OrderSide, RiskDecision
 from alphabrief_execution import (
     PaperBroker,
-    PaperBrokerError,
-    PaperBrokerResult,
 )
 from alphabrief_risk import RiskGate
 
 from alphabrief_trader.committee import TradingCommittee
 from alphabrief_trader.db_store import AiTradingStore
+from alphabrief_trader.execution_backend import (
+    ExecutionBackend,
+    ExecutionBackendError,
+    ExecutionBackendResult,
+    LocalPaperExecutionBackend,
+)
 from alphabrief_trader.schemas import (
     CommitteeInput,
     CommitteeVote,
@@ -92,6 +96,7 @@ class DailyTradingCycle:
         broker: PaperBroker,
         store: AiTradingStore,
         snapshot_loader: SnapshotLoader,
+        execution_backend: ExecutionBackend | None = None,
         enabled: bool | None = None,
         clock: Callable[[], datetime] | None = None,
         cycle_id_factory: Callable[[], str] | None = None,
@@ -109,6 +114,9 @@ class DailyTradingCycle:
         self._committee = committee
         self._risk_gate = risk_gate
         self._broker = broker
+        self._execution_backend = execution_backend or LocalPaperExecutionBackend(
+            broker
+        )
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -258,10 +266,18 @@ class DailyTradingCycle:
             if reference_price_resolver
             else snapshot.reference_price
         )
+        try:
+            estimated_quantity = self._execution_backend.estimate_quantity(
+                intent,
+                reference_price=price,
+            )
+        except ExecutionBackendError:
+            estimated_quantity = None
 
         decision: RiskDecision = self._risk_gate.evaluate(
             intent,
             estimated_price=price,
+            estimated_quantity=estimated_quantity,
             data_quality_passed=True,
         )
 
@@ -270,7 +286,7 @@ class DailyTradingCycle:
                 intent=intent,
                 decision=decision,
                 outcome="blocked_risk_gate",
-                fill_result=None,
+                execution_result=None,
                 now=now,
             )
 
@@ -279,20 +295,24 @@ class DailyTradingCycle:
                 intent=intent,
                 decision=decision,
                 outcome="blocked_human_review",
-                fill_result=None,
+                execution_result=None,
                 now=now,
             )
 
         try:
-            fill: PaperBrokerResult = self._broker.submit(
-                intent, decision, reference_price=price
+            execution_result = self._execution_backend.submit(
+                intent,
+                decision,
+                reference_price=price,
+                now=now,
+                estimated_quantity=estimated_quantity,
             )
-        except PaperBrokerError as exc:
+        except ExecutionBackendError as exc:
             return self._attempt_record(
                 intent=intent,
                 decision=decision,
                 outcome="error",
-                fill_result=None,
+                execution_result=None,
                 now=now,
                 error_message=str(exc),
             )
@@ -301,7 +321,7 @@ class DailyTradingCycle:
             intent=intent,
             decision=decision,
             outcome="executed",
-            fill_result=fill,
+            execution_result=execution_result,
             now=now,
         )
 
@@ -331,7 +351,7 @@ class DailyTradingCycle:
         intent: OrderIntent,
         decision: RiskDecision,
         outcome: CycleOutcome,
-        fill_result: PaperBrokerResult | None,
+        execution_result: ExecutionBackendResult | None,
         now: datetime,
         error_message: str | None = None,
     ) -> OrderAttempt:
@@ -347,24 +367,47 @@ class DailyTradingCycle:
             requires_human_review=decision.requires_human_review,
             risk_tags=list(decision.risk_tags),
             max_quantity=decision.max_quantity,
-            filled=fill_result is not None,
+            filled=execution_result.filled if execution_result is not None else False,
             order_id=(
-                fill_result.order.order_id if fill_result is not None else None
+                execution_result.order_id if execution_result is not None else None
             ),
             fill_price=(
-                fill_result.fill.price if fill_result is not None else None
+                execution_result.fill_price
+                if execution_result is not None
+                else None
             ),
             fill_quantity=(
-                fill_result.fill.quantity
-                if fill_result is not None
+                execution_result.fill_quantity if execution_result is not None else None
+            ),
+            execution_backend=(
+                execution_result.execution_backend
+                if execution_result is not None
+                else None
+            ),
+            client_order_id=(
+                execution_result.client_order_id
+                if execution_result is not None
+                else None
+            ),
+            broker_order_id=(
+                execution_result.broker_order_id
+                if execution_result is not None
+                else None
+            ),
+            broker_status=(
+                execution_result.broker_status
+                if execution_result is not None
                 else None
             ),
             outcome=outcome,
             order_intent_json=intent.model_dump(mode="json"),
             risk_decision_json=decision.model_dump(mode="json"),
             fill_json=(
-                fill_result.fill.model_dump(mode="json")
-                if fill_result is not None
+                execution_result.fill_json if execution_result is not None else None
+            ),
+            broker_result_json=(
+                execution_result.broker_result_json
+                if execution_result is not None
                 else None
             ),
             created_at=now,
