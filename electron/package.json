@@ -1,0 +1,14 @@
+{
+  "name": "alphabrief-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Native macOS wrapper for the AlphaBrief dashboard (spawns the FastAPI backend).",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:dev": "electron . --dev"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0"
+  }
+}
