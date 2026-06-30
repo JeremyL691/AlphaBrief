@@ -108,6 +108,28 @@ def test_execution_policy_rejects_unknown_fields(tmp_path: Path) -> None:
         load_paper_execution_policy(policy_path)
 
 
+def test_execution_policy_accepts_reviewed_oanda_paper_boundary(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "oanda_policy.yaml"
+    policy_path.write_text(
+        _configured_policy_text()
+        .replace("provider: alpaca_paper", "provider: oanda_paper")
+        .replace("market: us_equity", "market: fx")
+        .replace(
+            "symbols: [SPY, QQQ, IVV, VOO, AGG, BND, GLD, SLV]",
+            "symbols: [EUR_USD, GBP_USD]",
+        ),
+        encoding="utf-8",
+    )
+
+    policy = load_paper_execution_policy(policy_path)
+
+    assert policy.provider == "oanda_paper"
+    assert policy.market == "fx"
+    assert policy.symbols == ("EUR_USD", "GBP_USD")
+
+
 def test_settings_accepts_execution_policy_file_override() -> None:
     settings = load_settings({"ALPHABRIEF_EXECUTION_POLICY_FILE": "custom/policy.yaml"})
 
@@ -197,3 +219,18 @@ def test_risk_gate_rejects_unapproved_symbols(symbol: str) -> None:
 
     assert decision.approved is False
     assert "symbol_not_allowed" in decision.risk_tags
+
+
+def test_relative_policy_path_resolves_against_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relative path still resolves even when the caller is in a different cwd."""
+
+    policy = load_paper_execution_policy("config/paper_execution_policy.yaml")
+    monkeypatch.chdir(tmp_path)
+
+    again = load_paper_execution_policy("config/paper_execution_policy.yaml")
+
+    assert policy.provider == again.provider
+    assert policy.symbols == again.symbols
+    assert policy.market == again.market

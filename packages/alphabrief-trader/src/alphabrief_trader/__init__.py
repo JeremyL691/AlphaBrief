@@ -29,6 +29,11 @@ from alphabrief_trader.execution_backend import (
     LocalPaperExecutionBackend,
     is_ai_external_paper_enabled,
 )
+from alphabrief_trader.model_factory import (
+    build_ai_trading_committee,
+    build_ai_trading_provider,
+    build_conservative_fake_provider,
+)
 from alphabrief_trader.rules import DisciplineConfig, DisciplineGate
 from alphabrief_trader.schemas import (
     AnalystAction,
@@ -82,6 +87,9 @@ __all__ = [
     "TradePlan",
     "TradingCommittee",
     "build_committee_prompt",
+    "build_ai_trading_committee",
+    "build_ai_trading_provider",
+    "build_conservative_fake_provider",
     "default_roles",
     "is_ai_trading_enabled",
     "is_ai_external_paper_enabled",

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import alphabrief_cli.scheduler_commands as scheduler_commands
 import pytest
-from alphabrief_api.db import AiTradingStore, MarketDataStore
+from alphabrief_api.db import AiTradingStore, MarketDataStore, NewsStore
 from alphabrief_cli.scheduler_commands import _ai_cycle_factory
 from alphabrief_core import Bar
 from alphabrief_execution import (
@@ -40,6 +40,7 @@ from alphabrief_execution.operations.scheduler import (
     build_default_tasks,
 )
 from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_news.types import NewsFetchQuery, NewsHeadline
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
@@ -117,6 +118,22 @@ class _SubmittingAdapter(_NullAdapter):
             currency="USD",
             captured_at=datetime.now(UTC),
         )
+
+
+@pytest.fixture(autouse=True)
+def _scheduler_ai_test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED", "false")
+    monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # The project's local ``.env`` is auto-loaded at CLI / API import
+    # time (before pytest sets ``PYTEST_CURRENT_TEST``), so OANDA and
+    # Alpaca credentials from the developer's machine would otherwise
+    # leak into these tests. Strip both broker-credential sets so each
+    # test can opt in cleanly.
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
 
 
 @pytest.fixture
@@ -275,6 +292,111 @@ class TestSchedulerRunsAiTask:
         finally:
             store.close()
 
+    def test_ai_cycle_factory_ingests_market_and_news_before_cycle(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_MARKET_DATA_SOURCE", "yahoo")
+        monkeypatch.setenv("ALPHABRIEF_AI_NEWS_SOURCE", "rss")
+        monkeypatch.setenv("ALPHABRIEF_AI_NEWS_FEEDS", "marketwatch-rss")
+
+        class _MarketProvider:
+            provider_name = "test-market"
+
+            def fetch_ohlcv(
+                self,
+                *,
+                symbol: str,
+                start: datetime,
+                end: datetime,
+                interval: str,
+            ) -> list[Bar]:
+                del start, interval
+                return [
+                    Bar(
+                        symbol=symbol,
+                        timestamp=end - timedelta(days=2),
+                        open=Decimal("99"),
+                        high=Decimal("101"),
+                        low=Decimal("98"),
+                        close=Decimal("100"),
+                        volume=Decimal("1000"),
+                        source="test-market",
+                        data_version="test",
+                    ),
+                    Bar(
+                        symbol=symbol,
+                        timestamp=end - timedelta(days=1),
+                        open=Decimal("100"),
+                        high=Decimal("102"),
+                        low=Decimal("99"),
+                        close=Decimal("101"),
+                        volume=Decimal("1100"),
+                        source="test-market",
+                        data_version="test",
+                    ),
+                ]
+
+        class _NewsProvider:
+            def fetch_headlines(
+                self, query: NewsFetchQuery
+            ) -> list[NewsHeadline]:
+                return [
+                    NewsHeadline(
+                        headline_id=f"{query.symbols[0]}-1",
+                        published_at=query.end - timedelta(hours=1),
+                        symbols=["GENERAL"],
+                        category="macro",
+                        source="Test Wire",
+                        title="Markets gain as policy uncertainty eases",
+                        summary="",
+                        url="https://example.test/story",
+                        sentiment="positive",
+                        data_version=query.data_version,
+                    )
+                ]
+
+        monkeypatch.setattr(
+            scheduler_commands,
+            "_build_market_data_provider",
+            lambda source: _MarketProvider(),
+        )
+        monkeypatch.setattr(
+            scheduler_commands,
+            "_build_news_provider",
+            lambda source: _NewsProvider(),
+        )
+
+        handler = _ai_cycle_factory(db_path=isolated_data_dir)
+
+        async def _run_handler() -> None:
+            await handler()
+
+        asyncio.run(_run_handler())
+
+        market_store = MarketDataStore(db_path=isolated_data_dir / "alphabrief.db")
+        news_store = NewsStore(db_path=isolated_data_dir / "alphabrief.db")
+        ai_store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
+        try:
+            assert market_store.get_bar_count("SPY") == 2
+            headlines = news_store.list_headlines(symbol="SPY", limit=10)
+            assert len(headlines) == 1
+            assert headlines[0].symbols == ["SPY", "QQQ", "IVV"]
+
+            latest = ai_store.get_latest_cycle()
+            assert latest is not None
+            assert set(latest["symbols"]) == {
+                "SPY",
+                "QQQ",
+                "IVV",
+            }
+            assert len(latest["votes"]) == 12
+        finally:
+            ai_store.close()
+            news_store.close()
+            market_store.close()
+
     def test_ai_cycle_factory_skips_symbols_without_local_bars(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -302,6 +424,8 @@ class TestSchedulerRunsAiTask:
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
         monkeypatch.setenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_ALPACA_KEY", "test-key")
+        monkeypatch.setenv("ALPHABRIEF_ALPACA_SECRET", "test-secret")
         adapter = _SubmittingAdapter()
         monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
 
@@ -373,3 +497,32 @@ class TestSchedulerRunsAiTask:
             assert attempt["client_order_id"] == attempt["intent_id"]
         finally:
             store.close()
+
+    def test_external_ai_cycle_refuses_policy_broker_mismatch(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+
+        handler = _ai_cycle_factory(db_path=isolated_data_dir)
+
+        async def _run_handler() -> None:
+            await handler()
+
+        with pytest.raises(RuntimeError, match="policy/provider mismatch"):
+            asyncio.run(_run_handler())
+
+    def test_ai_scheduler_universe_can_be_overridden(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "ALPHABRIEF_AI_SCHEDULER_UNIVERSE",
+            " eur_usd, gbp_usd ",
+        )
+
+        assert scheduler_commands._ai_scheduler_universe() == (
+            "EUR_USD",
+            "GBP_USD",
+        )

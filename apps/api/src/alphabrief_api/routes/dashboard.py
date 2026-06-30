@@ -589,6 +589,7 @@ _NAV_ITEMS: list[tuple[str, str, str]] = [
     ("/dashboard/debate", "Debate", "debate"),
     ("/dashboard/models", "Models", "models"),
     ("/dashboard/strategies", "Strategies", "strategies"),
+    ("/dashboard/ai-trading", "AI Trading", "ai-trading"),
 ]
 
 
@@ -1594,6 +1595,207 @@ def get_dashboard_strategies() -> HTMLResponse:
             subtitle="Persisted StrategySpec objects and their advisory signal history.",
             body=_STRATEGIES_BODY,
             scripts=_STRATEGIES_JS,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# AI Trading page
+# ---------------------------------------------------------------------------
+
+_AI_TRADING_BODY = r"""
+<section class="page-grid page-grid--ai">
+  <div class="card card--status">
+    <div class="card__head">
+      <h2 class="card__title">AI Trading — feature flags</h2>
+      <p class="card__hint">AI trading is paper-only and requires both an explicit feature flag and the absence of the live-trading lock.</p>
+    </div>
+    <div class="card__body">
+      <div class="stat-grid" id="ai-status-grid">
+        <div class="stat"><span class="stat__label">AI trading</span><span class="stat__value" id="ai-flag-enabled">…</span></div>
+        <div class="stat"><span class="stat__label">Live trading</span><span class="stat__value" id="ai-flag-live">…</span></div>
+        <div class="stat"><span class="stat__label">Cycles recorded</span><span class="stat__value" id="ai-cycle-count">…</span></div>
+      </div>
+      <p class="card__hint" id="ai-status-hint"></p>
+    </div>
+  </div>
+
+  <div class="card card--form">
+    <div class="card__head">
+      <h2 class="card__title">Run a cycle</h2>
+      <p class="card__hint">Comma-separated symbols. The cycle still respects the AI trading feature flag — the form submits only when both flags permit it.</p>
+    </div>
+    <div class="card__body">
+      <form id="ai-run-form" class="form-grid">
+        <label class="form-row">
+          <span>Symbols</span>
+          <input type="text" id="ai-run-symbols" value="SPY,QQQ,IVV" autocomplete="off" />
+        </label>
+        <label class="form-row">
+          <span>Reference prices (JSON)</span>
+          <input type="text" id="ai-run-prices" placeholder='{"SPY": 450}' autocomplete="off" />
+        </label>
+        <div class="form-row form-row--actions">
+          <button type="submit" class="btn btn--primary">Run cycle</button>
+        </div>
+        <p class="card__hint" id="ai-run-result"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="card card--rules">
+    <div class="card__head">
+      <h2 class="card__title">Discipline rules</h2>
+      <p class="card__hint">Deterministic guardrails applied after the committee synthesizes a plan, before the risk gate.</p>
+    </div>
+    <div class="card__body">
+      <pre class="codeblock" id="ai-rules-body">…</pre>
+    </div>
+  </div>
+
+  <div class="card card--history">
+    <div class="card__head">
+      <h2 class="card__title">Cycle history</h2>
+      <p class="card__hint">Newest-first. Click a row to view the full audit JSON.</p>
+    </div>
+    <div class="card__body">
+      <table class="data-table" id="ai-history-table">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Symbols</th>
+            <th>Outcome</th>
+            <th>Plans</th>
+            <th>Attempts</th>
+            <th>Executed</th>
+            <th>Blocked</th>
+            <th>When</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card card--detail">
+    <div class="card__head">
+      <h2 class="card__title">Cycle detail</h2>
+      <a href="#" id="ai-detail-close" class="card__hint">close</a>
+    </div>
+    <div class="card__body">
+      <pre class="codeblock" id="ai-detail-body">Select a cycle to inspect the full audit JSON.</pre>
+    </div>
+  </div>
+</section>
+""".strip()
+
+_AI_TRADING_JS = r"""
+async function loadAiStatus() {
+  const data = await fetchJSON('/api/v1/ai/status');
+  if (!data) return;
+  document.getElementById('ai-flag-enabled').textContent = data.ai_trading_enabled ? 'ENABLED' : 'disabled';
+  document.getElementById('ai-flag-live').textContent = data.live_trading_enabled ? 'UNLOCKED' : 'locked';
+  document.getElementById('ai-cycle-count').textContent = String(data.cycle_count);
+  document.getElementById('ai-status-hint').textContent = data.ai_trading_enabled
+    ? 'AI trading is on; the committee will route plans through the risk gate and the paper broker.'
+    : 'Set ALPHABRIEF_AI_TRADING_ENABLED=true in the environment to actually execute cycles.';
+}
+
+async function loadAiRules() {
+  const data = await fetchJSON('/api/v1/ai/rules');
+  if (!data) return;
+  document.getElementById('ai-rules-body').textContent = JSON.stringify(data, null, 2);
+}
+
+async function loadAiHistory() {
+  const data = await fetchJSON('/api/v1/ai/history?limit=20');
+  const tbody = document.querySelector('#ai-history-table tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!data || !Array.isArray(data.cycles)) return;
+  for (const c of data.cycles) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + escapeHtml(c.trading_day) + '</td>' +
+      '<td>' + escapeHtml((c.symbols || []).join(', ')) + '</td>' +
+      '<td>' + escapeHtml(c.outcome) + '</td>' +
+      '<td>' + c.plan_count + '</td>' +
+      '<td>' + c.attempt_count + '</td>' +
+      '<td>' + c.executed_count + '</td>' +
+      '<td>' + c.blocked_count + '</td>' +
+      '<td>' + escapeHtml(c.created_at) + '</td>' +
+      '<td><a href="#" data-id="' + escapeHtml(c.cycle_id) + '" class="row-action ai-cycle-link">view</a></td>';
+    tbody.appendChild(tr);
+  }
+  document.querySelectorAll('.ai-cycle-link').forEach(a => {
+    a.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      const id = a.getAttribute('data-id');
+      const data = await fetchJSON('/api/v1/ai/cycles/' + encodeURIComponent(id));
+      document.getElementById('ai-detail-body').textContent = data
+        ? JSON.stringify(data, null, 2)
+        : 'cycle not found';
+    });
+  });
+}
+
+document.getElementById('ai-detail-close')?.addEventListener('click', (ev) => {
+  ev.preventDefault();
+  document.getElementById('ai-detail-body').textContent = 'Select a cycle to inspect the full audit JSON.';
+});
+
+document.getElementById('ai-run-form')?.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const symbolsRaw = document.getElementById('ai-run-symbols').value;
+  const pricesRaw = document.getElementById('ai-run-prices').value.trim();
+  const symbols = symbolsRaw.split(',').map(s => s.trim()).filter(Boolean);
+  const body = { symbols: symbols };
+  if (pricesRaw) {
+    try {
+      body.reference_prices = JSON.parse(pricesRaw);
+    } catch (err) {
+      document.getElementById('ai-run-result').textContent = 'Invalid reference-prices JSON: ' + err.message;
+      return;
+    }
+  }
+  try {
+    const res = await fetch('/api/v1/ai/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    document.getElementById('ai-run-result').textContent = res.ok
+      ? 'Cycle ' + data.cycle_id + ' — ' + data.outcome + ' (' + data.summary + ')'
+      : 'Error: ' + (data.detail || res.status);
+    loadAiHistory();
+    loadAiStatus();
+  } catch (err) {
+    document.getElementById('ai-run-result').textContent = 'Network error: ' + err.message;
+  }
+});
+
+loadAiStatus();
+loadAiRules();
+loadAiHistory();
+""".strip()
+
+
+@router.get("/dashboard/ai-trading", response_class=HTMLResponse)
+def get_dashboard_ai_trading() -> HTMLResponse:
+    """Serve the AI Trading Committee dashboard page."""
+    return HTMLResponse(
+        content=_shell(
+            active="ai-trading",
+            title="AI Trading",
+            subtitle=(
+                "Read-only view of the AI Trading Committee's daily cycles, "
+                "discipline rules, and order attempts. The committee is "
+                "paper-only and is gated by ALPHABRIEF_AI_TRADING_ENABLED."
+            ),
+            body=_AI_TRADING_BODY,
+            scripts=_AI_TRADING_JS,
         )
     )
 

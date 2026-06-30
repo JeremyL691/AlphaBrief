@@ -17,6 +17,19 @@ def _isolated_data_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+    # The CLI's ``__init__`` auto-loads the project's local ``.env`` at
+    # import time (before pytest sets ``PYTEST_CURRENT_TEST``), so the
+    # operator's ``ALPHABRIEF_AI_TRADING_ENABLED=true`` and broker
+    # credentials would otherwise leak into every test. Each test can
+    # opt back in by setting the variable it needs.
+    monkeypatch.delenv("ALPHABRIEF_AI_TRADING_ENABLED", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_AI_MODEL_PROVIDER", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
 
 
 class TestAiStatus:
