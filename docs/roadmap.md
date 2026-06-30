@@ -1582,6 +1582,22 @@ AI trading path is feature-flag gated and remains behind the existing
    missing headline sentiment via `RuleBasedSentimentAnalyzer`.
 5. Added `docs/development_plans/0058-phase-27-store-backed-ai-snapshots.md`.
 
+### R26.4 — External AI paper bridge
+
+1. Added `ExecutionBackend` as the final paper execution boundary for
+   `DailyTradingCycle`.
+2. Preserved local `PaperBroker` execution as the default via
+   `LocalPaperExecutionBackend`.
+3. Added `ExternalPaperExecutionBackend`, mapping approved AI
+   `OrderIntent` objects to broker-neutral `SubmitRequest` objects.
+4. Scheduler `ai_daily_cycle` injects the external backend only when
+   `ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED` is truthy.
+5. External submissions use `intent_id` as broker `client_order_id` for
+   adapter idempotency.
+6. `OrderAttempt` now records execution backend and external broker
+   metadata.
+7. Added `docs/development_plans/0059-phase-28-external-ai-paper-bridge.md`.
+
 ### Safety boundaries
 
 1. Live trading remains disabled by default and explicitly refused by
@@ -1595,6 +1611,10 @@ AI trading path is feature-flag gated and remains behind the existing
    does not bypass the existing reconciliation/freeze surface.
 6. Store-backed snapshots are input context only; sentiment summaries
    do not bypass `TradingCommittee`, `DisciplineGate`, or `RiskGate`.
+7. External AI paper submission is scheduler-only and separately gated
+   by `ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED`.
+8. Human-review and rejected risk decisions are not submitted to the
+   external paper adapter.
 
 ### Final quality gate
 
@@ -1609,3 +1629,4 @@ AI trading path is feature-flag gated and remains behind the existing
 - [x] Store-backed AI snapshot subset: 21 passed.
 - [x] Focused `ruff` and `mypy`: clean for trader, AI API, scheduler,
       and related tests.
+- [x] External AI paper bridge subset: 19 passed.

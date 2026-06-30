@@ -1377,10 +1377,29 @@ assigned placeholder prices. API requests may still pass
 `reference_prices` as an explicit manual override for controlled dry
 runs.
 
+### External AI paper execution bridge
+
+`DailyTradingCycle` now delegates its final approved-order hop to an
+`ExecutionBackend`.
+
+1. `LocalPaperExecutionBackend` is the default and preserves the
+   in-memory `PaperBroker` behavior.
+2. `ExternalPaperExecutionBackend` maps an approved, non-human-review
+   `OrderIntent` into the broker-neutral `SubmitRequest` port.
+3. The scheduler injects the external backend only when
+   `ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED=true`; API `/api/v1/ai/run`
+   remains a local-paper controlled run path.
+4. `intent_id` becomes the broker `client_order_id`, so adapter-level
+   idempotency protects retries and restarts.
+5. `OrderAttempt` persists broker metadata (`broker_order_id`,
+   `broker_status`, `client_order_id`) in the cycle JSON.
+
+The bridge is paper-only and fail-closed. The live-trading lock,
+`RiskGate`, and human-review block all run before any broker submit.
+
 Out of scope:
 
 - Live trading.
-- Direct external broker submission from the AI committee.
 - Provider-specific model wiring outside `ModelGateway`.
 - Automatic pre-cycle data ingestion from live providers.
 - Persistent scheduler duplicate-order state beyond the existing

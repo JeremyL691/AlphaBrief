@@ -1,0 +1,269 @@
+"""Execution backends for AI-approved paper orders.
+
+The AI trading cycle decides *whether* an order candidate may proceed.
+This module owns the final paper execution hop. The default backend is
+the local in-memory ``PaperBroker``. The external backend is an explicit
+paper-only bridge to the broker-neutral ``BrokerAdapter`` port.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import threading
+from collections.abc import Coroutine
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from typing import Any, Literal, Protocol
+
+from alphabrief_core import OrderIntent, RiskDecision
+from alphabrief_execution import (
+    PaperBroker,
+    PaperBrokerError,
+    PaperBrokerResult,
+)
+from alphabrief_execution.broker.errors import BrokerAdapterError
+from alphabrief_execution.broker.port import (
+    BrokerAdapter,
+    BrokerOrderSide,
+    BrokerOrderStatus,
+    BrokerOrderType,
+    BrokerTimeInForce,
+    SubmitRequest,
+)
+
+
+class ExecutionBackendError(ValueError):
+    """Raised when a paper execution backend refuses or fails an order."""
+
+
+ExecutionBackendName = Literal["local_paper", "external_paper"]
+
+
+@dataclass(frozen=True)
+class ExecutionBackendResult:
+    """Normalized result from a local or external paper backend."""
+
+    execution_backend: ExecutionBackendName
+    order_id: str
+    filled: bool
+    fill_price: Decimal | None
+    fill_quantity: Decimal | None
+    fill_json: dict[str, object] | None
+    client_order_id: str | None = None
+    broker_order_id: str | None = None
+    broker_status: str | None = None
+    broker_result_json: dict[str, object] | None = None
+
+
+class ExecutionBackend(Protocol):
+    """Small synchronous contract used by ``DailyTradingCycle``."""
+
+    def estimate_quantity(
+        self,
+        intent: OrderIntent,
+        *,
+        reference_price: Decimal,
+    ) -> Decimal | None:
+        """Return a pre-risk quantity estimate, or ``None`` when unavailable."""
+
+    def submit(
+        self,
+        intent: OrderIntent,
+        decision: RiskDecision,
+        *,
+        reference_price: Decimal,
+        now: datetime,
+        estimated_quantity: Decimal | None,
+    ) -> ExecutionBackendResult:
+        """Submit an approved, non-human-review order candidate."""
+
+
+class LocalPaperExecutionBackend:
+    """Execution backend that delegates to the local ``PaperBroker``."""
+
+    def __init__(self, broker: PaperBroker) -> None:
+        self._broker = broker
+
+    def estimate_quantity(
+        self,
+        intent: OrderIntent,
+        *,
+        reference_price: Decimal,
+    ) -> Decimal | None:
+        if reference_price <= 0:
+            raise ExecutionBackendError("reference_price must be positive")
+        if intent.quantity is not None:
+            return intent.quantity
+        if intent.target_position_pct is None:
+            return None
+        if intent.side == "buy":
+            return (self._broker.portfolio.cash * intent.target_position_pct) / (
+                reference_price
+            )
+        if intent.target_position_pct == 0:
+            return self._broker.portfolio.position_quantity(intent.symbol)
+        return None
+
+    def submit(
+        self,
+        intent: OrderIntent,
+        decision: RiskDecision,
+        *,
+        reference_price: Decimal,
+        now: datetime,
+        estimated_quantity: Decimal | None,
+    ) -> ExecutionBackendResult:
+        try:
+            fill: PaperBrokerResult = self._broker.submit(
+                intent, decision, reference_price=reference_price
+            )
+        except PaperBrokerError as exc:
+            raise ExecutionBackendError(str(exc)) from exc
+
+        return ExecutionBackendResult(
+            execution_backend="local_paper",
+            order_id=fill.order.order_id,
+            filled=True,
+            fill_price=fill.fill.price,
+            fill_quantity=fill.fill.quantity,
+            fill_json=fill.fill.model_dump(mode="json"),
+        )
+
+
+class ExternalPaperExecutionBackend:
+    """Execution backend that submits to a configured external paper adapter."""
+
+    def __init__(self, adapter: BrokerAdapter) -> None:
+        self._adapter = adapter
+
+    def estimate_quantity(
+        self,
+        intent: OrderIntent,
+        *,
+        reference_price: Decimal,
+    ) -> Decimal | None:
+        if reference_price <= 0:
+            raise ExecutionBackendError("reference_price must be positive")
+        if intent.quantity is not None:
+            return intent.quantity
+        if intent.target_position_pct is None:
+            return None
+        if intent.side == "buy":
+            account = _run_blocking(self._adapter.get_account())
+            return (account.buying_power * intent.target_position_pct) / reference_price
+        if intent.target_position_pct == 0:
+            positions = _run_blocking(self._adapter.get_positions())
+            for position in positions:
+                if position.symbol == intent.symbol:
+                    return abs(position.quantity)
+            return Decimal("0")
+        raise ExecutionBackendError(
+            "external paper sell requires an explicit quantity or flat target"
+        )
+
+    def submit(
+        self,
+        intent: OrderIntent,
+        decision: RiskDecision,
+        *,
+        reference_price: Decimal,
+        now: datetime,
+        estimated_quantity: Decimal | None,
+    ) -> ExecutionBackendResult:
+        quantity = _resolve_external_quantity(
+            decision=decision,
+            estimated_quantity=estimated_quantity,
+        )
+        request = SubmitRequest(
+            symbol=intent.symbol,
+            side=(
+                BrokerOrderSide.BUY
+                if intent.side == "buy"
+                else BrokerOrderSide.SELL
+            ),
+            order_type=(
+                BrokerOrderType.MARKET
+                if intent.order_type == "market"
+                else BrokerOrderType.LIMIT
+            ),
+            quantity=quantity,
+            limit_price=intent.limit_price,
+            time_in_force=BrokerTimeInForce.DAY,
+        )
+
+        try:
+            result = _run_blocking(
+                self._adapter.submit(request, client_order_id=intent.intent_id)
+            )
+        except (BrokerAdapterError, NotImplementedError) as exc:
+            raise ExecutionBackendError(str(exc)) from exc
+
+        filled = result.status == BrokerOrderStatus.FILLED
+        return ExecutionBackendResult(
+            execution_backend="external_paper",
+            order_id=result.broker_order_id,
+            client_order_id=result.client_order_id,
+            broker_order_id=result.broker_order_id,
+            broker_status=str(result.status),
+            broker_result_json=result.model_dump(mode="json"),
+            filled=filled,
+            fill_price=None,
+            fill_quantity=quantity if filled else None,
+            fill_json=None,
+        )
+
+
+def is_ai_external_paper_enabled() -> bool:
+    """Return True when AI-approved orders may reach the external paper broker."""
+
+    raw = os.environ.get("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "").lower().strip()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _resolve_external_quantity(
+    *,
+    decision: RiskDecision,
+    estimated_quantity: Decimal | None,
+) -> Decimal:
+    if estimated_quantity is None or estimated_quantity <= 0:
+        raise ExecutionBackendError("external paper requires a positive quantity")
+    if decision.max_quantity is not None:
+        if decision.max_quantity <= 0:
+            raise ExecutionBackendError("risk decision max_quantity is zero")
+        return min(estimated_quantity, decision.max_quantity)
+    return estimated_quantity
+
+
+def _run_blocking[T](awaitable: Coroutine[Any, Any, T]) -> T:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    result: list[T] = []
+    errors: list[BaseException] = []
+
+    def _runner() -> None:
+        try:
+            result.append(asyncio.run(awaitable))
+        except BaseException as exc:  # pragma: no cover - re-raised below
+            errors.append(exc)
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if errors:
+        raise errors[0]
+    return result[0]
+
+
+__all__ = [
+    "ExecutionBackend",
+    "ExecutionBackendError",
+    "ExecutionBackendResult",
+    "ExternalPaperExecutionBackend",
+    "LocalPaperExecutionBackend",
+    "is_ai_external_paper_enabled",
+]

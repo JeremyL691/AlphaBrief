@@ -169,6 +169,35 @@ Then confirm a fresh heartbeat landed:
 Expected: at least one row with a `last_run_at` from the last 60
 seconds.
 
+### 4.6 AI trading scheduler flags
+
+The AI daily cycle is disabled unless explicitly enabled:
+
+```bash
+export ALPHABRIEF_AI_TRADING_ENABLED=true
+```
+
+This lets the scheduler run `ai_daily_cycle` and record committee
+cycles. By default, approved AI orders still use the local paper broker
+path.
+
+To submit AI-approved, non-human-review orders to the configured
+external paper broker, enable the second flag:
+
+```bash
+export ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED=true
+```
+
+External paper submission remains fail-closed:
+
+1. `ALPHABRIEF_LIVE_TRADING_ENABLED=true` still blocks the AI cycle.
+2. `RiskGate` must approve the `OrderIntent`.
+3. Human-review decisions are not submitted.
+4. The order quantity is estimated from paper account buying power and
+   checked against `PaperExecutionPolicy.max_order_notional`.
+5. The AI `intent_id` is used as the broker `client_order_id` for
+   adapter idempotency.
+
 ## 5. Starting the 30-Day Run
 
 The recommended invocation:

@@ -21,6 +21,14 @@ from alphabrief_trader.daily_cycle import (
     is_live_trading_unlocked,
 )
 from alphabrief_trader.db_store import AiTradingStore
+from alphabrief_trader.execution_backend import (
+    ExecutionBackend,
+    ExecutionBackendError,
+    ExecutionBackendResult,
+    ExternalPaperExecutionBackend,
+    LocalPaperExecutionBackend,
+    is_ai_external_paper_enabled,
+)
 from alphabrief_trader.rules import DisciplineConfig, DisciplineGate
 from alphabrief_trader.schemas import (
     AnalystAction,
@@ -59,7 +67,12 @@ __all__ = [
     "DailyTradingCycle",
     "DisciplineConfig",
     "DisciplineGate",
+    "ExecutionBackend",
+    "ExecutionBackendError",
+    "ExecutionBackendResult",
+    "ExternalPaperExecutionBackend",
     "HeadlineLoader",
+    "LocalPaperExecutionBackend",
     "MarketSnapshot",
     "OrderAttempt",
     "OrderSide",
@@ -71,5 +84,6 @@ __all__ = [
     "build_committee_prompt",
     "default_roles",
     "is_ai_trading_enabled",
+    "is_ai_external_paper_enabled",
     "is_live_trading_unlocked",
 ]

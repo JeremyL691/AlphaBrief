@@ -3037,3 +3037,75 @@ the AI Trading Committee with local, auditable market/news context.
    operator's connected paper account before unattended operation.
 4. A pre-cycle daily ingestion task still needs to fetch market data and
    news before `ai_daily_cycle`.
+
+## 0059 Phase 28 External AI Paper Bridge
+
+### Goal
+
+Let scheduler-run AI-approved paper orders reach the configured
+broker-neutral paper adapter, without changing the default local paper
+behavior.
+
+### Findings and Fixes
+
+1. **AI-approved orders still stopped at local `PaperBroker`.** Fix:
+   added `ExecutionBackend`, `LocalPaperExecutionBackend`, and
+   `ExternalPaperExecutionBackend`.
+2. **External broker submit needed a quantity before order placement.**
+   Fix: execution backends now provide a pre-risk `estimated_quantity`
+   for target-position AI intents. For external paper buys, the estimate
+   uses paper account buying power and the snapshot reference price.
+3. **Scheduler risk limits did not bind external AI orders by notional.**
+   Fix: scheduler AI risk wiring now loads
+   `PaperExecutionPolicy.max_order_notional` into
+   `RiskLimitConfig.max_order_value`.
+4. **Broker idempotency metadata was not represented in AI attempts.**
+   Fix: `OrderAttempt` now carries `execution_backend`,
+   `client_order_id`, `broker_order_id`, `broker_status`, and
+   `broker_result_json`.
+5. **External paper execution needed a separate operator switch.** Fix:
+   scheduler injects `ExternalPaperExecutionBackend` only when
+   `ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED` is truthy. Default behavior is
+   unchanged.
+
+### Safety Boundaries
+
+1. Live trading remains blocked by `ALPHABRIEF_LIVE_TRADING_ENABLED`.
+2. `ALPHABRIEF_AI_TRADING_ENABLED` is still required before the
+   scheduler runs `ai_daily_cycle`.
+3. `ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED` is additionally required
+   before any external paper broker submit.
+4. Human-review and rejected `RiskDecision` objects still stop before
+   execution.
+5. API `/api/v1/ai/run` remains local-paper only; unattended external
+   paper submit is scheduler-only.
+6. No dashboard/UI files were changed.
+
+### Validation
+
+1. `tests/test_ai_trader_execution_backend.py`,
+   `tests/test_ai_trader_daily_cycle.py`, and
+   `tests/test_ai_trader_scheduler.py`: **19 passed**.
+2. Focused `ruff check` on trader/scheduler/test files passed.
+3. Focused `mypy` on trader/CLI and related tests passed:
+   **33 source files**, strict mode.
+4. AI trader/API cluster: **106 passed**.
+5. Full sandboxed `pytest`: **1319 passed**, 12 failed. The failures
+   are the known localhost mock-broker socket permission cases in
+   `tests/test_alpaca_adapter.py` and `tests/test_broker_api_live.py`.
+6. Full `ruff check .` passed.
+7. Full `mypy packages apps tests` passed: **251 source files**.
+8. `alphabrief acceptance verify --compact` passed: **11/11**.
+
+### Remaining 30-day Paper-run Gaps
+
+1. The default committee still uses `FakeProviderAdapter`; real
+   structured-output `ModelGateway` providers must be configured before
+   production-like autonomous decisions.
+2. A pre-cycle ingestion task still needs to fetch fresh market data and
+   financial news before `ai_daily_cycle`.
+3. `config/paper_execution_policy.yaml` remains Alpaca/us-equity scoped
+   and must be reconciled with the connected paper account and intended
+   universe.
+4. Full localhost mock-broker tests need to be rerun outside this
+   restricted sandbox.
