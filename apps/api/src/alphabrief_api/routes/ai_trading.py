@@ -15,7 +15,7 @@ the API is intentionally one-way with respect to feature flags.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
@@ -32,6 +32,7 @@ from alphabrief_trader import (
     DisciplineConfig,
     MarketSnapshot,
     SnapshotLoader,
+    StoredMarketSnapshotBuilder,
     TradingCommittee,
     is_ai_trading_enabled,
     is_live_trading_unlocked,
@@ -39,7 +40,7 @@ from alphabrief_trader import (
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphabrief_api.db import AiTradingStore
+from alphabrief_api.db import AiTradingStore, MarketDataStore, NewsStore
 
 # ---------------------------------------------------------------------------
 # Store + builder singletons (test-isolation via _reset_ai_state)
@@ -191,33 +192,45 @@ def _build_risk_gate(symbols: list[str]) -> RiskGate:
 def _build_snapshot_loader(
     symbols: list[str],
     reference_prices: dict[str, Decimal] | None,
-) -> SnapshotLoader:
-    """Build a snapshot loader that returns a fake snapshot per symbol."""
+) -> tuple[SnapshotLoader, Callable[[], None]]:
+    """Build a store-backed snapshot loader plus a close callback."""
 
+    symbol_set = {symbol.strip().upper() for symbol in symbols}
     overrides = reference_prices or {}
+    market_store = MarketDataStore()
+    news_store = NewsStore()
+    builder = StoredMarketSnapshotBuilder(
+        bar_loader=market_store.get_bar_models,
+        headline_loader=lambda symbol, start, end, limit: (
+            news_store.list_headlines(
+                symbol=symbol,
+                start=start,
+                end=end,
+                limit=limit,
+            )
+        ),
+    )
 
     def _loader(symbol: str) -> MarketSnapshot | None:
-        if symbol not in symbols:
+        normalized = symbol.strip().upper()
+        if normalized not in symbol_set:
             return None
-        ref = overrides.get(symbol, Decimal("100"))
-        return MarketSnapshot(
-            symbol=symbol,
-            reference_price=ref,
-            recent_return_pct=Decimal("0"),
-            recent_volume=Decimal("1000"),
-            news_context=None,
-            macro_context=None,
-            data_version="api-runner-v1",
-            captured_at=datetime.now(UTC),
+        return builder.build(
+            normalized,
+            reference_price_override=overrides.get(normalized),
         )
 
-    return _loader
+    def _close() -> None:
+        news_store.close()
+        market_store.close()
+
+    return _loader, _close
 
 
 def _build_cycle(
     *,
+    snapshot_loader: SnapshotLoader,
     symbols: list[str],
-    reference_prices: dict[str, Decimal] | None,
 ) -> DailyTradingCycle:
     """Build a fully wired daily cycle from the supplied universe."""
     return DailyTradingCycle(
@@ -225,7 +238,7 @@ def _build_cycle(
         risk_gate=_build_risk_gate(symbols),
         broker=_build_paper_broker(),
         store=_get_store(),
-        snapshot_loader=_build_snapshot_loader(symbols, reference_prices),
+        snapshot_loader=snapshot_loader,
         enabled=is_ai_trading_enabled(),
     )
 
@@ -269,18 +282,27 @@ def run_cycle(body: AiRunRequest) -> dict[str, object]:
             ),
         )
 
-    cycle = _build_cycle(
-        symbols=list(body.symbols),
-        reference_prices=(
-            {k: Decimal(v) for k, v in body.reference_prices.items()}
-            if body.reference_prices
-            else None
-        ),
+    symbols = [symbol.strip().upper() for symbol in body.symbols]
+    reference_prices = (
+        {k.strip().upper(): Decimal(v) for k, v in body.reference_prices.items()}
+        if body.reference_prices
+        else None
     )
-    record = cycle.run(
-        list(body.symbols),
-        time_horizon=body.time_horizon,
+    snapshot_loader, close_snapshot_loader = _build_snapshot_loader(
+        symbols=symbols,
+        reference_prices=reference_prices,
     )
+    try:
+        cycle = _build_cycle(
+            snapshot_loader=snapshot_loader,
+            symbols=symbols,
+        )
+        record = cycle.run(
+            symbols,
+            time_horizon=body.time_horizon,
+        )
+    finally:
+        close_snapshot_loader()
     return {
         "cycle_id": record.cycle_id,
         "outcome": record.outcome,

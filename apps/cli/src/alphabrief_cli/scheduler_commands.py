@@ -65,7 +65,7 @@ from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
     DisciplineConfig,
-    MarketSnapshot,
+    StoredMarketSnapshotBuilder,
     TradingCommittee,
     is_ai_trading_enabled,
 )
@@ -508,19 +508,15 @@ def _ai_cycle_factory(
     ``scheduler run`` enables the task only when
     ``ALPHABRIEF_AI_TRADING_ENABLED`` is truthy.
     """
-    from alphabrief_api.db import AiTradingStore as _Store
-
-    def _loader(symbol: str) -> MarketSnapshot | None:
-        if symbol not in _AI_SCHEDULER_UNIVERSE:
-            return None
-        return MarketSnapshot(
-            symbol=symbol,
-            reference_price=Decimal("100"),
-            recent_return_pct=Decimal("0"),
-            recent_volume=Decimal("1000"),
-            data_version="scheduler-runner-v1",
-            captured_at=datetime.now(UTC),
-        )
+    from alphabrief_api.db import (
+        AiTradingStore as _Store,
+    )
+    from alphabrief_api.db import (
+        MarketDataStore as _MarketDataStore,
+    )
+    from alphabrief_api.db import (
+        NewsStore as _NewsStore,
+    )
 
     async def _handler() -> None:
         # The store is opened and closed per-call so a long-running
@@ -529,8 +525,22 @@ def _ai_cycle_factory(
         # recon store). ponytail:scheduler_ai_duckdb_lock — see
         # upgrade path note in
         # docs/development_plans/0057-phase-26-ai-trader-closeout.md.
-        store = _Store(db_path=db_path / "alphabrief.db")
+        database = db_path / "alphabrief.db"
+        store = _Store(db_path=database)
+        market_store = _MarketDataStore(db_path=database)
+        news_store = _NewsStore(db_path=database)
         try:
+            snapshot_builder = StoredMarketSnapshotBuilder(
+                bar_loader=market_store.get_bar_models,
+                headline_loader=lambda symbol, start, end, limit: (
+                    news_store.list_headlines(
+                        symbol=symbol,
+                        start=start,
+                        end=end,
+                        limit=limit,
+                    )
+                ),
+            )
             committee = _build_ai_committee()
             broker = PaperBroker(
                 portfolio=PortfolioState(cash=Decimal("100000")),
@@ -548,11 +558,15 @@ def _ai_cycle_factory(
                 risk_gate=risk_gate,
                 broker=broker,
                 store=store,
-                snapshot_loader=_loader,
+                snapshot_loader=lambda symbol: snapshot_builder.build(symbol)
+                if symbol in _AI_SCHEDULER_UNIVERSE
+                else None,
                 enabled=is_ai_trading_enabled(),
             )
             cycle.run(list(_AI_SCHEDULER_UNIVERSE))
         finally:
+            news_store.close()
+            market_store.close()
             store.close()
 
     return _handler
