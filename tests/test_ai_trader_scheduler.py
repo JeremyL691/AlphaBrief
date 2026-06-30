@@ -7,9 +7,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import alphabrief_cli.scheduler_commands as scheduler_commands
 import pytest
-from alphabrief_api.db import AiTradingStore
+from alphabrief_api.db import AiTradingStore, MarketDataStore
 from alphabrief_cli.scheduler_commands import _ai_cycle_factory
+from alphabrief_core import Bar
 from alphabrief_execution import (
     FillSimulator,
     OrderRouter,
@@ -84,6 +86,34 @@ class _NullAdapter(BrokerAdapter):
             cash=Decimal("0"),
             equity=Decimal("0"),
             buying_power=Decimal("0"),
+            currency="USD",
+            captured_at=datetime.now(UTC),
+        )
+
+
+class _SubmittingAdapter(_NullAdapter):
+    def __init__(self) -> None:
+        self.requests: list[SubmitRequest] = []
+        self.client_order_ids: list[str] = []
+
+    async def submit(
+        self, request: SubmitRequest, *, client_order_id: str
+    ) -> SubmitResult:
+        self.requests.append(request)
+        self.client_order_ids.append(client_order_id)
+        return SubmitResult(
+            broker_order_id=f"broker-{client_order_id}",
+            client_order_id=client_order_id,
+            status=BrokerOrderStatus.NEW,
+            accepted_at=datetime.now(UTC),
+        )
+
+    async def get_account(self) -> AccountSnapshot:
+        return AccountSnapshot(
+            account_id="paper",
+            cash=Decimal("1000"),
+            equity=Decimal("1000"),
+            buying_power=Decimal("1000"),
             currency="USD",
             captured_at=datetime.now(UTC),
         )
@@ -264,5 +294,82 @@ class TestSchedulerRunsAiTask:
             assert latest["votes"] == []
             assert latest["plans"] == []
             assert latest["attempts"] == []
+        finally:
+            store.close()
+
+    def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "true")
+        adapter = _SubmittingAdapter()
+        monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
+
+        provider = FakeProviderAdapter(
+            provider_name="fake",
+            model_name="fake-1",
+            capabilities=["structured_output"],
+            structured_output={
+                "analysis": "Bullish continuation.",
+                "view": "bullish",
+                "confidence": 0.8,
+                "evidence": ["trend"],
+                "risks": [],
+                "suggested_action": "buy",
+                "target_position_pct": "0.10",
+                "veto": False,
+                "needs_human_review": False,
+            },
+        )
+        monkeypatch.setattr(
+            scheduler_commands,
+            "_build_ai_committee",
+            lambda: TradingCommittee(
+                gateway=ModelGateway(providers=[provider]),
+                discipline=DisciplineConfig(),
+            ),
+        )
+
+        market_store = MarketDataStore(db_path=isolated_data_dir / "alphabrief.db")
+        try:
+            market_store.insert_bars(
+                [
+                    Bar(
+                        symbol="SPY",
+                        timestamp=datetime.now(UTC),
+                        open=Decimal("100"),
+                        high=Decimal("100"),
+                        low=Decimal("100"),
+                        close=Decimal("100"),
+                        volume=Decimal("1000"),
+                        source="test",
+                        data_version="test",
+                    )
+                ],
+                source="test",
+                data_version="test",
+            )
+        finally:
+            market_store.close()
+
+        handler = _ai_cycle_factory(db_path=isolated_data_dir)
+
+        async def _run_handler() -> None:
+            await handler()
+
+        asyncio.run(_run_handler())
+
+        assert len(adapter.requests) == 1
+        assert adapter.requests[0].symbol == "SPY"
+        assert adapter.requests[0].quantity == Decimal("1.000")
+
+        store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
+        try:
+            latest = store.get_latest_cycle()
+            assert latest is not None
+            attempt = latest["attempts"][0]
+            assert attempt["execution_backend"] == "external_paper"
+            assert attempt["broker_order_id"] == attempt["order_id"]
+            assert attempt["client_order_id"] == attempt["intent_id"]
         finally:
             store.close()
