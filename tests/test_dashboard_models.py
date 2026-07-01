@@ -49,3 +49,29 @@ def test_dashboard_models_page_handles_empty_state() -> None:
     resp = client.get("/dashboard/models")
     assert resp.status_code == 200
     assert "No evaluations yet" in resp.text or "No model performance" in resp.text
+
+
+def test_dashboard_main_includes_scheduler_card() -> None:
+    """The main dashboard should now surface scheduler state."""
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "scheduler-status" in body
+    assert "Scheduler" in body
+
+
+def test_dashboard_main_includes_skeleton_loaders() -> None:
+    """Each card should ship a skeleton placeholder while loading."""
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    body = resp.text
+    assert body.count('class="skeleton') >= 6
+
+
+def test_dashboard_main_includes_refresh_indicator() -> None:
+    """A visible refresh indicator + 30s auto-refresh must be present."""
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "refresh-indicator" in body
+    assert "REFRESH_INTERVAL_MS = 30000" in body

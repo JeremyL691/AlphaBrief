@@ -45,7 +45,10 @@ from alphabrief_trader import (
     is_live_trading_unlocked,
 )
 
-from alphabrief_cli.api_client import is_api_running
+from alphabrief_cli.api_client import (
+    is_api_running,
+    print_api_unavailable_hint,
+)
 
 ai_app = typer.Typer(help="AI Trading Committee — multi-role paper cycle.")
 
@@ -93,6 +96,7 @@ def _read_api_json(path: str) -> dict[str, Any]:
             return cast(dict[str, Any], json.loads(response.read().decode("utf-8")))
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         print(f"error: failed to reach {_api_url(path)}: {exc}", file=sys.stderr)
+        print_api_unavailable_hint(command="ai status")
         sys.exit(1)
 
 
