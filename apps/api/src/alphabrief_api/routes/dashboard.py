@@ -534,6 +534,58 @@ canvas { display: block; width: 100%; height: 100%; }
 
 .error { color: var(--red); font-size: 0.825rem; }
 
+.skeleton {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    var(--bg-elev-3) 0%,
+    var(--border) 50%,
+    var(--bg-elev-3) 100%
+  );
+  background-size: 200% 100%;
+  border-radius: 4px;
+  animation: skeleton-shimmer 1.4s linear infinite;
+  height: 0.85rem;
+  margin: 0.35rem 0;
+}
+.skeleton--value { height: 1.75rem; width: 60%; }
+.skeleton--short { width: 40%; }
+.skeleton--line  { width: 100%; }
+
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.refresh-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 0.75rem;
+}
+.refresh-indicator.is-spinning .spinner { animation-play-state: running; }
+.refresh-indicator:not(.is-spinning) .spinner {
+  animation-play-state: paused;
+  border-top-color: var(--accent-dim);
+}
+
 /* Footer ------------------------------------------------------------------ */
 
 .app-footer {
@@ -752,37 +804,63 @@ _DASHBOARD_BODY = """
 <section class="grid grid--3">
   <article class="card">
     <div class="card__head"><span class="card__title">Project Status</span><span id="project-status-pill"></span></div>
-    <div id="project-status" class="loading">Loading...</div>
+    <div id="project-status" class="loading">
+      <div class="skeleton skeleton--line"></div>
+      <div class="skeleton skeleton--line skeleton--short"></div>
+    </div>
   </article>
 
   <article class="card">
     <div class="card__head"><span class="card__title">Data Symbols</span><span class="card__hint" id="data-symbols-hint">—</span></div>
-    <div id="data-symbols" class="loading">Loading...</div>
+    <div id="data-symbols" class="loading">
+      <div class="skeleton skeleton--value"></div>
+    </div>
   </article>
 
   <article class="card">
     <div class="card__head"><span class="card__title">Risk Status</span><span id="risk-status-pill"></span></div>
-    <div id="risk-status" class="loading">Loading...</div>
+    <div id="risk-status" class="loading">
+      <div class="skeleton skeleton--line"></div>
+      <div class="skeleton skeleton--line skeleton--short"></div>
+    </div>
+  </article>
+
+  <article class="card">
+    <div class="card__head"><span class="card__title">Scheduler</span><span id="scheduler-status-pill"></span></div>
+    <div id="scheduler-status" class="loading">
+      <div class="skeleton skeleton--line"></div>
+      <div class="skeleton skeleton--line skeleton--short"></div>
+    </div>
   </article>
 
   <article class="card">
     <div class="card__head"><span class="card__title">Last Backtest</span><span class="card__hint" id="last-backtest-hint">—</span></div>
-    <div id="last-backtest" class="loading">Loading...</div>
+    <div id="last-backtest" class="loading">
+      <div class="skeleton skeleton--value"></div>
+    </div>
   </article>
 
   <article class="card">
     <div class="card__head"><span class="card__title">Last Brief</span><span class="card__hint" id="last-brief-hint">—</span></div>
-    <div id="last-brief" class="loading">Loading...</div>
+    <div id="last-brief" class="loading">
+      <div class="skeleton skeleton--value"></div>
+    </div>
   </article>
 
   <article class="card">
     <div class="card__head"><span class="card__title">Paper Portfolio</span><span class="card__hint" id="portfolio-hint">—</span></div>
-    <div id="portfolio" class="loading">Loading...</div>
+    <div id="portfolio" class="loading">
+      <div class="skeleton skeleton--value"></div>
+    </div>
   </article>
 
   <article class="card card--full">
     <div class="card__head"><span class="card__title">Positions</span><span class="card__hint" id="positions-hint">—</span></div>
-    <div id="positions" class="loading">Loading...</div>
+    <div id="positions" class="loading">
+      <div class="skeleton skeleton--line"></div>
+      <div class="skeleton skeleton--line"></div>
+      <div class="skeleton skeleton--line skeleton--short"></div>
+    </div>
   </article>
 
   <article class="card card--full">
@@ -799,20 +877,120 @@ _DASHBOARD_BODY = """
 
   <article class="card card--full">
     <div class="card__head"><span class="card__title">Recent Fills</span><span class="card__hint">order_created · latest 5</span></div>
-    <div id="recent-fills" class="loading">Loading...</div>
+    <div id="recent-fills" class="loading">
+      <div class="skeleton skeleton--line"></div>
+      <div class="skeleton skeleton--line"></div>
+    </div>
   </article>
 
   <article class="card card--full">
     <div class="card__head"><span class="card__title">Model Performance</span><span class="card__hint">latest schema pass rate</span></div>
-    <div id="model-performance" class="loading">Loading...</div>
+    <div id="model-performance" class="loading">
+      <div class="skeleton skeleton--line"></div>
+      <div class="skeleton skeleton--line"></div>
+      <div class="skeleton skeleton--line skeleton--short"></div>
+    </div>
   </article>
 </section>
 """.strip()
 
 
 _DASHBOARD_JS = """
+const REFRESH_INTERVAL_MS = 30000;
+
+function setSkeleton(elementId, lines) {
+  // lines: array of {modifier: "value"|"short"|""} or null to clear
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  if (!lines) {
+    el.classList.remove("loading");
+    return;
+  }
+  el.classList.add("loading");
+  el.innerHTML = lines.map(function (l) {
+    const mod = l && l.modifier ? " skeleton--" + l.modifier : "";
+    return '<div class="skeleton' + mod + '"></div>';
+  }).join("");
+}
+
+function setRefreshIndicator(spinning) {
+  const el = document.getElementById("refresh-indicator");
+  if (!el) return;
+  if (spinning) el.classList.add("is-spinning");
+  else el.classList.remove("is-spinning");
+  const ts = document.getElementById("refresh-timestamp");
+  if (ts) {
+    const d = new Date();
+    ts.textContent = "updated " + d.toISOString().replace("T", " ").replace(/\..*$/, "Z");
+  }
+}
+
+function fmtInterval(ms) {
+  if (ms === null || ms === undefined) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s ago";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  return h + "h ago";
+}
+
+function lastRunAge(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return Date.now() - d.getTime();
+}
+
+async function loadScheduler() {
+  const el = document.getElementById("scheduler-status");
+  const pill = document.getElementById("scheduler-status-pill");
+  if (!el) return;
+  // 503 + scheduler_writer_locked is a graceful degradation, not an error.
+  const data = await fetchJSON("/api/v1/scheduler/status");
+  if (!data) {
+    el.classList.remove("loading");
+    el.innerHTML = '<div class="error">Failed to load</div>';
+    if (pill) pill.innerHTML = '<span class="pill pill--red">UNREACHABLE</span>';
+    return;
+  }
+  if (data && data.kind === "scheduler_writer_locked") {
+    el.classList.remove("loading");
+    el.innerHTML =
+      '<div class="status">'
+      + '<span class="status-dot warn" aria-hidden="true"></span>'
+      + 'Scheduler writer active — data unavailable'
+      + '</div>'
+      + '<div class="card__label">The launchd-managed scheduler process holds the DuckDB writer lock.</div>';
+    if (pill) pill.innerHTML = '<span class="pill pill--amber">WRITER ACTIVE</span>';
+    return;
+  }
+  el.classList.remove("loading");
+  const beats = Number(data.heartbeat_count || 0);
+  const freezes = Number(data.open_freeze_count || 0);
+  const alerts = Number(data.alerts_total || 0);
+  el.innerHTML =
+    '<div class="status">'
+    + '<span class="status-dot ' + (freezes > 0 ? "err" : (beats > 0 ? "ok" : "warn")) + '" aria-hidden="true"></span>'
+    + beats + ' task' + (beats === 1 ? '' : 's') + ' · ' + freezes + ' freeze' + (freezes === 1 ? '' : 's') + ' · ' + alerts + ' alert' + (alerts === 1 ? '' : 's')
+    + '</div>'
+    + '<div class="card__label">read-only · writer may be in a separate process</div>';
+  if (pill) {
+    pill.innerHTML = freezes > 0
+      ? '<span class="pill pill--red">FROZEN</span>'
+      : '<span class="pill pill--green">READY</span>';
+  }
+}
+
+async function loadHeartbeatsForLastRun() {
+  const data = await fetchJSON("/api/v1/scheduler/heartbeats");
+  if (!data) return null;
+  return data.heartbeats || [];
+}
+
 async function loadDashboard() {
-  const [status, symbols, reports, briefs, portfolio, risk, orders] = await Promise.all([
+  setRefreshIndicator(true);
+  const [status, symbols, reports, briefs, portfolio, risk, orders, schedulerData, heartbeats] = await Promise.all([
     fetchJSON("/api/status"),
     fetchJSON("/api/v1/data/symbols"),
     fetchJSON("/api/v1/backtest/reports"),
@@ -820,6 +998,8 @@ async function loadDashboard() {
     fetchJSON("/api/v1/paper/portfolio"),
     fetchJSON("/api/v1/risk/dashboard"),
     fetchJSON("/api/v1/paper/orders?status=order_created"),
+    fetchJSON("/api/v1/scheduler/status"),
+    fetchJSON("/api/v1/scheduler/heartbeats"),
   ]);
 
   // Project status
@@ -831,6 +1011,7 @@ async function loadDashboard() {
       ? '<span class="pill pill--red">LIVE ON</span>'
       : '<span class="pill pill--green">LIVE OFF</span>';
     document.getElementById("project-status-pill").innerHTML = envPill + " " + livePill;
+    document.getElementById("project-status").classList.remove("loading");
     document.getElementById("project-status").innerHTML =
       '<div class="card__value">' + escapeHtml(status.environment) + '</div>'
       + '<div class="card__label">'
@@ -838,6 +1019,7 @@ async function loadDashboard() {
       + '</div>';
   } else {
     document.getElementById("project-status-pill").innerHTML = "";
+    document.getElementById("project-status").classList.remove("loading");
     document.getElementById("project-status").innerHTML = '<div class="error">Failed to load</div>';
   }
 
@@ -845,10 +1027,12 @@ async function loadDashboard() {
   if (symbols) {
     const n = (symbols.symbols || []).length;
     document.getElementById("data-symbols-hint").textContent = "universe";
+    document.getElementById("data-symbols").classList.remove("loading");
     document.getElementById("data-symbols").innerHTML =
       '<div class="card__value">' + n + '</div>'
       + '<div class="card__label">loaded symbols</div>';
   } else {
+    document.getElementById("data-symbols").classList.remove("loading");
     document.getElementById("data-symbols").innerHTML = '<div class="error">Failed to load</div>';
   }
 
@@ -859,6 +1043,7 @@ async function loadDashboard() {
     document.getElementById("risk-status-pill").innerHTML = te
       ? '<span class="pill pill--green">TRADING ON</span>'
       : '<span class="pill pill--amber">TRADING OFF</span>';
+    document.getElementById("risk-status").classList.remove("loading");
     document.getElementById("risk-status").innerHTML =
       '<div class="status">'
       + '<span class="status-dot ' + (ks ? "err" : "ok") + '" aria-hidden="true"></span>'
@@ -866,49 +1051,92 @@ async function loadDashboard() {
       + '</div>'
       + '<div class="card__label">' + (te ? "Orders accepted" : "Orders blocked") + '</div>';
   } else {
+    document.getElementById("risk-status").classList.remove("loading");
     document.getElementById("risk-status").innerHTML = '<div class="error">Failed to load</div>';
+  }
+
+  // Scheduler status (graceful degradation for writer-lock 503)
+  const elSched = document.getElementById("scheduler-status");
+  const pillSched = document.getElementById("scheduler-status-pill");
+  if (schedulerData && schedulerData.kind === "scheduler_writer_locked") {
+    elSched.classList.remove("loading");
+    elSched.innerHTML =
+      '<div class="status">'
+      + '<span class="status-dot warn" aria-hidden="true"></span>'
+      + 'Scheduler writer active — data unavailable'
+      + '</div>'
+      + '<div class="card__label">The launchd-managed scheduler process holds the DuckDB writer lock.</div>';
+    if (pillSched) pillSched.innerHTML = '<span class="pill pill--amber">WRITER ACTIVE</span>';
+  } else if (schedulerData) {
+    const beats = Number(schedulerData.heartbeat_count || 0);
+    const freezes = Number(schedulerData.open_freeze_count || 0);
+    const alerts = Number(schedulerData.alerts_total || 0);
+    elSched.classList.remove("loading");
+    elSched.innerHTML =
+      '<div class="status">'
+      + '<span class="status-dot ' + (freezes > 0 ? "err" : (beats > 0 ? "ok" : "warn")) + '" aria-hidden="true"></span>'
+      + beats + ' task' + (beats === 1 ? '' : 's') + ' · ' + freezes + ' freeze' + (freezes === 1 ? '' : 's') + ' · ' + alerts + ' alert' + (alerts === 1 ? '' : 's')
+      + '</div>'
+      + '<div class="card__label">read-only · writer may be in a separate process</div>';
+    if (pillSched) {
+      pillSched.innerHTML = freezes > 0
+        ? '<span class="pill pill--red">FROZEN</span>'
+        : '<span class="pill pill--green">READY</span>';
+    }
+  } else {
+    elSched.classList.remove("loading");
+    elSched.innerHTML = '<div class="error">Failed to load</div>';
+    if (pillSched) pillSched.innerHTML = '<span class="pill pill--red">UNREACHABLE</span>';
   }
 
   // Last backtest
   const lastReport = reports && reports.reports && reports.reports[reports.reports.length - 1];
+  const lbEl = document.getElementById("last-backtest");
+  lbEl.classList.remove("loading");
   if (lastReport) {
     const r = Number(lastReport.total_return || 0);
     const cls = r >= 0 ? "card__value--green" : "card__value--red";
     document.getElementById("last-backtest-hint").textContent = escapeHtml(lastReport.symbol || "");
-    document.getElementById("last-backtest").innerHTML =
+    lbEl.innerHTML =
       '<div class="card__value ' + cls + '">' + fmtPct(r, 2) + '</div>'
       + '<div class="card__label">' + Number(lastReport.trade_count || 0) + ' trades · last run</div>';
   } else {
-    document.getElementById("last-backtest").innerHTML =
+    lbEl.innerHTML =
       '<div class="card__value">—</div><div class="card__label">No backtests yet</div>';
   }
 
   // Last brief
   const lastBrief = briefs && briefs.briefs && briefs.briefs[briefs.briefs.length - 1];
+  const lbBriefEl = document.getElementById("last-brief");
+  lbBriefEl.classList.remove("loading");
   if (lastBrief) {
     document.getElementById("last-brief-hint").textContent = escapeHtml(lastBrief.trading_day || "");
-    document.getElementById("last-brief").innerHTML =
+    lbBriefEl.innerHTML =
       '<div class="card__value card__value--small">' + escapeHtml(lastBrief.headline || "") + '</div>'
       + '<div class="card__label">' + fmtTime(lastBrief.generated_at) + '</div>';
   } else {
-    document.getElementById("last-brief").innerHTML =
+    lbBriefEl.innerHTML =
       '<div class="card__value">—</div><div class="card__label">No briefs yet</div>';
   }
 
   // Paper portfolio
   const positions = (portfolio && portfolio.positions) || [];
+  const portEl = document.getElementById("portfolio");
+  portEl.classList.remove("loading");
   if (portfolio) {
     const cash = Number(portfolio.cash || 0);
     document.getElementById("portfolio-hint").textContent = positions.length + " positions";
-    document.getElementById("portfolio").innerHTML =
+    portEl.innerHTML =
       '<div class="card__value">$' + fmtNumber(cash) + '</div>'
       + '<div class="card__label">cash · ' + positions.length + ' open</div>';
   } else {
-    document.getElementById("portfolio").innerHTML = '<div class="error">Failed to load</div>';
+    portEl.innerHTML = '<div class="error">Failed to load</div>';
   }
 
   // Positions table
   document.getElementById("positions-hint").textContent = positions.length + " open";
+  const positionsEl = document.getElementById("positions");
+  positionsEl.classList.remove("loading");
   const positionsHtml = positions.length === 0
     ? '<div class="empty">No open positions</div>'
     : '<div class="table-wrap"><table>'
@@ -921,12 +1149,14 @@ async function loadDashboard() {
             + '</tr>';
         }).join('')
       + '</tbody></table></div>';
-  document.getElementById("positions").innerHTML = positionsHtml;
+  positionsEl.innerHTML = positionsHtml;
 
   drawEquityCurve(positions.length);
 
   // Recent fills
   const recentOrders = ((orders && orders.entries) || []).slice(0, 5);
+  const fillsEl = document.getElementById("recent-fills");
+  fillsEl.classList.remove("loading");
   const fillsHtml = recentOrders.length === 0
     ? '<div class="empty">No recent orders</div>'
     : '<div class="table-wrap"><table>'
@@ -939,7 +1169,7 @@ async function loadDashboard() {
             + '</tr>';
         }).join('')
       + '</tbody></table></div>';
-  document.getElementById("recent-fills").innerHTML = fillsHtml;
+  fillsEl.innerHTML = fillsHtml;
 
   // Model performance
   const modelsData = await fetchJSON("/api/v1/models/evaluations?limit=20");
@@ -966,91 +1196,13 @@ async function loadDashboard() {
         + '<div class="card__label"><span class="status"><span class="status-dot ' + dotCls + '" aria-hidden="true"></span>schema pass · latest</span></div>'
         + '</div>';
     }).join('');
-  document.getElementById("model-performance").innerHTML = cardsHtml.length === 0
+  const mpEl = document.getElementById("model-performance");
+  mpEl.classList.remove("loading");
+  mpEl.innerHTML = cardsHtml.length === 0
     ? '<div class="empty">No model evaluations yet. POST /api/v1/models/evaluate to run one.</div>'
     : '<div class="grid">' + cardsHtml + '</div>';
-}
 
-function drawEquityCurve(hasPositions) {
-  const canvas = document.getElementById("equity-canvas");
-  if (!canvas) return;
-  const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  const w = Math.max(rect.width, 320);
-  const h = Math.max(rect.height, 160);
-  canvas.width = Math.round(w * dpr);
-  canvas.height = Math.round(h * dpr);
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-
-  const samples = 20;
-  const base = 100000;
-  const points = [];
-  for (let i = 0; i < samples; i++) {
-    const noise = Math.sin(i * 0.5) * 200 + (hasPositions ? (i - samples / 2) * 100 : 0);
-    points.push(base + i * 50 + noise);
-  }
-  const min = Math.min.apply(null, points);
-  const max = Math.max.apply(null, points);
-  const span = (max - min) || 1;
-  const padTop = 12, padBot = 12, padLeft = 12, padRight = 12;
-  const innerW = w - padLeft - padRight;
-  const innerH = h - padTop - padBot;
-
-  // Grid
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.08)";
-  ctx.lineWidth = 1;
-  for (let g = 0; g <= 4; g++) {
-    const y = padTop + (innerH * g) / 4;
-    ctx.beginPath();
-    ctx.moveTo(padLeft, y);
-    ctx.lineTo(w - padRight, y);
-    ctx.stroke();
-  }
-
-  const xy = points.map(function (v, i) {
-    const x = padLeft + (i / (samples - 1)) * innerW;
-    const y = padTop + innerH - ((v - min) / span) * innerH;
-    return [x, y];
-  });
-
-  // Fill
-  const grad = ctx.createLinearGradient(0, padTop, 0, h - padBot);
-  grad.addColorStop(0, "rgba(0, 212, 255, 0.28)");
-  grad.addColorStop(1, "rgba(0, 212, 255, 0)");
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.moveTo(xy[0][0], h - padBot);
-  xy.forEach(function (p) { ctx.lineTo(p[0], p[1]); });
-  ctx.lineTo(xy[xy.length - 1][0], h - padBot);
-  ctx.closePath();
-  ctx.fill();
-
-  // Line
-  ctx.strokeStyle = "#00d4ff";
-  ctx.lineWidth = 1.75;
-  ctx.beginPath();
-  xy.forEach(function (p, i) { if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
-  ctx.stroke();
-
-  // End dot
-  const last = xy[xy.length - 1];
-  ctx.fillStyle = "#00d4ff";
-  ctx.beginPath();
-  ctx.arc(last[0], last[1], 3, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Meta
-  const latest = "$" + fmtNumber(Math.round(points[points.length - 1]));
-  const first = points[0];
-  const delta = points[points.length - 1] - first;
-  const deltaPct = (delta / first) * 100;
-  document.getElementById("equity-latest").textContent = latest;
-  const deltaEl = document.getElementById("equity-delta");
-  const sign = delta >= 0 ? "+" : "";
-  deltaEl.textContent = sign + fmtNumber(Math.round(delta)) + " (" + sign + deltaPct.toFixed(2) + "%)";
-  deltaEl.style.color = delta >= 0 ? "var(--green)" : "var(--red)";
+  setRefreshIndicator(false);
 }
 
 window.addEventListener("resize", function () {
@@ -1058,6 +1210,7 @@ window.addEventListener("resize", function () {
 });
 
 loadDashboard();
+setInterval(loadDashboard, REFRESH_INTERVAL_MS);
 """.strip()
 
 
@@ -1510,7 +1663,13 @@ def get_dashboard() -> HTMLResponse:
             subtitle="Status, portfolio, recent activity and model health.",
             body=_DASHBOARD_BODY,
             scripts=_DASHBOARD_JS,
-            meta='<span class="pill pill--accent" id="env-pill">—</span>',
+            meta=(
+                '<span class="refresh-indicator" id="refresh-indicator" '
+                'title="Auto-refresh every 30s">'
+                '<span class="spinner" aria-hidden="true"></span>'
+                '<span id="refresh-timestamp">—</span></span>'
+                '<span class="pill pill--accent" id="env-pill">—</span>'
+            ),
         )
     )
 

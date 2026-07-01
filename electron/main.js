@@ -28,6 +28,16 @@ const VENV_BIN = path.join(REPO_ROOT, '.venv', 'bin');
 const VENTRY_ALPHABRIEF = path.join(VENV_BIN, 'alphabrief');
 const LOG_FILE = path.join(__dirname, 'backend.log');
 
+// Backend log rotation: cap the file at 1 MiB. When the file is
+// approaching the cap (>= 768 KiB written this session), rotate to a
+// single `.1` backup before opening a fresh append handle. ponytail:
+// single backup rotation — a real app would use logrotate or a
+// rotating-stream module, but the desktop wrapper only writes
+// stdout/stderr and one backup keeps the file from growing
+// unbounded across daily restarts.
+const LOG_ROTATE_AT = 1024 * 1024;
+const LOG_ROTATE_TRIGGER = 768 * 1024;
+
 // Lazy single-instance check — second launch focuses the existing window.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -36,9 +46,11 @@ if (!app.requestSingleInstanceLock()) {
 
 let backendProcess = null;
 let backendLogStream = null;
+let backendLogBytesThisSession = 0;
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+let lastBackendStartFailedReason = null;
 
 function resolveBackendCommand() {
   // Prefer the venv's installed `alphabrief` console script — it's the
@@ -58,10 +70,47 @@ function resolveBackendCommand() {
   };
 }
 
+function rotateBackendLogIfNeeded() {
+  try {
+    const stat = fs.statSync(LOG_FILE);
+    if (stat.size + backendLogBytesThisSession < LOG_ROTATE_AT) {
+      return;
+    }
+    const backup = LOG_FILE + '.1';
+    if (fs.existsSync(backup)) fs.unlinkSync(backup);
+    fs.renameSync(LOG_FILE, backup);
+  } catch (err) {
+    // Best-effort rotation — fall through and continue writing.
+    console.error('[electron] log rotation failed:', err.message);
+  }
+  backendLogBytesThisSession = 0;
+}
+
+function writeBackendLog(chunk) {
+  if (!backendLogStream) return;
+  // 4-byte prefix per chunk + chunk length in bytes — close enough to
+  // bound the on-disk size without counting UTF-8 multibyte widths.
+  const overhead = 12; // "[stdout] " / "[stderr] " prefix
+  backendLogBytesThisSession += chunk.length + overhead;
+  if (backendLogBytesThisSession >= LOG_ROTATE_TRIGGER) {
+    rotateBackendLogIfNeeded();
+  }
+  backendLogStream.write(chunk);
+}
+
+function openBackendLogStream() {
+  // Append mode, same as before — only rotate when the on-disk file is
+  // large enough that a new session's writes would push it past the cap.
+  return fs.createWriteStream(LOG_FILE, { flags: 'a' });
+}
+
 function startBackend() {
   const { command, args, label } = resolveBackendCommand();
-  backendLogStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
-  backendLogStream.write(`\n--- backend start (${new Date().toISOString()}) via ${label} ---\n`);
+  backendLogStream = openBackendLogStream();
+  const banner = `\n--- backend start (${new Date().toISOString()}) via ${label} ---\n`;
+  backendLogBytesThisSession += banner.length;
+  backendLogStream.write(banner);
+  lastBackendStartFailedReason = null;
 
   backendProcess = spawn(command, args, {
     cwd: REPO_ROOT,
@@ -70,18 +119,26 @@ function startBackend() {
   });
 
   backendProcess.stdout.on('data', (chunk) => {
-    backendLogStream.write(`[stdout] ${chunk}`);
+    writeBackendLog(`[stdout] ${chunk}`);
   });
   backendProcess.stderr.on('data', (chunk) => {
-    backendLogStream.write(`[stderr] ${chunk}`);
+    writeBackendLog(`[stderr] ${chunk}`);
   });
   backendProcess.on('exit', (code, signal) => {
-    backendLogStream.write(`--- backend exit code=${code} signal=${signal} ---\n`);
-    if (!isQuitting && mainWindow) {
-      mainWindow.webContents.executeJavaScript(
-        `alert("AlphaBrief backend stopped (code=${code}, signal=${signal}). See electron/backend.log.");`
-      ).catch(() => {});
+    if (backendLogStream) {
+      backendLogStream.write(
+        `--- backend exit code=${code} signal=${signal} ---\n`
+      );
     }
+    if (!isQuitting) {
+      lastBackendStartFailedReason =
+        `backend exited (code=${code}, signal=${signal}) before becoming healthy`;
+      showErrorOverlay(lastBackendStartFailedReason);
+    }
+  });
+  backendProcess.on('error', (err) => {
+    lastBackendStartFailedReason = `failed to spawn backend: ${err.message}`;
+    showErrorOverlay(lastBackendStartFailedReason);
   });
 
   console.log(`[electron] backend spawned via ${label}, pid=${backendProcess.pid}`);
@@ -104,7 +161,24 @@ function waitForHealth(timeoutMs = 30000) {
   return tick();
 }
 
-function createWindow() {
+const ERROR_OVERLAY = path.join(__dirname, 'error-overlay.html');
+
+function buildErrorOverlayUrl(message) {
+  const params = new URLSearchParams({ message: message || 'Unknown error.' });
+  return `file://${ERROR_OVERLAY}?${params.toString()}`;
+}
+
+function showErrorOverlay(message) {
+  if (!mainWindow) {
+    createWindow({ initialError: message });
+    return;
+  }
+  mainWindow.loadURL(buildErrorOverlayUrl(message)).catch((err) => {
+    console.error('[electron] failed to load error overlay:', err);
+  });
+}
+
+function createWindow({ initialError } = {}) {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -126,9 +200,50 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  if (initialError) {
+    mainWindow.loadURL(buildErrorOverlayUrl(initialError)).catch((err) => {
+      console.error('[electron] failed to load error overlay:', err);
+    });
+    return;
+  }
+
   mainWindow.loadURL(DASHBOARD_URL).catch((err) => {
     console.error('[electron] failed to load dashboard:', err);
+    if (lastBackendStartFailedReason) {
+      mainWindow.loadURL(buildErrorOverlayUrl(lastBackendStartFailedReason)).catch(() => {});
+    }
   });
+}
+
+function restartBackend() {
+  if (backendProcess && !backendProcess.killed) {
+    try {
+      backendProcess.kill('SIGTERM');
+    } catch (e) {
+      console.error('[electron] kill failed:', e);
+    }
+    // Wait briefly for graceful exit, then force.
+    setTimeout(() => {
+      if (backendProcess && !backendProcess.killed) {
+        try { backendProcess.kill('SIGKILL'); } catch (_) {}
+      }
+      backendProcess = null;
+      if (backendLogStream) {
+        backendLogStream.end();
+        backendLogStream = null;
+      }
+      startBackend();
+      waitForHealth().catch((err) => {
+        showErrorOverlay(`backend restart failed: ${err.message}`);
+      });
+    }, 1500);
+  } else {
+    backendProcess = null;
+    startBackend();
+    waitForHealth().catch((err) => {
+      showErrorOverlay(`backend start failed: ${err.message}`);
+    });
+  }
 }
 
 function createTray() {
@@ -143,9 +258,14 @@ function createTray() {
 
   const menu = Menu.buildFromTemplate([
     { label: 'Open Dashboard', click: () => {
-        if (mainWindow) mainWindow.show();
-        else createWindow();
+        if (!mainWindow) createWindow();
+        else {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+        }
       } },
+    { label: 'Restart Backend', click: () => restartBackend() },
     { label: 'Open Backend Log', click: () => shell.openPath(LOG_FILE) },
     { type: 'separator' },
     { label: 'Quit AlphaBrief', click: () => { isQuitting = true; app.quit(); } },
@@ -153,9 +273,23 @@ function createTray() {
   tray.setToolTip('AlphaBrief');
   tray.setContextMenu(menu);
   tray.on('click', () => {
-    if (mainWindow) mainWindow.show();
-    else createWindow();
+    if (!mainWindow) createWindow();
+    else {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
   });
+}
+
+function focusMainWindow() {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
 }
 
 function killBackend() {
@@ -174,11 +308,11 @@ function killBackend() {
 }
 
 app.on('second-instance', () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  // Bring the existing window to front instead of silently discarding
+  // the second launch — the previous behaviour did this on most
+  // platforms but could leave the window hidden on macOS, so we
+  // always call focusMainWindow() now.
+  focusMainWindow();
 });
 
 app.on('window-all-closed', (e) => {
@@ -196,14 +330,17 @@ app.on('will-quit', () => {
 
 app.whenReady().then(async () => {
   startBackend();
+  let backendHealthy = false;
   try {
     await waitForHealth();
     console.log('[electron] backend healthy, opening dashboard');
+    backendHealthy = true;
   } catch (err) {
     console.error('[electron] backend failed to become healthy:', err.message);
     console.error(`[electron] see ${LOG_FILE} for details`);
+    lastBackendStartFailedReason = err.message;
   }
-  createWindow();
+  createWindow(backendHealthy ? {} : { initialError: lastBackendStartFailedReason || 'backend health check failed' });
   createTray();
 
   app.on('activate', () => {

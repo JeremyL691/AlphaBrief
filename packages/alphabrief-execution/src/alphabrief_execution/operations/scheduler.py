@@ -31,6 +31,7 @@ from uuid import uuid4
 
 import duckdb
 
+from alphabrief_execution.broker.errors import BrokerTransientError
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.broker.reconciliation import ReconciliationRunner
 
@@ -268,6 +269,115 @@ class SchedulerConfig:
     reconcile_on_start: bool = True
     max_consecutive_failures: int = 3
     on_failure_freeze_source: str = "scheduler"
+    # Phase 30 task #4: emit a clear "broker unreachable" alert after
+    # this many consecutive broker-probe failures, so the operator
+    # sees the actual cause instead of N generic "transient error"
+    # log lines. Defaults to 3 — same ceiling as the per-task
+    # consecutive-failure count.
+    broker_unavailable_alert_threshold: int = 3
+
+
+# ---------------------------------------------------------------------------
+# Broker-unavailability tracker
+# ---------------------------------------------------------------------------
+
+
+def _looks_like_broker_unavailable(exc: BaseException) -> bool:
+    """Return ``True`` when ``exc`` looks like the broker is unreachable.
+
+    Phase 30 task #4: after N consecutive failures with this shape
+    the scheduler should emit a clear alert. Transient broker errors
+    and SSLError / URLError are all candidates.
+    """
+    if isinstance(exc, BrokerTransientError):
+        return True
+    name = exc.__class__.__name__
+    return name in {
+        "SSLError",
+        "URLError",
+        "TimeoutError",
+        "ConnectionError",
+        "OSError",
+        "BrokerAuthError",
+    }
+
+
+class BrokerAvailabilityTracker:
+    """Tracks consecutive broker-probe failures and emits one alert per outage.
+
+    Phase 30 task #4: a single transient ``BrokerTransientError`` is
+    noise; a *pattern* of them is a real outage. This tracker counts
+    consecutive failures with :func:`_looks_like_broker_unavailable`
+    shape, raises one ``alert_sink.emit(severity="critical")`` when
+    the count crosses the configured threshold, and resets on the
+    first successful probe.
+
+    The alert is emitted at most once per outage — not once per cycle.
+    A second outage starts a new count and emits a new alert when the
+    threshold is crossed again.
+    """
+
+    def __init__(
+        self,
+        *,
+        threshold: int,
+        alert_sink: AlertSink,
+        source: str = "scheduler",
+        task_name: str = "reconcile",
+    ) -> None:
+        if threshold <= 0:
+            raise ValueError("threshold must be positive")
+        self._threshold = threshold
+        self._alert_sink = alert_sink
+        self._source = source
+        self._task_name = task_name
+        self._consecutive_failures = 0
+        self._alert_emitted_for_outage = False
+
+    @property
+    def consecutive_failures(self) -> int:
+        return self._consecutive_failures
+
+    async def record_failure(self, *, error: BaseException) -> None:
+        """Record one broker-probe failure and emit an alert if needed."""
+        if not _looks_like_broker_unavailable(error):
+            # Non-broker-shaped exception — let the existing scheduler
+            # failure path handle it (auto-freeze, etc.).
+            return
+        self._consecutive_failures += 1
+        if (
+            self._consecutive_failures >= self._threshold
+            and not self._alert_emitted_for_outage
+        ):
+            await self._alert_sink.emit(
+                severity="critical",
+                source=self._source,
+                message=(
+                    f"broker unreachable for {self._consecutive_failures} "
+                    "consecutive attempts; auto-ordering will stay paused "
+                    "until the broker recovers"
+                ),
+                task_name=self._task_name,
+                payload={
+                    "consecutive_failures": self._consecutive_failures,
+                    "threshold": self._threshold,
+                    "last_error": str(error),
+                },
+            )
+            self._alert_emitted_for_outage = True
+
+    def record_success(self) -> None:
+        """Record one successful broker probe and reset the outage tracker."""
+        if (
+            self._consecutive_failures > 0
+            and self._alert_emitted_for_outage
+        ):
+            _LOGGER.info(
+                "broker recovered after %d consecutive failures",
+                self._consecutive_failures,
+            )
+        self._consecutive_failures = 0
+        self._alert_emitted_for_outage = False
 
 
 class OperationsScheduler:
@@ -283,6 +393,7 @@ class OperationsScheduler:
         recon_store: BrokerReconStore,
         config: SchedulerConfig | None = None,
         clock: Callable[[], datetime] | None = None,
+        broker_tracker: BrokerAvailabilityTracker | None = None,
     ) -> None:
         self._tasks = list(tasks)
         self._heartbeats = heartbeat_store
@@ -293,6 +404,13 @@ class OperationsScheduler:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._stop = asyncio.Event()
         self._failure_counters: dict[str, int] = {task.name: 0 for task in self._tasks}
+        # Phase 30 task #4: optional broker-availability tracker. When
+        # not supplied we build a no-op tracker so the existing call
+        # sites that do not pass one keep working unchanged.
+        self._broker_tracker = broker_tracker or BrokerAvailabilityTracker(
+            threshold=self._config.broker_unavailable_alert_threshold,
+            alert_sink=alert_sink,
+        )
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -320,6 +438,7 @@ class OperationsScheduler:
     async def _run_task(self, task: ScheduledTask) -> None:
         if not task.enabled:
             return
+        is_broker_task = task.name == "reconcile"
         while not self._stop.is_set():
             if self._recon_store.has_open_freeze():
                 await self._alert_sink.emit(
@@ -339,11 +458,15 @@ class OperationsScheduler:
                     task_name=task.name, status="ok", error=None
                 )
                 self._failure_counters[task.name] = 0
+                if is_broker_task:
+                    self._broker_tracker.record_success()
             except Exception as exc:  # noqa: BLE001 — record, alert, decide
                 self._failure_counters[task.name] += 1
                 self._heartbeats.record_run(
                     task_name=task.name, status="error", error=str(exc)
                 )
+                if is_broker_task:
+                    await self._broker_tracker.record_failure(error=exc)
                 if (
                     self._failure_counters[task.name]
                     >= self._config.max_consecutive_failures
@@ -480,6 +603,7 @@ def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
 # back-off intervals.
 __all__ = [
     "AlertSink",
+    "BrokerAvailabilityTracker",
     "HeartbeatStore",
     "OperationsScheduler",
     "ScheduledTask",
