@@ -21,10 +21,14 @@ npm start
 3. Polls `/health` until it returns 200 (30 s timeout).
 4. Opens a `BrowserWindow` at `http://127.0.0.1:8765/dashboard`.
 5. Streams the child's stdout/stderr to `electron/backend.log`.
-6. Adds a tray menu with **Open Dashboard**, **Open Backend Log**, and
-   **Quit AlphaBrief**.
+6. Adds a tray menu with **Open Dashboard**, **Restart Backend**,
+   **Open Backend Log**, and **Quit AlphaBrief**.
 7. Kills the child on app quit (SIGTERM, then SIGKILL after 3 s).
 8. Single-instance: a second launch focuses the existing window.
+9. Rotates `backend.log` when it exceeds 1 MiB (one `.1` backup).
+10. When the backend fails to become healthy, the window opens an
+    inline error overlay showing the actual error message instead
+    of a blank screen.
 
 ## Port choice
 
@@ -46,7 +50,11 @@ ALPHABRIEF_ELECTRON_PORT=9000 npm start
 ## Files
 
 - `main.js` — Electron main process: child spawn, health check,
-  window, tray, shutdown.
-- `preload.js` — context-isolated bridge exposing the dashboard URL.
+  window, tray, shutdown, log rotation, error overlay.
+- `preload.js` — context-isolated bridge exposing the dashboard URL
+  and backend-error events.
+- `error-overlay.html` — local error overlay shown when the Python
+  backend fails to become healthy.
 - `package.json` — `electron` only; no extra runtime deps.
-- `backend.log` — child stdout/stderr (created at runtime, gitignored).
+- `backend.log` — child stdout/stderr (rotated when > 1 MiB,
+  gitignored).

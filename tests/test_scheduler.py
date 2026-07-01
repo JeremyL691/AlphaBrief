@@ -423,3 +423,130 @@ def test_heartbeat_store_list_heartbeats_orders_by_last_run_desc(
         assert [row["task_name"] for row in rows] == ["second", "first"]
     finally:
         heartbeats.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 task #4: BrokerAvailabilityTracker emits a clear
+# "broker unreachable" alert after N consecutive failures, and only
+# once per outage. A success resets the counter.
+# ---------------------------------------------------------------------------
+
+
+def test_broker_tracker_emits_alert_after_threshold(
+    tmp_path: Path,
+) -> None:
+    from alphabrief_execution.broker.errors import BrokerTransientError
+    from alphabrief_execution.operations.scheduler import BrokerAvailabilityTracker
+
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    try:
+        sink = AlertSink(heartbeat_store=heartbeats)
+        tracker = BrokerAvailabilityTracker(
+            threshold=3, alert_sink=sink, task_name="reconcile"
+        )
+
+        # Two failures — below threshold, no alert yet.
+        _run(tracker.record_failure(error=BrokerTransientError("ssl 1")))
+        _run(tracker.record_failure(error=BrokerTransientError("ssl 2")))
+        assert heartbeats.list_alerts(limit=10) == []
+        assert tracker.consecutive_failures == 2
+
+        # Third failure crosses the threshold → one alert.
+        _run(tracker.record_failure(error=BrokerTransientError("ssl 3")))
+        alerts_after = heartbeats.list_alerts(limit=10)
+        assert len(alerts_after) == 1
+        msg = alerts_after[0]["message"]
+        assert "broker unreachable" in msg
+        assert "3 consecutive attempts" in msg
+
+        # A fourth failure must NOT re-alert (one alert per outage).
+        _run(tracker.record_failure(error=BrokerTransientError("ssl 4")))
+        alerts_extra = heartbeats.list_alerts(limit=10)
+        assert len(alerts_extra) == 1
+    finally:
+        heartbeats.close()
+
+
+def test_broker_tracker_success_resets_counter(
+    tmp_path: Path,
+) -> None:
+    from alphabrief_execution.broker.errors import BrokerTransientError
+    from alphabrief_execution.operations.scheduler import BrokerAvailabilityTracker
+
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    try:
+        sink = AlertSink(heartbeat_store=heartbeats)
+        tracker = BrokerAvailabilityTracker(
+            threshold=2, alert_sink=sink, task_name="reconcile"
+        )
+        _run(tracker.record_failure(error=BrokerTransientError("ssl 1")))
+        _run(tracker.record_failure(error=BrokerTransientError("ssl 2")))
+        assert tracker.consecutive_failures == 2
+        alerts_first = heartbeats.list_alerts(limit=10)
+        assert len(alerts_first) == 1
+
+        # First success resets the outage tracker.
+        tracker.record_success()
+        assert tracker.consecutive_failures == 0
+
+        # Two more failures re-arm and emit a second alert.
+        _run(tracker.record_failure(error=BrokerTransientError("ssl again 1")))
+        _run(tracker.record_failure(error=BrokerTransientError("ssl again 2")))
+        alerts_second = heartbeats.list_alerts(limit=10)
+        assert len(alerts_second) == 2
+    finally:
+        heartbeats.close()
+
+
+def test_broker_tracker_ignores_unrelated_exceptions(
+    tmp_path: Path,
+) -> None:
+    from alphabrief_execution.operations.scheduler import BrokerAvailabilityTracker
+
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    try:
+        sink = AlertSink(heartbeat_store=heartbeats)
+        tracker = BrokerAvailabilityTracker(threshold=2, alert_sink=sink)
+        # ValueError is not a broker-shaped exception — should not
+        # count toward the outage threshold.
+        _run(tracker.record_failure(error=ValueError("not a broker problem")))
+        _run(tracker.record_failure(error=ValueError("still not")))
+        assert tracker.consecutive_failures == 0
+        assert heartbeats.list_alerts(limit=10) == []
+    finally:
+        heartbeats.close()
+
+
+def test_broker_tracker_rejects_non_positive_threshold(
+    tmp_path: Path,
+) -> None:
+    from alphabrief_execution.operations.scheduler import BrokerAvailabilityTracker
+
+    heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
+    try:
+        sink = AlertSink(heartbeat_store=heartbeats)
+        with pytest.raises(ValueError):
+            BrokerAvailabilityTracker(threshold=0, alert_sink=sink)
+    finally:
+        heartbeats.close()
+
+
+def test_scheduler_uses_default_broker_tracker_when_omitted(
+    tmp_path: Path,
+) -> None:
+    """The scheduler must wire a default BrokerAvailabilityTracker so
+    task-level broker failures feed the outage counter without callers
+    having to construct one.
+    """
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[_ok_task()],
+    )
+    try:
+        assert scheduler._broker_tracker is not None
+        assert scheduler._broker_tracker._threshold == (
+            SchedulerConfig().broker_unavailable_alert_threshold
+        )
+    finally:
+        heartbeats.close()
+        recon_store.close()

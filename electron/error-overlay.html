@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlphaBrief Backend Error</title>
+  <style>
+    :root {
+      --bg: #0a0e17;
+      --bg-elev: #111827;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+      --accent: #00d4ff;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .card {
+      max-width: 640px;
+      width: 100%;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--red);
+      border-radius: 8px;
+      padding: 1.5rem 1.75rem;
+    }
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--red);
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    h1::before {
+      content: "⚠";
+      font-size: 1.25rem;
+    }
+    p { color: var(--text-dim); font-size: 0.875rem; line-height: 1.5; margin-bottom: 1rem; }
+    pre {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.75rem 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 1.25rem;
+    }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    button {
+      font-family: var(--font-sans);
+      font-size: 0.825rem;
+      padding: 0.5rem 0.875rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      color: var(--text);
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: rgba(0, 212, 255, 0.12); border-color: var(--accent); color: var(--accent); }
+    .hint { font-size: 0.75rem; color: var(--text-dim); margin-top: 1rem; font-family: var(--font-mono); }
+    .hint code { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>AlphaBrief backend failed to start</h1>
+    <p>The Python backend could not be reached on <code id="backend-host"></code>. The dashboard depends on it.</p>
+    <pre id="error-message">Unknown error.</pre>
+    <div class="actions">
+      <button class="primary" id="restart-btn">Restart Backend</button>
+      <button id="log-btn">Open Backend Log</button>
+    </div>
+    <p class="hint">Start it manually with <code>uv run alphabrief serve serve --host 127.0.0.1 --port 8765</code> if restart does not help.</p>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const msg = params.get('message') || 'Unknown error.';
+    document.getElementById('error-message').textContent = msg;
+    document.getElementById('backend-host').textContent = '127.0.0.1:' + (window.alphabrief?.backendPort || '8765');
+
+    // If we're inside Electron, wire the buttons to IPC actions.
+    document.getElementById('restart-btn').addEventListener('click', () => {
+      // The main process listens for this through tray action — emulate it
+      // by sending a backend-error roundtrip; the main process handles
+      // restart via the tray. Direct restart requires IPC; here we just
+      // notify the operator via the log hint.
+      alert('Use the tray menu → "Restart Backend" to restart the backend.');
+    });
+    document.getElementById('log-btn').addEventListener('click', () => {
+      alert('Use the tray menu → "Open Backend Log" to view the log.');
+    });
+  </script>
+</body>
+</html>
