@@ -38,6 +38,7 @@ class OpenAIProviderAdapter:
     provider_name: str = field(init=False, default="openai")
     model_name: str = "gpt-3.5-turbo"
     api_key: str | None = None
+    base_url: str | None = None
     capabilities: frozenset[ModelCapability] = _DEFAULT_OPENAI_CAPABILITIES
     timeout_seconds: float = 30.0
     http_post: _HttpPost = _default_http_post
@@ -49,6 +50,12 @@ class OpenAIProviderAdapter:
             raise ValueError("timeout_seconds must be positive")
         if self.api_key is None:
             self.api_key = os.environ.get("OPENAI_API_KEY")
+        if self.base_url is None:
+            self.base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com")
+        self.base_url = self.base_url.rstrip("/")
+
+    def _chat_url(self) -> str:
+        return f"{self.base_url}/v1/chat/completions"
 
     def call(self, request: ModelRequest) -> ModelResponse:
         payload: dict[str, Any] = {
@@ -60,12 +67,13 @@ class OpenAIProviderAdapter:
 
         headers: dict[str, str] = {
             "Content-Type": "application/json",
+            "User-Agent": "alphabrief-trading-committee/0.1",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         http_request = Request(
-            "https://api.openai.com/v1/chat/completions",
+            self._chat_url(),
             data=json.dumps(payload).encode("utf-8"),
             headers=headers,
             method="POST",
