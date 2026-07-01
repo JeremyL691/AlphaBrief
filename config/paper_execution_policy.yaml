@@ -1,15 +1,15 @@
 # Reviewed paper-only operating boundary. This file contains no credentials and
 # never authorizes broker calls; all execution still requires RiskGate.
 mode: paper
-provider: alpaca_paper
-market: us_equity
-symbols: [SPY, QQQ, IVV, VOO, AGG, BND, GLD, SLV]
+provider: oanda_paper
+market: fx
+symbols: [EUR_USD, GBP_USD, USD_JPY, AUD_USD, USD_CHF]
 order_types: [market, limit]
 timezone: America/New_York
 trading_days: [mon, tue, wed, thu, fri]
-session_start: "09:30"
-session_end: "16:00"
-max_order_notional: "100"
-max_total_exposure: "300"
-require_human_review: true
+session_start: "00:00"
+session_end: "23:00"
+max_order_notional: "1000"
+max_total_exposure: "3000"
+require_human_review: false
 automated_execution: false
