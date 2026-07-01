@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import ssl
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -45,6 +46,30 @@ class OandaHttpResponse:
 # Methods that may be retried on transient failure. Mutating methods are not
 # retried because we cannot guarantee OANDA has not already accepted them.
 _RETRIABLE_METHODS: frozenset[str] = frozenset({"GET"})
+
+
+# Phrases that identify a TLS handshake failure so the operator can
+# distinguish them from a generic connection refused — Phase 30 task #4.
+_SSL_ERROR_MARKERS: tuple[str, ...] = (
+    "ssl handshake",
+    "ssl: certificate",
+    "ssl: tlsv1",
+    "ssl: wrong version",
+    "sslv3 alert",
+    "certificate verify failed",
+    "bad handshake",
+)
+
+
+def _looks_like_ssl_error(message: str) -> bool:
+    """Return ``True`` when ``message`` reads as an SSL handshake failure."""
+    lowered = message.lower()
+    return any(marker in lowered for marker in _SSL_ERROR_MARKERS)
+
+
+def looks_like_ssl_error(message: str) -> bool:
+    """Public alias for :func:`_looks_like_ssl_error` for callers and tests."""
+    return _looks_like_ssl_error(message)
 
 
 class OandaHttpClient:
@@ -96,16 +121,48 @@ class OandaHttpClient:
                 if method not in _RETRIABLE_METHODS:
                     raise
                 if attempt == attempts - 1:
+                    # Surface the final attempt as a clear transient error
+                    # so callers can render a "broker temporarily
+                    # unavailable" message instead of treating it as a
+                    # hard failure. Phase 30 task #4: log clearly rather
+                    # than crash silently.
+                    _LOGGER.warning(
+                        "oanda transient error on %s %s attempt=%d/%d "
+                        "after retries, giving up: %s",
+                        method,
+                        path,
+                        attempt + 1,
+                        attempts,
+                        exc,
+                    )
                     raise
                 backoff = self._config.retry_backoff_seconds * (2**attempt)
-                _LOGGER.warning(
-                    "oanda transient error on %s %s attempt=%d backoff=%.3fs: %s",
-                    method,
-                    path,
-                    attempt + 1,
-                    backoff,
-                    exc,
-                )
+                # Phase 30: tag SSL handshake failures distinctly so the
+                # operator can correlate them with their local Python /
+                # certifi version instead of treating them as a generic
+                # transport blip.
+                if _looks_like_ssl_error(str(exc)):
+                    _LOGGER.warning(
+                        "oanda SSL handshake error on %s %s attempt=%d "
+                        "backoff=%.3fs: %s "
+                        "(check Python certifi bundle, SSL_CERT_FILE, "
+                        "or macOS /Applications/Python certificate)",
+                        method,
+                        path,
+                        attempt + 1,
+                        backoff,
+                        exc,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "oanda transient error on %s %s attempt=%d "
+                        "backoff=%.3fs: %s",
+                        method,
+                        path,
+                        attempt + 1,
+                        backoff,
+                        exc,
+                    )
                 time.sleep(backoff)
         # Unreachable, but mypy needs it.
         if last_error is not None:
@@ -167,6 +224,12 @@ class OandaHttpClient:
             raw = self._http_send(request, self._config.timeout_seconds)
         except HTTPError as exc:
             raise _http_error_to_broker_error(exc, request) from exc
+        except ssl.SSLError as exc:
+            # Phase 30 task #4: surface SSL handshake failures as
+            # BrokerTransientError so the retry path covers them and the
+            # final-attempt log line tells the operator to inspect their
+            # local Python / certifi bundle.
+            raise BrokerTransientError(f"oanda ssl handshake error: {exc}") from exc
         except (URLError, OSError, TimeoutError) as exc:
             raise BrokerTransientError(f"oanda transport error: {exc}") from exc
 
@@ -260,4 +323,9 @@ def _http_error_to_broker_error(exc: HTTPError, request: Request) -> Exception:
     )
 
 
-__all__ = ["OandaHttpClient", "OandaHttpResponse", "run_async"]
+__all__ = [
+    "OandaHttpClient",
+    "OandaHttpResponse",
+    "looks_like_ssl_error",
+    "run_async",
+]

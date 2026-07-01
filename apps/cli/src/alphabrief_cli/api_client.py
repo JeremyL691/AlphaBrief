@@ -339,6 +339,50 @@ def _try_detail(exc: urllib.error.HTTPError) -> str:
     return str(exc)
 
 
+# ---------------------------------------------------------------------------
+# Operator-friendly error helpers
+# ---------------------------------------------------------------------------
+
+
+def print_api_unavailable_hint(*, command: str = "this command") -> None:
+    """Print a helpful hint when the API server is not running.
+
+    The CLI is runnable in two modes:
+    - standalone, with the local DuckDB store (works without the API)
+    - proxied, with the API server (reads/writes the same store via HTTP)
+
+    Some commands only work in proxied mode. When the proxy mode is
+    missing, this helper tells the operator the exact command to start
+    the server so they do not have to dig through the docs.
+    """
+    base = _base_url()
+    print(
+        f"error: {command} could not reach the API server at {base}.",
+        file=sys.stderr,
+    )
+    print(
+        "hint: start the API server first, for example:",
+        file=sys.stderr,
+    )
+    print(
+        f"      alphabrief serve serve --host 127.0.0.1 --port {urlparse_port(base)}",
+        file=sys.stderr,
+    )
+
+
+def urlparse_port(base: str) -> int:
+    """Extract the port from a base URL like ``http://127.0.0.1:8000``.
+
+    Falls back to 8000 when parsing fails so the hint always renders.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(base)
+    if parsed.port is not None:
+        return parsed.port
+    return 8000
+
+
 __all__ = [
     "api_signal_count",
     "api_signal_create",
@@ -350,4 +394,5 @@ __all__ = [
     "api_strategy_list",
     "api_strategy_set_enabled",
     "is_api_running",
+    "print_api_unavailable_hint",
 ]

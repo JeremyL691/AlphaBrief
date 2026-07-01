@@ -191,3 +191,100 @@ def test_scheduler_status_aggregates_counts_from_multiple_stores(
     assert body["open_freeze_count"] == 2
     assert body["alerts_total"] == 0
     assert body["running"] is False
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation: writer-lock collisions must return 503 with a
+# structured "scheduler_writer_locked" payload, not a 500 that breaks
+# the dashboard. Phase 30 task #2.
+# ---------------------------------------------------------------------------
+
+
+def test_scheduler_status_returns_503_when_writer_locked(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from alphabrief_api.routes import scheduler as scheduler_routes
+
+    def _explode() -> dict[str, object]:
+        raise OSError("IO Error: Could not set lock on file")
+
+    monkeypatch.setattr(
+        scheduler_routes, "_heartbeat_store", _explode, raising=True
+    )
+    response = client.get("/api/v1/scheduler/status")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["kind"] == "scheduler_writer_locked"
+    assert body["error"] == "scheduler_writer_locked"
+
+
+def test_scheduler_heartbeats_returns_503_when_writer_locked(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from alphabrief_api.routes import scheduler as scheduler_routes
+
+    def _explode() -> dict[str, object]:
+        raise OSError("database is locked by another process")
+
+    monkeypatch.setattr(
+        scheduler_routes, "_heartbeat_store", _explode, raising=True
+    )
+    response = client.get("/api/v1/scheduler/heartbeats")
+    assert response.status_code == 503
+    assert response.json()["kind"] == "scheduler_writer_locked"
+
+
+def test_scheduler_alerts_returns_503_when_writer_locked(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from alphabrief_api.routes import scheduler as scheduler_routes
+
+    def _explode() -> dict[str, object]:
+        raise RuntimeError("Could not set lock")
+
+    monkeypatch.setattr(
+        scheduler_routes, "_heartbeat_store", _explode, raising=True
+    )
+    response = client.get("/api/v1/scheduler/alerts?limit=5")
+    assert response.status_code == 503
+    assert response.json()["kind"] == "scheduler_writer_locked"
+
+
+def test_scheduler_freezes_returns_503_when_writer_locked(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from alphabrief_api.routes import scheduler as scheduler_routes
+
+    def _explode() -> dict[str, object]:
+        raise OSError("IO Error: Could not set lock on file")
+
+    monkeypatch.setattr(
+        scheduler_routes, "_recon_store", _explode, raising=True
+    )
+    response = client.get("/api/v1/scheduler/freezes")
+    assert response.status_code == 503
+    assert response.json()["kind"] == "scheduler_writer_locked"
+
+
+def test_scheduler_status_propagates_non_lock_errors(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unrelated failures must still surface as 500 (no silent 503)."""
+    from alphabrief_api.routes import scheduler as scheduler_routes
+
+    def _explode() -> dict[str, object]:
+        raise ValueError("something else broke")
+
+    monkeypatch.setattr(
+        scheduler_routes, "_heartbeat_store", _explode, raising=True
+    )
+    with pytest.raises(ValueError, match="something else broke"):
+        client.get("/api/v1/scheduler/status")
+    # Non-lock errors must NOT be silently swallowed by the writer-lock
+    # handler. TestClient re-raises in-test exceptions; the contract
+    # is that the error surfaces, not that it's a specific status code.

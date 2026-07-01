@@ -12,13 +12,22 @@ Routes
 The surface is strictly read-only. The scheduler process is launched
 from the CLI (``alphabrief scheduler run``); these endpoints reflect
 whatever state has been persisted to the local DuckDB file.
+
+When the separate launchd-managed scheduler process holds the
+DuckDB writer lock, the read-only store cannot open. Each endpoint
+catches that failure and returns a structured ``{"error": ...,
+"kind": "scheduler_writer_locked"}`` payload with HTTP 503 so the
+dashboard can render a graceful "Scheduler writer active — data
+unavailable" message instead of a 500 that breaks the page.
 """
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -27,10 +36,55 @@ from alphabrief_execution.operations.scheduler import (
     build_default_tasks,
 )
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 _LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/scheduler", tags=["scheduler"])
+
+
+# ---------------------------------------------------------------------------
+# Writer-lock detection
+# ---------------------------------------------------------------------------
+
+
+def _is_writer_lock_error(exc: BaseException) -> bool:
+    """Return ``True`` when ``exc`` is a DuckDB writer-lock collision.
+
+    DuckDB raises ``IOException`` with a message containing
+    ``"Could not set lock"`` when another process already holds the
+    write lock on the same file. We also match the R lock / database
+    is locked variants to be safe across DuckDB versions.
+    """
+    msg = str(exc).lower()
+    needles = (
+        "could not set lock",
+        "database is locked",
+        "another process",
+        "i/o error",
+        "conflicting lock",
+    )
+    return any(needle in msg for needle in needles)
+
+
+def _writer_locked_response() -> JSONResponse:
+    """Return the standard 503 payload for writer-lock collisions.
+
+    The dashboard reads ``kind == "scheduler_writer_locked"`` to
+    render a graceful "Scheduler writer active — data unavailable"
+    card instead of an error.
+    """
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "scheduler_writer_locked",
+            "kind": "scheduler_writer_locked",
+            "message": (
+                "Scheduler DuckDB writer is held by another process; "
+                "read-only data is temporarily unavailable."
+            ),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +110,41 @@ def _recon_store() -> BrokerReconStore:
     return BrokerReconStore()
 
 
+def _safe_reader(
+    handler: Callable[..., dict[str, Any] | JSONResponse],
+) -> Callable[..., dict[str, Any] | JSONResponse]:
+    """Run a read-only scheduler handler, returning 503 on writer-lock.
+
+    Decorator-free wrapper used by every route below. Any non-
+    writer-lock exception propagates so it remains visible in tests
+    and logs; writer-lock collisions return the structured
+    ``scheduler_writer_locked`` 503 payload.
+    """
+
+    @functools.wraps(handler)
+    def _wrapper(
+        *args: Any, **kwargs: Any
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            return handler(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — narrow re-raise below
+            if _is_writer_lock_error(exc):
+                _LOGGER.warning(
+                    "scheduler: writer lock detected while reading store: %s", exc
+                )
+                return _writer_locked_response()
+            raise
+
+    return _wrapper
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 
 @router.get("/status")
+@_safe_reader
 def scheduler_status() -> dict[str, Any]:
     """Return aggregate scheduler state.
 
@@ -87,6 +170,7 @@ def scheduler_status() -> dict[str, Any]:
 
 
 @router.get("/heartbeats")
+@_safe_reader
 def scheduler_heartbeats() -> dict[str, Any]:
     """Return one row per registered task, newest-first by ``last_run_at``."""
     heartbeats = _heartbeat_store()
@@ -98,6 +182,7 @@ def scheduler_heartbeats() -> dict[str, Any]:
 
 
 @router.get("/alerts")
+@_safe_reader
 def scheduler_alerts(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
     """Return recent alerts (newest-first). ``limit`` is clamped to [1, 500]."""
     heartbeats = _heartbeat_store()
@@ -109,6 +194,7 @@ def scheduler_alerts(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
 
 
 @router.get("/tasks")
+@_safe_reader
 def scheduler_tasks() -> dict[str, Any]:
     """Return the static description of the default registered tasks.
 
@@ -137,6 +223,7 @@ def scheduler_tasks() -> dict[str, Any]:
 
 
 @router.get("/freezes")
+@_safe_reader
 def scheduler_freezes() -> dict[str, Any]:
     """Return currently-open broker freezes."""
     recon = _recon_store()

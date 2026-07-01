@@ -34,7 +34,7 @@ import typer
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.broker.reconciliation import ALLOWED_SCOPES
 
-from alphabrief_cli.api_client import is_api_running
+from alphabrief_cli.api_client import is_api_running, print_api_unavailable_hint
 
 broker_app = typer.Typer(help="Inspect and operate the external paper broker.")
 
@@ -90,6 +90,7 @@ def status_cmd(
                 f"error: failed to reach broker status endpoint: {exc}",
                 file=sys.stderr,
             )
+            print_api_unavailable_hint(command="broker status")
             sys.exit(1)
         _dump(payload, pretty=pretty, default=True)
         return
@@ -161,6 +162,13 @@ def reconcile_cmd(
                 f"error: failed to reach broker reconcile endpoint: {exc}",
                 file=sys.stderr,
             )
+            print(
+                "note: broker reconcile needs a live broker connection. "
+                "Without OANDA / Alpaca credentials the broker call cannot run; "
+                "start the API server with credentials and try again.",
+                file=sys.stderr,
+            )
+            print_api_unavailable_hint(command="broker reconcile")
             sys.exit(1)
         _dump(payload, pretty=pretty, default=True)
         return
@@ -198,13 +206,22 @@ def _read_broker_endpoint(endpoint: str, *, command: str) -> dict[str, Any]:
             f"error: broker {command} requires the API server to be running",
             file=sys.stderr,
         )
+        print_api_unavailable_hint(command=f"broker {command}")
         sys.exit(1)
     import urllib.request
 
     base = os.environ.get("ALPHABRIEF_API_URL", "http://127.0.0.1:8000")
     url = f"{base}/api/v1/broker/{endpoint}"
-    with urllib.request.urlopen(url, timeout=5) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"error: broker {command} failed to reach {url}: {exc}",
+            file=sys.stderr,
+        )
+        print_api_unavailable_hint(command=f"broker {command}")
+        sys.exit(1)
     if not isinstance(payload, dict):
         raise ValueError(f"broker {command} returned a non-object JSON response")
     return payload

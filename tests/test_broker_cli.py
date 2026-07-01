@@ -151,3 +151,29 @@ def test_cli_broker_unfreeze_unknown_event_errors(
     assert result.returncode != 0
     combined = result.stdout + result.stderr
     assert "unknown freeze event_id" in combined
+
+
+def test_cli_broker_positions_error_includes_start_hint(
+    tmp_path: Path, isolated_data_dir: dict[str, str]
+) -> None:
+    """When the API is unreachable, the error must include a start hint."""
+    result = _run_cli(["broker", "positions"], env=isolated_data_dir)
+    assert result.returncode != 0
+    stderr = result.stderr
+    assert "requires the API server to be running" in stderr
+    assert "hint: start the API server" in stderr
+    assert "alphabrief serve serve" in stderr
+
+
+def test_print_api_unavailable_hint_renders_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The shared hint helper must include the suggested start command."""
+    from alphabrief_cli import api_client
+
+    api_client.print_api_unavailable_hint(command="broker reconcile")
+    captured = capsys.readouterr()
+    stderr = captured.err
+    assert "broker reconcile" in stderr
+    assert "hint: start the API server" in stderr
+    assert "alphabrief serve serve" in stderr
