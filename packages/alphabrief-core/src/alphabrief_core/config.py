@@ -116,10 +116,10 @@ def load_env_file(
 
     Notes:
         The auto-load path (when ``path is None``) is automatically
-        suppressed when ``PYTEST_CURRENT_TEST`` is set, so a project's
-        real ``.env`` cannot leak into unit-test processes. Tests that
-        explicitly want to load a dotenv file should pass ``path``
-        directly or set ``ALPHABRIEF_NO_AUTO_LOAD_ENV=1``.
+        suppressed while pytest is running, so a project's real ``.env``
+        cannot leak into unit-test processes. Tests that explicitly want
+        to load a dotenv file should pass ``path`` directly or set
+        ``ALPHABRIEF_NO_AUTO_LOAD_ENV=1``.
     """
     if path is None and _auto_load_is_suppressed():
         return None
@@ -146,17 +146,22 @@ def load_env_file(
 def _auto_load_is_suppressed() -> bool:
     """Return ``True`` when the auto-load should be skipped.
 
-    Two conditions suppress the auto-load:
+    Three conditions suppress the auto-load:
 
     1. ``PYTEST_CURRENT_TEST`` — pytest sets this for every test, so a
        real ``.env`` never leaks into unit tests.
-    2. ``ALPHABRIEF_NO_AUTO_LOAD_ENV=1`` — explicit operator override for
+    2. ``pytest`` in ``sys.modules`` — pytest imports test modules
+       before ``PYTEST_CURRENT_TEST`` exists, so this catches collection.
+    3. ``ALPHABRIEF_NO_AUTO_LOAD_ENV=1`` — explicit operator override for
        ad-hoc debugging or for sub-processes that must run with a clean
        environment.
     """
     import os
+    import sys
 
     if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if "pytest" in sys.modules:
         return True
     if os.environ.get("ALPHABRIEF_NO_AUTO_LOAD_ENV", "").strip().lower() in {
         "1",

@@ -25,6 +25,7 @@ _reference_sources/
 # Local agent / dev-tool state (not part of the project)
 .hermes/
 .omo/
+.claude/
 .codegraph/
 .codebase-memory/
 
