@@ -121,3 +121,12 @@ def test_load_env_file_returns_none_when_missing(
     monkeypatch.chdir(tmp_path)
 
     assert load_env_file(tmp_path / "absent.env") is None
+
+
+def test_load_env_file_auto_load_is_suppressed_during_pytest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_NO_AUTO_LOAD_ENV", raising=False)
+
+    assert load_env_file() is None

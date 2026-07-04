@@ -44,6 +44,7 @@ class OpenAIProviderAdapter:
     http_post: _HttpPost = _default_http_post
 
     def __post_init__(self) -> None:
+        explicit_api_key = self.api_key is not None
         if self.model_name.strip() == "":
             raise ValueError("model_name must not be blank")
         if self.timeout_seconds <= 0:
@@ -51,7 +52,11 @@ class OpenAIProviderAdapter:
         if self.api_key is None:
             self.api_key = os.environ.get("OPENAI_API_KEY")
         if self.base_url is None:
-            self.base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com")
+            self.base_url = (
+                "https://api.openai.com"
+                if explicit_api_key
+                else os.environ.get("OPENAI_BASE_URL", "https://api.openai.com")
+            )
         self.base_url = self.base_url.rstrip("/")
 
     def _chat_url(self) -> str:
