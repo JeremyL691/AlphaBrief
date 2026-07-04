@@ -3278,3 +3278,63 @@ changed):
    completed; the AI daily cycle ran once, generated 3 plans, and
    persisted a `DailyCycleRecord` to DuckDB. `alphabrief ai history`
    read the cycle back without error.
+
+## 0062 Quality Gate Recovery
+
+### Goal
+
+Restore the default repository safety boundary and full quality gate
+status after local operator `.env` settings and an OANDA-tuned paper
+policy leaked into test and acceptance runs.
+
+### Findings and Fixes
+
+1. **Default paper policy drifted from the reviewed repository
+   boundary.** `config/paper_execution_policy.yaml` had been changed to
+   OANDA/FX symbols, larger order caps, and `require_human_review:
+   false`. That broke acceptance and risk-policy tests, and conflicted
+   with the checked-in runbook. Fix: restored the default Alpaca paper
+   / US ETF policy, `$100` max order notional, `$300` max total
+   exposure, and mandatory human review. OANDA remains an operator
+   override path documented in the runbook.
+2. **`.env` auto-loading could still run during pytest collection.**
+   `PYTEST_CURRENT_TEST` is not set while pytest imports test modules,
+   so CLI/API imports could load a developer's local `.env` before
+   test fixtures cleared broker and AI flags. Fix: `load_env_file()`
+   now also suppresses implicit auto-load whenever pytest is already
+   imported.
+3. **OpenAI adapter tests could inherit an operator base URL.** Passing
+   an explicit API key still allowed `OPENAI_BASE_URL` from `.env` to
+   change the default endpoint. Fix: an explicit `api_key` now keeps
+   the official OpenAI endpoint unless the caller also passes an
+   explicit `base_url`.
+4. **Scheduler API imports were out of Ruff order.** Fix: normalized
+   the import block.
+5. Added a core config regression test that verifies implicit `.env`
+   auto-load is suppressed during pytest collection.
+
+### Safety Boundaries
+
+1. No live trading path was opened.
+2. No broker submit behavior was relaxed.
+3. No provider SDK calls were added.
+4. No files under `_reference_sources/` were opened or imported.
+5. Real operator credentials in `.env` and `.env.backup` were not
+   touched.
+
+### Validation
+
+Initial full test run before the fix: **25 failed, 1336 passed**.
+Focused recovery suite after the fix:
+`tests/test_execution_policy.py`, acceptance API/CLI/verifier,
+AI scheduler, API server, OpenAI adapter, strategy admission, and core
+config: **166 passed**.
+Final validation:
+
+1. Full `pytest`: **1362 passed**, 9 warnings.
+2. `.venv/bin/python -m ruff check .` passed.
+3. `.venv/bin/python -m mypy packages apps tests` passed: 253 source
+   files, strict mode.
+4. `.venv/bin/alphabrief acceptance verify --compact` passed: 11/11.
+5. `.venv/bin/alphabrief acceptance preflight --scope paper --compact`
+   passed: 1/1.
