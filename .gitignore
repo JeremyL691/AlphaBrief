@@ -19,6 +19,7 @@ build/
 reports/generated/
 reports/*.json
 data/local/
+apps/api/data/
 *.log
 _reference_sources/
 
