@@ -720,6 +720,145 @@ function headerClock() {
 }
 
 document.addEventListener("DOMContentLoaded", headerClock);
+
+// ---------------------------------------------------------------------------
+// Canvas chart helpers (Phase 32: shared by main + AI trading dashboards)
+// ---------------------------------------------------------------------------
+
+// Resize a canvas to its CSS box for HiDPI rendering. Returns {ctx, w, h}.
+function setupChartCanvas(canvas) {
+  if (!canvas) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(rect.width));
+  const h = Math.max(1, Math.floor(rect.height));
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx: ctx, w: w, h: h };
+}
+
+// Draw a line chart of {t, v} points. Auto-scales; renders axes + grid.
+function drawLineChart(canvasId, points, opts) {
+  const canvas = document.getElementById(canvasId);
+  const setup = setupChartCanvas(canvas);
+  if (!setup) return;
+  const { ctx, w, h } = setup;
+  const padL = 44, padR = 12, padT = 14, padB = 22;
+  ctx.clearRect(0, 0, w, h);
+  if (!points || points.length === 0) {
+    ctx.fillStyle = "#64748b";
+    ctx.font = "12px var(--font-sans, sans-serif)";
+    ctx.textAlign = "center";
+    ctx.fillText("no data", w / 2, h / 2);
+    return;
+  }
+  // ponytail: O(n) single-pass for min/max; stdlib Math.min/max covers it.
+  let vMin = Infinity, vMax = -Infinity, tMin = Infinity, tMax = -Infinity;
+  for (const p of points) {
+    if (p.v < vMin) vMin = p.v;
+    if (p.v > vMax) vMax = p.v;
+    if (p.t < tMin) tMin = p.t;
+    if (p.t > tMax) tMax = p.t;
+  }
+  if (vMin === vMax) { vMin -= 1; vMax += 1; }
+  const innerW = w - padL - padR, innerH = h - padT - padB;
+  const sx = (t) => tMin === tMax ? padL + innerW / 2 : padL + ((t - tMin) / (tMax - tMin)) * innerW;
+  const sy = (v) => padT + (1 - (v - vMin) / (vMax - vMin)) * innerH;
+  // Grid + Y axis labels (4 ticks).
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.12)";
+  ctx.fillStyle = "#64748b";
+  ctx.font = "10px var(--font-mono, monospace)";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= 3; i++) {
+    const v = vMin + (vMax - vMin) * (i / 3);
+    const y = sy(v);
+    ctx.beginPath();
+    ctx.moveTo(padL, y); ctx.lineTo(w - padR, y);
+    ctx.stroke();
+    ctx.fillText(v.toLocaleString("en-US", { maximumFractionDigits: 0 }), padL - 6, y);
+  }
+  // X axis labels (start / mid / end).
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  const fmtX = (opts && opts.fmtX) || ((t) => new Date(t).toISOString().slice(5, 10));
+  const xTicks = points.length === 1 ? [tMin] : [tMin, (tMin + tMax) / 2, tMax];
+  xTicks.forEach((t) => ctx.fillText(fmtX(t), sx(t), h - padB + 4));
+  // Line + fill.
+  const lineColor = (opts && opts.color) || "#00d4ff";
+  const fillColor = (opts && opts.fillColor) || "rgba(0, 212, 255, 0.12)";
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    const x = sx(p.t), y = sy(p.v);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  // Area fill.
+  ctx.lineTo(sx(points[points.length - 1].t), padT + innerH);
+  ctx.lineTo(sx(points[0].t), padT + innerH);
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  // Latest-point dot.
+  const last = points[points.length - 1];
+  ctx.beginPath();
+  ctx.arc(sx(last.t), sy(last.v), 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = lineColor;
+  ctx.fill();
+}
+
+// Draw a donut chart. segments = [{label, value, color}]. Renders a centered
+// legend on the right when wider than 220px.
+function drawDonut(canvasId, segments) {
+  const canvas = document.getElementById(canvasId);
+  const setup = setupChartCanvas(canvas);
+  if (!setup) return;
+  const { ctx, w, h } = setup;
+  ctx.clearRect(0, 0, w, h);
+  const total = segments.reduce((s, x) => s + Math.max(0, x.value || 0), 0);
+  if (total <= 0) {
+    ctx.fillStyle = "#64748b";
+    ctx.font = "12px var(--font-sans, sans-serif)";
+    ctx.textAlign = "center";
+    ctx.fillText("no votes", w / 2, h / 2);
+    return;
+  }
+  const cx = w / 2, cy = h / 2;
+  const radius = Math.min(w, h) * 0.36;
+  const innerR = radius * 0.62;
+  let start = -Math.PI / 2;
+  for (const seg of segments) {
+    const v = Math.max(0, seg.value || 0);
+    if (v === 0) continue;
+    const sweep = (v / total) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, start, start + sweep);
+    ctx.closePath();
+    ctx.fillStyle = seg.color;
+    ctx.fill();
+    start += sweep;
+  }
+  // Donut hole.
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+  ctx.fillStyle = "#0f1623";
+  ctx.fill();
+  // Center label = total.
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "600 16px var(--font-mono, monospace)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(total), cx, cy - 6);
+  ctx.fillStyle = "#64748b";
+  ctx.font = "10px var(--font-sans, sans-serif)";
+  ctx.fillText("votes", cx, cy + 10);
+}
 """.strip()
 
 
@@ -1763,7 +1902,67 @@ def get_dashboard_strategies() -> HTMLResponse:
 # ---------------------------------------------------------------------------
 
 _AI_TRADING_BODY = r"""
-<section class="page-grid page-grid--ai">
+<style>
+  /* Phase 32 — AI Trading dashboard deepening. Scoped to .ai-page so it
+     can't leak into the main dashboard. ponytail: minimal additions; all
+     values come from existing endpoints. */
+  .ai-page { display: grid; gap: 1rem; }
+  .ai-page .ai-row--2 { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .ai-page .donut-card { display: flex; align-items: center; gap: 1rem; }
+  .ai-page .donut-wrap { width: 180px; height: 180px; flex-shrink: 0; position: relative; }
+  .ai-page .donut-legend { display: grid; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.78rem; flex: 1; min-width: 0; }
+  .ai-page .donut-legend__row { display: flex; align-items: center; gap: 0.5rem; }
+  .ai-page .donut-legend__sw { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .ai-page .donut-legend__label { color: var(--text-dim); flex: 1; }
+  .ai-page .donut-legend__value { color: var(--text); font-variant-numeric: tabular-nums; }
+  .ai-page .role-trend { display: grid; gap: 0.45rem; }
+  .ai-page .role-trend__row { display: grid; grid-template-columns: 6.5rem 1fr; align-items: center; gap: 0.75rem; }
+  .ai-page .role-trend__role { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  .ai-page .role-trend__dots { display: flex; gap: 4px; flex-wrap: wrap; }
+  .ai-page .role-trend__dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(148, 163, 184, 0.15); }
+  .ai-page .role-trend__dot--buy { background: var(--green); }
+  .ai-page .role-trend__dot--sell { background: var(--red); }
+  .ai-page .role-trend__dot--hold { background: var(--amber); }
+  .ai-page .role-trend__dot--watch { background: var(--accent); opacity: 0.7; }
+  .ai-page .role-trend__dot--skip { background: #475569; }
+  .ai-page .role-trend__dot--none { background: transparent; }
+  .ai-page .role-trend__legend { display: flex; gap: 0.75rem; flex-wrap: wrap; font-family: var(--font-mono); font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
+  .ai-page .role-trend__legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+  .ai-page .role-trend__legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .ai-page .plan-cards { display: grid; gap: 0.75rem; }
+  .ai-page .plan-card { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.875rem 1rem; background: var(--bg-elev-3); }
+  .ai-page .plan-card__head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+  .ai-page .plan-card__symbol { font-family: var(--font-mono); font-size: 0.95rem; font-weight: 600; color: var(--text); }
+  .ai-page .plan-card__side { font-family: var(--font-mono); font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .ai-page .plan-card__side--buy { color: var(--green); background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); }
+  .ai-page .plan-card__side--sell { color: var(--red); background: var(--red-dim); border: 1px solid rgba(239,68,68,0.25); }
+  .ai-page .plan-card__side--hold { color: var(--amber); background: var(--amber-dim); border: 1px solid rgba(245,158,11,0.25); }
+  .ai-page .plan-card__meta { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.5rem; }
+  .ai-page .plan-card__meta b { color: var(--text); font-weight: 500; }
+  .ai-page .plan-card__rationale { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 0.75rem; line-height: 1.5; }
+  .ai-page .plan-card__votes { display: grid; gap: 0.35rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
+  .ai-page .plan-card__vote { display: grid; grid-template-columns: 6.5rem 4rem 1fr auto; gap: 0.5rem; align-items: center; font-family: var(--font-mono); font-size: 0.72rem; }
+  .ai-page .plan-card__vote-role { color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  .ai-page .plan-card__vote-action { color: var(--text); }
+  .ai-page .plan-card__vote-conf { color: var(--text-muted); }
+  .ai-page .plan-card__vote-model { color: var(--text-muted); font-size: 0.65rem; }
+  .ai-page .plan-card__attempts { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px solid var(--border); font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim); }
+  .ai-page .plan-card__attempts-row { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.25rem; }
+  .ai-page .outcome-pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.45rem; border-radius: 3px; font-family: var(--font-mono); font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border: 1px solid transparent; white-space: nowrap; }
+  .ai-page .outcome-pill--executed { color: var(--green); background: var(--green-dim); border-color: rgba(34,197,94,0.25); }
+  .ai-page .outcome-pill--blocked { color: var(--red); background: var(--red-dim); border-color: rgba(239,68,68,0.25); }
+  .ai-page .outcome-pill--mixed { color: var(--amber); background: var(--amber-dim); border-color: rgba(245,158,11,0.25); }
+  .ai-page .outcome-pill--none { color: var(--text-dim); background: rgba(148,163,184,0.08); border-color: rgba(148,163,184,0.18); }
+  .ai-page .equity-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 0.75rem; }
+  .ai-page .equity-meta__value { font-family: var(--font-mono); font-size: 1.4rem; font-weight: 600; color: var(--text); }
+  .ai-page .equity-meta__hint { font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+  @media (max-width: 720px) {
+    .ai-page .donut-card { flex-direction: column; align-items: stretch; }
+    .ai-page .donut-wrap { margin: 0 auto; }
+    .ai-page .plan-card__vote { grid-template-columns: 1fr; gap: 0.15rem; }
+  }
+</style>
+<section class="page-grid page-grid--ai ai-page">
   <div class="card card--status">
     <div class="card__head">
       <h2 class="card__title">AI Trading — feature flags</h2>
@@ -1776,6 +1975,47 @@ _AI_TRADING_BODY = r"""
         <div class="stat"><span class="stat__label">Cycles recorded</span><span class="stat__value" id="ai-cycle-count">…</span></div>
       </div>
       <p class="card__hint" id="ai-status-hint"></p>
+    </div>
+  </div>
+
+  <div class="ai-row--2">
+    <div class="card card--donut">
+      <div class="card__head">
+        <h2 class="card__title">Vote distribution</h2>
+        <span class="card__hint" id="ai-donut-hint">latest cycle</span>
+      </div>
+      <div class="card__body donut-card">
+        <div class="donut-wrap"><canvas id="ai-donut-canvas"></canvas></div>
+        <div class="donut-legend" id="ai-donut-legend">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card--trend">
+      <div class="card__head">
+        <h2 class="card__title">Per-role vote trend</h2>
+        <span class="card__hint" id="ai-trend-hint">last 10 cycles</span>
+      </div>
+      <div class="card__body">
+        <div class="role-trend" id="ai-role-trend">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card--equity">
+    <div class="card__head">
+      <h2 class="card__title">Paper portfolio equity</h2>
+      <span class="card__hint">cash + positions + realized pnl · 30-day observation</span>
+    </div>
+    <div class="card__body">
+      <div class="equity-meta">
+        <div class="equity-meta__value" id="ai-equity-value">—</div>
+        <div class="equity-meta__hint" id="ai-equity-hint">current snapshot</div>
+      </div>
+      <div class="chart-wrap"><canvas id="ai-equity-canvas"></canvas></div>
     </div>
   </div>
 
@@ -1815,7 +2055,7 @@ _AI_TRADING_BODY = r"""
   <div class="card card--history">
     <div class="card__head">
       <h2 class="card__title">Cycle history</h2>
-      <p class="card__hint">Newest-first. Click a row to view the full audit JSON.</p>
+      <p class="card__hint">Newest-first. Click a row to view structured plan cards.</p>
     </div>
     <div class="card__body">
       <table class="data-table" id="ai-history-table">
@@ -1824,6 +2064,7 @@ _AI_TRADING_BODY = r"""
             <th>Day</th>
             <th>Symbols</th>
             <th>Outcome</th>
+            <th>Action</th>
             <th>Plans</th>
             <th>Attempts</th>
             <th>Executed</th>
@@ -1843,13 +2084,64 @@ _AI_TRADING_BODY = r"""
       <a href="#" id="ai-detail-close" class="card__hint">close</a>
     </div>
     <div class="card__body">
-      <pre class="codeblock" id="ai-detail-body">Select a cycle to inspect the full audit JSON.</pre>
+      <div id="ai-detail-body" class="plan-cards"><div class="empty">Select a cycle to inspect its committee plan cards.</div></div>
+      <pre class="codeblock" id="ai-detail-raw" style="display:none; margin-top:1rem;"></pre>
+      <p class="card__hint" style="margin-top:0.5rem;"><a href="#" id="ai-detail-toggle-raw">show raw JSON</a></p>
     </div>
   </div>
 </section>
 """.strip()
 
 _AI_TRADING_JS = r"""
+// ---------------------------------------------------------------------------
+// Phase 32: vote distribution, per-role trend, equity curve, plan cards,
+// outcome badge. Pure HTML/CSS/JS, no new endpoints.
+// ---------------------------------------------------------------------------
+
+// Colors keyed by vote action for the donut and dot grid.
+const VOTE_COLORS = {
+  buy:   "#22c55e",
+  sell:  "#ef4444",
+  hold:  "#f59e0b",
+  watch: "#00d4ff",
+  skip:  "#475569",
+};
+
+function fmtUsd(v) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+  return "$" + v.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+function outcomeBadgeForCycle(c) {
+  // ponytail: the "win/loss" claim the spec asks for can't be computed from
+  // a single cycle without a held-position cost basis. The honest proxy is
+  // executed_count vs blocked_count — does the committee's plan clear risk
+  // and reach the broker?
+  if (!c) return { label: "—", cls: "outcome-pill--none" };
+  const ex = Number(c.executed_count || 0);
+  const bl = Number(c.blocked_count || 0);
+  if (ex > 0 && bl > 0) return { label: "MIXED", cls: "outcome-pill--mixed" };
+  if (ex > 0) return { label: "EXECUTED", cls: "outcome-pill--executed" };
+  if (bl > 0) return { label: "BLOCKED", cls: "outcome-pill--blocked" };
+  return { label: "NO ACTION", cls: "outcome-pill--none" };
+}
+
+function majorityActionFromVotes(votes) {
+  // ponytail: simple plurality over suggested_action. Treat watch/skip
+  // separately from buy/hold/sell so the donut tells a clear story.
+  if (!votes || votes.length === 0) return "hold";
+  const counts = {};
+  for (const v of votes) {
+    const a = (v.suggested_action || "skip").toLowerCase();
+    counts[a] = (counts[a] || 0) + 1;
+  }
+  let best = "hold", bestN = -1;
+  for (const k of Object.keys(counts)) {
+    if (counts[k] > bestN) { best = k; bestN = counts[k]; }
+  }
+  return best;
+}
+
 async function loadAiStatus() {
   const data = await fetchJSON('/api/v1/ai/status');
   if (!data) return;
@@ -1873,35 +2165,266 @@ async function loadAiHistory() {
   if (!tbody) return;
   tbody.innerHTML = '';
   if (!data || !Array.isArray(data.cycles)) return;
-  for (const c of data.cycles) {
+  // Lazy-load outcomes (badge) per row in parallel.
+  const detailPromises = data.cycles.map((c) =>
+    fetchJSON('/api/v1/ai/cycles/' + encodeURIComponent(c.cycle_id)).catch(() => null)
+  );
+  const details = await Promise.all(detailPromises);
+  data.cycles.forEach((c, i) => {
+    const detail = details[i];
+    const majority = detail ? majorityActionFromVotes(detail.votes) : "—";
+    const badge = outcomeBadgeForCycle(c);
     const tr = document.createElement('tr');
     tr.innerHTML =
-      '<td>' + escapeHtml(c.trading_day) + '</td>' +
-      '<td>' + escapeHtml((c.symbols || []).join(', ')) + '</td>' +
-      '<td>' + escapeHtml(c.outcome) + '</td>' +
-      '<td>' + c.plan_count + '</td>' +
-      '<td>' + c.attempt_count + '</td>' +
-      '<td>' + c.executed_count + '</td>' +
-      '<td>' + c.blocked_count + '</td>' +
-      '<td>' + escapeHtml(c.created_at) + '</td>' +
-      '<td><a href="#" data-id="' + escapeHtml(c.cycle_id) + '" class="row-action ai-cycle-link">view</a></td>';
+      '<td>' + escapeHtml(c.trading_day) + '</td>'
+      + '<td>' + escapeHtml((c.symbols || []).join(', ')) + '</td>'
+      + '<td>' + escapeHtml(c.outcome) + '</td>'
+      + '<td><span class="outcome-pill ' + badge.cls + '">' + badge.label + '</span></td>'
+      + '<td>' + c.plan_count + '</td>'
+      + '<td>' + c.attempt_count + '</td>'
+      + '<td>' + c.executed_count + '</td>'
+      + '<td>' + c.blocked_count + '</td>'
+      + '<td>' + escapeHtml(c.created_at) + '</td>'
+      + '<td><a href="#" data-id="' + escapeHtml(c.cycle_id) + '" class="row-action ai-cycle-link">view</a></td>';
     tbody.appendChild(tr);
-  }
-  document.querySelectorAll('.ai-cycle-link').forEach(a => {
+  });
+  document.querySelectorAll('.ai-cycle-link').forEach((a) => {
     a.addEventListener('click', async (ev) => {
       ev.preventDefault();
       const id = a.getAttribute('data-id');
-      const data = await fetchJSON('/api/v1/ai/cycles/' + encodeURIComponent(id));
-      document.getElementById('ai-detail-body').textContent = data
-        ? JSON.stringify(data, null, 2)
-        : 'cycle not found';
+      await renderCycleDetail(id);
     });
   });
+  // Drive the other visuals from the most recent N cycles' details.
+  const valid = data.cycles
+    .map((c, i) => ({ summary: c, detail: details[i] }))
+    .filter((x) => x.detail)
+    .slice(0, 10);
+  renderVoteDonut(valid[0] ? valid[0].detail : null);
+  renderRoleTrend(valid);
+  loadEquityCurve();
+}
+
+async function renderCycleDetail(cycleId) {
+  const body = document.getElementById('ai-detail-body');
+  const raw = document.getElementById('ai-detail-raw');
+  const toggle = document.getElementById('ai-detail-toggle-raw');
+  if (toggle) toggle.textContent = 'show raw JSON';
+  if (raw) { raw.style.display = 'none'; raw.textContent = ''; }
+  body.innerHTML = '<div class="empty">Loading…</div>';
+  const data = await fetchJSON('/api/v1/ai/cycles/' + encodeURIComponent(cycleId));
+  if (!data) {
+    body.innerHTML = '<div class="empty">cycle not found</div>';
+    return;
+  }
+  // Stash raw JSON for the toggle.
+  if (raw) raw.textContent = JSON.stringify(data, null, 2);
+  body.innerHTML = '';
+  const plans = data.plans || [];
+  if (plans.length === 0) {
+    body.innerHTML = '<div class="empty">No plans in this cycle.</div>';
+    return;
+  }
+  // Index votes by plan-relevant (symbol, side) and attempts by intent_id.
+  const votesBySymbol = {};
+  for (const v of (data.votes || [])) {
+    const sym = v.symbol || (data.symbols && data.symbols[0]) || '?';
+    if (!votesBySymbol[sym]) votesBySymbol[sym] = [];
+    votesBySymbol[sym].push(v);
+  }
+  const attempts = data.attempts || [];
+  for (const p of plans) {
+    const side = (p.side || 'hold').toLowerCase();
+    const cls = 'plan-card__side--' + (side === 'buy' || side === 'sell' || side === 'hold' ? side : 'hold');
+    const conf = (Number(p.confidence) * 100).toFixed(0);
+    const tgt = (Number(p.target_position_pct) * 100).toFixed(1);
+    const planAttempts = attempts.filter((a) => {
+      const o = a.order_intent_json || {};
+      return o.symbol === p.symbol && o.side === p.side;
+    });
+    const planVotes = votesBySymbol[p.symbol] || [];
+    const card = document.createElement('div');
+    card.className = 'plan-card';
+    card.innerHTML =
+      '<div class="plan-card__head">'
+        + '<span class="plan-card__symbol">' + escapeHtml(p.symbol) + '</span>'
+        + '<span class="plan-card__side ' + cls + '">' + escapeHtml(side) + '</span>'
+      + '</div>'
+      + '<div class="plan-card__meta">'
+        + 'consensus: <b>' + escapeHtml(p.consensus_level || '—') + '</b>'
+        + ' · confidence: <b>' + conf + '%</b>'
+        + ' · target: <b>' + tgt + '%</b>'
+        + (p.needs_human_review ? ' · <b style="color:var(--amber)">human review</b>' : '')
+        + (p.blocked_by_ethics ? ' · <b style="color:var(--red)">ethics block</b>' : '')
+      + '</div>'
+      + '<div class="plan-card__rationale">' + escapeHtml(p.rationale || '') + '</div>'
+      + (planVotes.length > 0
+          ? '<div class="plan-card__votes">'
+            + planVotes.map((v) =>
+                '<div class="plan-card__vote">'
+                  + '<span class="plan-card__vote-role">' + escapeHtml(v.role) + '</span>'
+                  + '<span class="plan-card__vote-action">' + escapeHtml(v.suggested_action) + '</span>'
+                  + '<span class="plan-card__vote-conf">conf ' + (Number(v.confidence) * 100).toFixed(0) + '%</span>'
+                  + '<span class="plan-card__vote-model">' + escapeHtml(v.model_name || '') + '</span>'
+                + '</div>'
+              ).join('')
+            + '</div>'
+          : '')
+      + (planAttempts.length > 0
+          ? '<div class="plan-card__attempts">'
+            + planAttempts.map((a) =>
+                '<div class="plan-card__attempts-row">'
+                  + '<span class="outcome-pill outcome-pill--' + (a.outcome === 'executed' ? 'executed' : (String(a.outcome).startsWith('blocked') ? 'blocked' : 'none')) + '">'
+                  + escapeHtml(a.outcome) + '</span>'
+                  + '<span>' + (a.filled ? 'filled @ ' + (a.fill_price || '?') : 'not filled') + '</span>'
+                  + '<span style="color:var(--text-muted)">' + escapeHtml(a.reason || '') + '</span>'
+                + '</div>'
+              ).join('')
+            + '</div>'
+          : '');
+    body.appendChild(card);
+  }
+}
+
+function renderVoteDonut(latestDetail) {
+  const hint = document.getElementById('ai-donut-hint');
+  const legend = document.getElementById('ai-donut-legend');
+  const votes = (latestDetail && latestDetail.votes) || [];
+  if (votes.length === 0) {
+    if (hint) hint.textContent = 'latest cycle · no votes';
+    legend.innerHTML = '<div class="empty">No committee votes yet.</div>';
+    drawDonut('ai-donut-canvas', []);
+    return;
+  }
+  if (hint) hint.textContent = 'latest cycle · ' + (latestDetail.trading_day || '');
+  const counts = { buy: 0, hold: 0, sell: 0, watch: 0, skip: 0 };
+  for (const v of votes) {
+    const a = (v.suggested_action || 'skip').toLowerCase();
+    if (counts[a] === undefined) counts.skip += 1;
+    else counts[a] += 1;
+  }
+  const segments = [
+    { label: 'buy',   value: counts.buy,   color: VOTE_COLORS.buy },
+    { label: 'hold',  value: counts.hold,  color: VOTE_COLORS.hold },
+    { label: 'sell',  value: counts.sell,  color: VOTE_COLORS.sell },
+    { label: 'watch', value: counts.watch, color: VOTE_COLORS.watch },
+    { label: 'skip',  value: counts.skip,  color: VOTE_COLORS.skip },
+  ].filter((s) => s.value > 0);
+  drawDonut('ai-donut-canvas', segments);
+  legend.innerHTML = segments.map((s) =>
+    '<div class="donut-legend__row">'
+      + '<span class="donut-legend__sw" style="background:' + s.color + '"></span>'
+      + '<span class="donut-legend__label">' + s.label + '</span>'
+      + '<span class="donut-legend__value">' + s.value + '</span>'
+    + '</div>'
+  ).join('');
+}
+
+function renderRoleTrend(records) {
+  const wrap = document.getElementById('ai-role-trend');
+  const hint = document.getElementById('ai-trend-hint');
+  if (!records || records.length === 0) {
+    if (hint) hint.textContent = 'last 10 cycles · no data';
+    wrap.innerHTML = '<div class="empty">Run a cycle to populate the per-role trend.</div>';
+    return;
+  }
+  // Reverse so column 0 is the OLDEST cycle and the rightmost dot is newest.
+  const ordered = records.slice().reverse();
+  if (hint) hint.textContent = 'last ' + ordered.length + ' cycles · newest on the right';
+  const ROLES = ['technical', 'fundamental', 'risk', 'manager'];
+  // For each role, find the majority suggested_action per cycle.
+  const rows = ROLES.map((role) => {
+    const dots = ordered.map((rec) => {
+      const votes = (rec.detail.votes || []).filter((v) => v.role === role);
+      if (votes.length === 0) return { action: null };
+      const counts = {};
+      for (const v of votes) {
+        const a = (v.suggested_action || 'skip').toLowerCase();
+        counts[a] = (counts[a] || 0) + 1;
+      }
+      let best = 'skip', bestN = -1;
+      for (const k of Object.keys(counts)) {
+        if (counts[k] > bestN) { best = k; bestN = counts[k]; }
+      }
+      return { action: best };
+    });
+    return { role: role, dots: dots };
+  });
+  wrap.innerHTML =
+    rows.map((r) =>
+      '<div class="role-trend__row">'
+        + '<span class="role-trend__role">' + r.role + '</span>'
+        + '<span class="role-trend__dots">'
+          + r.dots.map((d) =>
+              '<span class="role-trend__dot role-trend__dot--' + (d.action || 'none') + '" title="' + (d.action || 'no vote') + '"></span>'
+            ).join('')
+        + '</span>'
+      + '</div>'
+    ).join('')
+    + '<div class="role-trend__legend">'
+      + '<span><i style="background:' + VOTE_COLORS.buy + '"></i>buy</span>'
+      + '<span><i style="background:' + VOTE_COLORS.hold + '"></i>hold</span>'
+      + '<span><i style="background:' + VOTE_COLORS.sell + '"></i>sell</span>'
+      + '<span><i style="background:' + VOTE_COLORS.watch + '"></i>watch</span>'
+      + '<span><i style="background:' + VOTE_COLORS.skip + '"></i>skip</span>'
+      + '<span><i style="background:transparent;border:1px solid var(--border-strong)"></i>none</span>'
+    + '</div>';
+}
+
+async function loadEquityCurve() {
+  const portfolio = await fetchJSON('/api/v1/paper/portfolio');
+  const orders = await fetchJSON('/api/v1/paper/orders?status=order_created');
+  const hintEl = document.getElementById('ai-equity-hint');
+  const valueLabel = document.getElementById('ai-equity-value');
+  // ponytail: no /equity-history endpoint exists, so the chart is a single
+  // current-snapshot point unless the audit log provides fill events with
+  // timestamps. The honest fallback is to mark the chart "current snapshot".
+  const cash = portfolio ? Number(portfolio.cash || 0) : 0;
+  const realized = portfolio ? Number(portfolio.realized_pnl || 0) : 0;
+  const positions = (portfolio && portfolio.positions) || [];
+  // Mark-to-market current equity = cash + realized + sum(qty * avg_price).
+  // (avg_price is a cost basis; without a mark price we just use cost.)
+  let mtm = 0;
+  for (const p of positions) {
+    mtm += Number(p.quantity || 0) * Number(p.average_price || 0);
+  }
+  const equityNow = cash + mtm + realized;
+  if (valueLabel) valueLabel.textContent = fmtUsd(equityNow);
+  // Build a one-point series; if we have order events, project a step
+  // timeline walking down to the present so the chart isn't a dot.
+  const events = (orders && orders.entries) || [];
+  const points = [];
+  if (events.length === 0) {
+    points.push({ t: Date.now(), v: equityNow });
+    if (hintEl) hintEl.textContent = 'current snapshot · no order history yet';
+  } else {
+    // Use the earliest order as t0 with a baseline cash value, then plot
+    // the current equity at "now". This keeps the line meaningful without
+    // fabricating intermediate values.
+    const earliestTs = new Date(events[events.length - 1].created_at).getTime();
+    points.push({ t: earliestTs, v: 100000 });
+    points.push({ t: Date.now(), v: equityNow });
+    if (hintEl) hintEl.textContent = 'snapshot vs starting cash · ' + events.length + ' order' + (events.length === 1 ? '' : 's');
+  }
+  drawLineChart('ai-equity-canvas', points, { color: '#00d4ff', fillColor: 'rgba(0, 212, 255, 0.12)' });
 }
 
 document.getElementById('ai-detail-close')?.addEventListener('click', (ev) => {
   ev.preventDefault();
-  document.getElementById('ai-detail-body').textContent = 'Select a cycle to inspect the full audit JSON.';
+  document.getElementById('ai-detail-body').innerHTML = '<div class="empty">Select a cycle to inspect its committee plan cards.</div>';
+  const raw = document.getElementById('ai-detail-raw');
+  if (raw) { raw.style.display = 'none'; raw.textContent = ''; }
+  const toggle = document.getElementById('ai-detail-toggle-raw');
+  if (toggle) toggle.textContent = 'show raw JSON';
+});
+
+document.getElementById('ai-detail-toggle-raw')?.addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const raw = document.getElementById('ai-detail-raw');
+  if (!raw) return;
+  const showing = raw.style.display !== 'none';
+  raw.style.display = showing ? 'none' : 'block';
+  ev.target.textContent = showing ? 'show raw JSON' : 'hide raw JSON';
 });
 
 document.getElementById('ai-run-form')?.addEventListener('submit', async (ev) => {
@@ -1933,6 +2456,14 @@ document.getElementById('ai-run-form')?.addEventListener('submit', async (ev) =>
   } catch (err) {
     document.getElementById('ai-run-result').textContent = 'Network error: ' + err.message;
   }
+});
+
+// Re-render the equity curve on resize so the canvas stays crisp.
+let _aiResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (!document.getElementById('ai-equity-canvas')) return;
+  clearTimeout(_aiResizeTimer);
+  _aiResizeTimer = setTimeout(loadEquityCurve, 150);
 });
 
 loadAiStatus();
