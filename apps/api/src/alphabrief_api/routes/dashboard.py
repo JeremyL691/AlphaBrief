@@ -642,6 +642,7 @@ _NAV_ITEMS: list[tuple[str, str, str]] = [
     ("/dashboard/models", "Models", "models"),
     ("/dashboard/strategies", "Strategies", "strategies"),
     ("/dashboard/ai-trading", "AI Trading", "ai-trading"),
+    ("/dashboard/scheduler", "Scheduler", "scheduler"),
 ]
 
 
@@ -2486,6 +2487,485 @@ def get_dashboard_ai_trading() -> HTMLResponse:
             ),
             body=_AI_TRADING_BODY,
             scripts=_AI_TRADING_JS,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scheduler operations dashboard (Phase 33)
+# ---------------------------------------------------------------------------
+#
+# Pure HTML/CSS/JS view over the read-only /api/v1/scheduler/* endpoints.
+# Five sections: status row, heartbeat table, alerts log, registered tasks,
+# active freezes. Auto-refresh refreshes only the heartbeat + alert cards
+# every 15s when the toggle is on — the registered-tasks and freezes lists
+# are stable enough that re-fetching them every 15s is wasteful.
+
+_SCHEDULER_BODY = r"""
+<style>
+  /* Phase 33 — Scheduler Operations dashboard. Scoped to .scheduler-page so
+     nothing here leaks into the main dashboard. ponytail: minimal styles,
+     all values from existing /api/v1/scheduler/* endpoints. */
+  .scheduler-page { display: grid; gap: 1rem; }
+  .scheduler-page .scheduler-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+  }
+  .scheduler-page .scheduler-stat {
+    background: linear-gradient(180deg, var(--bg-elev-2) 0%, var(--bg-elev-1) 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.125rem;
+  }
+  .scheduler-page .scheduler-stat__label {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .scheduler-page .scheduler-stat__value {
+    font-family: var(--font-mono);
+    font-size: 1.75rem;
+    font-weight: 600;
+    margin-top: 0.5rem;
+    line-height: 1.15;
+    color: var(--text);
+  }
+  .scheduler-page .scheduler-stat__value--green { color: var(--green); }
+  .scheduler-page .scheduler-stat__value--amber { color: var(--amber); }
+  .scheduler-page .scheduler-stat__value--red   { color: var(--red); }
+  .scheduler-page .scheduler-stat__hint {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.35rem;
+    font-family: var(--font-mono);
+  }
+  .scheduler-page .scheduler-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    flex-wrap: wrap;
+  }
+  .scheduler-page .scheduler-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--bg-elev-2);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .scheduler-page .scheduler-toggle:hover { border-color: var(--accent); color: var(--text); }
+  .scheduler-page .scheduler-toggle.is-on {
+    color: var(--accent);
+    border-color: rgba(0, 212, 255, 0.45);
+    background: rgba(0, 212, 255, 0.06);
+  }
+  .scheduler-page .scheduler-toggle__dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+  }
+  .scheduler-page .scheduler-toggle.is-on .scheduler-toggle__dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.15);
+  }
+  .scheduler-page .scheduler-alert-log {
+    max-height: 24rem;
+    overflow-y: auto;
+  }
+  .scheduler-page .severity {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .scheduler-page .severity--error { color: var(--red);   background: var(--red-dim);   border: 1px solid rgba(239,68,68,0.25); }
+  .scheduler-page .severity--warn  { color: var(--amber); background: var(--amber-dim); border: 1px solid rgba(245,158,11,0.25); }
+  .scheduler-page .severity--info  { color: var(--accent); background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.25); }
+  .scheduler-page .severity--other { color: var(--text-dim); background: rgba(148,163,184,0.08); border: 1px solid rgba(148,163,184,0.18); }
+  .scheduler-page .scheduler-error-cell { color: var(--red); font-family: var(--font-mono); font-size: 0.75rem; max-width: 28rem; }
+  .scheduler-page .scheduler-error-cell--truncate {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .scheduler-page .scheduler-grayed { opacity: 0.5; }
+</style>
+
+<section class="scheduler-page">
+  <div class="scheduler-stat-grid">
+    <div class="scheduler-stat" id="sched-stat-running">
+      <div class="scheduler-stat__label">Running Tasks</div>
+      <div class="scheduler-stat__value" id="sched-running-value">—</div>
+      <div class="scheduler-stat__hint" id="sched-running-hint">beating</div>
+    </div>
+    <div class="scheduler-stat" id="sched-stat-total">
+      <div class="scheduler-stat__label">Total Runs</div>
+      <div class="scheduler-stat__value" id="sched-total-value">—</div>
+      <div class="scheduler-stat__hint" id="sched-total-hint">across all tasks</div>
+    </div>
+    <div class="scheduler-stat" id="sched-stat-alerts">
+      <div class="scheduler-stat__label">Active Alerts</div>
+      <div class="scheduler-stat__value" id="sched-alerts-value">—</div>
+      <div class="scheduler-stat__hint" id="sched-alerts-hint">most recent</div>
+    </div>
+    <div class="scheduler-stat" id="sched-stat-freezes">
+      <div class="scheduler-stat__label">Active Freezes</div>
+      <div class="scheduler-stat__value" id="sched-freezes-value">—</div>
+      <div class="scheduler-stat__hint" id="sched-freezes-hint">broker locks</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <span class="card__title">Heartbeats</span>
+      <div class="card__hint scheduler-toolbar">
+        <span id="sched-heartbeats-hint">—</span>
+        <button type="button" class="scheduler-toggle" id="sched-auto-refresh" aria-pressed="false">
+          <span class="scheduler-toggle__dot" aria-hidden="true"></span>
+          <span id="sched-auto-refresh-label">auto-refresh off</span>
+        </button>
+      </div>
+    </div>
+    <div id="sched-heartbeats" class="loading">Loading…</div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <span class="card__title">Alerts</span>
+      <span class="card__hint" id="sched-alerts-hint-count">—</span>
+    </div>
+    <div id="sched-alerts" class="scheduler-alert-log loading">Loading…</div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <span class="card__title">Registered Tasks</span>
+      <span class="card__hint" id="sched-tasks-hint">—</span>
+    </div>
+    <div id="sched-tasks" class="loading">Loading…</div>
+  </div>
+
+  <div class="card">
+    <div class="card__head">
+      <span class="card__title">Active Freezes</span>
+      <span class="card__hint" id="sched-freezes-hint-count">—</span>
+    </div>
+    <div id="sched-freezes" class="loading">Loading…</div>
+  </div>
+</section>
+""".strip()
+
+
+_SCHEDULER_JS = r"""
+// ---------------------------------------------------------------------------
+// Phase 33: Scheduler Operations dashboard.
+// ponytail: simplest layout that surfaces the data — one row of stat tiles,
+// five cards. Auto-refresh refreshes only heartbeats + alerts (the two
+// volatile feeds); registered tasks / freezes are stable and only fetched
+// on initial load.
+// ---------------------------------------------------------------------------
+
+const SCHED_REFRESH_MS = 15000;
+
+// Fetch one endpoint and return null on any failure (writer lock etc).
+async function fetchScheduler(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    return null;
+  }
+}
+
+// Sum of run_count across heartbeats.
+function sumRunCounts(beats) {
+  let n = 0;
+  for (const b of beats || []) n += Number(b.run_count || 0);
+  return n;
+}
+
+// Map the lowercased severity to a CSS modifier; unknown → "other".
+function severityClass(sev) {
+  const s = (sev || "").toLowerCase();
+  if (s === "error" || s === "critical" || s === "fatal") return "error";
+  if (s === "warn" || s === "warning") return "warn";
+  if (s === "info" || s === "information" || s === "notice") return "info";
+  return "other";
+}
+
+// Friendly relative-time string for "last run" columns.
+function relativeAge(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const ms = Date.now() - d.getTime();
+  if (isNaN(d.getTime())) return "—";
+  if (ms < 0) return "just now";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + "s ago";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m " + (s % 60) + "s ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h " + (m % 60) + "m ago";
+  const days = Math.floor(h / 24);
+  return days + "d " + (h % 24) + "h ago";
+}
+
+function renderStatusRow(status, heartbeats, alerts) {
+  // Running tasks = distinct task_names whose last_status is "ok".
+  // ponytail: the spec asks for "Running Tasks count"; the cleanest reading
+  // is "tasks that have a healthy last heartbeat" — since the scheduler is
+  // a separate process and not API-attached, "running" is best-effort.
+  const beats = heartbeats || [];
+  const running = beats.filter((b) => (b.last_status || "").toLowerCase() === "ok").length;
+  const total = beats.length;
+  const totalRuns = sumRunCounts(beats);
+  const alertCount = ((alerts && alerts.alerts) || []).length;
+  const freezeCount = Number((status && status.open_freeze_count) || 0);
+
+  const rv = document.getElementById("sched-running-value");
+  if (rv) {
+    rv.textContent = running;
+    rv.classList.remove("scheduler-stat__value--green", "scheduler-stat__value--amber", "scheduler-stat__value--red");
+    if (total === 0) rv.classList.add("scheduler-stat__value--amber");
+    else if (running === total) rv.classList.add("scheduler-stat__value--green");
+    else if (running === 0) rv.classList.add("scheduler-stat__value--red");
+    else rv.classList.add("scheduler-stat__value--amber");
+  }
+  const rh = document.getElementById("sched-running-hint");
+  if (rh) rh.textContent = total + " beating";
+
+  const tv = document.getElementById("sched-total-value");
+  if (tv) tv.textContent = totalRuns.toLocaleString("en-US");
+
+  const av = document.getElementById("sched-alerts-value");
+  if (av) {
+    av.textContent = alertCount;
+    av.classList.remove("scheduler-stat__value--green", "scheduler-stat__value--amber", "scheduler-stat__value--red");
+    av.classList.add(alertCount > 0 ? "scheduler-stat__value--amber" : "scheduler-stat__value--green");
+  }
+  const ah = document.getElementById("sched-alerts-hint");
+  if (ah) ah.textContent = alertCount > 0 ? "needs attention" : "all clear";
+
+  const fv = document.getElementById("sched-freezes-value");
+  if (fv) {
+    fv.textContent = freezeCount;
+    fv.classList.remove("scheduler-stat__value--green", "scheduler-stat__value--amber", "scheduler-stat__value--red");
+    fv.classList.add(freezeCount > 0 ? "scheduler-stat__value--red" : "scheduler-stat__value--green");
+  }
+  const fh = document.getElementById("sched-freezes-hint");
+  if (fh) fh.textContent = freezeCount > 0 ? "investigate" : "trading clean";
+}
+
+function renderHeartbeats(beats) {
+  const el = document.getElementById("sched-heartbeats");
+  if (!el) return;
+  el.classList.remove("loading");
+  const list = beats || [];
+  document.getElementById("sched-heartbeats-hint").textContent = list.length + " task" + (list.length === 1 ? "" : "s");
+  if (list.length === 0) {
+    el.innerHTML = '<div class="empty">No heartbeats recorded yet. Start the scheduler with <code>alphabrief scheduler run</code>.</div>';
+    return;
+  }
+  // The endpoint already sorts by last_run_at DESC; re-sort to be defensive.
+  const sorted = list.slice().sort((a, b) => {
+    const at = a.last_run_at ? new Date(a.last_run_at).getTime() : 0;
+    const bt = b.last_run_at ? new Date(b.last_run_at).getTime() : 0;
+    return bt - at;
+  });
+  el.innerHTML =
+    '<div class="table-wrap"><table>'
+    + '<thead><tr><th>Task Name</th><th>Last Run</th><th class="num">Run Count</th><th>Last Error</th></tr></thead>'
+    + '<tbody>'
+    + sorted.map((b) => {
+        const err = b.last_error;
+        const errCell = err
+          ? '<td class="scheduler-error-cell scheduler-error-cell--truncate" title="' + escapeHtml(err) + '">' + escapeHtml(err) + '</td>'
+          : '<td class="dim">—</td>';
+        return '<tr>'
+          + '<td class="mono">' + escapeHtml(b.task_name || "—") + '</td>'
+          + '<td class="dim mono">' + relativeAge(b.last_run_at) + '</td>'
+          + '<td class="num">' + Number(b.run_count || 0).toLocaleString("en-US") + '</td>'
+          + errCell
+          + '</tr>';
+      }).join("")
+    + '</tbody></table></div>';
+}
+
+function renderAlerts(alerts) {
+  const el = document.getElementById("sched-alerts");
+  if (!el) return;
+  el.classList.remove("loading");
+  const list = (alerts && alerts.alerts) || [];
+  document.getElementById("sched-alerts-hint-count").textContent = list.length + " alert" + (list.length === 1 ? "" : "s");
+  if (list.length === 0) {
+    el.innerHTML = '<div class="empty">No alerts recorded yet.</div>';
+    return;
+  }
+  el.innerHTML =
+    '<div class="table-wrap"><table>'
+    + '<thead><tr><th>Severity</th><th>Message</th><th>Task</th><th>Timestamp</th></tr></thead>'
+    + '<tbody>'
+    + list.map((a) => {
+        const sevClass = severityClass(a.severity);
+        return '<tr>'
+          + '<td><span class="severity severity--' + sevClass + '">' + escapeHtml((a.severity || "unknown").toUpperCase()) + '</span></td>'
+          + '<td class="title"><div class="title-inner">' + escapeHtml(a.message || "—") + '</div></td>'
+          + '<td class="mono dim">' + escapeHtml(a.task_name || "—") + '</td>'
+          + '<td class="mono dim">' + fmtTime(a.raised_at) + '</td>'
+          + '</tr>';
+      }).join("")
+    + '</tbody></table></div>';
+}
+
+function renderTasks(tasks) {
+  const el = document.getElementById("sched-tasks");
+  if (!el) return;
+  el.classList.remove("loading");
+  const list = (tasks && tasks.tasks) || [];
+  document.getElementById("sched-tasks-hint").textContent = list.length + " registered";
+  if (list.length === 0) {
+    el.innerHTML = '<div class="empty">No tasks registered.</div>';
+    return;
+  }
+  el.innerHTML =
+    '<div class="table-wrap"><table>'
+    + '<thead><tr><th>Name</th><th>Interval</th><th>Timeout</th><th class="num">Retries</th><th>Enabled</th></tr></thead>'
+    + '<tbody>'
+    + list.map((t) => {
+        const enabled = t.enabled !== false;
+        const badge = enabled
+          ? '<span class="badge badge--on">enabled</span>'
+          : '<span class="badge badge--off">disabled</span>';
+        const interval = t.interval_seconds != null
+          ? (Number(t.interval_seconds) >= 60
+              ? Math.round(Number(t.interval_seconds) / 60) + " min"
+              : Number(t.interval_seconds) + "s")
+          : "—";
+        const timeout = t.timeout_seconds != null ? Number(t.timeout_seconds) + "s" : "—";
+        return '<tr>'
+          + '<td class="mono">' + escapeHtml(t.name || "—") + '</td>'
+          + '<td class="mono">' + escapeHtml(interval) + '</td>'
+          + '<td class="mono">' + escapeHtml(timeout) + '</td>'
+          + '<td class="num">' + Number(t.max_retries || 0) + '</td>'
+          + '<td>' + badge + '</td>'
+          + '</tr>';
+      }).join("")
+    + '</tbody></table></div>';
+}
+
+function renderFreezes(freezes) {
+  const el = document.getElementById("sched-freezes");
+  if (!el) return;
+  el.classList.remove("loading");
+  const list = (freezes && freezes.open_freezes) || [];
+  const hint = document.getElementById("sched-freezes-hint-count");
+  if (hint) hint.textContent = list.length + " active";
+  if (list.length === 0) {
+    el.classList.add("scheduler-grayed");
+    el.innerHTML = '<div class="empty">No active freezes. Trading is unblocked.</div>';
+    return;
+  }
+  el.classList.remove("scheduler-grayed");
+  el.innerHTML =
+    '<div class="table-wrap"><table>'
+    + '<thead><tr><th>Reason</th><th>Scope</th><th>Source</th><th>Raised</th></tr></thead>'
+    + '<tbody>'
+    + list.map((f) => {
+        return '<tr>'
+          + '<td><div class="title-inner">' + escapeHtml(f.reason || "—") + '</div></td>'
+          + '<td class="mono">' + escapeHtml(f.scope || "—") + '</td>'
+          + '<td class="mono dim">' + escapeHtml(f.source || "—") + '</td>'
+          + '<td class="mono dim">' + fmtTime(f.raised_at) + '</td>'
+          + '</tr>';
+      }).join("")
+    + '</tbody></table></div>';
+}
+
+async function loadSchedulerInitial() {
+  // Run all five fetches in parallel — none depend on each other.
+  const [status, heartbeats, alerts, tasks, freezes] = await Promise.all([
+    fetchScheduler("/api/v1/scheduler/status"),
+    fetchScheduler("/api/v1/scheduler/heartbeats"),
+    fetchScheduler("/api/v1/scheduler/alerts?limit=50"),
+    fetchScheduler("/api/v1/scheduler/tasks"),
+    fetchScheduler("/api/v1/scheduler/freezes"),
+  ]);
+  renderStatusRow(status, heartbeats ? heartbeats.heartbeats : [], alerts);
+  renderHeartbeats(heartbeats ? heartbeats.heartbeats : null);
+  renderAlerts(alerts);
+  renderTasks(tasks);
+  renderFreezes(freezes);
+}
+
+async function loadSchedulerVolatile() {
+  // Auto-refresh path: heartbeats + alerts + status only.
+  const [status, heartbeats, alerts] = await Promise.all([
+    fetchScheduler("/api/v1/scheduler/status"),
+    fetchScheduler("/api/v1/scheduler/heartbeats"),
+    fetchScheduler("/api/v1/scheduler/alerts?limit=50"),
+  ]);
+  renderStatusRow(status, heartbeats ? heartbeats.heartbeats : [], alerts);
+  renderHeartbeats(heartbeats ? heartbeats.heartbeats : null);
+  renderAlerts(alerts);
+}
+
+// Auto-refresh plumbing. ponytail: simplest possible — a single interval, on
+// or off. Manual scope is "heartbeat + alert" only (per spec); tasks and
+// freezes are fetched once.
+const toggleBtn = document.getElementById("sched-auto-refresh");
+const toggleLabel = document.getElementById("sched-auto-refresh-label");
+let autoTimer = null;
+
+function setAutoRefresh(on) {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (toggleBtn) {
+    toggleBtn.classList.toggle("is-on", on);
+    toggleBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  if (toggleLabel) toggleLabel.textContent = on ? "auto-refresh 15s" : "auto-refresh off";
+  if (on) autoTimer = setInterval(loadSchedulerVolatile, SCHED_REFRESH_MS);
+}
+
+if (toggleBtn) {
+  toggleBtn.addEventListener("click", () => setAutoRefresh(!autoTimer));
+}
+
+loadSchedulerInitial();
+""".strip()
+
+
+@router.get("/dashboard/scheduler", response_class=HTMLResponse)
+def get_dashboard_scheduler() -> HTMLResponse:
+    """Serve the Scheduler Operations dashboard page."""
+    return HTMLResponse(
+        content=_shell(
+            active="scheduler",
+            title="Scheduler Operations",
+            subtitle=(
+                "Live view of registered scheduler tasks, per-task "
+                "heartbeats, recent alerts and active broker freezes. "
+                "Auto-refresh refreshes heartbeats and alerts every 15s."
+            ),
+            body=_SCHEDULER_BODY,
+            scripts=_SCHEDULER_JS,
         )
     )
 
