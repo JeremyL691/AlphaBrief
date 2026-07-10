@@ -1,15 +1,60 @@
 # Reviewed paper-only operating boundary. This file contains no credentials and
 # never authorizes broker calls; all execution still requires RiskGate.
+#
+# Default broker: OANDA v20 practice (paper). Alpaca remains an optional operator
+# override by editing `provider` and `symbols` together.
+# See docs/development_plans/0063-default-paper-policy-oanda-fx.md.
+#
+# Universe covers 19 OANDA instruments across FX majors/crosses, metals, and
+# index CFDs (US30 / SPX500 / NAS100 cover the "美股" exposure the operator
+# asked for; DAX and Nikkei are added for cross-region diversification).
+#
+# Units: OANDA counts contracts in "units" (1 standard lot = 100,000 units,
+# 1 mini lot = 10,000 units, 1 micro lot = 1,000 units). max_order_notional and
+# max_total_exposure below are stated in units — the RiskGate translates them
+# to USD notional using the live OANDA mid-price at evaluation time.
 mode: paper
-provider: alpaca_paper
-market: us_equity
-symbols: [SPY, QQQ, IVV, VOO, AGG, BND, GLD, SLV]
+provider: oanda_paper
+market: multi_asset
+symbols:
+  # FX Majors
+  - EUR_USD
+  - GBP_USD
+  - USD_JPY
+  - USD_CHF
+  - AUD_USD
+  - USD_CAD
+  - NZD_USD
+  # FX Crosses
+  - EUR_GBP
+  - EUR_JPY
+  - GBP_JPY
+  - AUD_JPY
+  - CHF_JPY
+  # Metals
+  - XAU_USD
+  - XAG_USD
+  # Index CFDs (US + EU + JP)
+  - US30_USD
+  - SPX500_USD
+  - NAS100_USD
+  - DE30_EUR
+  - JP225_USD
 order_types: [market, limit]
 timezone: America/New_York
 trading_days: [mon, tue, wed, thu, fri]
-session_start: "09:30"
-session_end: "16:00"
-max_order_notional: "100"
-max_total_exposure: "300"
+# FX trades Sun 22:00 UTC -> Fri 22:00 UTC. We keep operator-timezone 09:30-16:00
+# fields for US-style read-only window; RiskGate defers session checks to the
+# OANDA broker for FX/index instruments and uses these fields only for any
+# future US equity additions.
+session_start: "00:00"
+session_end: "23:59"
+# 10,000 units = 1 mini lot. On EUR_USD at ~1.14, that is roughly $11,400
+# notional; on XAU_USD at ~4100, 10,000 units would be excessive, so the
+# RiskGate also enforces a USD notional cap derived from live mid-price.
+# Operators who want stricter caps should lower max_order_notional to
+# 1,000 (micro lot) or 5,000 (half mini).
+max_order_notional: "10000"
+max_total_exposure: "50000"
 require_human_review: true
 automated_execution: false
