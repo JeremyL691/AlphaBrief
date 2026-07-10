@@ -8,8 +8,9 @@ in `.venv`) and that all standard quality gates pass.
 
 ## 1. What This Is For
 
-A 30-day continuous observation against an external paper-trading account
-(OANDA v20 demo/practice or Alpaca Paper). The goal is **not** to prove
+A 30-day continuous observation against an **OANDA v20 practice** account.
+Alpaca Paper remains an optional compatibility path, not the default. The goal
+is **not** to prove
 that paper trading works in isolation — the internal paper broker already
 does that. The goal is to verify, in a real external environment, that:
 
@@ -23,11 +24,11 @@ does that. The goal is to verify, in a real external environment, that:
 
 - Python 3.12+ with the project virtual environment installed.
 - One external paper-trading account:
-  - **OANDA v20 demo/practice** — sign up at <https://www.oanda.com/>,
-    create a demo account, generate a personal access token, and copy the
-    demo account ID. This is the recommended path when Alpaca identity
-    verification is unavailable.
-  - **Alpaca Paper** — sign up at <https://app.alpaca.markets/signup>,
+  - **OANDA v20 demo/practice (default)** — sign up at
+    <https://www.oanda.com/>, create a demo account, generate a personal
+    access token, and copy the demo account ID.
+  - **Alpaca Paper (optional compatibility path)** — sign up at
+    <https://app.alpaca.markets/signup>,
     stay in **Paper** mode, then generate a paper API key + secret from
     *View → API Keys → Generate Paper Key*.
 - If both OANDA and Alpaca credentials are set, AlphaBrief prefers OANDA.
@@ -40,7 +41,7 @@ does that. The goal is to verify, in a real external environment, that:
 
 ## 3. One-Time Setup
 
-1. Copy the environment template and fill in one broker section:
+1. Copy the environment template and fill in the OANDA practice section:
 
    ```bash
    cp .env.example .env
@@ -79,10 +80,12 @@ does that. The goal is to verify, in a real external environment, that:
 3. Confirm the paper execution policy is unchanged:
 
    ```bash
-   grep -E "mode:|automated_execution:|require_human_review:" \
+   grep -E "mode:|provider:|market:|automated_execution:|require_human_review:" \
         config/paper_execution_policy.yaml
    # Expected:
    #   mode: paper
+   #   provider: oanda_paper
+   #   market: multi_asset
    #   automated_execution: false
    #   require_human_review: true
    ```
@@ -182,19 +185,19 @@ This lets the scheduler run `ai_daily_cycle` and record committee
 cycles. By default, approved AI orders still use the local paper broker
 path.
 
-Set the AI scheduler universe to symbols that match the reviewed paper
-policy and broker adapter:
+The default AI scheduler universe is aligned to the OANDA practice policy:
+`EUR_USD`, `GBP_USD`, and `USD_JPY`. To override it, use OANDA instrument
+names that remain inside the reviewed policy allowlist:
 
 ```bash
-export ALPHABRIEF_AI_SCHEDULER_UNIVERSE=SPY,QQQ,IVV
+export ALPHABRIEF_AI_SCHEDULER_UNIVERSE=EUR_USD,GBP_USD,USD_JPY
 ```
 
-For OANDA paper, first edit `config/paper_execution_policy.yaml` to use
-`provider: oanda_paper`, an appropriate `market` such as `fx`, and
-OANDA instrument names such as `EUR_USD`. Then set the same symbols in
-`ALPHABRIEF_AI_SCHEDULER_UNIVERSE`. If external AI paper is enabled and
-the policy provider does not match the configured broker credentials,
-the scheduler fails closed before submitting any order.
+The wider policy also permits selected FX crosses, metals, and index CFDs.
+Those index CFDs provide market-index exposure; they are not direct US-stock
+orders. If external AI paper is enabled and the policy provider does not
+match the configured broker credentials, the scheduler fails closed before
+submitting any order.
 
 Choose the committee model provider:
 

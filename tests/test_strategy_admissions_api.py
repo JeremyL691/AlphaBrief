@@ -154,17 +154,21 @@ def test_approval_record_cannot_grant_execution_authority() -> None:
     config = client.get("/api/v1/risk/config")
     assert config.status_code == 200
     assert config.json()["enabled_strategies"] == []
-    assert config.json()["symbol_allowlist"] == sorted(
-        ["SPY", "QQQ", "IVV", "VOO", "AGG", "BND", "GLD", "SLV"]
-    )
-    assert config.json()["max_order_value"] == "100"
+    # Round 0063: default allowlist is the OANDA multi-asset universe.
+    assert config.json()["symbol_allowlist"] == sorted([
+        "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD",
+        "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CHF_JPY",
+        "XAU_USD", "XAG_USD",
+        "US30_USD", "SPX500_USD", "NAS100_USD", "DE30_EUR", "JP225_USD",
+    ])
+    assert config.json()["max_order_value"] == "10000"
     assert config.json()["require_human_review"] is True
 
     gate = RiskGate(limits=RiskLimitConfig(enabled_strategies=frozenset()))
     intent = OrderIntent(
         intent_id="admission-cannot-authorize",
         source="strategy",
-        symbol="SPY",
+        symbol="EUR_USD",
         side="buy",
         order_type="market",
         quantity=Decimal("1"),

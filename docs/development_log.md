@@ -3338,3 +3338,37 @@ Final validation:
 4. `.venv/bin/alphabrief acceptance verify --compact` passed: 11/11.
 5. `.venv/bin/alphabrief acceptance preflight --scope paper --compact`
    passed: 1/1.
+
+## 0063 — OANDA-First Default Paper Policy
+
+Goal: align the checked-in default paper workflow with the already-configured
+OANDA v20 practice account while preserving the project’s paper-only and
+human-review safety boundaries.
+
+### Changes
+
+1. Switched the default policy to `provider: oanda_paper` and a 19-instrument
+   `multi_asset` universe: FX majors/crosses, XAU/XAG metals, and selected
+   index CFDs. Index CFDs are market-index exposure, not direct US-stock
+   orders.
+2. Retained `mode: paper`, `require_human_review: true`, and
+   `automated_execution: false`; no live-trading path was opened.
+3. Updated the default AI scheduler universe from US ETFs to
+   `EUR_USD,GBP_USD,USD_JPY`, so it now matches the OANDA-first policy.
+4. Migrated policy, API, scheduler, and admission tests from legacy
+   Alpaca/ETF assumptions while keeping provider-mismatch and RiskGate
+   fail-closed coverage.
+5. Updated the paper-broker runbook so OANDA practice is the primary path;
+   Alpaca remains an optional compatibility path.
+
+### Validation
+
+1. Full `pytest`: **1361 passed**, 9 existing warnings.
+2. `.venv/bin/ruff check .`: passed.
+3. `.venv/bin/mypy packages apps tests`: **253 source files** clean.
+4. `.venv/bin/alphabrief acceptance verify --compact`: **11/11** passed.
+5. Read-only `alphabrief broker status`: latest reconciliation matched and
+   `open_freeze_count` was `0`.
+6. No order-capable AI command was invoked. The current CLI has no
+   `ai daily-cycle --dry-run` command, so a zero-side-effect CLI dry-run
+   remains a future enhancement rather than a claimed validation step.

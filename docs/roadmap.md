@@ -1651,3 +1651,24 @@ AI trading path is feature-flag gated and remains behind the existing
 - [x] Focused `ruff` and `mypy`: clean for trader, AI API, scheduler,
       and related tests.
 - [x] External AI paper bridge subset: 19 passed.
+
+## Round 0063 — OANDA-First Default Paper Workflow
+
+Status: implemented and validated; 30-day observation intentionally not
+started.
+
+1. The checked-in paper policy now defaults to OANDA v20 practice with a
+   19-instrument multi-asset allowlist: FX majors/crosses, metals, and index
+   CFDs. The latter are market-index exposure, not direct US-stock orders.
+2. `mode: paper`, mandatory human review, disabled automation, and the
+   live-trading lock remain unchanged.
+3. The scheduler’s default AI universe is now
+   `EUR_USD,GBP_USD,USD_JPY`, aligned to the OANDA policy. Operators can
+   override it only with policy-approved OANDA instrument names.
+4. All legacy Alpaca/ETF test assumptions on the default path were migrated;
+   explicit policy/broker mismatch tests remain fail-closed.
+5. Validation: **1361 pytest passed**, `ruff` clean, `mypy` clean across
+   **253 source files**, acceptance **11/11**, and a read-only broker-status
+   check reported a matching snapshot with zero open freezes.
+6. No order-capable AI CLI command was run: the published CLI has no dry-run
+   option, and no 30-day observation was started.

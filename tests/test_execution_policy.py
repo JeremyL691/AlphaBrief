@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -49,23 +50,30 @@ def _configured_policy_text() -> str:
 
 
 def test_checked_in_execution_policy_is_paper_only_and_locked() -> None:
+    """Round 0063: default paper policy is now OANDA FX + metals + index CFDs.
+
+    Locks the reviewed OANDA boundary documented in
+    docs/development_plans/0063-default-paper-policy-oanda-fx.md. Edit that
+    plan and this assertion together when the universe changes.
+    """
     policy = load_paper_execution_policy("config/paper_execution_policy.yaml")
 
     assert policy.mode == "paper"
-    assert policy.provider == "alpaca_paper"
+    assert policy.provider == "oanda_paper"
+    assert policy.market == "multi_asset"
     assert policy.symbols == (
-        "SPY",
-        "QQQ",
-        "IVV",
-        "VOO",
-        "AGG",
-        "BND",
-        "GLD",
-        "SLV",
+        # FX Majors
+        "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD",
+        # FX Crosses
+        "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CHF_JPY",
+        # Metals
+        "XAU_USD", "XAG_USD",
+        # Index CFDs (US + EU + JP)
+        "US30_USD", "SPX500_USD", "NAS100_USD", "DE30_EUR", "JP225_USD",
     )
     assert policy.order_types == ("market", "limit")
-    assert policy.max_order_notional == Decimal("100")
-    assert policy.max_total_exposure == Decimal("300")
+    assert policy.max_order_notional == Decimal("10000")
+    assert policy.max_total_exposure == Decimal("50000")
     assert policy.require_human_review is True
     assert policy.automated_execution is False
 
@@ -84,16 +92,44 @@ def test_execution_policy_rejects_invalid_operating_boundaries(
     replacement: str,
     error: str,
 ) -> None:
+    """Round 0063: baseline-aware boundary tests.
+
+    Replacements target fields by key prefix on the actual baseline so the
+    tests stay stable when default values (provider, market, symbols,
+    notional caps, session window) change across rounds.
+    """
     policy_path = tmp_path / "policy.yaml"
     baseline = _configured_policy_text()
+
+    def _replace_first(prefix: str, new_text: str) -> str:
+        for line in baseline.splitlines():
+            if line.startswith(prefix):
+                return baseline.replace(line, new_text, 1)
+        raise AssertionError(f"baseline has no line starting with {prefix!r}")
+
     if replacement.startswith("mode:"):
-        text = baseline.replace("mode: paper", replacement)
+        text = _replace_first("mode:", replacement)
     elif replacement.startswith("order_types:"):
-        text = baseline.replace("order_types: [market, limit]", replacement)
+        text = _replace_first("order_types:", replacement)
     elif replacement.startswith("max_order_notional:"):
-        text = baseline.replace('max_order_notional: "100"', replacement)
+        text = _replace_first("max_order_notional:", replacement)
     else:
-        text = baseline.replace('session_end: "16:00"', replacement)
+        # session_end: pin start to 10:00 so the validator's start > end
+        # check fires. We mutate the running text each step because each
+        # ``_replace_first`` call rebuilds from the original baseline.
+        text = baseline
+        for prefix, value in (
+            ("session_start:", 'session_start: "10:00"'),
+            ("session_end:", replacement),
+        ):
+            for line in text.splitlines():
+                if line.startswith(prefix):
+                    text = text.replace(line, value, 1)
+                    break
+            else:
+                raise AssertionError(
+                    f"running text has no line starting with {prefix!r}"
+                )
     policy_path.write_text(text, encoding="utf-8")
 
     with pytest.raises((ValidationError, ValueError), match=error):
@@ -111,17 +147,37 @@ def test_execution_policy_rejects_unknown_fields(tmp_path: Path) -> None:
 def test_execution_policy_accepts_reviewed_oanda_paper_boundary(
     tmp_path: Path,
 ) -> None:
-    policy_path = tmp_path / "oanda_policy.yaml"
-    policy_path.write_text(
-        _configured_policy_text()
-        .replace("provider: alpaca_paper", "provider: oanda_paper")
-        .replace("market: us_equity", "market: fx")
-        .replace(
-            "symbols: [SPY, QQQ, IVV, VOO, AGG, BND, GLD, SLV]",
-            "symbols: [EUR_USD, GBP_USD]",
-        ),
-        encoding="utf-8",
+    """Round 0063: default paper policy is now OANDA + multi_asset.
+
+    This test still proves the policy can be expressed as a paper OANDA
+    configuration, but it now mutates symbols on the already-OANDA baseline
+    rather than translating an Alpaca baseline.
+    """
+    baseline = _configured_policy_text()
+    text = baseline
+    # Force the OANDA + fx + EUR-only shape regardless of what the baseline
+    # currently says — this test documents that the reviewed boundary can be
+    # expressed from any starting policy. Round 0063 changed the default to
+    # multi_asset, so we explicitly collapse to fx here.
+    text = re.sub(
+        r"^provider:.*$", "provider: oanda_paper", text, count=1, flags=re.MULTILINE
     )
+    text = re.sub(r"^market:.*$", "market: fx", text, count=1, flags=re.MULTILINE)
+    # The baseline uses a block-style ``symbols:`` list (one per line);
+    # replace the whole block so we can narrow to a pure-FX pair. The list
+    # contains commented sub-sections (e.g. "  # FX Majors") which are also
+    # matched by `  - .+\n` because they start with "  -". The non-greedy
+    # `+` followed by a comment-and-list pattern needs DOTALL + matching the
+    # leading "  - " (any content) plus subsequent "  - " lines, but skipping
+    # comment lines.
+    text = re.sub(
+        r"(?ms)^symbols:\n((?:  - [^\n]+\n|  #[^\n]*\n)+)",
+        "symbols:\n  - EUR_USD\n  - GBP_USD\n",
+        text,
+        count=1,
+    )
+    policy_path = tmp_path / "oanda_policy.yaml"
+    policy_path.write_text(text, encoding="utf-8")
 
     policy = load_paper_execution_policy(policy_path)
 
@@ -142,28 +198,31 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
     _reset_risk_gate()
     gate = _get_risk_gate()
     gate.clock = lambda: POLICY_NOW  # session-in, fresh signal
+    # Round 0063: default universe is OANDA FX/metals/index CFDs. Use a
+    # representative instrument from the new allowlist. The order value
+    # stays well under max_order_notional=10000 units.
     allowed = OrderIntent(
-        intent_id="policy-spy",
+        intent_id="policy-eurusd",
         source="manual",
-        symbol="SPY",
+        symbol="EUR_USD",
         side="buy",
         order_type="market",
-        quantity=Decimal("1"),
+        quantity=Decimal("100"),
         rationale="policy boundary test",
         created_at=POLICY_NOW,
     )
     blocked_symbol = allowed.model_copy(update={"symbol": "BTC-USD"})
-    blocked_value = allowed.model_copy(update={"quantity": Decimal("2")})
+    blocked_value = allowed.model_copy(update={"quantity": Decimal("99999")})
 
-    ctx = _empty_account_context()
+    ctx = _empty_account_context(symbol="EUR_USD", mark=Decimal("1.14"))
     allowed_decision = gate.evaluate(
-        allowed, estimated_price=Decimal("100"), account_context=ctx
+        allowed, estimated_price=Decimal("1.14"), account_context=ctx
     )
     blocked_symbol_decision = gate.evaluate(
         blocked_symbol, estimated_price=Decimal("100"), account_context=ctx
     )
     blocked_value_decision = gate.evaluate(
-        blocked_value, estimated_price=Decimal("100"), account_context=ctx
+        blocked_value, estimated_price=Decimal("1.14"), account_context=ctx
     )
     assert allowed_decision.approved is True
     assert allowed_decision.requires_human_review is True
@@ -171,7 +230,15 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
     assert blocked_value_decision.approved is False
 
 
-@pytest.mark.parametrize("symbol", ["IVV", "VOO", "AGG", "BND", "GLD", "SLV"])
+@pytest.mark.parametrize("symbol", [
+    # Round 0063: sample from the new OANDA multi-asset universe. All entries
+    # are sized so 1 unit stays well under max_order_notional=10000 units even
+    # on the priciest instrument in the set (XAU_USD at ~4100). Index CFDs
+    # (US30/SPX500/NAS100) are intentionally excluded here because their
+    # 1-unit USD notional is in the 5k-30k range; their allowlist membership
+    # is covered indirectly by the checked-in policy test and broker API tests.
+    "EUR_USD", "GBP_JPY", "AUD_JPY", "XAU_USD", "XAG_USD",
+])
 def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
     from alphabrief_api.routes.risk import _get_risk_gate, _reset_risk_gate
 
@@ -189,10 +256,23 @@ def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
         created_at=POLICY_NOW,
     )
 
+    # Match mark to a representative price per asset class. Quantity is 1
+    # so the order value is well under max_order_notional=10000 units even
+    # on XAU_USD (~4100 notional per unit). We only verify symbol membership
+    # in the allowlist here — order-value/leverage ceilings are covered by
+    # test_default_api_risk_gate_enforces_policy_subset.
+    mark = {
+        "EUR_USD": Decimal("1.14"),
+        "GBP_JPY": Decimal("217.0"),
+        "AUD_JPY": Decimal("112.4"),
+        "XAU_USD": Decimal("4100"),
+        "XAG_USD": Decimal("59.7"),
+    }[symbol]
+
     decision = gate.evaluate(
         intent,
-        estimated_price=Decimal("50"),
-        account_context=_empty_account_context(symbol=symbol, mark=Decimal("50")),
+        estimated_price=mark,
+        account_context=_empty_account_context(symbol=symbol, mark=mark),
     )
 
     assert decision.approved is True
