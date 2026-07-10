@@ -1,10 +1,9 @@
 # AlphaBrief Final Acceptance Report
 
-**Audit date:** 2026-06-26 (Asia/Shanghai)
-**Audit object:** Current `main` checkout after Phase 23 project
-acceptance closeout.
-**Baseline:** Phase 22 Kronos forecast integration plus the Phase 23
-read-only acceptance verifier.
+**Audit date:** 2026-07-10 (Asia/Shanghai)
+**Audit object:** `JeremyL691/feat/oanda-paper-defaults` after Round 0063
+OANDA-first default-paper alignment.
+**Baseline:** latest local quality gates and the read-only broker-status check.
 
 This report is both the final local code acceptance summary and the
 remaining operational gate list. It does not claim completion of
@@ -19,8 +18,11 @@ workbench. The current checkout includes:
 
 - core market data, news, macro, model, strategy, backtest, gym,
   research, review, risk, execution, API, CLI, and dashboard surfaces;
-- external paper-broker adapter boundaries, reconciliation storage,
-  scheduler operations controls, and account-level risk checks;
+- OANDA v20 practice as the default paper-broker path, with a 19-instrument
+  multi-asset policy spanning FX, metals, and selected index CFDs; Alpaca
+  remains an optional compatibility path;
+- default scheduler FX universe aligned to `EUR_USD`, `GBP_USD`, and
+  `USD_JPY`;
 - optional Kronos market forecasts through `ModelGateway`, structured
   and advisory only;
 - Phase 23 `alphabrief_acceptance` verifier exposed through
@@ -37,24 +39,24 @@ an external paper account, and elapsed operating time.
 
 | Verification item | Status | Evidence |
 |---|---|---|
-| Phase 22 quality baseline | Passed | 1212 tests passed after Kronos integration; Ruff and strict Mypy were clean |
-| Phase 23 acceptance verifier | Implemented | `alphabrief_acceptance.build_acceptance_report` with CLI and API surfaces |
-| Phase 23 targeted tests | Passed | Acceptance/API/CLI/status and broker/scheduler CLI subsets passed: 22 tests |
-| Phase 23 sandbox full pytest | Environment-limited | 1204 tests passed; 12 localhost mock-broker tests failed with sandbox `PermissionError` while binding `127.0.0.1` |
-| Static quality gates | Passed | `ruff check .`, `mypy packages apps tests` across 223 source files, and `git diff --check` passed |
+| Round 0063 full pytest | Passed | 1361 tests passed; 9 known warnings |
+| Round 0063 static quality gates | Passed | `ruff check .`, strict Mypy across 253 source files, and `git diff --check` passed |
+| Round 0063 acceptance verifier | Passed | `alphabrief acceptance verify --compact`: 11/11 |
+| Default paper policy | Passed | OANDA practice, 19 instruments, human review, and disabled automation |
+| Read-only broker status | Passed | Latest reconciliation matched; zero open freezes |
 | Default live trading lock | Passed | `load_settings({}).live_trading_enabled` remains false |
-| Execution policy | Passed | `config/paper_execution_policy.yaml` remains paper-mode, human-review, no-automation |
+| Execution policy | Passed | Default OANDA-practice multi-asset policy stays paper-mode, human-review, and no-automation |
 | RiskGate live lock | Passed | Acceptance check verifies `live_trading_locked` rejection when live mode is forced on |
 | Kronos boundary | Passed | Forecasts run through `ModelGateway` and validate as `advisory_only=True` |
 | Reference-source isolation | Passed locally | Acceptance verifier scans runtime imports under `apps/` and `packages/` |
 | Provider SDK boundary | Passed locally | Acceptance verifier scans runtime business imports for direct SDK use |
-| External paper-account operations | Not completed | Adapter code exists, but user credentials and long-running evidence are not present |
+| External paper-account operations | Not started | OANDA practice credentials and read-only account status were verified; no order-capable AI command or 30-day observation was started |
 | Live trading | Not implemented and locked | No live adapter is delivered; RiskGate rejects live-mode configurations |
 
-The final Phase 23 quality gate is tracked in `docs/roadmap.md` and
+The latest quality gate is tracked in `docs/roadmap.md` and
 `docs/development_log.md`. This report intentionally separates local
-code acceptance, sandbox-limited test execution, and broker-account
-operating evidence.
+code acceptance, read-only broker evidence, and broker-account operating
+evidence.
 
 ## 3. Implemented Product Scope
 
@@ -96,9 +98,10 @@ operating evidence.
   tighten-only when they compute a `max_quantity` clamp.
 - Internal paper broker, order router, fill simulator, portfolio state,
   execution audit log, and persistent paper route.
-- Paper-only Alpaca adapter boundary, order mapping, account and
-  position reads, reconciliation storage, scheduler heartbeat, alerts,
-  freeze controls, and CLI/API observation surfaces.
+- Paper-only broker adapters (OANDA practice by default; Alpaca optional),
+  order mapping, account and position reads, reconciliation storage,
+  scheduler heartbeat, alerts, freeze controls, and CLI/API observation
+  surfaces.
 
 ### Product Surfaces
 
@@ -179,7 +182,7 @@ GET /api/v1/acceptance/verify
 
 The following remain outside the local code closeout:
 
-- broker-account credentials and external paper-account operation;
+- external paper-account credentials and external paper-account operation;
 - real submit/query/cancel/fill/reconcile drills against a user-owned
   paper account;
 - daily and weekly operating reports from a continuous 30-60 day paper
@@ -195,8 +198,7 @@ gates that require a real environment and time.
 ## 8. Final Recommendation
 
 Treat the current AlphaBrief checkout as ready for local paper-first
-research and controlled external paper-account onboarding. The next real
-gate is operational: configure a paper broker account, run the existing
-adapter and scheduler under explicit limits, retain daily reconciliation
-evidence, and only after 30-60 stable days consider a separate live
-trading design review.
+research and controlled OANDA-practice onboarding. The next real gate is
+operational: run the existing adapter and scheduler under explicit limits,
+retain daily reconciliation evidence, and only after 30-60 stable days
+consider a separate live-trading design review.
