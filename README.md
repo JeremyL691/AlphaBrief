@@ -11,10 +11,10 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-Phases 1–24 are implemented and locally verified. The project remains
-paper-only: external broker credentials and a long-running external-paper
-observation period are separate acceptance gates, and live trading stays
-locked.
+Through Round 0063, AlphaBrief is implemented and locally verified as an
+OANDA-practice-first paper-trading workbench. The project remains paper-only:
+external broker credentials and a long-running external-paper observation
+period are separate acceptance gates, and live trading stays locked.
 
 - **Phase 1 — Core.** Domain models, CSV/Parquet OHLCV loaders, in-memory
   data quality checks, no-lookahead features, StrategySpec schema, and a
@@ -85,7 +85,7 @@ locked.
   card grid and a dedicated `/dashboard/models` page. 87 new tests.
 - **Phases 15–19 — Strategy lifecycle and paper-broker operations.**
   Strategy specifications and signals are persistent, versioned artifacts;
-  the reviewed paper-only execution policy, Alpaca paper adapter,
+  the reviewed paper-only execution policy, broker-neutral adapters,
   reconciliation store, scheduler operations surface, and account-level
   exposure guard are implemented. The exposure guard is fail-closed and
   tighten-only: it cannot relax an existing RiskGate decision.
@@ -112,8 +112,8 @@ locked.
   pre-flight check via `alphabrief acceptance preflight --paper`
   and `GET /api/v1/acceptance/preflight?scope=paper`; it confirms the
   30-day observation runbook (`docs/paper_broker_setup.md`) is in place
-  and that the Alpaca env-var names, paper execution policy, and
-  broker config files are wired up.
+  and that the OANDA-first broker env-var names, paper execution policy,
+  and broker config files are wired up.
 - **Phase 24 — Pre-paper-trading hardening.** Every CLI command
   (16 groups, 35 subcommands) and every API route (70 endpoints)
   was exercised end-to-end. Six real defects were found and fixed
@@ -196,23 +196,23 @@ Run all checks before committing:
 alphabrief acceptance verify
 ```
 
-Current result: Phase 24 pre-paper-trading hardening passes;
-the full pytest run reaches 1223 passing tests. Ruff is clean,
-strict Mypy is clean across 204 source files, and the project
-acceptance verifier is green (`verify` 11/11, `preflight
---scope paper` 1/1). The development log records the latest
+Current result: Round 0063 OANDA-first default-paper alignment passes;
+the full pytest run reaches **1361 passing tests**. Ruff is clean,
+strict Mypy is clean across **253 source files**, and the project
+acceptance verifier is green (`verify` 11/11, `preflight`
+`--scope paper` 1/1). The development log records the latest
 verified run and its environment constraints.
 
 ## Paper Broker Setup
 
-The external paper-trading adapter (Alpaca) and the 30-day observation
-runbook are wired and ready to use. To attach AlphaBrief to a paper
-account:
+The external paper-trading adapter defaults to **OANDA v20 practice**;
+Alpaca Paper remains an optional compatibility path. To attach AlphaBrief to
+a paper account:
 
 1. Read the runbook: [`docs/paper_broker_setup.md`](docs/paper_broker_setup.md).
-2. Sign up at <https://app.alpaca.markets/signup> (Paper mode).
-3. Copy `.env.example` to `.env` and fill in `ALPHABRIEF_ALPACA_KEY`
-   and `ALPHABRIEF_ALPACA_SECRET` (placeholders in `.env.example`).
+2. Create an OANDA v20 demo/practice account.
+3. Copy `.env.example` to `.env` and fill in `ALPHABRIEF_OANDA_TOKEN`
+   and `ALPHABRIEF_OANDA_ACCOUNT_ID` (placeholders in `.env.example`).
 4. Run the pre-flight:
 
    ```bash
