@@ -45,4 +45,3 @@ docs/development_plans/*
 *.tmp
 *.orig
 *.rej
-.DS_Store
