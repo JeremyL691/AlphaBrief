@@ -379,17 +379,17 @@ class TestSchedulerRunsAiTask:
         news_store = NewsStore(db_path=isolated_data_dir / "alphabrief.db")
         ai_store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
         try:
-            assert market_store.get_bar_count("SPY") == 2
-            headlines = news_store.list_headlines(symbol="SPY", limit=10)
+            assert market_store.get_bar_count("EUR_USD") == 2
+            headlines = news_store.list_headlines(symbol="EUR_USD", limit=10)
             assert len(headlines) == 1
-            assert headlines[0].symbols == ["SPY", "QQQ", "IVV"]
+            assert headlines[0].symbols == ["EUR_USD", "GBP_USD", "USD_JPY"]
 
             latest = ai_store.get_latest_cycle()
             assert latest is not None
             assert set(latest["symbols"]) == {
-                "SPY",
-                "QQQ",
-                "IVV",
+                "EUR_USD",
+                "GBP_USD",
+                "USD_JPY",
             }
             assert len(latest["votes"]) == 12
         finally:
@@ -422,10 +422,13 @@ class TestSchedulerRunsAiTask:
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Round 0063: default paper broker is OANDA, so set OANDA credentials
+        # to match the default policy. Insert a EUR_USD bar instead of SPY
+        # because SPY is no longer in the default allowlist.
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
         monkeypatch.setenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "true")
-        monkeypatch.setenv("ALPHABRIEF_ALPACA_KEY", "test-key")
-        monkeypatch.setenv("ALPHABRIEF_ALPACA_SECRET", "test-secret")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
         adapter = _SubmittingAdapter()
         monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
 
@@ -459,12 +462,12 @@ class TestSchedulerRunsAiTask:
             market_store.insert_bars(
                 [
                     Bar(
-                        symbol="SPY",
+                        symbol="EUR_USD",
                         timestamp=datetime.now(UTC),
-                        open=Decimal("100"),
-                        high=Decimal("100"),
-                        low=Decimal("100"),
-                        close=Decimal("100"),
+                        open=Decimal("1.14"),
+                        high=Decimal("1.14"),
+                        low=Decimal("1.14"),
+                        close=Decimal("1.14"),
                         volume=Decimal("1000"),
                         source="test",
                         data_version="test",
@@ -484,8 +487,10 @@ class TestSchedulerRunsAiTask:
         asyncio.run(_run_handler())
 
         assert len(adapter.requests) == 1
-        assert adapter.requests[0].symbol == "SPY"
-        assert adapter.requests[0].quantity == Decimal("1.000")
+        assert adapter.requests[0].symbol == "EUR_USD"
+        # The committee's unchanged $100 paper budget is converted into FX
+        # units at the stored EUR_USD price before external submission.
+        assert adapter.requests[0].quantity == Decimal("100") / Decimal("1.14")
 
         store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
         try:
@@ -501,10 +506,37 @@ class TestSchedulerRunsAiTask:
     def test_external_ai_cycle_refuses_policy_broker_mismatch(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Round 0063: the default policy is OANDA, so to trigger a real
+        policy/provider mismatch we must override the policy to Alpaca while
+        keeping the OANDA credentials set. This guards the fail-closed path
+        regardless of which broker the default policy uses in the future.
+        """
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
         monkeypatch.setenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "true")
         monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
         monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        # Force the policy to claim Alpaca so the broker credentials and the
+        # policy provider disagree — the safety net should still raise.
+        policy_path = isolated_data_dir / "policy.yaml"
+        policy_path.write_text(
+            (
+                "mode: paper\n"
+                "provider: alpaca_paper\n"
+                "market: us_equity\n"
+                "symbols: [SPY, QQQ]\n"
+                "order_types: [market, limit]\n"
+                "timezone: America/New_York\n"
+                "trading_days: [mon, tue, wed, thu, fri]\n"
+                "session_start: \"09:30\"\n"
+                "session_end: \"16:00\"\n"
+                "max_order_notional: \"100\"\n"
+                "max_total_exposure: \"300\"\n"
+                "require_human_review: true\n"
+                "automated_execution: false\n"
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ALPHABRIEF_EXECUTION_POLICY_FILE", str(policy_path))
 
         handler = _ai_cycle_factory(db_path=isolated_data_dir)
 

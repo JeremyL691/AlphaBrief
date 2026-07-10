@@ -502,7 +502,11 @@ def _build_ai_committee() -> TradingCommittee:
     return build_ai_trading_committee()
 
 
-_AI_SCHEDULER_UNIVERSE = ("SPY", "QQQ", "IVV")
+# Keep the scheduler's default cycle aligned with the checked-in OANDA
+# practice execution policy. The broader policy allowlist includes metals and
+# index CFDs, while the default AI cycle intentionally starts with three
+# liquid FX majors; operators can expand it via ALPHABRIEF_AI_SCHEDULER_UNIVERSE.
+_AI_SCHEDULER_UNIVERSE = ("EUR_USD", "GBP_USD", "USD_JPY")
 _AI_SCHEDULER_UNIVERSE_ENV = "ALPHABRIEF_AI_SCHEDULER_UNIVERSE"
 _AI_PRE_CYCLE_INGEST_ENV = "ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED"
 _AI_MARKET_DATA_SOURCE_ENV = "ALPHABRIEF_AI_MARKET_DATA_SOURCE"

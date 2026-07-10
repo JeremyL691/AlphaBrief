@@ -820,12 +820,32 @@ def _load_spy_bars(tmp_path: Path, close: str = "90.0") -> None:
     assert resp.status_code == 201, resp.text
 
 
+def _load_eur_usd_bars(tmp_path: Path, close: str = "1.14") -> None:
+    """Load a minimal EUR_USD bar set for OANDA-default paper-order tests."""
+    c = Decimal(close)
+    csv_path = _write_csv(
+        tmp_path / "eur_usd.csv",
+        (
+            "timestamp,open,high,low,close,volume\n"
+            f"2026-06-12T09:30:00,{c},{c + Decimal('0.01')},"
+            f"{c - Decimal('0.01')},{c},1000.0\n"
+        ),
+    )
+    resp = client.post(
+        "/api/v1/data/load",
+        json={"file_path": str(csv_path), "symbol": "EUR_USD", "source": "test"},
+    )
+    assert resp.status_code == 201, resp.text
+
+
 def test_paper_submit_order_requires_human_review_by_default(tmp_path: Path) -> None:
-    _load_spy_bars(tmp_path)
+    _load_eur_usd_bars(tmp_path)
+    # Round 0063: default universe is OANDA multi-asset. Use EUR_USD so the
+    # allowlist check passes and we land on the "human review required" branch.
     response = client.post(
         "/api/v1/paper/orders",
         json={
-            "symbol": "SPY",
+            "symbol": "EUR_USD",
             "side": "buy",
             "order_type": "market",
             "quantity": "1",
@@ -907,15 +927,23 @@ def test_risk_config_returns_200() -> None:
     assert body["trading_enabled"] is True
     assert body["live_trading_enabled"] is False
     assert body["enabled_strategies"] == []
-    assert body["symbol_allowlist"] == sorted(
-        ["SPY", "QQQ", "IVV", "VOO", "AGG", "BND", "GLD", "SLV"]
-    )
-    assert body["max_order_value"] == "100"
+    # Round 0063: default allowlist is the 19-instrument OANDA multi-asset
+    # universe is documented in the Round 0063 OANDA paper-policy plan.
+    assert body["symbol_allowlist"] == sorted([
+        "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD",
+        "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CHF_JPY",
+        "XAU_USD", "XAG_USD",
+        "US30_USD", "SPX500_USD", "NAS100_USD", "DE30_EUR", "JP225_USD",
+    ])
+    # OANDA units: 10,000 units = 1 mini lot. The /risk/config endpoint
+    # surfaces ``max_order_value`` derived from max_order_notional × 1.0
+    # reference USD per unit, so 10,000 units reads back as "10000".
+    assert body["max_order_value"] == "10000"
     # Phase 19: the runtime account-exposure cap from PaperExecutionPolicy.
-    assert body["max_total_exposure"] == "300"
+    assert body["max_total_exposure"] == "50000"
     assert body["require_human_review"] is True
     # Phase 21 R21.2/R21.3 fields are surfaced with paper defaults.
-    assert body["max_symbol_exposure"] == "300"
+    assert body["max_symbol_exposure"] == "50000"
     assert body["max_concentration_pct"] == "1.0"
     assert body["max_leverage"] == "1.0"
     assert body["max_price_deviation_pct"] == "0.05"
