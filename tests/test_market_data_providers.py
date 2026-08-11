@@ -22,6 +22,7 @@ from decimal import Decimal
 from email.message import Message
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import unquote
 from urllib.request import Request
 
 import pytest
@@ -231,6 +232,73 @@ def test_yahoo_provider_skips_null_rows() -> None:
         interval="1d",
     )
     assert len(bars) == 1
+
+
+# ---------------------------------------------------------------------------
+# Yahoo provider — OANDA FX/metals symbol mapping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("symbol", "expected_request_symbol"),
+    [
+        ("EUR_USD", "EURUSD=X"),
+        ("XAU_USD", "XAUUSD=X"),
+    ],
+)
+def test_yahoo_provider_maps_oanda_symbol_in_request_url(
+    symbol: str, expected_request_symbol: str
+) -> None:
+    base = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+    payload = _yahoo_payload(
+        timestamps=[int(base.timestamp()), int(base.timestamp()) + 86_400],
+        opens=[1.05, 1.06],
+        highs=[1.10, 1.11],
+        lows=[1.00, 1.01],
+        closes=[1.08, 1.09],
+        volumes=[0.0, 0.0],
+    )
+    http_get, captures = _http_capture(payload)
+    provider = YahooFinanceProvider(http_get=http_get)
+
+    bars = provider.fetch_ohlcv(
+        symbol=symbol,
+        start=base,
+        end=base + timedelta(days=2),
+        interval="1d",
+    )
+
+    request_url = unquote(str(captures[0]["url"]))
+    assert expected_request_symbol in request_url
+    assert symbol not in request_url
+    assert len(bars) == 2
+    assert all(bar.symbol == symbol for bar in bars)
+
+
+def test_yahoo_provider_passes_through_non_oanda_symbol() -> None:
+    base = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
+    payload = _yahoo_payload(
+        timestamps=[int(base.timestamp()), int(base.timestamp()) + 86_400],
+        opens=[100.0, 101.0],
+        highs=[110.0, 111.0],
+        lows=[95.0, 96.0],
+        closes=[105.0, 106.0],
+        volumes=[1234.0, 1500.0],
+    )
+    http_get, captures = _http_capture(payload)
+    provider = YahooFinanceProvider(http_get=http_get)
+
+    bars = provider.fetch_ohlcv(
+        symbol="AAPL",
+        start=base,
+        end=base + timedelta(days=2),
+        interval="1d",
+    )
+
+    assert "AAPL" in str(captures[0]["url"])
+    assert "=X" not in str(captures[0]["url"])
+    assert len(bars) == 2
+    assert all(bar.symbol == "AAPL" for bar in bars)
 
 
 # ---------------------------------------------------------------------------

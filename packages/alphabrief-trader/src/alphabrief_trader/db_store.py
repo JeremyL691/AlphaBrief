@@ -42,6 +42,9 @@ _DEFAULT_DB_DIR = Path.home() / ".alphabrief" / "data"
 
 
 def _db_dir() -> Path:
+    ai_dir = os.environ.get("ALPHABRIEF_AI_DB_DIR")
+    if ai_dir:
+        return Path(ai_dir)
     env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
     if env_dir:
         return Path(env_dir)
