@@ -18,6 +18,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from alphabrief_execution.broker.errors import BrokerTransientError
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -203,6 +204,31 @@ def test_failed_recon_pass_raises_freeze(store: BrokerReconStore) -> None:
     result = _run(runner.reconcile(scope="startup"))
     assert result.snapshot.all_match is False
     assert result.freeze_raised is True
+
+
+def test_transient_recon_failure_does_not_freeze(store: BrokerReconStore) -> None:
+    adapter = FakeAdapter()
+    adapter.fail_with = BrokerTransientError(
+        "oanda transport error: <urlopen error timed out>"
+    )
+    runner = ReconciliationRunner(adapter=adapter, store=store)
+    with pytest.raises(BrokerTransientError):
+        _run(runner.reconcile(scope="cycle"))
+    snapshot = store.latest_snapshot(scope="cycle")
+    assert snapshot is not None
+    assert snapshot.all_match is False
+    assert snapshot.diff["error"] == "reconciliation probe failed (transient)"
+    assert store.has_open_freeze() is False
+
+
+def test_non_transient_recon_failure_still_freezes(store: BrokerReconStore) -> None:
+    adapter = FakeAdapter()
+    adapter.fail_with = RuntimeError("adapter offline")
+    runner = ReconciliationRunner(adapter=adapter, store=store)
+    result = _run(runner.reconcile(scope="startup"))
+    assert result.snapshot.all_match is False
+    assert result.freeze_raised is True
+    assert store.has_open_freeze() is True
 
 
 def test_clear_freeze_resets_open_state(store: BrokerReconStore) -> None:
