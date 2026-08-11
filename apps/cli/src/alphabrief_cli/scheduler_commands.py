@@ -943,12 +943,14 @@ def run_cmd(
         async def _on_reconcile(scope: str) -> None:
             await runner.reconcile(scope=scope)
 
+        ai_db_dir_env = os.environ.get("ALPHABRIEF_AI_DB_DIR")
         db_dir_env = os.environ.get("ALPHABRIEF_DATA_DIR")
-        db_path = (
-            Path(db_dir_env)
-            if db_dir_env
-            else Path.home() / ".alphabrief" / "data"
-        )
+        if ai_db_dir_env:
+            db_path = Path(ai_db_dir_env)
+        elif db_dir_env:
+            db_path = Path(db_dir_env)
+        else:
+            db_path = Path.home() / ".alphabrief" / "data"
         ai_handler = _ai_cycle_factory(db_path=db_path)
 
         tasks = build_default_tasks(
