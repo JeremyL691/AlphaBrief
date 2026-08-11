@@ -10,8 +10,11 @@ Three reconciliation scopes are supported:
   freeze on transient empty positions (start of trading day).
 
 The runner is **fail-closed**: any exception during a reconciliation
-pass records a non-matching snapshot and raises a freeze. It does not
-swallow errors.
+pass records a non-matching snapshot and raises a freeze. The one
+exception is :class:`BrokerTransientError` (timeout, 5xx, 429): it
+records the failed snapshot for observability, then re-raises so the
+scheduler's per-task failure counter drives retries and only freezes
+after ``max_consecutive_failures``. It does not swallow errors.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from alphabrief_execution.broker.errors import BrokerTransientError
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -84,6 +88,23 @@ class ReconciliationRunner:
             positions = await self._adapter.get_positions()
             account = await self._adapter.get_account()
             known = self._store.list_order_id_map()
+        except BrokerTransientError as exc:
+            # A single transient blip must not halt the run; record the
+            # failed snapshot for observability, then re-raise so the
+            # scheduler retries and only freezes after
+            # max_consecutive_failures.
+            self._store.record_snapshot(
+                scope=scope,
+                orders_match=False,
+                fills_match=False,
+                cash_match=False,
+                positions_match=False,
+                diff={
+                    "error": "reconciliation probe failed (transient)",
+                    "detail": str(exc),
+                },
+            )
+            raise
         except Exception as exc:  # noqa: BLE001 — fail closed
             snapshot = self._store.record_snapshot(
                 scope=scope,
