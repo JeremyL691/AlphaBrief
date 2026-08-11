@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -121,10 +122,16 @@ class _SubmittingAdapter(_NullAdapter):
 
 
 @pytest.fixture(autouse=True)
-def _scheduler_ai_test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+def _scheduler_ai_test_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED", "false")
     monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Keep AI-cycle observation exports out of the real ~/.alphabrief dir.
+    monkeypatch.setenv(
+        "ALPHABRIEF_OBSERVATION_DIR", str(tmp_path / "observation")
+    )
     # The project's local ``.env`` is auto-loaded at CLI / API import
     # time (before pytest sets ``PYTEST_CURRENT_TEST``), so OANDA and
     # Alpaca credentials from the developer's machine would otherwise
@@ -418,6 +425,63 @@ class TestSchedulerRunsAiTask:
             assert latest["attempts"] == []
         finally:
             store.close()
+
+    def test_ai_cycle_factory_exports_latest_cycle_json(
+        self,
+        isolated_data_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        obs_dir = tmp_path / "observation"
+        handler = _ai_cycle_factory(db_path=isolated_data_dir)
+
+        async def _run_handler() -> None:
+            await handler()
+
+        asyncio.run(_run_handler())
+
+        store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
+        try:
+            latest = store.get_latest_cycle()
+            assert latest is not None
+        finally:
+            store.close()
+
+        exports = list(obs_dir.glob("ai_cycle_*.json"))
+        assert len(exports) == 1
+        data = json.loads(exports[0].read_text(encoding="utf-8"))
+        assert data["trading_day"] == latest["trading_day"]
+        assert data["outcome"] == "skipped_no_consensus"
+
+    def test_ai_cycle_factory_writes_error_json_on_failure(
+        self,
+        isolated_data_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        obs_dir = tmp_path / "observation"
+
+        def _boom() -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            scheduler_commands, "_ai_scheduler_universe", _boom
+        )
+        handler = _ai_cycle_factory(db_path=isolated_data_dir)
+
+        async def _run_handler() -> None:
+            await handler()
+
+        with pytest.raises(RuntimeError, match="boom"):
+            asyncio.run(_run_handler())
+
+        errors = list(obs_dir.glob("ai_cycle_error_*.json"))
+        assert len(errors) == 1
+        data = json.loads(errors[0].read_text(encoding="utf-8"))
+        assert data["error"] == "boom"
+        assert "at" in data
 
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch

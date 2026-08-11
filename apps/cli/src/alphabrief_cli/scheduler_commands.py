@@ -27,7 +27,7 @@ import signal
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -810,6 +810,48 @@ def _assert_external_policy_matches_broker(
         )
 
 
+def _ai_observation_dir() -> Path:
+    """Directory where external processes read AI cycle exports.
+
+    The scheduler holds the DuckDB write lock on its own DB file for its
+    lifetime, so the paper observation must read these JSON snapshots
+    instead of querying the DB directly.
+    """
+    return Path(
+        os.environ.get(
+            "ALPHABRIEF_OBSERVATION_DIR",
+            str(Path.home() / ".alphabrief" / "reports" / "paper_observation"),
+        )
+    )
+
+
+def _write_ai_cycle_result(latest: dict[str, Any] | None) -> None:
+    """Export the latest cycle as JSON for the observation to read."""
+    if latest is None:
+        return
+    trading_day = latest.get("trading_day") or date.today().isoformat()
+    obs_dir = _ai_observation_dir()
+    obs_dir.mkdir(parents=True, exist_ok=True)
+    (obs_dir / f"ai_cycle_{trading_day}.json").write_text(
+        json.dumps(latest, default=str, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _write_ai_cycle_error(exc: Exception) -> None:
+    """Export a failed cycle as an error JSON for the observation to read."""
+    obs_dir = _ai_observation_dir()
+    obs_dir.mkdir(parents=True, exist_ok=True)
+    (obs_dir / f"ai_cycle_error_{date.today().isoformat()}.json").write_text(
+        json.dumps(
+            {"error": str(exc), "at": datetime.now(UTC).isoformat()},
+            default=str,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _ai_cycle_factory(
     *, db_path: Path
 ) -> Callable[[], Awaitable[None]]:
@@ -894,6 +936,10 @@ def _ai_cycle_factory(
                 enabled=is_ai_trading_enabled(),
             )
             cycle.run(list(universe))
+            _write_ai_cycle_result(store.get_latest_cycle())
+        except Exception as exc:
+            _write_ai_cycle_error(exc)
+            raise
         finally:
             news_store.close()
             market_store.close()
