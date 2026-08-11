@@ -16,6 +16,16 @@ Before planning or implementing a development round, read:
 7. `docs/rewrite_policy.md`
 8. The current code structure relevant to the task
 
+## Branch Policy (main-only)
+
+This repository is strictly single-branch: `main` only.
+
+- Never create a new branch (local or remote) for any work.
+- Never commit or push from any branch other than `main`.
+- The git hooks in `.git/hooks/` enforce this policy and will reject
+  non-main commits and pushes. Do not bypass or disable them.
+- If work needs isolation, use `git stash` or a separate clone, never a branch.
+
 ## Round Discipline
 
 Each round must:
