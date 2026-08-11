@@ -197,6 +197,33 @@ class TestAiTradingStoreLifecycle:
         finally:
             store.close()
 
+    def test_ai_db_dir_env_takes_precedence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ai_dir = tmp_path / "ai-data"
+        monkeypatch.setenv("ALPHABRIEF_AI_DB_DIR", str(ai_dir))
+        monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path / "other"))
+        store = AiTradingStore()
+        try:
+            assert store._db_path.parent == ai_dir  # noqa: SLF001
+            assert store._db_path.name == "alphabrief.db"
+            assert store._db_path.exists()
+        finally:
+            store.close()
+
+    def test_ai_db_dir_env_unset_falls_back_to_data_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data_dir = tmp_path / "data"
+        monkeypatch.delenv("ALPHABRIEF_AI_DB_DIR", raising=False)
+        monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(data_dir))
+        store = AiTradingStore()
+        try:
+            assert store._db_path.parent == data_dir  # noqa: SLF001
+            assert store._db_path.exists()
+        finally:
+            store.close()
+
 
 class TestDisciplineSnapshot:
     def test_save_and_get(self, tmp_db: AiTradingStore) -> None:
