@@ -43,6 +43,7 @@ constraint that all timestamps must be timezone-aware.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -91,6 +92,24 @@ _SUPPORTED_INTERVALS: frozenset[str] = frozenset(
 
 #: Yahoo chart endpoint base URL.
 _YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
+
+#: OANDA-style FX/metals symbols (e.g. ``EUR_USD``, ``XAU_USD``) must be
+#: rewritten to Yahoo's ``basequote=X`` form (e.g. ``EURUSD=X``) for the
+#: HTTP request; returned bars keep the original caller-provided symbol.
+_OANDA_SYMBOL_RE = re.compile(r"[A-Z]{3}_[A-Z]{3}")
+
+
+def _yahoo_request_symbol(symbol: str) -> str:
+    """Map *symbol* to the form Yahoo expects in the request URL.
+
+    Yahoo 404s on OANDA-style symbols such as ``EUR_USD``; it only
+    resolves the ``=X`` form (``EURUSD=X``). All other symbols pass
+    through unchanged.
+    """
+    if _OANDA_SYMBOL_RE.fullmatch(symbol):
+        base, quote = symbol.split("_", 1)
+        return f"{base}{quote}=X"
+    return symbol
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +176,8 @@ class YahooFinanceProvider:
             f"&period2={int(end.timestamp())}"
             f"&interval={interval}"
         )
-        url = f"{_YAHOO_CHART_URL}/{quote(symbol, safe='')}?{params}"
+        request_symbol = _yahoo_request_symbol(symbol)
+        url = f"{_YAHOO_CHART_URL}/{quote(request_symbol, safe='')}?{params}"
         request = Request(url, headers={"User-Agent": "alphabrief/0.0.0"})
 
         try:
