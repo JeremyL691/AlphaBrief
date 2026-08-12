@@ -422,6 +422,17 @@ M05 激活并继承 `external_evidence_pending`（按 autonomous_loop §5.1，M0
 `CurrentRoundSchema` 同步接受该字段（loop-controller schema 的文档化 forced
 path）。full pytest 1625 passed（+32 candles 测试）。
 
+#### M05-W02 已闭环证据（R-20260813-M05-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M05-W02-01 | 请求按配置上限确定性分块；响应保留 bid/ask ladders、spread、liquidity、tradeable、closeout、conversion factors、broker time、request correlation | `PricingRequest.max_instruments_per_request`（默认 50、上限 500）确定性分块（7 symbols/3 → 3 请求）；`OandaPrice` 全字段保留（Decimal ladder entries + spread + closeout + conversion_factor + broker_time UTC + request_id + source_version）；chunk correlation ID 唯一（`test_oanda_market_pricing.py`） |
+| AC-M05-W02-02 | missing sides、crossed prices、nonpositive conversion factors、duplicate instruments、malformed timestamps 失败而非静默修复 | 五类 quality validation 各有测试：空 bids/asks → failed；bid>ask → failed；conversion factor<=0 → failed；重复 instrument → failed；非法时间 → failed；float 输入拒绝 |
+| AC-M05-W02-03 | partial broker response 发布显式 per-instrument coverage，不能表示为完整 pricing snapshot | `InstrumentCoverage`（requested/returned/missing/failed/complete）；partial（1/3 返回）→ missing 明确列出且 complete=False；全量返回 → complete=True |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1636 passed（+11
+pricing 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

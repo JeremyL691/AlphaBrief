@@ -45,6 +45,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | catalog API/CLI | read-only catalog surfaces | M04-W05 起：共享 `store.query()`（pagination/search/category/active、确定性排序）；API `/api/v1/data/catalog` 与 CLI `data catalog` 输出全等；missing/stale/mismatch 显式 unavailable，绝不 substitute allowlist 或触发 broker write |
 | M04 里程碑 | account + instruments + catalog | W01 preflight、W02 instruments contract、W03 versioned snapshots、W04 taxonomy、W05 API/CLI 全部落地；W06 本地 gates 通过，T7 practice evidence PENDING（CODE_COMPLETE，M05 继承 external_evidence_pending） |
 | `oanda/candles` | complete candles contract | M05-W01 起：全部官方 granularity、M/B/A 组件各自成 fact（Decimal-safe）、alignment 参数、bounded duplicate-free pagination、complete 语义（incomplete 保留 raw、排除出 decision inputs）、immutable source_version |
+| `oanda/pricing` | batch pricing + conversions | M05-W02 起：确定性分块（默认 50/上限 500）、ladders/spread/liquidity/tradeable/closeout/conversion/broker time/correlation 全保留；quality validation fail-closed；显式 per-instrument coverage（partial 永不视为 complete snapshot） |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |
