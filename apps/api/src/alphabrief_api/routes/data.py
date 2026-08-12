@@ -23,6 +23,10 @@ from alphabrief_data import (
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from alphabrief_api.db.instrument_catalog import (
+    CatalogQueryResult,
+    InstrumentCatalogStore,
+)
 from alphabrief_api.db.market_data import MarketDataStore
 from alphabrief_api.db.merged import merge_dedupe, open_snapshot_store
 
@@ -64,6 +68,25 @@ def _close_store() -> None:
     if _store is not None:
         _store.close()
         _store = None
+
+
+_catalog_store: InstrumentCatalogStore | None = None
+
+
+def _get_catalog_store() -> InstrumentCatalogStore:
+    """Return the singleton catalog store, creating it on first access."""
+    global _catalog_store
+    if _catalog_store is None:
+        _catalog_store = InstrumentCatalogStore()
+    return _catalog_store
+
+
+def _clear_catalog_store() -> None:
+    """Clear and nullify the catalog store (test isolation)."""
+    global _catalog_store
+    if _catalog_store is not None:
+        _catalog_store.close()
+        _catalog_store = None
 
 
 def _get_stored_bars(symbol: str) -> list[Bar]:
@@ -327,6 +350,33 @@ def list_symbols() -> SymbolsResponse:
         for row in rows
     ]
     return SymbolsResponse(symbols=summaries)
+
+
+@router.get("/catalog", response_model=CatalogQueryResult)
+def get_instrument_catalog(
+    search: str | None = None,
+    category: str | None = None,
+    active_only: bool = False,
+    page: int = 1,
+    page_size: int = 100,
+    freshness_threshold_seconds: int = 86400,
+) -> CatalogQueryResult:
+    """Return the read-only account instrument catalog.
+
+    Backed only by the persisted account catalog with explicit freshness
+    state: missing, stale, or account-mismatched catalogs return
+    explicit unavailable states; a hard-coded allowlist is never
+    substituted and no broker write is triggered (M04-W05).
+    """
+    store = _get_catalog_store()
+    return store.query(
+        search=search,
+        category=category,
+        active_only=active_only,
+        page=page,
+        page_size=page_size,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+    )
 
 
 @router.get("/{symbol}/bars", response_model=BarsResponse)
