@@ -478,6 +478,18 @@ snapshot/lineage 测试）。
 M05-W06 为 CODE_COMPLETE；M05 里程碑 CODE_COMPLETE，M06 激活并继续继承
 `external_evidence_pending`。
 
+#### M06-W01 已闭环证据（R-20260813-M06-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M06-W01-01 | property tests 证明 positive=buy、negative=sell、zero 拒绝，quantity/price/distance 从 instrument metadata 精确规范化后才序列化 | 确定性生成 property loops（正/负 units 全量、whole-unit 精度、price 精度边界）；zero 与“normalize 后为零”均拒绝；price 超精度拒绝而非静默舍入；`order_side`/`normalize_order`（`test_oanda_order_models.py`） |
+| AC-M06-W01-02 | Market/Limit/Stop/Market-if-Touched、dependent orders、FOK/IOC/GTC/GTD 及 supported trigger 组合序列化为精确 contract fixtures | `serialize_order` fixtures：4 类 order type、4 种 TIF、GTD gtdTime、TP/SL/trailing/GSLO `*OnFill` 键、无 `side` 字段（signed units 编码方向）（`test_oanda_order_contracts.py`） |
+| AC-M06-W01-03 | DAY 与所有 unsupported/account-incompatible 组合失败，绝不静默映射/舍入/提交/送人工 review | DAY 在模型层被拒（不映射 FOK/GTC——替换旧 adapter 的 silent mapping）；MARKET+price、GTD 缺 gtd_time、gtd_time 无 GTD、dependent order price/distance 二选一、GSLO 账户不支持、price 超精度——全部 ValueError fail-closed |
+
+范围说明：本 round 无 allowlist 外路径。property tests 用确定性生成替代
+hypothesis 依赖（未声明 dependency 不引入）。full pytest 1700 passed（+23
+order 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
