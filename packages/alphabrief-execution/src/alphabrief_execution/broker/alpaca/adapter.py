@@ -15,6 +15,7 @@ mapping from the store before the first submit after restart.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -43,6 +44,41 @@ from alphabrief_execution.broker.port import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Crypto symbol mapping
+# ---------------------------------------------------------------------------
+#
+# AlphaBrief uses Yahoo-style crypto identifiers (``BTC-USD``); Alpaca's
+# v2 REST API uses the dashless form (``BTCUSD``). The mapping is
+# reversible and restricted to known crypto bases so no equity symbol
+# is ever rewritten.
+
+_KNOWN_CRYPTO_BASES = frozenset(
+    {
+        "BTC", "ETH", "SOL", "XRP", "DOGE", "LTC", "ADA", "DOT", "LINK",
+        "AVAX", "UNI", "AAVE", "SHIB", "MATIC", "TRX", "BCH", "ETC",
+    }
+)
+_CRYPTO_DASH_RE = re.compile(r"^([A-Z0-9]{2,8})-USD$")
+
+
+def _to_alpaca_symbol(symbol: str) -> str:
+    """Map an internal symbol to the Alpaca wire format."""
+    normalized = symbol.strip().upper()
+    match = _CRYPTO_DASH_RE.match(normalized)
+    if match and match.group(1) in _KNOWN_CRYPTO_BASES:
+        return f"{match.group(1)}USD"
+    return normalized
+
+
+def _from_alpaca_symbol(symbol: str) -> str:
+    """Map an Alpaca wire symbol back to the internal identifier."""
+    normalized = symbol.strip().upper()
+    match = re.match(r"^([A-Z0-9]{2,8})USD$", normalized)
+    if match and match.group(1) in _KNOWN_CRYPTO_BASES:
+        return f"{match.group(1)}-USD"
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +219,7 @@ class AlpacaPaperAdapter(BrokerAdapter):
             )
 
         payload: dict[str, Any] = {
-            "symbol": request.symbol,
+            "symbol": _to_alpaca_symbol(request.symbol),
             "qty": _decimal_to_alpaca_qty(request.quantity),
             "side": _SIDE_MAP[request.side],
             "type": _TYPE_MAP[request.order_type],
@@ -304,7 +340,7 @@ def _parse_order_state(body: Any) -> OrderState:
         return OrderState(
             broker_order_id=str(body.get("id", "")).strip(),
             client_order_id=str(body.get("client_order_id", "")).strip(),
-            symbol=str(body.get("symbol", "")).strip(),
+            symbol=_from_alpaca_symbol(str(body.get("symbol", "")).strip()),
             side=BrokerOrderSide(str(body.get("side", "")).strip().lower()),
             order_type=BrokerOrderType(str(body.get("type", "")).strip().lower()),
             quantity=Decimal(str(body.get("qty", "0"))),
@@ -328,7 +364,7 @@ def _parse_fill(body: dict[str, Any]) -> Fill:
     return Fill(
         fill_id=str(body.get("id", "")).strip(),
         broker_order_id=str(body.get("order_id", "")).strip(),
-        symbol=str(body.get("symbol", "")).strip(),
+        symbol=_from_alpaca_symbol(str(body.get("symbol", "")).strip()),
         side=BrokerOrderSide(str(body.get("side", "")).strip().lower()),
         quantity=Decimal(str(body.get("qty", "0"))),
         price=Decimal(str(body.get("price", "0"))),
@@ -339,7 +375,7 @@ def _parse_fill(body: dict[str, Any]) -> Fill:
 
 def _parse_position(body: dict[str, Any]) -> Position:
     return Position(
-        symbol=str(body.get("symbol", "")).strip(),
+        symbol=_from_alpaca_symbol(str(body.get("symbol", "")).strip()),
         quantity=Decimal(str(body.get("qty", "0"))),
         average_price=Decimal(str(body.get("avg_entry_price", "0"))),
     )

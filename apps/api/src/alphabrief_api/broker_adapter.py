@@ -146,22 +146,26 @@ def _alpaca_is_configured() -> bool:
 
 
 def _build_broker_adapter() -> BrokerAdapter:
-    """Build the appropriate broker adapter for the runtime environment.
+    """Build the routed broker adapter for the runtime environment.
 
-    OANDA credentials win over Alpaca credentials so non-US operators can
-    use the OANDA demo account without unsetting Alpaca keys. If neither
-    credential set is present, fall back to :class:`_NullBrokerAdapter`.
+    FX / metals / index CFDs route to OANDA practice and US equities /
+    crypto route to Alpaca paper when their credentials are present;
+    venues without credentials fall back to the built-in simulated
+    adapter. With no credentials at all, fall back to
+    :class:`_NullBrokerAdapter` so the API boots in dev / CI.
 
     Live base URL overrides may be supplied via :data:`ENV_OANDA_BASE_URL`
     or :data:`ENV_ALPACA_BASE_URL` for tests pointing at mock servers; an
     ``http://`` scheme is permitted there (``allow_insecure_base_url``)
     and must not point at live trading.
     """
-    if _oanda_is_configured():
-        return _build_oanda_adapter()
-    if _alpaca_is_configured():
-        return _build_alpaca_adapter()
-    return _NullBrokerAdapter()
+    from alphabrief_execution.broker.routing import RoutingBrokerAdapter
+
+    oanda = _build_oanda_adapter() if _oanda_is_configured() else None
+    alpaca = _build_alpaca_adapter() if _alpaca_is_configured() else None
+    if oanda is None and alpaca is None:
+        return _NullBrokerAdapter()
+    return RoutingBrokerAdapter(oanda=oanda, alpaca=alpaca)
 
 
 def _build_oanda_adapter() -> BrokerAdapter:

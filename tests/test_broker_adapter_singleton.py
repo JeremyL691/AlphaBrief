@@ -16,8 +16,7 @@ from decimal import Decimal
 
 import pytest
 from alphabrief_api import broker_adapter
-from alphabrief_execution.broker.alpaca.adapter import AlpacaPaperAdapter
-from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+from alphabrief_execution.broker.routing import RoutingBrokerAdapter
 
 
 @pytest.fixture(autouse=True)
@@ -54,12 +53,16 @@ def test_credentials_set_returns_live_adapter(
     monkeypatch.setenv("ALPHABRIEF_ALPACA_SECRET", "test-secret")
     monkeypatch.setenv("ALPHABRIEF_ALPACA_BASE_URL", "http://127.0.0.1:1")
     adapter = broker_adapter.get_broker_adapter()
-    assert isinstance(adapter, AlpacaPaperAdapter)
+    assert isinstance(adapter, RoutingBrokerAdapter)
+    assert adapter.venue_for_symbol("AAPL") == "alpaca_paper"
+    assert adapter.venue_for_symbol("BTC-USD") == "alpaca_paper"
     assert broker_adapter.has_live_broker() is True
 
-def test_oanda_credentials_are_preferred_over_alpaca(
+def test_oanda_credentials_are_routed_alongside_alpaca(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # With both credential sets present the routed adapter wires both
+    # venues: FX/metals/index CFDs -> OANDA, equities/crypto -> Alpaca.
     monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
     monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
     monkeypatch.setenv("ALPHABRIEF_OANDA_BASE_URL", "http://127.0.0.1:1")
@@ -67,7 +70,12 @@ def test_oanda_credentials_are_preferred_over_alpaca(
     monkeypatch.setenv("ALPHABRIEF_ALPACA_SECRET", "test-secret")
     monkeypatch.setenv("ALPHABRIEF_ALPACA_BASE_URL", "http://127.0.0.1:1")
     adapter = broker_adapter.get_broker_adapter()
-    assert isinstance(adapter, OandaPaperAdapter)
+    assert isinstance(adapter, RoutingBrokerAdapter)
+    assert adapter.venue_for_symbol("EUR_USD") == "oanda_paper"
+    assert adapter.venue_for_symbol("XAU_USD") == "oanda_paper"
+    assert adapter.venue_for_symbol("US30_USD") == "oanda_paper"
+    assert adapter.venue_for_symbol("AAPL") == "alpaca_paper"
+    assert adapter.venue_for_symbol("BTC-USD") == "alpaca_paper"
     assert broker_adapter.has_live_broker() is True
 
 
@@ -82,7 +90,7 @@ def test_reset_clears_cached_singleton(
     monkeypatch.setenv("ALPHABRIEF_ALPACA_SECRET", "test-secret")
     monkeypatch.setenv("ALPHABRIEF_ALPACA_BASE_URL", "http://127.0.0.1:1")
     live = broker_adapter.get_broker_adapter()
-    assert isinstance(live, AlpacaPaperAdapter)
+    assert isinstance(live, RoutingBrokerAdapter)
 
     # Drop credentials and reset; the next access rebuilds a null adapter.
     monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)

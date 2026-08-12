@@ -307,6 +307,11 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setenv("ALPHABRIEF_AI_MARKET_DATA_SOURCE", "yahoo")
         monkeypatch.setenv("ALPHABRIEF_AI_NEWS_SOURCE", "rss")
         monkeypatch.setenv("ALPHABRIEF_AI_NEWS_FEEDS", "marketwatch-rss")
+        # Pin a small universe so the test stays focused on the ingestion
+        # pipeline (the default universe now spans FX + equities + crypto).
+        monkeypatch.setenv(
+            "ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD,GBP_USD,USD_JPY"
+        )
 
         class _MarketProvider:
             provider_name = "test-market"

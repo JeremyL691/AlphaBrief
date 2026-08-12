@@ -100,6 +100,7 @@ class DailyTradingCycle:
         enabled: bool | None = None,
         clock: Callable[[], datetime] | None = None,
         cycle_id_factory: Callable[[], str] | None = None,
+        max_order_value: Decimal | None = None,
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -115,8 +116,10 @@ class DailyTradingCycle:
         self._risk_gate = risk_gate
         self._broker = broker
         self._execution_backend = execution_backend or LocalPaperExecutionBackend(
-            broker
+            broker,
+            max_order_value=max_order_value,
         )
+        self._max_order_value = max_order_value
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
