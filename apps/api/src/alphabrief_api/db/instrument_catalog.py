@@ -15,17 +15,24 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import duckdb
 from alphabrief_execution.broker.oanda.instruments import (
     InstrumentCatalogSnapshot,
     InstrumentMetadata,
 )
+from alphabrief_execution.broker.oanda.taxonomy import (
+    classify_instrument,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphabrief_api.db.schema import apply_schema, drop_schema
+
+#: Default freshness threshold for catalog availability (seconds).
+DEFAULT_FRESHNESS_THRESHOLD_SECONDS = 24 * 60 * 60
 
 
 class CatalogDiff(BaseModel):
@@ -48,6 +55,40 @@ class CatalogProjection(BaseModel):
     snapshot_id: str
     content_hash: str
     instruments: tuple[InstrumentMetadata, ...] = Field(min_length=1)
+
+
+CatalogAvailability = Literal["available", "stale", "account_mismatch", "missing"]
+
+
+class CatalogItem(BaseModel):
+    """One catalog query result row (metadata + taxonomy + active state)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    raw_type: str = Field(min_length=1)
+    category: str = Field(min_length=1)
+    taxonomy_version: str = Field(min_length=1)
+    active: bool
+    margin_rate: Decimal
+    minimum_trade_size: Decimal
+    display_precision: int
+
+
+class CatalogQueryResult(BaseModel):
+    """The deterministic catalog query response shared by API and CLI."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    availability: CatalogAvailability
+    catalog_version: str | None = None
+    freshness: str | None = None
+    total: int = 0
+    filtered_count: int = 0
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+    items: tuple[CatalogItem, ...] = ()
 
 
 def _content_hash(snapshot: InstrumentCatalogSnapshot) -> str:
@@ -74,6 +115,7 @@ class InstrumentCatalogStore:
         if db_path is None:
             db_path = _default_db_path()
         self._db_path = Path(db_path)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
         apply_schema(self._conn)
 
@@ -216,6 +258,101 @@ class InstrumentCatalogStore:
             }
             for row in rows
         ]
+
+    def query(
+        self,
+        *,
+        search: str | None = None,
+        category: str | None = None,
+        active_only: bool = False,
+        page: int = 1,
+        page_size: int = 100,
+        expected_account_id_hash: str | None = None,
+        freshness_threshold_seconds: int = DEFAULT_FRESHNESS_THRESHOLD_SECONDS,
+    ) -> CatalogQueryResult:
+        """Run the deterministic catalog query shared by API and CLI.
+
+        The projection is the single source of truth: totals, filters,
+        metadata, taxonomy, and active state all derive from the latest
+        immutable snapshot. Missing, stale, or account-mismatched
+        catalogs return explicit unavailable states; a hard-coded
+        allowlist is never substituted and no broker write ever happens
+        here.
+        """
+        projection = self.current_projection()
+        if projection is None:
+            return CatalogQueryResult(
+                availability="missing", page=page, page_size=page_size
+            )
+        if (
+            expected_account_id_hash is not None
+            and projection.account_id_hash != expected_account_id_hash
+        ):
+            return CatalogQueryResult(
+                availability="account_mismatch",
+                page=page,
+                page_size=page_size,
+            )
+
+        latest = self._conn.execute(
+            "SELECT fetched_at FROM instrument_catalog_snapshots "
+            "WHERE snapshot_id = ?",
+            [projection.snapshot_id],
+        ).fetchone()
+        fetched_at = latest[0] if latest else None
+        freshness = str(fetched_at) if fetched_at is not None else None
+        if (
+            fetched_at is not None
+            and (datetime.now(UTC) - fetched_at).total_seconds()
+            > freshness_threshold_seconds
+        ):
+            return CatalogQueryResult(
+                availability="stale",
+                catalog_version=projection.snapshot_id,
+                freshness=freshness,
+                page=page,
+                page_size=page_size,
+            )
+
+        query = search.strip().lower() if search else ""
+        items: list[CatalogItem] = []
+        for instrument in projection.instruments:
+            classified = classify_instrument(instrument)
+            if query and (
+                query not in instrument.name.lower()
+                and query not in instrument.display_name.lower()
+            ):
+                continue
+            if category and classified.category != category:
+                continue
+            if active_only:
+                continue  # everything in the projection is active by construction
+            items.append(
+                CatalogItem(
+                    name=instrument.name,
+                    display_name=instrument.display_name,
+                    raw_type=instrument.raw_type,
+                    category=classified.category,
+                    taxonomy_version=classified.taxonomy_version,
+                    active=True,
+                    margin_rate=instrument.margin_rate,
+                    minimum_trade_size=instrument.minimum_trade_size,
+                    display_precision=instrument.display_precision,
+                )
+            )
+        items.sort(key=lambda item: item.name)
+        total = len(projection.instruments)
+        start = (page - 1) * page_size
+        return CatalogQueryResult(
+            availability="available",
+            catalog_version=projection.snapshot_id,
+            freshness=freshness,
+            total=total,
+            filtered_count=len(items),
+            page=page,
+            page_size=page_size,
+            items=tuple(items[start : start + page_size]),
+        )
 
     def _snapshot_from_projection(
         self,

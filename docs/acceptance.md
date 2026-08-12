@@ -386,6 +386,17 @@ full pytest 1565 passed（+9 catalog 测试）。
 范围说明：本 round 无 allowlist 外路径。full pytest 1581 passed（+16
 taxonomy 测试）。
 
+#### M04-W05 已闭环证据（R-20260813-M04-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M04-W05-01 | API 与 CLI 对同一 query 返回相同 total/filtered counts/metadata/taxonomy/active state/catalog version/freshness | 共享 `InstrumentCatalogStore.query()`（单一 truth）；API `GET /api/v1/data/catalog` 与 CLI `alphabrief data catalog` 输出 JSON 全等断言（`test_instrument_catalog_api_cli.py`） |
+| AC-M04-W05-02 | pagination、exact-name、case-insensitive search、category/active filters、unknown categories、empty results 有确定 schema 与排序 | 分页不重叠且按 name 排序；exact `XAU_USD` 与 fuzzy `gold` 均命中；OTHER_CFD filter 与无结果返回确定性空结构；items 带 category/taxonomy_version/active |
+| AC-M04-W05-03 | missing/stale/account-mismatch catalog 返回显式 unavailable states，绝不替换 hard-coded allowlist 或触发 broker write | `availability ∈ {missing, stale, account_mismatch, available}`；query 只读（snapshot 数量不变）；API/CLI 无任何 broker 调用路径 |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1590 passed（+9
+catalog API/CLI 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
