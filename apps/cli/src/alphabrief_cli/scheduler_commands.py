@@ -824,14 +824,11 @@ def _assert_external_policy_matches_broker(
 ) -> None:
     """Fail closed when external AI paper config is internally inconsistent.
 
-    ``routed`` policies are valid with any subset of broker credentials
-    (venues without credentials degrade to the simulated paper broker).
-    Single-venue policies still require their credentials.
+    M01-W01: the execution policy accepts only the OANDA practice provider,
+    so an external policy always requires OANDA practice credentials.
     """
 
     configured = _configured_broker_provider_name()
-    if policy.provider == "routed":
-        return
     if configured is None:
         raise RuntimeError(
             "ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED=true requires OANDA or "

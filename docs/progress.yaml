@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-13T03:13:45+08:00"
+updated_at: "2026-08-13T03:45:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -56,7 +56,7 @@ current_baseline:
     mypy: PASS
     legacy_acceptance: "11/11 PASS; static/local checks only"
   current_execution:
-    policy_provider: routed
+    policy_provider: oanda_paper
     oanda_adapter_present: true
     alpaca_adapter_present: true
     production_simulated_fallback_present: true
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M01
-  work_item_id: M01-W01
+  work_item_id: M01-W02
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M00-FINAL-GATE
-  next_action: resolve HEAD as base commit and start the OANDA-only hard cutover
+  last_verified_gate: M01-W01-FINAL-GATE
+  next_action: delete Alpaca implementation, exports, configuration, and tests
 
 milestones:
   M00: DONE
@@ -97,10 +97,10 @@ milestones:
 
 work_item_states:
   M00-W01: DONE
-  M01-W01: READY
+  M01-W01: DONE
 
 latest_validation:
-  completed_at: "2026-08-13T03:13:45+08:00"
+  completed_at: "2026-08-13T03:45:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -108,7 +108,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 1406
+      passed: 1417
       failed: 0
       warnings: 9
     restricted_sandbox:
@@ -211,5 +211,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M00-DOCS
-last_ledger_record: R-20260813-M00-DOCS
+last_completed_round: R-20260813-M01-W01
+last_ledger_record: R-20260813-M01-W01

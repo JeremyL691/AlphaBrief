@@ -117,6 +117,21 @@ Work queue topology validator 必须检测遗漏和重复但冲突的 requiremen
 - no fake external execution；
 - full regression + SAFE-001..004。
 
+#### M01-W01 已闭环证据（R-20260813-M01-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M01-W01-01 | PaperExecutionPolicy 只接受 provider oanda_paper 和 OANDA-account market boundary | schema Literal 收窄（`oanda_paper`；market 移除 `us_equity`）+ mutation tests（`routed`/`alpaca_paper`/`us_equity` 均被拒绝） |
+| AC-M01-W01-02 | 生产配置不能选择 live host、other broker、routed mode 或 simulated fallback | `alphabrief_execution.broker.safety.production_boundary_violations` 正向门禁（policy mode/provider、oanda base_url 常量、settings live 默认关、selector-line 扫描）+ 6 组 mutation 用例 |
+| AC-M01-W01-03 | 缺凭证 fail closed 且不生成订单/成交 | 无凭证时 `OandaHttpClient` 构造抛 `BrokerAuthError`；API 工厂解析为 `_NullBrokerAdapter`，`submit` 抛 `NotImplementedError`；scheduler external cycle 无凭证拒绝运行 |
+
+范围说明：本 item 对已声明全仓 gates（mypy strict、full pytest）的强制涟漪做了两处最小测试更新，
+语义不变：(1) `tests/test_risk_account_rules.py` 的 venue-agnostic session fixture 值改为
+`oanda_paper`/`multi_asset`（原值已不可能存在）；(2) `tests/test_ai_trader_scheduler.py`
+的 policy/provider mismatch 用例改写为“OANDA policy 缺 OANDA 凭证 fail closed”
+（mismatch 场景在 OANDA-only 下不再可表达）。`apps/cli/.../scheduler_commands.py` 中
+`provider == "routed"` 死分支随字面量收窄删除（mypy 强制，行为不变）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
