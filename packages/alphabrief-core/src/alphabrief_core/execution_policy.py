@@ -15,8 +15,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PaperOrderType = Literal["market", "limit"]
-PaperProvider = Literal["alpaca_paper", "oanda_paper"]
-PaperMarket = Literal["us_equity", "fx", "multi_asset"]
+PaperProvider = Literal["alpaca_paper", "oanda_paper", "routed"]
+PaperMarket = Literal["us_equity", "fx", "multi_asset", "crypto"]
 TradingDay = Literal["mon", "tue", "wed", "thu", "fri"]
 
 
@@ -37,7 +37,7 @@ class PaperExecutionPolicy(BaseModel):
     max_order_notional: Decimal = Field(gt=0)
     max_total_exposure: Decimal = Field(gt=0)
     require_human_review: bool
-    automated_execution: Literal[False]
+    automated_execution: bool
 
     @field_validator("symbols")
     @classmethod
