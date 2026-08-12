@@ -593,6 +593,32 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=4,
+        name="market-data-snapshots",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS market_data_snapshots (
+                snapshot_id           TEXT PRIMARY KEY,
+                manifest_hash         TEXT NOT NULL,
+                quality_policy_version TEXT NOT NULL,
+                source_ids_json       JSON NOT NULL,
+                quality_json          JSON NOT NULL,
+                lineage_parent        TEXT,
+                created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS market_data_snapshot_facts (
+                snapshot_id   TEXT NOT NULL,
+                symbol        TEXT NOT NULL,
+                fact_kind     TEXT NOT NULL,
+                fact_id       TEXT NOT NULL,
+                PRIMARY KEY (snapshot_id, symbol, fact_kind)
+            )
+            """,
+        ),
+    ),
 )
 
 _LATEST_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)
