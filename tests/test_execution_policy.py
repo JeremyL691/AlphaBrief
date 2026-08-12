@@ -1,3 +1,4 @@
+import asyncio
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -50,17 +51,17 @@ def _configured_policy_text() -> str:
 
 
 def test_checked_in_execution_policy_is_paper_only_and_locked() -> None:
-    """Round 0065: default policy is routed multi-asset auto-execution.
+    """M01-W01: default policy is OANDA-practice paper auto-execution.
 
-    FX / metals / index CFDs route to OANDA, US equities and crypto route
-    to Alpaca (or the built-in simulator when credentials are absent).
-    Paper mode and live-trading lock are unchanged; automated execution
-    is allowed inside paper mode only.
+    FX / metals / index CFDs and the transitional names all sit behind the
+    single OANDA practice provider; the RiskGate allowlist is the policy
+    symbols. Paper mode and the live-trading lock are unchanged; automated
+    execution is allowed inside paper mode only.
     """
     policy = load_paper_execution_policy("config/paper_execution_policy.yaml")
 
     assert policy.mode == "paper"
-    assert policy.provider == "routed"
+    assert policy.provider == "oanda_paper"
     assert policy.market == "multi_asset"
     assert policy.symbols == (
         # FX Majors
@@ -203,9 +204,10 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
     _reset_risk_gate()
     gate = _get_risk_gate()
     gate.clock = lambda: POLICY_NOW  # session-in, fresh signal
-    # Round 0065: default universe is routed multi-asset (FX + equities +
-    # crypto). Use a representative instrument from each class; order value
-    # stays well under max_order_notional=2000 USD.
+    # M01-W01: default universe is the OANDA-practice multi-asset boundary
+    # (FX + metals + index CFDs + transitional names). Use a representative
+    # instrument from each class; order value stays well under
+    # max_order_notional=2000 USD.
     allowed = OrderIntent(
         intent_id="policy-eurusd",
         source="manual",
@@ -254,9 +256,9 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
 @pytest.mark.parametrize(
     ("symbol", "quantity"),
     [
-        # Round 0065: sample from the routed multi-asset universe. Quantities
-        # keep the USD notional under max_order_notional=2000 at each asset
-        # class's representative mark.
+        # M01-W01: sample from the OANDA-practice multi-asset boundary.
+        # Quantities keep the USD notional under max_order_notional=2000 at
+        # each asset class's representative mark.
         ("EUR_USD", Decimal("1000")),
         ("GBP_JPY", Decimal("5")),
         ("AUD_JPY", Decimal("10")),
@@ -344,3 +346,167 @@ def test_relative_policy_path_resolves_against_project_root(
     assert policy.provider == again.provider
     assert policy.symbols == again.symbols
     assert policy.market == again.market
+
+
+# ---------------------------------------------------------------------------
+# M01-W01: OANDA-only policy boundary and negative gates
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("provider", ["routed", "alpaca_paper"])
+def test_execution_policy_rejects_non_oanda_providers(
+    tmp_path: Path, provider: str
+) -> None:
+    """AC-M01-W01-01: provider accepts only ``oanda_paper``."""
+    policy_path = tmp_path / "policy.yaml"
+    text = _replace_line(
+        _configured_policy_text(), "provider:", f"provider: {provider}"
+    )
+    policy_path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="Input should be 'oanda_paper'"):
+        load_paper_execution_policy(policy_path)
+
+
+def test_execution_policy_rejects_non_oanda_market(tmp_path: Path) -> None:
+    """AC-M01-W01-01: market must be an OANDA-account market boundary."""
+    policy_path = tmp_path / "policy.yaml"
+    text = _replace_line(
+        _configured_policy_text(), "market:", "market: us_equity"
+    )
+    policy_path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="Input should be"):
+        load_paper_execution_policy(policy_path)
+
+
+def test_production_boundary_gate_accepts_checked_in_configuration() -> None:
+    """AC-M01-W01-02: the checked-in production configuration passes."""
+    from alphabrief_execution.broker.safety import production_boundary_violations
+
+    root = Path(__file__).resolve().parents[1]
+    assert production_boundary_violations(root) == []
+
+
+@pytest.mark.parametrize(
+    ("file_name", "prefix", "replacement", "fragment"),
+    [
+        ("paper_execution_policy.yaml", "provider:", "provider: routed", "provider"),
+        (
+            "paper_execution_policy.yaml",
+            "provider:",
+            "provider: alpaca_paper",
+            "provider",
+        ),
+        ("paper_execution_policy.yaml", "mode:", "mode: live", "mode"),
+        (
+            "paper_execution_policy.yaml",
+            "market:",
+            "market: us_equity",
+            "market",
+        ),
+        (
+            "paper_execution_policy.yaml",
+            "provider:",
+            "provider: oanda_paper\nfallback: true",
+            "fallback",
+        ),
+        (
+            "oanda_paper.yaml",
+            "base_url:",
+            "base_url: https://api-fxtrade.oanda.com",
+            "base_url",
+        ),
+    ],
+)
+def test_production_boundary_gate_rejects_forbidden_selections(
+    tmp_path: Path,
+    file_name: str,
+    prefix: str,
+    replacement: str,
+    fragment: str,
+) -> None:
+    """AC-M01-W01-02: no live host, other broker, routing, or fallback."""
+    from alphabrief_execution.broker.safety import production_boundary_violations
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    baseline = Path(f"config/{file_name}").read_text(encoding="utf-8")
+    (config_dir / file_name).write_text(
+        _replace_line(baseline, prefix, replacement), encoding="utf-8"
+    )
+    for other in ("paper_execution_policy.yaml", "oanda_paper.yaml"):
+        if other != file_name:
+            (config_dir / other).write_text(
+                Path(f"config/{other}").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+
+    violations = production_boundary_violations(tmp_path)
+
+    assert violations, "forbidden selection must produce a violation"
+    assert any(fragment in violation for violation in violations)
+
+
+def test_missing_oanda_credentials_fail_closed_without_order_or_fill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-M01-W01-03: missing credentials fail closed with no order or fill."""
+    from alphabrief_execution.broker.errors import BrokerAuthError
+    from alphabrief_execution.broker.oanda.client import OandaHttpClient
+    from alphabrief_execution.broker.oanda.config import OandaPaperConfig
+    from alphabrief_execution.broker.port import (
+        BrokerOrderSide,
+        BrokerOrderType,
+        SubmitRequest,
+    )
+
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_ALPACA_BASE_URL", raising=False)
+
+    # A client cannot even be constructed without credentials, so no HTTP
+    # request and no order/fill can be generated.
+    with pytest.raises(BrokerAuthError, match="missing OANDA credentials"):
+        OandaHttpClient(
+            config=OandaPaperConfig(
+                base_url="http://oanda.test",
+                timeout_seconds=1.0,
+                max_retries=0,
+                retry_backoff_seconds=0.001,
+                allow_insecure_base_url=True,
+            )
+        )
+
+    # The production API factory resolves to an adapter whose submit path
+    # raises instead of synthesizing a local fill.
+    from alphabrief_api import broker_adapter
+
+    broker_adapter._reset_broker_adapter()
+    adapter = broker_adapter.get_broker_adapter()
+    assert isinstance(adapter, broker_adapter._NullBrokerAdapter)
+    with pytest.raises(NotImplementedError):
+        asyncio.run(
+            adapter.submit(
+                SubmitRequest(
+                    symbol="EUR_USD",
+                    side=BrokerOrderSide.BUY,
+                    order_type=BrokerOrderType.MARKET,
+                    quantity=Decimal("1000"),
+                ),
+                client_order_id="missing-credentials",
+            )
+        )
+    broker_adapter._reset_broker_adapter()
+
+
+def _replace_line(text: str, prefix: str, new_text: str) -> str:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[index] = new_text
+            return "\n".join(lines)
+    raise AssertionError(f"baseline has no line starting with {prefix!r}")

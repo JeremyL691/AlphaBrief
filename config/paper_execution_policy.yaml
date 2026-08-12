@@ -1,24 +1,25 @@
-# Reviewed paper-only operating boundary. This file contains no credentials and
-# never authorizes broker calls; all execution still requires RiskGate.
+# Reviewed paper-only operating boundary. This file contains no credentials
+# and never authorizes broker calls; all execution still requires RiskGate.
 #
-# Default broker: routed — FX / metals / index CFDs go to OANDA v20 practice;
-# US stocks and crypto go to Alpaca paper. When a broker's credentials are not
-# configured, its asset class degrades to the built-in simulated paper broker
-# so the current baseline stays usable. This fallback is explicitly temporary
-# and must be deleted by blueprint milestone M01 before formal observation.
+# M01-W01: OANDA v20 practice is the only production provider. The schema
+# accepts provider: oanda_paper only; a live host, another broker, routed
+# mode, or any in-memory fallback cannot be selected by this configuration
+# (REQ-PLAT-001 / REQ-PLAT-002). The practice endpoint is a constant in
+# config/oanda_paper.yaml and cannot be overridden to a live host.
 #
-# Universe: 34 instruments across FX majors/crosses, metals, index CFDs, US
-# equities, and crypto. Symbols are internal AlphaBrief identifiers — Yahoo
-# serves them natively (AAPL, BTC-USD, EURUSD=X) and the routed broker adapter
-# maps each class to the right venue.
+# Symbol list: a transitional operating allowlist for the deterministic
+# RiskGate. The final universe is defined by what the configured OANDA
+# practice account returns from GET /v3/accounts/{accountID}/instruments
+# (blueprint milestone M04); until then the list below is the reviewed
+# boundary, not a claim about account availability.
 #
 # Money units: max_order_notional and max_total_exposure are USD notional
 # (quantity x reference price). The RiskGate enforces them as dollar caps.
 mode: paper
-provider: routed
+provider: oanda_paper
 market: multi_asset
 symbols:
-  # FX Majors (OANDA)
+  # FX Majors
   - EUR_USD
   - GBP_USD
   - USD_JPY
@@ -26,22 +27,22 @@ symbols:
   - AUD_USD
   - USD_CAD
   - NZD_USD
-  # FX Crosses (OANDA)
+  # FX Crosses
   - EUR_GBP
   - EUR_JPY
   - GBP_JPY
   - AUD_JPY
   - CHF_JPY
-  # Metals (OANDA)
+  # Metals
   - XAU_USD
   - XAG_USD
-  # Index CFDs (OANDA)
+  # Index CFDs
   - US30_USD
   - SPX500_USD
   - NAS100_USD
   - DE30_EUR
   - JP225_USD
-  # US Equities (Alpaca)
+  # Transitional names; availability is confirmed per account in M04.
   - AAPL
   - MSFT
   - NVDA
@@ -52,7 +53,6 @@ symbols:
   - AMD
   - SPY
   - QQQ
-  # Crypto (Alpaca)
   - BTC-USD
   - ETH-USD
   - SOL-USD
@@ -67,7 +67,8 @@ session_end: "23:59"
 max_order_notional: "2000"
 max_total_exposure: "20000"
 # Auto-execution: AI plans and manual paper orders execute immediately once
-# the deterministic RiskGate approves them (paper mode only; live trading
-# stays locked). Ethics veto, exposure caps, and the kill switch still bind.
+# the deterministic RiskGate approves them (paper mode only; the OANDA
+# practice boundary is enforced by schema and acceptance gates). Ethics
+# veto, exposure caps, and the kill switch still bind.
 require_human_review: false
 automated_execution: true
