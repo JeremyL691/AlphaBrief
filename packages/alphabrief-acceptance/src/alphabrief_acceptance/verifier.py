@@ -22,9 +22,14 @@ from alphabrief_core import (
     load_paper_execution_policy,
     load_settings,
 )
-from alphabrief_execution import ENV_KEY as ALPACA_ENV_KEY
-from alphabrief_execution import ENV_SECRET as ALPACA_ENV_SECRET
-from alphabrief_execution import load_alpaca_paper_config
+from alphabrief_execution.broker.oanda import (
+    DEFAULT_BASE_URL as OANDA_PRACTICE_BASE_URL,
+)
+from alphabrief_execution.broker.oanda import (
+    ENV_ACCOUNT_ID as OANDA_ENV_ACCOUNT_ID,
+)
+from alphabrief_execution.broker.oanda import ENV_TOKEN as OANDA_ENV_TOKEN
+from alphabrief_execution.broker.oanda import load_oanda_paper_config
 from alphabrief_models import (
     DeterministicKronosRuntime,
     KronosForecastAdapter,
@@ -39,16 +44,16 @@ from pydantic import BaseModel, ConfigDict, Field
 AcceptanceStatus = Literal["passed", "failed", "warning"]
 
 _REQUIRED_DOCS = (
-    "ALPHABRIEF_PRODUCT_BLUEPRINT.md",
-    "ALPHABRIEF_DEVELOPMENT_CADENCE.md",
-    "PROJECT_RULES.md",
-    "docs/architecture.md",
-    "docs/roadmap.md",
-    "docs/risk_model.md",
-    "docs/rewrite_policy.md",
-    "docs/model_gateway.md",
-    "FINAL_ACCEPTANCE_REPORT.md",
+    "AGENTS.md",
     "README.md",
+    "ALPHABRIEF_PRODUCT_BLUEPRINT.md",
+    "docs/architecture.md",
+    "docs/work_items.yaml",
+    "docs/progress.yaml",
+    "docs/acceptance.md",
+    "docs/oanda_30_day_runbook.md",
+    "docs/autonomous_loop.md",
+    "docs/development_ledger.ndjson",
 )
 
 _RUNTIME_MODULES = (
@@ -64,6 +69,7 @@ _RUNTIME_MODULES = (
     "alphabrief_review",
     "alphabrief_news",
     "alphabrief_acceptance",
+    "alphabrief_trader",
 )
 
 _PROVIDER_SDK_DENYLIST = frozenset(
@@ -148,7 +154,7 @@ def _build_report(root: Path, *, scope: str) -> AcceptanceReport:
             _kronos_forecast_is_advisory,
             _runtime_code_does_not_import_reference_sources,
             _runtime_code_does_not_import_provider_sdks,
-            _final_report_mentions_latest_phase,
+            _blueprint_is_current,
             _tooling_configured,
             _paper_preflight_ready,
         )
@@ -382,33 +388,34 @@ def _runtime_code_does_not_import_provider_sdks(root: Path) -> AcceptanceCheck:
     )
 
 
-def _final_report_mentions_latest_phase(root: Path) -> AcceptanceCheck:
+def _blueprint_is_current(root: Path) -> AcceptanceCheck:
     def run() -> tuple[AcceptanceStatus, str, str | None]:
-        final_report = (root / "FINAL_ACCEPTANCE_REPORT.md").read_text(
+        blueprint = (root / "ALPHABRIEF_PRODUCT_BLUEPRINT.md").read_text(
             encoding="utf-8"
         )
-        roadmap = (root / "docs/roadmap.md").read_text(encoding="utf-8")
+        progress = (root / "docs/progress.yaml").read_text(encoding="utf-8")
         required_phrases = (
-            "Phase 23",
-            "Kronos",
-            "acceptance verifier",
+            "M17",
+            "OANDA v20 practice-only",
+            "GAP-001",
+            "controller_enforced",
         )
         missing = [
             phrase
             for phrase in required_phrases
-            if phrase not in final_report and phrase not in roadmap
+            if phrase not in blueprint and phrase not in progress
         ]
         if missing:
             return (
                 "failed",
-                "latest acceptance evidence is not documented",
+                "final blueprint or progress state is incomplete",
                 ", ".join(missing),
             )
-        return "passed", "latest phase and quality evidence are documented", None
+        return "passed", "final blueprint and progress authority are current", None
 
     return _check(
-        check_id="docs.final_report_current",
-        title="Final acceptance evidence is current",
+        check_id="docs.blueprint_current",
+        title="Final blueprint and progress authority are current",
         run=run,
     )
 
@@ -449,22 +456,22 @@ def _paper_preflight_ready(root: Path) -> AcceptanceCheck:
     def run() -> tuple[AcceptanceStatus, str, str | None]:
         problems: list[str] = []
 
-        runbook = root / "docs/paper_broker_setup.md"
+        runbook = root / "docs/oanda_30_day_runbook.md"
         if not runbook.is_file():
-            problems.append("docs/paper_broker_setup.md is missing")
+            problems.append("docs/oanda_30_day_runbook.md is missing")
 
         env_example = root / ".env.example"
         if not env_example.is_file():
             problems.append(".env.example is missing")
         else:
             env_text = env_example.read_text(encoding="utf-8")
-            if ALPACA_ENV_KEY not in env_text:
+            if OANDA_ENV_TOKEN not in env_text:
                 problems.append(
-                    f".env.example does not document {ALPACA_ENV_KEY}"
+                    f".env.example does not document {OANDA_ENV_TOKEN}"
                 )
-            if ALPACA_ENV_SECRET not in env_text:
+            if OANDA_ENV_ACCOUNT_ID not in env_text:
                 problems.append(
-                    f".env.example does not document {ALPACA_ENV_SECRET}"
+                    f".env.example does not document {OANDA_ENV_ACCOUNT_ID}"
                 )
 
         try:
@@ -486,11 +493,13 @@ def _paper_preflight_ready(root: Path) -> AcceptanceCheck:
             problems.append(f"paper_execution_policy.yaml invalid: {exc}")
 
         try:
-            load_alpaca_paper_config(root / "config/alpaca_paper.yaml")
-        except FileNotFoundError as exc:
-            problems.append(f"alpaca_paper.yaml missing: {exc}")
+            oanda_config = load_oanda_paper_config(root / "config/oanda_paper.yaml")
+            if oanda_config.base_url != OANDA_PRACTICE_BASE_URL:
+                problems.append(
+                    "oanda_paper.base_url is not the locked practice endpoint"
+                )
         except (ValueError, TypeError) as exc:
-            problems.append(f"alpaca_paper.yaml invalid: {exc}")
+            problems.append(f"oanda_paper.yaml invalid: {exc}")
 
         if problems:
             return (
@@ -500,7 +509,7 @@ def _paper_preflight_ready(root: Path) -> AcceptanceCheck:
             )
         return (
             "passed",
-            "runbook, env wiring, and broker configs are ready",
+            "OANDA practice runbook, env wiring, and broker configs are ready",
             None,
         )
 

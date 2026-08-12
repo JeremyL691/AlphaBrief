@@ -46,16 +46,7 @@ from alphabrief_execution import (
     PortfolioState,
 )
 from alphabrief_execution.broker.port import (
-    AccountSnapshot,
     BrokerAdapter,
-    BrokerHealth,
-    BrokerOrderStatus,
-    CancelResult,
-    Fill,
-    OrderState,
-    Position,
-    SubmitRequest,
-    SubmitResult,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.broker.reconciliation import ReconciliationRunner
@@ -315,159 +306,25 @@ def freezes_cmd(
 # ---------------------------------------------------------------------------
 
 
-class _NullBrokerAdapter(BrokerAdapter):
-    """Phase 18 dev-mode adapter used when no broker credentials are set.
-
-    Every probe returns an empty result so the reconcile task succeeds
-    and the scheduler stays running. The scheduler never places orders
-    through this adapter — ``ReconciliationRunner`` only calls
-    ``list_orders`` / ``get_positions`` / ``get_account``.
-    """
-
-    async def health(self) -> BrokerHealth:
-        return BrokerHealth(
-            healthy=True,
-            detail="null adapter (no broker credentials configured)",
-            checked_at=datetime.now(UTC),
-        )
-
-    async def submit(
-        self, request: SubmitRequest, *, client_order_id: str
-    ) -> SubmitResult:
-        raise NotImplementedError("null adapter does not accept orders")
-
-    async def cancel(self, broker_order_id: str) -> CancelResult:
-        raise NotImplementedError("null adapter does not cancel orders")
-
-    async def get_order(self, broker_order_id: str) -> OrderState:
-        raise NotImplementedError("null adapter has no order state")
-
-    async def list_orders(
-        self, status: BrokerOrderStatus | None = None
-    ) -> list[OrderState]:
-        return []
-
-    async def list_fills(self, since: datetime | None = None) -> list[Fill]:
-        return []
-
-    async def get_positions(self) -> list[Position]:
-        return []
-
-    async def get_account(self) -> AccountSnapshot:
-        return AccountSnapshot(
-            account_id="null-adapter",
-            cash=Decimal("0"),
-            equity=Decimal("0"),
-            buying_power=Decimal("0"),
-            currency="USD",
-            captured_at=datetime.now(UTC),
-        )
-
-
 def _oanda_is_configured() -> bool:
     """Return True when both OANDA credentials are present in the environment."""
-    return bool(
-        os.environ.get("ALPHABRIEF_OANDA_TOKEN")
-        and os.environ.get("ALPHABRIEF_OANDA_ACCOUNT_ID")
-    )
+    from alphabrief_execution.broker.runtime import oanda_is_configured
 
-
-def _alpaca_is_configured() -> bool:
-    """Return True when both Alpaca credentials are present in the environment."""
-    return bool(
-        os.environ.get("ALPHABRIEF_ALPACA_KEY")
-        and os.environ.get("ALPHABRIEF_ALPACA_SECRET")
-    )
+    return oanda_is_configured()
 
 
 def _build_adapter() -> BrokerAdapter:
-    """Build the routed broker adapter for the runtime environment.
+    """Return the process-scoped OANDA practice runtime adapter.
 
-    FX / metals / index CFDs route to OANDA practice when its credentials
-    are present; US equities and crypto route to Alpaca paper when its
-    credentials are present. Any venue without credentials degrades to
-    the built-in simulated paper broker, so the scheduler always has a
-    working execution path.
+    M01-W04: the API lifespan, CLI broker commands, and the scheduler
+    resolve the same runtime factory and persistent data directory
+    authority, so in-memory idempotency state cannot diverge between
+    entry points. Missing OANDA credentials fail closed to a not-ready
+    null adapter that cannot submit.
     """
-    from alphabrief_execution.broker.routing import (
-        RoutingBrokerAdapter,
-        SimulatedBrokerAdapter,
-    )
+    from alphabrief_execution.broker.runtime import get_broker_runtime
 
-    oanda = _build_oanda_adapter() if _oanda_is_configured() else None
-    alpaca = _build_alpaca_adapter() if _alpaca_is_configured() else None
-    return RoutingBrokerAdapter(
-        oanda=oanda,
-        alpaca=alpaca,
-        simulated=SimulatedBrokerAdapter(),
-    )
-
-
-def _build_oanda_adapter() -> BrokerAdapter:
-    from pathlib import Path as _Path
-
-    from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
-    from alphabrief_execution.broker.oanda.client import OandaHttpClient
-    from alphabrief_execution.broker.oanda.config import (
-        DEFAULT_BASE_URL,
-        DEFAULT_MAX_RETRIES,
-        DEFAULT_RETRY_BACKOFF_SECONDS,
-        DEFAULT_TIMEOUT_SECONDS,
-        OandaPaperConfig,
-        load_oanda_paper_config,
-    )
-
-    config_path = _Path("config/oanda_paper.yaml")
-    if config_path.exists():
-        oanda_config = load_oanda_paper_config(config_path)
-    else:
-        oanda_config = OandaPaperConfig(
-            base_url=DEFAULT_BASE_URL,
-            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-            max_retries=DEFAULT_MAX_RETRIES,
-            retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-        )
-    client = OandaHttpClient(config=oanda_config)
-    return OandaPaperAdapter(client=client)
-
-
-def _build_alpaca_adapter() -> BrokerAdapter:
-    # Local import so the CLI doesn't require Alpaca config to be
-    # present at module import time. The config file is loaded
-    # from the default path; tests that exercise the live path
-    # should set the env vars and the config file location.
-    from pathlib import Path as _Path
-
-    from alphabrief_execution.broker.alpaca.adapter import (
-        AlpacaPaperAdapter,
-    )
-    from alphabrief_execution.broker.alpaca.client import (
-        AlpacaHttpClient,
-    )
-    from alphabrief_execution.broker.alpaca.config import (
-        DEFAULT_BASE_URL,
-        DEFAULT_MAX_RETRIES,
-        DEFAULT_RETRY_BACKOFF_SECONDS,
-        DEFAULT_TIMEOUT_SECONDS,
-        AlpacaPaperConfig,
-        load_alpaca_paper_config,
-    )
-
-    config_path = _Path("config/alpaca_paper.yaml")
-    if config_path.exists():
-        alpaca_config = load_alpaca_paper_config(config_path)
-    else:
-        # Dev fallback: explicit defaults rather than a default
-        # constructor because AlpacaPaperConfig fields are
-        # required (no default values).
-        alpaca_config = AlpacaPaperConfig(
-            base_url=DEFAULT_BASE_URL,
-            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-            max_retries=DEFAULT_MAX_RETRIES,
-            retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-        )
-    alpaca_client = AlpacaHttpClient(config=alpaca_config)
-    return AlpacaPaperAdapter(client=alpaca_client)
+    return get_broker_runtime().adapter
 
 
 def _refuse_if_live_trading_unlocked() -> None:
@@ -814,8 +671,6 @@ def _tag_ai_news_headline(
 def _configured_broker_provider_name() -> str | None:
     if _oanda_is_configured():
         return "oanda_paper"
-    if _alpaca_is_configured():
-        return "alpaca_paper"
     return None
 
 
@@ -824,18 +679,15 @@ def _assert_external_policy_matches_broker(
 ) -> None:
     """Fail closed when external AI paper config is internally inconsistent.
 
-    ``routed`` policies are valid with any subset of broker credentials
-    (venues without credentials degrade to the simulated paper broker).
-    Single-venue policies still require their credentials.
+    M01-W01: the execution policy accepts only the OANDA practice provider,
+    so an external policy always requires OANDA practice credentials.
     """
 
     configured = _configured_broker_provider_name()
-    if policy.provider == "routed":
-        return
     if configured is None:
         raise RuntimeError(
-            "ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED=true requires OANDA or "
-            "Alpaca paper credentials"
+            "ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED=true requires OANDA "
+            "practice credentials"
         )
     if policy.provider != configured:
         raise RuntimeError(
@@ -1095,7 +947,7 @@ def _ai_cycle_factory(
         # cycles (the AI store is currently the same DB as the broker
         # recon store). ponytail:scheduler_ai_duckdb_lock — see
         # upgrade path note in
-        # docs/development_plans/0057-phase-26-ai-trader-closeout.md.
+        # The final migration contract is blueprint milestone M11.
         database = db_path / "alphabrief.db"
         store = _Store(db_path=database)
         market_store = _MarketDataStore(db_path=database)

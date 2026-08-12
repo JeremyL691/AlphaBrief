@@ -572,27 +572,26 @@ class TestSchedulerRunsAiTask:
         finally:
             store.close()
 
-    def test_external_ai_cycle_refuses_policy_broker_mismatch(
+    def test_external_ai_cycle_refuses_missing_oanda_credentials(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Round 0063: the default policy is OANDA, so to trigger a real
-        policy/provider mismatch we must override the policy to Alpaca while
-        keeping the OANDA credentials set. This guards the fail-closed path
-        regardless of which broker the default policy uses in the future.
+        """M01-W01: the policy can only claim OANDA practice, so the
+        expressible fail-closed case is an OANDA policy with no OANDA
+        credentials configured. The external paper path must raise instead
+        of running (missing credentials fail closed, no local fill).
         """
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
         monkeypatch.setenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "true")
-        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
-        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
-        # Force the policy to claim Alpaca so the broker credentials and the
-        # policy provider disagree — the safety net should still raise.
+        monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+        monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+        # An OANDA-only policy with no credentials must be refused.
         policy_path = isolated_data_dir / "policy.yaml"
         policy_path.write_text(
             (
                 "mode: paper\n"
-                "provider: alpaca_paper\n"
-                "market: us_equity\n"
-                "symbols: [SPY, QQQ]\n"
+                "provider: oanda_paper\n"
+                "market: fx\n"
+                "symbols: [EUR_USD]\n"
                 "order_types: [market, limit]\n"
                 "timezone: America/New_York\n"
                 "trading_days: [mon, tue, wed, thu, fri]\n"
@@ -612,7 +611,7 @@ class TestSchedulerRunsAiTask:
         async def _run_handler() -> None:
             await handler()
 
-        with pytest.raises(RuntimeError, match="policy/provider mismatch"):
+        with pytest.raises(RuntimeError, match="requires OANDA"):
             asyncio.run(_run_handler())
 
     def test_ai_scheduler_universe_can_be_overridden(

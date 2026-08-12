@@ -68,6 +68,74 @@ def _emit_report(report: Any, *, pretty: bool) -> None:
         sys.exit(1)
 
 
+@acceptance_app.command("loop")
+def loop_cmd(
+    work_item_id: str = typer.Argument(
+        ...,
+        help="Work item ID to run through the deterministic controller.",
+    ),
+    round_id: str = typer.Argument(
+        ...,
+        help="Stable round ID for this run (R-YYYYMMDD-NNN).",
+    ),
+    commit_message: str = typer.Argument(
+        ...,
+        help="Commit message for the round.",
+    ),
+    project_root: Path = typer.Option(  # noqa: B008
+        Path("."),
+        "--project-root",
+        help="Repository root to control.",
+    ),
+    artifacts_dir: Path = typer.Option(  # noqa: B008
+        Path(".agent-artifacts"),
+        "--artifacts-dir",
+        help="Directory for scrubbed command evidence.",
+    ),
+    dry_run: bool = typer.Option(  # noqa: B008
+        False,
+        "--dry-run",
+        help="Run every gate but skip the Git commit.",
+    ),
+    pretty: bool = typer.Option(  # noqa: B008
+        True,
+        "--pretty/--compact",
+        help="Pretty-print JSON output.",
+    ),
+) -> None:
+    """Run one work item through the deterministic loop controller.
+
+    The controller runs the item's declared commands (PASS/FAIL from
+    exit codes only), evaluates the scope/safety/test-delta gates,
+    re-verifies the frozen acceptance, appends the ledger, updates
+    progress, and commits with the protocol trailers.
+    """
+    from alphabrief_acceptance.loop_controller import controller_run
+
+    outcome = controller_run(
+        repo_root=project_root,
+        work_item_id=work_item_id,
+        round_id=round_id,
+        commit_message=commit_message,
+        artifacts_dir=artifacts_dir,
+        dry_run=dry_run,
+    )
+    _emit_outcome(outcome, pretty=pretty)
+
+
+def _emit_outcome(outcome: Any, *, pretty: bool) -> None:
+    indent = 2 if pretty else None
+    json.dump(
+        outcome.model_dump(mode="json"),
+        sys.stdout,
+        indent=indent,
+        sort_keys=True,
+    )
+    sys.stdout.write("\n")
+    if outcome.status != "DONE":
+        sys.exit(1)
+
+
 def _load_build_report(
     project_root: Path,
 ) -> Callable[..., Any]:

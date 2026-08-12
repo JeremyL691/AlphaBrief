@@ -26,8 +26,8 @@ PRE_OPEN_NOW = datetime(2026, 6, 22, 13, 0, tzinfo=UTC)
 
 _SESSION_POLICY = PaperExecutionPolicy(
     mode="paper",
-    provider="alpaca_paper",
-    market="us_equity",
+    provider="oanda_paper",
+    market="multi_asset",
     symbols=("SPY", "QQQ"),
     order_types=("market", "limit"),
     timezone="America/New_York",

@@ -4,7 +4,7 @@
 # from environment variables:
 #   ALPHABRIEF_OANDA_TOKEN
 #   ALPHABRIEF_OANDA_ACCOUNT_ID
-# See PROJECT_RULES: keys must never be committed, logged, or embedded.
+# See AGENTS.md: keys must never be committed, logged, or embedded.
 base_url: https://api-fxpractice.oanda.com
 request_timeout_seconds: 5.0
 max_order_attempts: 3
