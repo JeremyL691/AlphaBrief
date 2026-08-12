@@ -405,6 +405,28 @@ commit 或 amend 循环。
 
 ## 8. Checkpoint and Ledger
 
+### 8.0 Strict Machine-State Schemas（M02-W01）
+
+所有 machine state 文件都必须通过 `alphabrief_acceptance.autonomous_schemas`
+的 versioned strict schemas 解析（frozen + unknown fields rejected）：
+
+- `load_work_queue()` —— `docs/work_items.yaml`（work items、milestones、
+  policy、scope profiles、completion defaults）；duplicate ID、unknown
+  dependency、unknown scope profile、gate work item 归属错误均被拒；
+- `load_progress()` —— `docs/progress.yaml`（project/target_policy/
+  current_baseline/current/milestones/work_item_states/latest_validation/
+  known_gaps/observation）；
+- `load_checkpoint()` —— `.agent-state/current.yaml`；
+- `load_ledger()` —— `docs/development_ledger.ndjson`，逐行严格解析，
+  malformed 行按行号报错；
+- `resolve_execution_contract()` —— 把 work item 与 scope profile、
+  global forbidden paths、completion defaults 合并为 immutable
+  `ExecutionContractSchema`；`resolve_all_execution_contracts()` 覆盖
+  全队列。
+
+Schema 或 state 文件漂移（新增未知字段、非法 transition 值、缺失依赖）
+必须 fail，不允许静默忽略。
+
 ### 8.1 `.agent-state/current.yaml`
 
 该目录 gitignored，用于未提交 round 恢复：
