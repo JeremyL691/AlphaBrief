@@ -11,10 +11,13 @@ market data -> research -> hypothesis -> StrategySpec -> backtest
 
 ## Status
 
-Through Round 0063, AlphaBrief is implemented and locally verified as an
-OANDA-practice-first paper-trading workbench. The project remains paper-only:
-external broker credentials and a long-running external-paper observation
-period are separate acceptance gates, and live trading stays locked.
+Through Round 0066, AlphaBrief is implemented, deployed, and verified as a
+**multi-asset auto-executing paper-trading workbench** that is usable out of
+the box. The AI Trading Committee trades FX, metals, index CFDs, US
+equities, and crypto across routed paper venues (OANDA practice + Alpaca
+paper, with a built-in simulator fallback when credentials are absent).
+Every dashboard page is populated by an auto-refreshing content pipeline.
+The project remains paper-only: live trading stays locked.
 
 - **Phase 1 — Core.** Domain models, CSV/Parquet OHLCV loaders, in-memory
   data quality checks, no-lookahead features, StrategySpec schema, and a
@@ -196,15 +199,16 @@ Run all checks before committing:
 alphabrief acceptance verify
 ```
 
-Current result: Round 0064 production repair passes; the full pytest run
-reaches **1379 passing tests**. Ruff is clean, strict Mypy is clean
-across **233 source files**, and the project acceptance verifier is
-green (`verify` 11/11, `preflight` `--scope paper` 1/1). Round 0064
+Current result: Round 0066 passes; the full pytest run reaches
+**1401 passing tests**. Ruff is clean, strict Mypy is clean across
+**236 source files**, and the project acceptance verifier is green
+(`verify` 11/11, `preflight` `--scope paper` 1/1). Rounds 0064-0066
 restored the deployed AI Trading Committee (real provider key, visible
-`provider_error` outcomes instead of silent zero-vote cycles), deduped
-freeze alerts (1.3M-row flood removed), widened the `ai_daily_cycle`
-task timeout, and made the dashboard serve live scheduler/AI state via
-`ALPHABRIEF_AI_OBSERVATION_DIR` and `ALPHABRIEF_SCHEDULER_DB_DIR`. The
+`provider_error` outcomes), deduped freeze alerts, widened the
+`ai_daily_cycle` timeout, unlocked multi-asset auto-execution with
+routed brokers, and activated every dashboard page via the
+`research_content` task, snapshot-merged reads
+(`ALPHABRIEF_SCHEDULER_DB_DIR`), and `alphabrief bootstrap all`. The
 development log records the latest verified run and its environment
 constraints.
 
