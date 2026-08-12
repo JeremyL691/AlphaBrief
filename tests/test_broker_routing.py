@@ -1,9 +1,9 @@
 """Tests for the routed broker adapter and simulated fallback.
 
-Covers:
-- symbol -> venue classification (OANDA vs Alpaca)
+M01-W02: routing resolves every symbol to OANDA practice. Covers:
+- symbol -> venue classification (OANDA only)
 - RoutingBrokerAdapter delegates submits by venue and degrades to the
-  simulated adapter when a venue has no live adapter
+  simulated adapter when no live adapter is wired
 - SimulatedBrokerAdapter fills through the deterministic PaperBroker
   and reports positions / account state
 - execution-backend quantity clamping to the USD notional cap
@@ -44,10 +44,11 @@ class TestSymbolRouting:
             ("GBP_JPY", "oanda_paper"),
             ("XAU_USD", "oanda_paper"),
             ("US30_USD", "oanda_paper"),
-            ("AAPL", "alpaca_paper"),
-            ("SPY", "alpaca_paper"),
-            ("BTC-USD", "alpaca_paper"),
-            ("ETH-USD", "alpaca_paper"),
+            # Any other identifier also resolves to OANDA practice.
+            ("AAPL", "oanda_paper"),
+            ("SPY", "oanda_paper"),
+            ("BTC-USD", "oanda_paper"),
+            ("ETH-USD", "oanda_paper"),
         ],
     )
     def test_route_symbol_to_venue(self, symbol: str, venue: str) -> None:
@@ -95,7 +96,7 @@ class TestSimulatedBrokerAdapter:
 
 
 class TestRoutingBrokerAdapter:
-    def test_delegates_submit_to_venue_adapter(self) -> None:
+    def test_delegates_submit_to_oanda_adapter(self) -> None:
         class _RecordingAdapter(SimulatedBrokerAdapter):
             def __init__(self) -> None:
                 super().__init__()
@@ -108,8 +109,11 @@ class TestRoutingBrokerAdapter:
                 return await super().submit(request, client_order_id=client_order_id)
 
         oanda = _RecordingAdapter()
-        alpaca = _RecordingAdapter()
-        routed = RoutingBrokerAdapter(oanda=oanda, alpaca=alpaca)
+        # Reference prices keep the shared simulated portfolio within cash
+        # for both fills (EUR_USD 1000 @ 1.14 and AAPL 5 @ 200).
+        oanda.record_reference_price("EUR_USD", Decimal("1.14"))
+        oanda.record_reference_price("AAPL", Decimal("200"))
+        routed = RoutingBrokerAdapter(oanda=oanda)
 
         fx = SubmitRequest(
             symbol="EUR_USD",
@@ -127,11 +131,10 @@ class TestRoutingBrokerAdapter:
         )
         asyncio.run(routed.submit(fx, client_order_id="f1"))
         asyncio.run(routed.submit(stock, client_order_id="s1"))
-        assert oanda.submitted == ["EUR_USD"]
-        assert alpaca.submitted == ["AAPL"]
+        assert oanda.submitted == ["EUR_USD", "AAPL"]
 
     def test_missing_venue_degrades_to_simulated(self) -> None:
-        routed = RoutingBrokerAdapter(oanda=None, alpaca=None)
+        routed = RoutingBrokerAdapter()
         request = SubmitRequest(
             symbol="NVDA",
             side=BrokerOrderSide.BUY,
@@ -145,14 +148,14 @@ class TestRoutingBrokerAdapter:
         positions = asyncio.run(routed.get_positions())
         assert positions[0].symbol == "NVDA"
 
-    def test_health_reports_venues(self) -> None:
-        routed = RoutingBrokerAdapter(oanda=None, alpaca=None)
+    def test_health_reports_simulated_without_live_adapter(self) -> None:
+        routed = RoutingBrokerAdapter()
         health = asyncio.run(routed.health())
         assert health.healthy is True
         assert "simulated" in health.detail
 
     def test_get_account_with_no_live_venue_returns_simulated(self) -> None:
-        routed = RoutingBrokerAdapter(oanda=None, alpaca=None)
+        routed = RoutingBrokerAdapter()
         account = asyncio.run(routed.get_account())
         assert account.account_id == "simulated-paper"
         assert account.cash == Decimal("100000")
