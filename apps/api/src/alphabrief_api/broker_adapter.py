@@ -10,19 +10,11 @@ behind a :class:`RiskDecision`. Account-level exposure *enforcement*
 already lives in :class:`alphabrief_risk.RiskGate`; this module closes
 the *observability* gap, not the enforcement path.
 
-Adapter selection reuses the same logic the CLI ``scheduler run`` command
-uses (``apps/cli/src/alphabrief_cli/scheduler_commands.py``): prefer a
+M01-W02: OANDA practice is the only execution venue. The adapter is a
 real :class:`OandaPaperAdapter` when ``ALPHABRIEF_OANDA_TOKEN`` and
-``ALPHABRIEF_OANDA_ACCOUNT_ID`` are set, otherwise build
-:class:`AlpacaPaperAdapter` when ``ALPHABRIEF_ALPACA_KEY`` and
-``ALPHABRIEF_ALPACA_SECRET`` are set, otherwise fall back to a
+``ALPHABRIEF_OANDA_ACCOUNT_ID`` are set, otherwise a fail-closed
 :class:`_NullBrokerAdapter` so the API boots and tests pass without
-broker credentials. This selection logic is intentionally duplicated
-here rather than imported from the CLI — importing the CLI into the API
-would invert the layering. ``ponytail:duplicated-adapter-factory``: the
-upgrade path is to promote the factory into
-``alphabrief_execution.broker`` and have both the API and the CLI call
-it; deferred until a second caller justifies the move.
+broker credentials.
 
 The singleton is built lazily on first access so :func:`create_app`
 (at ``apps.api.main:app = create_app()``) and every test import without
@@ -62,21 +54,13 @@ from alphabrief_execution.broker.port import (
 #: Intended for tests that point the adapter at a mock OANDA server.
 ENV_OANDA_BASE_URL = "ALPHABRIEF_OANDA_BASE_URL"
 
-#: When set, overrides the Alpaca base URL used by the live adapter.
-#: Intended for tests that point the adapter at a mock Alpaca server
-#: without writing a YAML config. The value is only read when credentials
-#: are present and must still satisfy the paper-only validation in
-#: :class:`AlpacaPaperConfig` (an ``http://`` mock requires
-#: ``allow_insecure_base_url=True``, which the factory sets for it).
-ENV_ALPACA_BASE_URL = "ALPHABRIEF_ALPACA_BASE_URL"
-
 # ---------------------------------------------------------------------------
 # Null adapter (dev / CI fallback when no broker credentials are set)
 # ---------------------------------------------------------------------------
 
 
 class _NullBrokerAdapter(BrokerAdapter):
-    """No-op broker adapter used when no Alpaca credentials are configured.
+    """No-op broker adapter used when no OANDA credentials are configured.
 
     Read probes return empty / zero snapshots so the API boots and the
     scheduler stays healthy in dev and CI. The API only ever reads
@@ -137,35 +121,20 @@ def _oanda_is_configured() -> bool:
     )
 
 
-def _alpaca_is_configured() -> bool:
-    """Return True when both Alpaca credentials are present in the environment."""
-    return bool(
-        os.environ.get("ALPHABRIEF_ALPACA_KEY")
-        and os.environ.get("ALPHABRIEF_ALPACA_SECRET")
-    )
-
-
 def _build_broker_adapter() -> BrokerAdapter:
-    """Build the routed broker adapter for the runtime environment.
+    """Build the OANDA practice adapter for the runtime environment.
 
-    FX / metals / index CFDs route to OANDA practice and US equities /
-    crypto route to Alpaca paper when their credentials are present;
-    venues without credentials fall back to the built-in simulated
-    adapter. With no credentials at all, fall back to
-    :class:`_NullBrokerAdapter` so the API boots in dev / CI.
+    OANDA practice is the only execution venue (M01-W02). With no OANDA
+    credentials the API resolves a fail-closed null adapter so it boots in
+    dev / CI; the null adapter never submits or cancels orders.
 
-    Live base URL overrides may be supplied via :data:`ENV_OANDA_BASE_URL`
-    or :data:`ENV_ALPACA_BASE_URL` for tests pointing at mock servers; an
-    ``http://`` scheme is permitted there (``allow_insecure_base_url``)
-    and must not point at live trading.
+    A live base URL override may be supplied via :data:`ENV_OANDA_BASE_URL`
+    for tests pointing at mock servers; an ``http://`` scheme is permitted
+    there (``allow_insecure_base_url``) and must not point at live trading.
     """
-    from alphabrief_execution.broker.routing import RoutingBrokerAdapter
-
-    oanda = _build_oanda_adapter() if _oanda_is_configured() else None
-    alpaca = _build_alpaca_adapter() if _alpaca_is_configured() else None
-    if oanda is None and alpaca is None:
+    if not _oanda_is_configured():
         return _NullBrokerAdapter()
-    return RoutingBrokerAdapter(oanda=oanda, alpaca=alpaca)
+    return _build_oanda_adapter()
 
 
 def _build_oanda_adapter() -> BrokerAdapter:
@@ -208,55 +177,6 @@ def _build_oanda_adapter() -> BrokerAdapter:
     return OandaPaperAdapter(client=client)
 
 
-def _build_alpaca_adapter() -> BrokerAdapter:
-    """Build an Alpaca paper adapter from env credentials and YAML config."""
-    # Local imports so the module imports cleanly without Alpaca config
-    # present and without constructing the client (which reads creds) at
-    # import time.
-    from alphabrief_execution.broker.alpaca.adapter import AlpacaPaperAdapter
-    from alphabrief_execution.broker.alpaca.client import AlpacaHttpClient
-    from alphabrief_execution.broker.alpaca.config import (
-        DEFAULT_BASE_URL,
-        DEFAULT_MAX_RETRIES,
-        DEFAULT_RETRY_BACKOFF_SECONDS,
-        DEFAULT_TIMEOUT_SECONDS,
-        AlpacaPaperConfig,
-        load_alpaca_paper_config,
-    )
-
-    override = os.environ.get(ENV_ALPACA_BASE_URL)
-    if override:
-        # Test / dev mock override. allow_insecure_base_url permits an
-        # http:// mock; the paper-only "live" check still applies.
-        config = AlpacaPaperConfig(
-            base_url=override,
-            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-            max_retries=DEFAULT_MAX_RETRIES,
-            retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-            allow_insecure_base_url=True,
-        )
-    else:
-        config_path = Path("config/alpaca_paper.yaml")
-        if config_path.exists():
-            config = load_alpaca_paper_config(config_path)
-        else:
-            # Dev fallback: explicit defaults rather than a default
-            # constructor because AlpacaPaperConfig fields are required.
-            config = AlpacaPaperConfig(
-                base_url=DEFAULT_BASE_URL,
-                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-                max_retries=DEFAULT_MAX_RETRIES,
-                retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-            )
-    try:
-        client = AlpacaHttpClient(config=config)
-    except BrokerAuthError:
-        # Credentials were present but rejected at client construction.
-        # Degrade to the null adapter rather than failing to boot the API.
-        return _NullBrokerAdapter()
-    return AlpacaPaperAdapter(client=client)
-
-
 # ---------------------------------------------------------------------------
 # Lazy singleton + reset hook
 # ---------------------------------------------------------------------------
@@ -275,7 +195,7 @@ def get_broker_adapter() -> BrokerAdapter:
 def has_live_broker() -> bool:
     """Return True when a real (non-null) broker adapter is wired.
 
-    Lets routes and tests distinguish a live Alpaca adapter from the
+    Lets routes and tests distinguish a live OANDA adapter from the
     dev/CI null fallback without leaking the concrete adapter type.
     """
     return not isinstance(get_broker_adapter(), _NullBrokerAdapter)
@@ -293,7 +213,6 @@ def _reset_broker_adapter() -> None:
 
 
 __all__ = [
-    "ENV_ALPACA_BASE_URL",
     "ENV_OANDA_BASE_URL",
     "get_broker_adapter",
     "has_live_broker",
