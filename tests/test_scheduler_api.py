@@ -288,3 +288,63 @@ def test_scheduler_status_propagates_non_lock_errors(
     # Non-lock errors must NOT be silently swallowed by the writer-lock
     # handler. TestClient re-raises in-test exceptions; the contract
     # is that the error surfaces, not that it's a specific status code.
+
+
+def test_scheduler_routes_serve_scheduler_db_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ALPHABRIEF_SCHEDULER_DB_DIR points the read-only scheduler routes
+    at a refreshed copy of the scheduler's own DB (which the API process
+    cannot open directly while the scheduler holds the writer lock)."""
+    from alphabrief_api.routes import scheduler as scheduler_routes
+
+    sched_dir = tmp_path / "scheduler_data"
+    sched_dir.mkdir()
+    store = HeartbeatStore(db_path=sched_dir / "alphabrief.db")
+    store.record_run(task_name="reconcile", status="ok", error=None)
+    store.close()
+    recon = BrokerReconStore(db_path=sched_dir / "alphabrief.db")
+    recon.raise_freeze(reason="external", source="test")
+    recon.close()
+
+    # The API's own data dir points elsewhere; the snapshot must win.
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path / "api_data"))
+    monkeypatch.setenv("ALPHABRIEF_SCHEDULER_DB_DIR", str(sched_dir))
+    scheduler_routes._snapshot_state = None
+    client = TestClient(create_app())
+    try:
+        res = client.get("/api/v1/scheduler/heartbeats")
+        assert res.status_code == 200
+        assert len(res.json()["heartbeats"]) == 1
+        assert res.json()["heartbeats"][0]["task_name"] == "reconcile"
+
+        res = client.get("/api/v1/scheduler/freezes")
+        assert res.status_code == 200
+        assert len(res.json()["open_freezes"]) == 1
+
+        res = client.get("/api/v1/scheduler/status")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["heartbeat_count"] == 1
+        assert body["open_freeze_count"] == 1
+    finally:
+        scheduler_routes._snapshot_state = None
+
+
+def test_scheduler_routes_fallback_to_local_data_dir_without_snapshot_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without ALPHABRIEF_SCHEDULER_DB_DIR the routes read the local
+    ALPHABRIEF_DATA_DIR DB exactly as before."""
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+    store = HeartbeatStore(db_path=tmp_path / "alphabrief.db")
+    store.record_run(task_name="local", status="ok", error=None)
+    store.close()
+
+    client = TestClient(create_app())
+    res = client.get("/api/v1/scheduler/heartbeats")
+    assert res.status_code == 200
+    assert len(res.json()["heartbeats"]) == 1
+    assert res.json()["heartbeats"][0]["task_name"] == "local"

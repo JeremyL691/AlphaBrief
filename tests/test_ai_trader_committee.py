@@ -73,6 +73,14 @@ class TestTradingCommittee:
         assert result.ok is False
         assert result.error_message == "no_committee_votes"
         assert result.plan is None
+        # Every role call failed at the gateway → per-role stable codes.
+        assert len(result.role_errors) == 4
+        assert all(
+            error.endswith("provider_call_failed")
+            for error in result.role_errors
+        )
+        roles = {error.split(":")[0] for error in result.role_errors}
+        assert roles == {"technical", "fundamental", "risk", "manager"}
 
     def test_invalid_structured_output_skipped(self) -> None:
         provider = FakeProviderAdapter(
@@ -83,8 +91,10 @@ class TestTradingCommittee:
         )
         committee = _build_committee(provider)
         result = committee.run(CommitteeInput(snapshot=_snapshot()))
-        # No vote passes validation → ok=False
+        # No vote passes validation → ok=False with per-role parse errors.
         assert result.ok is False
+        assert len(result.role_errors) == 4
+        assert all(":" in error for error in result.role_errors)
 
     def test_ethics_keyword_in_manager_blocks(self) -> None:
         payload = {

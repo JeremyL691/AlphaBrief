@@ -363,6 +363,78 @@ def test_build_default_tasks_returns_reconcile_task() -> None:
     assert tasks[0].interval_seconds == 300.0
 
 
+def test_build_default_tasks_ai_cycle_timeout_covers_committee_runtime() -> None:
+    async def reconcile_cycle(scope: str) -> None:
+        return None
+
+    async def ai_cycle() -> None:
+        return None
+
+    tasks = build_default_tasks(on_reconcile=reconcile_cycle, on_ai_cycle=ai_cycle)
+    by_name = {t.name: t for t in tasks}
+    assert "ai_daily_cycle" in by_name
+    ai = by_name["ai_daily_cycle"]
+    assert ai.enabled is False
+    assert ai.interval_seconds == 86_400.0
+    # Must comfortably exceed pre-cycle ingestion plus one committee run
+    # per symbol (4 role calls, up to 30s model timeout each); a too-short
+    # timeout would auto-freeze the scheduler on a slow provider.
+    assert ai.timeout_seconds >= 600.0
+
+
+def test_freeze_warning_alert_emitted_once_per_freeze_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An open freeze blocks task execution. The scheduler must alert once
+    # per freeze event per task, then poll silently — not write a new
+    # alert on every short-poll tick (previous behavior flooded the
+    # alerts table with ~1.3M rows during a 6-week freeze).
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
+    first = recon_store.raise_freeze(reason="external", source="test")
+    recon_store.close()
+
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[_ok_task()],
+        config=SchedulerConfig(
+            reconcile_on_start=False, max_consecutive_failures=99
+        ),
+    )
+    monkeypatch.setattr(scheduler, "_short_poll_seconds", lambda: 0.02)
+
+    async def drive() -> None:
+        # Several short-poll iterations while frozen, then unfreeze and
+        # raise a second freeze to confirm a new event alerts again.
+        await asyncio.sleep(0.12)
+        recon_store.clear_freeze(
+            event_id=first.event_id, reason="test unfreeze"
+        )
+        recon_store.raise_freeze(reason="second", source="test")
+        await asyncio.sleep(0.12)
+        scheduler.request_stop()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_drive_and_run(scheduler, drive))
+    finally:
+        loop.close()
+    try:
+        alerts = heartbeats.list_alerts(limit=100)
+        freeze_alerts = [a for a in alerts if "open freeze detected" in a["message"]]
+        # One alert for the first freeze event, one for the second —
+        # despite ~12 short-poll iterations in between.
+        assert len(freeze_alerts) == 2
+        messages = " | ".join(a["message"] for a in freeze_alerts)
+        assert first.event_id in messages
+        assert "freeze_" in messages
+        # The task never ran while frozen.
+        assert heartbeats.last_run_at("noop") is None
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
 def test_scheduled_task_rejects_invalid_interval() -> None:
     async def handler() -> None:
         return None

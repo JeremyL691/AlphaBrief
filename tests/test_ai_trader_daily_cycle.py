@@ -14,7 +14,13 @@ from alphabrief_execution import (
     PaperBroker,
     PortfolioState,
 )
-from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_models import (
+    FakeProviderAdapter,
+    ModelGateway,
+    ModelProviderError,
+    ModelRequest,
+    ModelResponse,
+)
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
 from alphabrief_trader.daily_cycle import (
@@ -227,6 +233,77 @@ class TestDailyTradingCycle:
             "SPY",
             "QQQ",
         }
+
+    def test_all_provider_failures_record_provider_error(
+        self, store: AiTradingStore
+    ) -> None:
+        # Every role call fails at the gateway → the cycle must record a
+        # visible provider_error outcome instead of a misleading
+        # skipped_no_consensus.
+        provider = FakeProviderAdapter(
+            provider_name="fake",
+            model_name="fake-1",
+            capabilities=["structured_output"],
+            fail=True,
+        )
+        committee = TradingCommittee(
+            gateway=ModelGateway(providers=[provider]),
+            discipline=DisciplineConfig(),
+        )
+        cycle = DailyTradingCycle(
+            committee=committee,
+            risk_gate=_build_risk_gate(["SPY"]),
+            broker=_build_broker(),
+            store=store,
+            snapshot_loader=lambda s: _snapshot(s),
+            enabled=True,
+        )
+        record = cycle.run(["SPY"])
+        assert record.outcome == "provider_error"
+        assert record.votes == []
+        assert record.plans == []
+        assert "provider_call_failed" in record.summary
+        assert "technical" in record.summary
+        # The record is persisted so dashboards/exports can surface it.
+        saved = store.get_cycle(record.cycle_id)
+        assert saved is not None
+        assert saved["outcome"] == "provider_error"
+
+    def test_partial_role_failure_does_not_mask_outcome(
+        self, store: AiTradingStore
+    ) -> None:
+        # One role fails but the rest vote → normal synthesis continues
+        # and the outcome reflects the plan, not provider_error.
+        class _PartialFailProvider(FakeProviderAdapter):
+            def __init__(self, payload: dict[str, object]) -> None:
+                super().__init__(
+                    provider_name="fake",
+                    model_name="fake-1",
+                    capabilities=["structured_output"],
+                    structured_output=payload,
+                )
+
+            def call(self, request: ModelRequest) -> ModelResponse:
+                if request.metadata.get("committee_role") == "technical":
+                    raise ModelProviderError("technical down")
+                return super().call(request)
+
+        committee = TradingCommittee(
+            gateway=ModelGateway(providers=[_PartialFailProvider(_BULLISH_PAYLOAD)]),
+            discipline=DisciplineConfig(),
+        )
+        cycle = DailyTradingCycle(
+            committee=committee,
+            risk_gate=_build_risk_gate(["SPY"]),
+            broker=_build_broker(),
+            store=store,
+            snapshot_loader=lambda s: _snapshot(s),
+            enabled=True,
+        )
+        record = cycle.run(["SPY"])
+        assert record.outcome == "executed"
+        assert len(record.votes) == 3
+        assert "provider_error" not in record.summary
 
     def test_constructor_requires_all_dependencies(self) -> None:
         with pytest.raises(TypeError):

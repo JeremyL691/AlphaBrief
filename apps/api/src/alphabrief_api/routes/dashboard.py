@@ -2119,6 +2119,9 @@ function outcomeBadgeForCycle(c) {
   // executed_count vs blocked_count — does the committee's plan clear risk
   // and reach the broker?
   if (!c) return { label: "—", cls: "outcome-pill--none" };
+  if (c.outcome === "provider_error") {
+    return { label: "PROVIDER ERROR", cls: "outcome-pill--blocked" };
+  }
   const ex = Number(c.executed_count || 0);
   const bl = Number(c.blocked_count || 0);
   if (ex > 0 && bl > 0) return { label: "MIXED", cls: "outcome-pill--mixed" };

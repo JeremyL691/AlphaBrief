@@ -439,19 +439,34 @@ class OperationsScheduler:
         if not task.enabled:
             return
         is_broker_task = task.name == "reconcile"
+        # Emit at most one "freeze detected" alert per open freeze event
+        # per task. Once the alert for the current freeze is out, poll
+        # silently until the freeze clears or a new freeze event opens.
+        alerted_freeze_id: str | None = None
         while not self._stop.is_set():
             if self._recon_store.has_open_freeze():
-                await self._alert_sink.emit(
-                    severity="warning",
-                    source="scheduler",
-                    message=(
-                        f"open freeze detected; skipping task {task.name} "
-                        "until manual unfreeze"
-                    ),
-                    task_name=task.name,
+                open_freezes = self._recon_store.list_freezes(only_open=True)
+                current_freeze_id = (
+                    open_freezes[0].event_id if open_freezes else None
                 )
+                if (
+                    current_freeze_id is not None
+                    and current_freeze_id != alerted_freeze_id
+                ):
+                    await self._alert_sink.emit(
+                        severity="warning",
+                        source="scheduler",
+                        message=(
+                            f"open freeze detected ({current_freeze_id}); "
+                            f"skipping task {task.name} until manual unfreeze"
+                        ),
+                        task_name=task.name,
+                        payload={"freeze_event_id": current_freeze_id},
+                    )
+                    alerted_freeze_id = current_freeze_id
                 await self._sleep(self._short_poll_seconds())
                 continue
+            alerted_freeze_id = None
             try:
                 await asyncio.wait_for(task.handler(), timeout=task.timeout_seconds)
                 self._heartbeats.record_run(
@@ -556,7 +571,13 @@ def build_default_tasks(
                 name="ai_daily_cycle",
                 interval_seconds=86_400.0,
                 handler=on_ai_cycle,
-                timeout_seconds=120.0,
+                # The cycle includes pre-cycle market/news ingestion plus
+                # one committee run per symbol (4 roles each); with a
+                # per-call model timeout of up to 30s this can exceed
+                # 120s. Keep the task timeout well above the worst-case
+                # cycle so a slow provider never trips the scheduler's
+                # auto-freeze (3 consecutive timeouts).
+                timeout_seconds=900.0,
                 max_retries=1,
                 enabled=False,  # gated by ALPHABRIEF_AI_TRADING_ENABLED
             )
