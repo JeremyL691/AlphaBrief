@@ -348,6 +348,9 @@ class CurrentRoundSchema(BaseModel):
     attempt: int = 0
     last_verified_gate: str | None = None
     next_action: str | None = None
+    #: External-evidence marker inherited from CODE_COMPLETE upstream items
+    #: (autonomous_loop.md section 5.1).
+    external_evidence_pending: str | None = None
 
 
 class LatestValidationSchema(BaseModel):
