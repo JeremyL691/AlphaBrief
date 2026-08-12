@@ -1,8 +1,9 @@
 # AlphaBrief Final Acceptance Report
 
-**Audit date:** 2026-07-10 (Asia/Shanghai)
-**Audit object:** `JeremyL691/feat/oanda-paper-defaults` after Round 0063
-OANDA-first default-paper alignment.
+**Audit date:** 2026-08-13 (Asia/Shanghai)
+**Audit object:** after Round 0066 — multi-asset auto-executing
+paper-trading workbench with routed brokers and a fully populated
+dashboard.
 **Baseline:** latest local quality gates and the read-only broker-status check.
 
 This report is both the final local code acceptance summary and the
@@ -12,17 +13,23 @@ time.
 
 ## 1. Executive Conclusion
 
-AlphaBrief is locally complete as a paper-first research, backtesting,
-risk, execution-simulation, broker-paper integration, and review
+AlphaBrief is deployed and verified as a paper-first research,
+backtesting, risk, auto-execution, broker-paper integration, and review
 workbench. The current checkout includes:
 
 - core market data, news, macro, model, strategy, backtest, gym,
   research, review, risk, execution, API, CLI, and dashboard surfaces;
-- OANDA v20 practice as the default paper-broker path, with a 19-instrument
-  multi-asset policy spanning FX, metals, and selected index CFDs; Alpaca
-  remains an optional compatibility path;
-- default scheduler FX universe aligned to `EUR_USD`, `GBP_USD`, and
-  `USD_JPY`;
+- routed paper brokers: OANDA v20 practice for FX/metals/index CFDs and
+  Alpaca paper for US equities and crypto, with a built-in simulated
+  broker fallback per venue when credentials are absent — the system is
+  usable out of the box;
+- a 35-instrument policy (FX majors/crosses, metals, index CFDs, 10 US
+  equities, 6 crypto) with USD-notional caps and automated paper
+  execution (deterministic RiskGate still binds);
+- an 11-symbol default AI scheduler universe spanning all asset classes;
+- a daily `research_content` scheduler task (macro indicators, daily
+  alpha brief, debate, model evaluation) plus `alphabrief bootstrap all`
+  so every dashboard page is populated;
 - optional Kronos market forecasts through `ModelGateway`, structured
   and advisory only;
 - Phase 23 `alphabrief_acceptance` verifier exposed through
@@ -39,10 +46,10 @@ an external paper account, and elapsed operating time.
 
 | Verification item | Status | Evidence |
 |---|---|---|
-| Round 0063 full pytest | Passed | 1361 tests passed; 9 known warnings |
-| Round 0063 static quality gates | Passed | `ruff check .`, strict Mypy across 253 source files, and `git diff --check` passed |
-| Round 0063 acceptance verifier | Passed | `alphabrief acceptance verify --compact`: 11/11 |
-| Default paper policy | Passed | OANDA practice, 19 instruments, human review, and disabled automation |
+| Round 0066 full pytest | Passed | 1401 tests passed; 9 known warnings |
+| Round 0066 static quality gates | Passed | `ruff check .`, strict Mypy across 236 source files, and `git diff --check` passed |
+| Round 0066 acceptance verifier | Passed | `alphabrief acceptance verify --compact`: 11/11 |
+| Default paper policy | Passed | Routed multi-asset (35 instruments), paper mode, USD caps, automated execution inside paper with RiskGate binding |
 | Read-only broker status | Passed | Latest reconciliation matched; zero open freezes |
 | Default live trading lock | Passed | `load_settings({}).live_trading_enabled` remains false |
 | Execution policy | Passed | Default OANDA-practice multi-asset policy stays paper-mode, human-review, and no-automation |

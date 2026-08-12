@@ -24,6 +24,10 @@ export SSL_CERT_FILE=/etc/ssl/cert.pem
 export ALPHABRIEF_LIVE_TRADING_ENABLED=false
 export ALPHABRIEF_DATA_DIR="${ALPHABRIEF_DATA_DIR:-$HOME/.alphabrief/api-data}"
 export ALPHABRIEF_AI_OBSERVATION_DIR="${ALPHABRIEF_AI_OBSERVATION_DIR:-$HOME/.alphabrief/reports/paper_observation}"
+# Real model provider for API-generated briefs/debates/evaluations.
+# Fill in the real key in the deployed copy only.
+export OPENAI_BASE_URL=https://opencode.ai/zen/go
+export OPENAI_API_KEY=REPLACE_WITH_OPENAI_API_KEY
 # The scheduler holds the writer lock on its own DB; the API serves
 # scheduler status/heartbeats/alerts/freezes from a refreshed copy of
 # this DB instead of the (empty) API database.

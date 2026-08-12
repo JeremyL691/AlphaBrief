@@ -216,6 +216,23 @@ export ALPHABRIEF_AI_MODEL_NAME=gpt-4o-mini
 provider key, it falls back to the conservative fake committee, which is
 useful for smoke tests but is not a production-like autonomous model.
 
+**Auto-execution (Round 0065+):** the checked-in policy runs
+`automated_execution: true` and `require_human_review: false` in paper
+mode — AI plans and manual paper orders execute as soon as the
+deterministic RiskGate approves them (ethics veto, exposure caps, and
+the kill switch still bind). The execution policy stays `mode: paper`
+and live trading stays locked.
+
+**Multi-asset universe:** the policy lists 35 instruments across FX
+majors/crosses, metals, index CFDs, 10 US equities, and 6 crypto.
+FX/metals/indices route to OANDA practice; equities/crypto route to
+Alpaca paper (register a free Alpaca paper account and set
+`ALPHABRIEF_ALPACA_KEY` / `ALPHABRIEF_ALPACA_SECRET`); a venue without
+credentials degrades to the built-in simulated paper broker, so the
+system works before any Alpaca keys exist. The default AI universe is
+`EUR_USD,GBP_USD,USD_JPY,BTC-USD,ETH-USD,SOL-USD,AAPL,NVDA,TSLA,SPY,QQQ`
+(override via `ALPHABRIEF_AI_SCHEDULER_UNIVERSE`).
+
 The scheduler refreshes local market/news stores before each AI cycle:
 
 ```bash
@@ -300,6 +317,20 @@ heartbeat and recon snapshots (all `*_match=true`), and
 `GET /api/v1/ai/status` (cycle count should grow daily). A cycle that
 cannot reach the model provider records `outcome=provider_error` in the
 export and dashboard instead of a misleading `skipped_no_consensus`.
+
+## 4.8 One-command content seeding
+
+With the API running, populate every dashboard page immediately:
+
+```bash
+.venv/bin/alphabrief bootstrap all
+```
+
+This seeds sample strategies, news headlines, macro indicators, a daily
+brief, a research debate, and a model evaluation through the API. The
+scheduler's `research_content` task (enabled with
+`ALPHABRIEF_AI_TRADING_ENABLED=true`) regenerates macro/brief/debate/
+evaluation content automatically every day.
 
 ## 5. Starting the 30-Day Run
 

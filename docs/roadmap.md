@@ -1672,3 +1672,46 @@ started.
    check reported a matching snapshot with zero open freezes.
 6. No order-capable AI CLI command was run: the published CLI has no dry-run
    option, and no 30-day observation was started.
+
+## Round 0065 — Multi-Asset Auto-Execution + Routed Brokers
+
+Status: implemented and deployed.
+
+1. The execution-policy schema unlocks `automated_execution` (bool) and
+   `provider: routed`; the default policy auto-executes in paper mode
+   (require_human_review=false) across 35 instruments: FX majors/crosses,
+   metals, index CFDs, 10 US equities, and 6 crypto. USD-notional caps
+   (2000/order, 20000 total).
+2. New `RoutingBrokerAdapter`: FX/metals/indices → OANDA practice,
+   equities/crypto → Alpaca paper, with a built-in simulated broker
+   fallback per venue when credentials are absent. Alpaca crypto symbols
+   map to the wire format (BTC-USD <-> BTCUSD).
+3. Execution backends clamp estimated quantity to the USD notional cap so
+   auto-execution passes RiskGate instead of being blocked by the
+   order-value check.
+4. Default AI scheduler universe: 11 instruments spanning FX, crypto, and
+   US equities (env-overridable).
+5. Validation: **1399 pytest passed**, ruff/mypy clean, acceptance 11/11;
+   production AI cycle recorded 43 real votes/10 plans; an AAPL paper
+   order auto-filled at $304.91.
+
+## Round 0066 — Auto-Generated Research Content + All Dashboard Pages Live
+
+Status: implemented and deployed.
+
+1. Scheduler gains a daily `research_content` task (macro indicators,
+   daily alpha brief, debate, model evaluation) writing into the scheduler
+   DB; the brief uses the real provider with strict parse + retry + a
+   lenient coercion fallback so the page never stays empty.
+2. Dashboard routes merge the scheduler DB (snapshot via
+   `ALPHABRIEF_SCHEDULER_DB_DIR`) with the API DB; News/Macro/Briefs/
+   Debates/Models/Data pages all show content.
+3. `alphabrief bootstrap all` seeds strategies, news, macro, brief,
+   debate, and evaluation in one command (6/6 in production).
+4. Mock news/macro providers are simulators (canned rows land inside the
+   requested window); the OpenAI adapter satisfies json_object mode for
+   upstreams that require the word "json" in the prompt; brief timestamps
+   default to parse time; `use_real_provider` wired for evaluations.
+5. Scheduler tasks no longer block behind the startup reconcile.
+6. Validation: **1401 pytest passed**, ruff/mypy clean; production
+   dashboard verified populated; bootstrap 6/6.

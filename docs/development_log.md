@@ -3436,3 +3436,72 @@ for 13 consecutive cycles, the scheduler had flooded its alerts table with
 7. Live API: `/api/v1/ai/status` shows real cycle count; `/api/v1/ai/history`
    lists scheduler cycles; `/api/v1/scheduler/status` reports
    `heartbeat_count=2`, `alerts_total=2`, `open_freeze_count=0`.
+## 0065 — Multi-Asset Auto-Execution + Routed Brokers
+
+Goal: turn the AI trading engine into a multi-asset, fully automated
+paper-trading system inside the paper-only boundary.
+
+### Changes
+
+1. Unlocked `automated_execution` (bool) and `provider: routed` in the
+   execution-policy schema; the default policy now auto-executes
+   (require_human_review=false) across 35 symbols: FX majors/crosses,
+   metals, index CFDs, 10 US equities, 6 crypto. USD-notional caps
+   (2000/order, 20000 total).
+2. New `RoutingBrokerAdapter` (alphabrief_execution.broker.routing):
+   FX/metals/indices → OANDA practice, equities/crypto → Alpaca paper,
+   with a `SimulatedBrokerAdapter` fallback (deterministic PaperBroker
+   wrapper) when a venue's credentials are absent — the system works
+   out of the box with no keys. Alpaca adapter maps crypto symbols to
+   the wire format (BTC-USD <-> BTCUSD).
+3. Execution backends clamp estimated quantity to the USD notional cap
+   so auto-execution passes RiskGate instead of being blocked.
+4. Default AI scheduler universe: 11 instruments across FX/crypto/US
+   equities (env-overridable); scheduler/API build the routed adapter.
+5. Acceptance verifier: paper_policy + paper.preflight now assert
+   paper mode, sane caps, and the live lock (auto-execution allowed
+   inside paper); tests updated + 17 new routing/clamp tests.
+
+### Validation
+
+1. Full pytest: **1399 passed**.
+2. ruff clean; mypy clean (235 files); acceptance verify 11/11.
+3. Production: AI cycle on the 11-symbol universe recorded 43 real
+   deepseek-v4-flash votes and 10 plans; an AAPL paper order
+   auto-filled at $304.91 (no human review).
+
+## 0066 — Auto-Generated Research Content + All Dashboard Pages Live
+
+Goal: eliminate the empty dashboard pages (News/Macro/Briefs/Debates/
+Models/Strategies) and make the deployed system self-populating.
+
+### Changes
+
+1. Scheduler gains a daily `research_content` task (same process, single
+   DuckDB writer): mock macro indicators (FRED-ready), a daily alpha
+   brief (real provider; strict parse with retries + lenient coercion
+   fallback so real-model output always lands), a multi-perspective
+   debate, and a model evaluation.
+2. Dashboard routes read the scheduler DB via a shared snapshot module
+   (`alphabrief_api.db.merged`, ALPHABRIEF_SCHEDULER_DB_DIR) and merge
+   with the API DB — scheduler-produced and API/CLI-produced content
+   are both visible.
+3. New `alphabrief bootstrap all` seeds strategies, news, macro, brief,
+   debate, and evaluation through the running API in one command.
+4. Mock news/macro providers are simulators: canned rows are placed
+   inside the requested window so recent windows return data.
+5. OpenAI adapter sends a system "Respond in JSON format" message when
+   json_object mode is requested (opencode's Console Go rejects
+   json_object without the word "json" in the prompt); DailyAlphaBrief
+   timestamps default to parse time; `use_real_provider` wired for
+   model evaluations.
+6. Scheduler no longer blocks every task behind the startup reconcile
+   (transient broker hangs stalled startup for minutes).
+
+### Validation
+
+1. Full pytest: **1401 passed**; ruff clean; mypy clean (236 files).
+2. Production: content task writes macro/brief/debate/eval daily;
+   dashboard pages verified populated (News 10 / Macro 10 / Briefs 3 /
+   Debates 7 / Models 6 / Strategies 2 / 12 data symbols); bootstrap
+   completes 6/6.
