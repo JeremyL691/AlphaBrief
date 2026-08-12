@@ -87,6 +87,79 @@ def test_production_settings_cannot_reach_test_fakes() -> None:
     assert offenders == []
 
 
+# ---------------------------------------------------------------------------
+# M01-W05: milestone-wide safety scan (SAFE-001..004)
+# ---------------------------------------------------------------------------
+
+
+def test_production_safety_gate_passes_on_checked_in_repository() -> None:
+    """SAFE-001..003: the checked-in repository passes the milestone scan."""
+    from alphabrief_execution.broker.safety import production_safety_violations
+
+    assert production_safety_violations(PROJECT_ROOT) == []
+
+
+def test_production_safety_gate_flags_forbidden_imports(
+    tmp_path: Path,
+) -> None:
+    """SAFE-001: other-broker / routing / simulated imports are flagged."""
+    from alphabrief_execution.broker.safety import production_safety_violations
+
+    source = tmp_path / "apps" / "demo"
+    source.mkdir(parents=True)
+    (source / "bad.py").write_text(
+        "import alphabrief_execution.broker.routing as routing\n",
+        encoding="utf-8",
+    )
+
+    violations = production_safety_violations(tmp_path)
+
+    assert any("routing" in violation for violation in violations)
+
+
+def test_production_safety_gate_flags_non_practice_execution_host(
+    tmp_path: Path,
+) -> None:
+    """SAFE-002: execution code must only reference the practice host."""
+    from alphabrief_execution.broker.safety import production_safety_violations
+
+    source = tmp_path / "packages" / "alphabrief-execution" / "src"
+    source.mkdir(parents=True)
+    (source / "bad.py").write_text(
+        'BASE = "https://api-fxtrade.oanda.com"\n',
+        encoding="utf-8",
+    )
+
+    violations = production_safety_violations(tmp_path)
+
+    assert any("api-fxtrade.oanda.com" in violation for violation in violations)
+
+
+def test_production_safety_gate_flags_forbidden_config_selection(
+    tmp_path: Path,
+) -> None:
+    """SAFE-003: configuration cannot select routing or another venue."""
+    from alphabrief_execution.broker.safety import production_safety_violations
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    policy_text = Path("config/paper_execution_policy.yaml").read_text(
+        encoding="utf-8"
+    )
+    (config_dir / "paper_execution_policy.yaml").write_text(
+        policy_text.replace("provider: oanda_paper", "provider: routed"),
+        encoding="utf-8",
+    )
+    (config_dir / "oanda_paper.yaml").write_text(
+        Path("config/oanda_paper.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    violations = production_safety_violations(tmp_path)
+
+    assert any("provider" in violation for violation in violations)
+
+
 def test_unconfigured_scheduler_runtime_reports_not_ready_and_cannot_submit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

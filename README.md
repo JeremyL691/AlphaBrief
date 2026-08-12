@@ -12,7 +12,7 @@ yet complete.
 
 ## Current Verified Baseline
 
-Snapshot: 2026-08-13, commit `c0d16c23fb80fd2239ab9aad1d48c0421d21aa2a`.
+Snapshot: 2026-08-13, commit `61ad0eea05c4164ea0ab0dd229caf9ae2b1ac464` (M01 OANDA-only cutover complete).
 
 | Area | What exists now | Important limitation |
 |---|---|---|
@@ -22,7 +22,7 @@ Snapshot: 2026-08-13, commit `c0d16c23fb80fd2239ab9aad1d48c0421d21aa2a`.
 | Research | Daily briefs, evidence objects, multi-role debate, AI trading committee | Research-to-order provenance and prompt-injection isolation are not end-to-end complete |
 | Strategy/backtest | StrategySpec registry, moving-average strategy, vectorized single-asset backtest, metrics, gym environments | Conditions are not compiled, API IS/OOS is incomplete, portfolio/event-driven/walk-forward surfaces need closure |
 | Risk | Symbol/order/exposure/loss/drawdown/news-aware rule primitives | AI auto-execution does not yet pass the full account and news context into every RiskGate call |
-| Execution | In-memory paper broker, OANDA practice adapter, Alpaca paper adapter, routed/fallback adapter, reconciliation stores | This is still multi-broker code; OANDA lifecycle coverage, persistence, and reconciliation are incomplete |
+| Execution | In-memory paper broker (explicit local mode), OANDA practice adapter, shared process runtime, reconciliation stores | M01 cutover complete: OANDA practice is the only execution venue; OANDA lifecycle coverage, persistence, and reconciliation are incomplete |
 | Operations | Scheduler, heartbeats, alerts, API/CLI, nine dashboard pages, Electron wrapper | Scheduler/control-plane truth, crash recovery, observability, and 30-day evidence are incomplete |
 
 At the baseline, the repository exposed 18 CLI command groups with 57
