@@ -306,6 +306,17 @@ storage profile globs 内（同前例），按声明文件名新建并纳入 doc
 path；其余 changed paths 全部在 allowlist 内。full pytest 1517 passed（+7
 lease 测试）。
 
+#### M03-W05 已闭环证据（R-20260813-M03-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M03-W05-01 | backup 原子、含 schema/build/file hashes、不含 configured secret patterns | `create_backup`（CHECKPOINT → 临时文件 → `os.replace` 原子改名 → manifest：source_db_sha256/schema_version/blueprint_version/files sha256/size/retention）；artifact 全量 secret-pattern 扫描，命中即 abort 且无残留（`test_backup_restore.py`） |
+| AC-M03-W05-02 | isolated restore 迁移、重建 projections、通过 integrity queries | `restore_backup`（hash 校验后复制到隔离 target → `apply_schema` 迁移到 latest → tables integrity 检查 → cycle projections 从 facts 重建并逐字节比对）；corrupt backup 在复制前被拒（`test_backup_restore.py` + `test_database_migrations.py`/`test_projection_rebuild.py` 集成） |
+| AC-M03-W05-03 | retention 只删过期显式 target，保留 newest verified restore point | `apply_retention`（(created_at, backup_id) 确定性排序；expired-by-age / keep-count 规则；newest verified 永不删除；foreign files 不碰）（`test_backup_retention.py`） |
+
+范围说明：本 round 无 allowlist 外路径（`tests/test_backup_*.py` 均在 storage
+profile globs 内）。full pytest 1527 passed（+10 backup/retention 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

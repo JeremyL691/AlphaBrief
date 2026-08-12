@@ -120,7 +120,10 @@ M15 必须实现一个确定性 preflight command。最终 command contract：
 9. scheduler single leader；
 10. database migration/writer lease；
 11. transaction cursor and reconciliation clean；
-12. backup destination writable and last restore drill；
+12. backup destination writable and last restore drill（M03-W05 起由
+    `alphabrief_api.db.backup` 提供原子 backup + manifest hashes +
+    isolated restore + retention；restore 后必须跑 migration/integrity/
+    projection rebuild 检查）；
 13. secret scrub/static no-live/no-other-broker gates；
 14. alert sink local persistence；
 15. current Git/config matches frozen build。
