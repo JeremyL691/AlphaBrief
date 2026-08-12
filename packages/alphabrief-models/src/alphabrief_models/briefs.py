@@ -6,7 +6,7 @@ do not produce any side effects. They are designed to be the target model for
 ``parse_structured_output`` and future research layer generators.
 """
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
@@ -26,7 +26,10 @@ class MarketBrief(AlphaBriefModel):
     """A market-level research brief for a single trading day."""
 
     brief_id: str = Field(min_length=1)
-    generated_at: datetime
+    # Defaulted so real-model output that omits the timestamp still parses.
+    generated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
     trading_day: date
     regime: MarketRegime
     summary: str = Field(min_length=1)
@@ -77,7 +80,10 @@ class SymbolBrief(AlphaBriefModel):
 
     brief_id: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
-    generated_at: datetime
+    # Defaulted so real-model output that omits the timestamp still parses.
+    generated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
     horizon: BriefHorizon
     verdict: SymbolVerdict
     catalysts: list[str]
@@ -114,7 +120,12 @@ class DailyAlphaBrief(AlphaBriefModel):
     """A daily research brief assembled from validated model output."""
 
     brief_id: str = Field(min_length=1)
-    generated_at: datetime
+    # Real providers often omit a timestamp even when the prompt asks for
+    # one; defaulting keeps the parse robust without relaxing the rest of
+    # the schema.
+    generated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
     trading_day: date
     headline: str = Field(min_length=1)
     executive_summary: str = Field(min_length=1)

@@ -401,7 +401,7 @@ def test_news_list_after_fetch(_isolated_news_dir: None) -> None:
     assert "AAPL" in result.output
 
 
-def test_news_fetch_empty_window_fails(_isolated_news_dir: None) -> None:
+def test_news_fetch_simulator_serves_any_window(_isolated_news_dir: None) -> None:
     from alphabrief_cli.news_commands import news_app
 
     result = runner.invoke(
@@ -410,12 +410,12 @@ def test_news_fetch_empty_window_fails(_isolated_news_dir: None) -> None:
             "fetch",
             "--source", "mock",
             "--symbol", "AAPL",
-            "--start", "2023-01-01T00:00:00",
-            "--end", "2023-01-02T00:00:00",
+            "--start", "2026-01-01T00:00:00",
+            "--end", "2026-01-02T00:00:00",
         ],
     )
-    assert result.exit_code != 0
-    assert "No headlines" in result.output
+    assert result.exit_code == 0
+    assert "Fetched 1 headlines" in result.output
 
 
 # ---------------------------------------------------------------------------
