@@ -513,6 +513,19 @@ order ops 测试）。
 `broker/oanda/transitions.py`（initial-fill 投影、union 返回类型、行宽）；
 full pytest 1722 passed（+14 transition 测试）；ruff/mypy 全仓 clean。
 
+#### M06-W04 已闭环证据（R-20260813-M06-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M06-W04-01 | trade/position get/list/partial-close/full-close/side-specific close/dependent modification/account summary/account changes 匹配精确 request/response fixtures | `TradeOpsClient`/`PositionOpsClient`/`AccountOpsClient`（`test_oanda_trade_position_lifecycle.py` + `test_oanda_account_changes.py`，in-memory mock transport）：trade get/list 分页 has_more、position long/short 独立 units/avgPrice/PL、TP/SL/trailing/GSLO 四选一依赖单、summary 全字段、changes 九类计数 + state 余额 |
+| AC-M06-W04-02 | partial-close units、ALL semantics、long/short side handling、realized PnL、financing、margin、related transaction IDs 各自 distinct 且 Decimal-safe | close ALL 以 fill transaction units 为准（broker truth）；partial close 保留剩余 units；position close 显式 ALL/NONE/positive units（OANDA 缺省即 ALL，未指定侧绝不静默全平）；realizedPL/financing Decimal 精确；orderCreate/orderFill/tradeClose（trade）与 long/short 两侧（position）transaction ID 互不重合；summary margin/counts/lastTransactionID 精确 fixture |
+| AC-M06-W04-03 | missing/stale/already-closed/account-mismatched/over-close/unsupported 请求 fail closed，无本地合成仓位变更 | unknown trade/position（404→unknown_*）、already closed（trade_state_invalid）、stale race（read 与 close 之间已关 → broker cancel+no-fill → trade_state_invalid）、negative units（invalid_units）、over-close（over_close，读后即拒、无 PUT 发出）、GSLO 未启用（unsupported_dependent）、多依赖类型（invalid_dependent）、双 None（invalid_units）；全部断言 broker 侧零变更、零本地合成 |
+
+范围说明：本 round 无 allowlist 外路径；两个 targeted 测试文件为契约声明的
+缺失文件，按既有先例创建（documented forced path）。OANDA position-close
+语义（缺省 ALL、ALL/NONE/DecimalNumber）已对照官方 API 文档核实。
+full pytest 1755 passed（+33 trade/position/account 测试）；ruff/mypy 全仓 clean。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

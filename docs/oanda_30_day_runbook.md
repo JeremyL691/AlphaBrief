@@ -238,6 +238,10 @@ projection/reconciliation/acceptance。成功后销毁临时 restore（不销毁
 - submitted request mapping（如 approved）；
 - OANDA order/transaction/trade/fill references；
 - partial/reject/cancel/expire/dependent order transitions；
+- trade/position close 记录（ALL/partial、long/short side、realized/unrealized/financing）与
+  account summary/changes（sinceTransactionID 游标）——M06-W04 起由
+  `trade_ops`/`position_ops`/`account_ops` 端口提供，游标只前进到已确认
+  消费的 lastTransactionID；
 - realized/unrealized/financing/fees；
 - no-trade/reject 也必须进入日报。
 
