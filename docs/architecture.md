@@ -43,6 +43,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | `instrument_catalog` store | versioned catalog snapshots + diffs | M04-W03 起：migration v3 表；publish 原子（content hash/account correlation/fetched_at UTC/diff 一起提交）；replay 幂等；projection 从 immutable rows 重建并与最新 snapshot 逐字节一致 |
 | `oanda/taxonomy` | versioned deterministic taxonomy | M04-W04 起：Currency/Metal/CFD 子类（INDEX/COMMODITY/BOND/EQUITY/CRYPTO/OTHER），display-based 规则，raw type 保留；unknown 永不消失；分类不 mutate raw snapshot |
 | catalog API/CLI | read-only catalog surfaces | M04-W05 起：共享 `store.query()`（pagination/search/category/active、确定性排序）；API `/api/v1/data/catalog` 与 CLI `data catalog` 输出全等；missing/stale/mismatch 显式 unavailable，绝不 substitute allowlist 或触发 broker write |
+| M04 里程碑 | account + instruments + catalog | W01 preflight、W02 instruments contract、W03 versioned snapshots、W04 taxonomy、W05 API/CLI 全部落地；W06 本地 gates 通过，T7 practice evidence PENDING（CODE_COMPLETE，M05 继承 external_evidence_pending） |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |
