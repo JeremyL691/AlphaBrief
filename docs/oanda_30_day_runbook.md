@@ -124,6 +124,11 @@ M15 必须实现一个确定性 preflight command。最终 command contract：
     `alphabrief_api.db.backup` 提供原子 backup + manifest hashes +
     isolated restore + retention；restore 后必须跑 migration/integrity/
     projection rebuild 检查）；
+12b. account preflight 通过（M04-W01 起由
+    `alphabrief_execution.broker.oanda.preflight.run_account_preflight`
+    在 catalog sync 与任何执行前验证 credentials/practice host/
+    account ownership/tradeable state/malformed response，全程无 token
+    与完整 account ID 外泄）；
 13. secret scrub/static no-live/no-other-broker gates；
 14. alert sink local persistence；
 15. current Git/config matches frozen build。

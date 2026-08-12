@@ -340,6 +340,18 @@ profile globs 内）。full pytest 1527 passed（+10 backup/retention 测试）�
 测试）。M03 里程碑全部 6 个 work items DONE；下一个 READY item 为 M04-W01
 （依赖 M03-W06 ✓）。
 
+#### M04-W01 已闭环证据（R-20260813-M04-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M04-W01-01 | 有效 practice response 产生 typed account profile（state/currency/margin/capability flags/scrubbed hash/UTC timestamp） | `run_account_preflight` → `OandaAccountProfile`（Decimal 字段、counts、GSL mode、tradeable、retrieved_at UTC）；mock response 全字段断言（`test_oanda_account_preflight.py`） |
+| AC-M04-W01-02 | 缺凭证/invalid credentials/live host/account mismatch/non-tradeable/malformed 在任何 catalog sync 或执行前 fail closed，无 fallback 无提问 | 六类分类失败各有测试：missing_credentials、invalid_credentials（BrokerAuthError→分类）、live_host（config 构造即拒 + preflight 防御）、account_mismatch、not_tradeable（balance/margin 缺失）、malformed_response |
+| AC-M04-W01-03 | CLI/API/logs/exceptions/evidence 不含 token 或完整 account ID | profile 只含 SHA-256 account_id_hash（64 hex）；serialized JSON/异常消息均不含 token 与完整 account ID；preflight 模块无 logging/print |
+
+范围说明：本 round 无 allowlist 外路径。`OandaHttpClient` 增加显式
+token/account_id 注入参数（缺省回退 env），供 preflight 与测试使用。
+full pytest 1541 passed（+10 preflight 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

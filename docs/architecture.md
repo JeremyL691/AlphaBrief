@@ -38,6 +38,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | `writer_lease` | 共享 DuckDB 文件的可续期单写者 lease | M03-W04 起 acquire/renew/validate 全为 SQL CAS；过期 ownership 在 takeover 后写被拒；`open_readonly` 结构性只读 |
 | `backup` | 原子 DB backup / manifest / restore / retention | M03-W05 起：CHECKPOINT+rename 原子快照、file/schema/build hashes、secret scan、isolated restore（migrate+integrity+projection rebuild）、确定性 retention |
 | storage 里程碑 | M03 完成 | versioned migrations、immutable facts、atomic cycle checkpoints、writer lease、verified backup/restore 全部落地；crash recovery boundary suite 通过 |
+| `oanda/preflight` | fail-closed account preflight | M04-W01 起：typed profile（Decimal margins + capability flags + scrubbed account hash + UTC retrieved_at）；六类分类失败；无 token/完整 account ID 外泄 |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |
