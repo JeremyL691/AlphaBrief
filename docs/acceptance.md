@@ -145,6 +145,18 @@ Work queue topology validator 必须检测遗漏和重复但冲突的 requiremen
 纳入本 round（其余 changed paths 全部在 allowlist 内）。routing composition 与 simulated fallback
 本身仍存在，属 M01-W03 删除范围。
 
+#### M01-W03 已闭环证据（R-20260813-M01-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M01-W03-01 | production dependency graphs 不能实例化 routing 或 in-memory broker adapter | 删除 `broker/routing.py`（RoutingBrokerAdapter/SimulatedBrokerAdapter/route_symbol_to_venue）；AST scan 证明 apps/packages 无 `broker.routing` import；`test_broker_routing.py` 重写为 absence/negative-gate 文件 |
+| AC-M01-W03-02 | 未配置的 broker runtime 报告 not ready 且不能 submit | API 与 CLI 的 null adapter `health.healthy=False`（"broker runtime not configured"），`submit` 抛 `NotImplementedError`；API/CLI 两侧均有 automated test |
+| AC-M01-W03-03 | test fakes 需要显式 test composition root 且生产 settings 不可达 | `_FakeAdapter`（test_ai_trader_execution_backend.py）、`MockOandaServer`（tests/_helpers）均在测试边界；AST scan 证明 production 模块不 import `tests`/`_helpers`；`_build_adapter` 有凭证时仅返回 `OandaPaperAdapter` |
+
+范围说明：本 round 无 allowlist 外路径。`LocalPaperExecutionBackend` 是显式 local paper
+mode（operator 选择），不是缺凭证回退，保持不动；full pytest 1392 passed（routing 原 12
+个测试由 5 个 negative-gate 测试替代，无断言弱化）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

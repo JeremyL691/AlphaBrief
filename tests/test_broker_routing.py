@@ -1,227 +1,119 @@
-"""Tests for the routed broker adapter and simulated fallback.
+"""M01-W03 negative gates: routing and simulated composition are gone.
 
-M01-W02: routing resolves every symbol to OANDA practice. Covers:
-- symbol -> venue classification (OANDA only)
-- RoutingBrokerAdapter delegates submits by venue and degrades to the
-  simulated adapter when no live adapter is wired
-- SimulatedBrokerAdapter fills through the deterministic PaperBroker
-  and reports positions / account state
-- execution-backend quantity clamping to the USD notional cap
+The routed broker adapter and the in-memory simulated fallback were
+removed from production (AC-M01-W03-01). Every production entry point
+resolves either a real OANDA practice adapter or a fail-closed not-ready
+null adapter (AC-M01-W03-02). Test fakes live behind an explicit test
+composition root — ``tests/_helpers`` and in-test classes — that
+production settings can never reach (AC-M01-W03-03).
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
-from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
-from alphabrief_core import OrderIntent
 from alphabrief_execution.broker.port import (
     BrokerOrderSide,
-    BrokerOrderStatus,
     BrokerOrderType,
-    BrokerTimeInForce,
     SubmitRequest,
-    SubmitResult,
 )
-from alphabrief_execution.broker.routing import (
-    RoutingBrokerAdapter,
-    SimulatedBrokerAdapter,
-    route_symbol_to_venue,
-)
-from alphabrief_trader.execution_backend import (
-    ExternalPaperExecutionBackend,
-    LocalPaperExecutionBackend,
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_PRODUCTION_ROOTS = ("apps", "packages")
+_ROUTING_MODULE = (
+    "packages/alphabrief-execution/src/alphabrief_execution/broker/routing.py"
 )
 
 
-class TestSymbolRouting:
-    @pytest.mark.parametrize(
-        ("symbol", "venue"),
-        [
-            ("EUR_USD", "oanda_paper"),
-            ("GBP_JPY", "oanda_paper"),
-            ("XAU_USD", "oanda_paper"),
-            ("US30_USD", "oanda_paper"),
-            # Any other identifier also resolves to OANDA practice.
-            ("AAPL", "oanda_paper"),
-            ("SPY", "oanda_paper"),
-            ("BTC-USD", "oanda_paper"),
-            ("ETH-USD", "oanda_paper"),
-        ],
-    )
-    def test_route_symbol_to_venue(self, symbol: str, venue: str) -> None:
-        assert route_symbol_to_venue(symbol) == venue
+def _production_source_files() -> list[Path]:
+    files: list[Path] = []
+    for root in _PRODUCTION_ROOTS:
+        folder = PROJECT_ROOT / root
+        if folder.exists():
+            files.extend(folder.rglob("*.py"))
+    return files
 
 
-class TestSimulatedBrokerAdapter:
-    def test_submit_fills_and_reports_position(self) -> None:
-        adapter = SimulatedBrokerAdapter()
-        adapter.record_reference_price("AAPL", Decimal("200"))
-        request = SubmitRequest(
-            symbol="AAPL",
-            side=BrokerOrderSide.BUY,
-            order_type=BrokerOrderType.MARKET,
-            quantity=Decimal("10"),
-            time_in_force=BrokerTimeInForce.DAY,
-        )
-        result = asyncio.run(adapter.submit(request, client_order_id="c1"))
-        assert result.status == BrokerOrderStatus.FILLED
-        assert result.client_order_id == "c1"
-
-        positions = asyncio.run(adapter.get_positions())
-        assert len(positions) == 1
-        assert positions[0].symbol == "AAPL"
-        assert positions[0].quantity == Decimal("10")
-        assert positions[0].average_price == Decimal("200")
-
-        account = asyncio.run(adapter.get_account())
-        assert account.cash == Decimal("100000") - Decimal("2000")
-        assert account.equity == Decimal("100000")
-
-    def test_submit_without_recorded_price_uses_default(self) -> None:
-        adapter = SimulatedBrokerAdapter(default_price=Decimal("50"))
-        request = SubmitRequest(
-            symbol="BTC-USD",
-            side=BrokerOrderSide.BUY,
-            order_type=BrokerOrderType.MARKET,
-            quantity=Decimal("2"),
-            time_in_force=BrokerTimeInForce.DAY,
-        )
-        result = asyncio.run(adapter.submit(request, client_order_id="c2"))
-        assert result.status == BrokerOrderStatus.FILLED
-        positions = asyncio.run(adapter.get_positions())
-        assert positions[0].average_price == Decimal("50")
+def _imported_modules(tree: ast.AST) -> list[str]:
+    modules: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                modules.append(node.module)
+    return modules
 
 
-class TestRoutingBrokerAdapter:
-    def test_delegates_submit_to_oanda_adapter(self) -> None:
-        class _RecordingAdapter(SimulatedBrokerAdapter):
-            def __init__(self) -> None:
-                super().__init__()
-                self.submitted: list[str] = []
-
-            async def submit(
-                self, request: SubmitRequest, *, client_order_id: str
-            ) -> SubmitResult:
-                self.submitted.append(request.symbol)
-                return await super().submit(request, client_order_id=client_order_id)
-
-        oanda = _RecordingAdapter()
-        # Reference prices keep the shared simulated portfolio within cash
-        # for both fills (EUR_USD 1000 @ 1.14 and AAPL 5 @ 200).
-        oanda.record_reference_price("EUR_USD", Decimal("1.14"))
-        oanda.record_reference_price("AAPL", Decimal("200"))
-        routed = RoutingBrokerAdapter(oanda=oanda)
-
-        fx = SubmitRequest(
-            symbol="EUR_USD",
-            side=BrokerOrderSide.BUY,
-            order_type=BrokerOrderType.MARKET,
-            quantity=Decimal("1000"),
-            time_in_force=BrokerTimeInForce.DAY,
-        )
-        stock = SubmitRequest(
-            symbol="AAPL",
-            side=BrokerOrderSide.BUY,
-            order_type=BrokerOrderType.MARKET,
-            quantity=Decimal("5"),
-            time_in_force=BrokerTimeInForce.DAY,
-        )
-        asyncio.run(routed.submit(fx, client_order_id="f1"))
-        asyncio.run(routed.submit(stock, client_order_id="s1"))
-        assert oanda.submitted == ["EUR_USD", "AAPL"]
-
-    def test_missing_venue_degrades_to_simulated(self) -> None:
-        routed = RoutingBrokerAdapter()
-        request = SubmitRequest(
-            symbol="NVDA",
-            side=BrokerOrderSide.BUY,
-            order_type=BrokerOrderType.MARKET,
-            quantity=Decimal("3"),
-            time_in_force=BrokerTimeInForce.DAY,
-        )
-        result = asyncio.run(routed.submit(request, client_order_id="d1"))
-        assert result.status == BrokerOrderStatus.FILLED
-        # The simulated adapter received the order: a position exists.
-        positions = asyncio.run(routed.get_positions())
-        assert positions[0].symbol == "NVDA"
-
-    def test_health_reports_simulated_without_live_adapter(self) -> None:
-        routed = RoutingBrokerAdapter()
-        health = asyncio.run(routed.health())
-        assert health.healthy is True
-        assert "simulated" in health.detail
-
-    def test_get_account_with_no_live_venue_returns_simulated(self) -> None:
-        routed = RoutingBrokerAdapter()
-        account = asyncio.run(routed.get_account())
-        assert account.account_id == "simulated-paper"
-        assert account.cash == Decimal("100000")
+def test_routing_module_is_absent() -> None:
+    """AC-M01-W03-01: the routed adapter module no longer exists."""
+    assert not (PROJECT_ROOT / _ROUTING_MODULE).is_file()
 
 
-class TestExecutionBackendClamp:
-    def _intent(self, symbol: str = "AAPL") -> OrderIntent:
-        return OrderIntent(
-            intent_id="clamp-test",
-            source="model",
-            symbol=symbol,
-            side="buy",
-            order_type="market",
-            target_position_pct=Decimal("0.25"),
-            rationale="clamp test",
-            created_at=datetime(2026, 8, 1, tzinfo=UTC),
+def test_production_sources_do_not_import_routing() -> None:
+    """AC-M01-W03-01: no production source can reach the routing module."""
+    offenders: list[str] = []
+    for path in _production_source_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for module in _imported_modules(tree):
+            if "broker.routing" in module or module.endswith(".routing"):
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)} imports {module}")
+    assert offenders == []
+
+
+def test_production_settings_cannot_reach_test_fakes() -> None:
+    """AC-M01-W03-03: test fakes are unreachable from production settings."""
+    offenders: list[str] = []
+    for path in _production_source_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for module in _imported_modules(tree):
+            if module == "tests" or module.startswith("tests.") or module == "_helpers":
+                offenders.append(f"{path.relative_to(PROJECT_ROOT)} imports {module}")
+    assert offenders == []
+
+
+def test_unconfigured_scheduler_runtime_reports_not_ready_and_cannot_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-M01-W03-02: unconfigured broker runtime is not ready, cannot submit."""
+    from alphabrief_cli.scheduler_commands import _build_adapter
+
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
+
+    adapter = _build_adapter()
+    health = asyncio.run(adapter.health())
+    assert health.healthy is False
+    assert "not configured" in health.detail
+    with pytest.raises(NotImplementedError):
+        asyncio.run(
+            adapter.submit(
+                SubmitRequest(
+                    symbol="EUR_USD",
+                    side=BrokerOrderSide.BUY,
+                    order_type=BrokerOrderType.MARKET,
+                    quantity=Decimal("1000"),
+                ),
+                client_order_id="unconfigured",
+            )
         )
 
-    def test_local_backend_clamps_to_notional_cap(self) -> None:
-        from alphabrief_execution import (
-            FillSimulator,
-            OrderRouter,
-            PaperBroker,
-            PortfolioState,
-        )
 
-        broker = PaperBroker(
-            portfolio=PortfolioState(cash=Decimal("100000")),
-            router=OrderRouter(),
-            fill_simulator=FillSimulator(),
-        )
-        backend = LocalPaperExecutionBackend(
-            broker, max_order_value=Decimal("2000")
-        )
-        # 0.25 x $100k = $25k notional -> clamped to $2000 / $200 = 10 shares.
-        quantity = backend.estimate_quantity(
-            self._intent(), reference_price=Decimal("200")
-        )
-        assert quantity == Decimal("10")
+def test_configured_scheduler_runtime_is_oanda_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-M01-W03-02: with credentials the runtime is the OANDA adapter."""
+    from alphabrief_cli.scheduler_commands import _build_adapter
+    from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
 
-    def test_external_backend_clamps_to_notional_cap(self) -> None:
-        adapter = SimulatedBrokerAdapter()
-        backend = ExternalPaperExecutionBackend(
-            adapter, max_order_value=Decimal("2000")
-        )
-        quantity = backend.estimate_quantity(
-            self._intent("BTC-USD"), reference_price=Decimal("40000")
-        )
-        # $2000 / $40000 = 0.05 BTC.
-        assert quantity == Decimal("0.05")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
 
-    def test_no_cap_keeps_legacy_behavior(self) -> None:
-        from alphabrief_execution import (
-            FillSimulator,
-            OrderRouter,
-            PaperBroker,
-            PortfolioState,
-        )
+    adapter = _build_adapter()
 
-        broker = PaperBroker(
-            portfolio=PortfolioState(cash=Decimal("100000")),
-            router=OrderRouter(),
-            fill_simulator=FillSimulator(),
-        )
-        backend = LocalPaperExecutionBackend(broker)
-        quantity = backend.estimate_quantity(
-            self._intent(), reference_price=Decimal("200")
-        )
-        assert quantity == Decimal("125")  # 0.25 x 100k / 200
+    assert isinstance(adapter, OandaPaperAdapter)

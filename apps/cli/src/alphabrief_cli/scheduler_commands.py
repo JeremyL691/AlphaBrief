@@ -316,18 +316,19 @@ def freezes_cmd(
 
 
 class _NullBrokerAdapter(BrokerAdapter):
-    """Phase 18 dev-mode adapter used when no broker credentials are set.
+    """Dev-mode adapter used when no OANDA credentials are set.
 
     Every probe returns an empty result so the reconcile task succeeds
-    and the scheduler stays running. The scheduler never places orders
-    through this adapter — ``ReconciliationRunner`` only calls
-    ``list_orders`` / ``get_positions`` / ``get_account``.
+    and the scheduler stays running, but the runtime reports not ready
+    and cannot place orders — the scheduler never executes through this
+    adapter (``ReconciliationRunner`` only calls ``list_orders`` /
+    ``get_positions`` / ``get_account``).
     """
 
     async def health(self) -> BrokerHealth:
         return BrokerHealth(
-            healthy=True,
-            detail="null adapter (no broker credentials configured)",
+            healthy=False,
+            detail="broker runtime not configured (no OANDA credentials)",
             checked_at=datetime.now(UTC),
         )
 
@@ -373,22 +374,16 @@ def _oanda_is_configured() -> bool:
 
 
 def _build_adapter() -> BrokerAdapter:
-    """Build the OANDA practice adapter for the runtime environment.
+    """Build the fail-closed OANDA practice adapter for the runtime.
 
-    OANDA practice is the only execution venue (M01-W02). Missing OANDA
-    credentials fail closed; the routed composition and the simulated
-    fallback are removed by milestone M01-W03.
+    OANDA practice is the only execution venue (M01-W03). Without OANDA
+    credentials the runtime resolves a not-ready null adapter that cannot
+    submit, cancel, or read order state; no in-memory execution path is
+    composed here.
     """
-    from alphabrief_execution.broker.routing import (
-        RoutingBrokerAdapter,
-        SimulatedBrokerAdapter,
-    )
-
-    oanda = _build_oanda_adapter() if _oanda_is_configured() else None
-    return RoutingBrokerAdapter(
-        oanda=oanda,
-        simulated=SimulatedBrokerAdapter(),
-    )
+    if _oanda_is_configured():
+        return _build_oanda_adapter()
+    return _NullBrokerAdapter()
 
 
 def _build_oanda_adapter() -> BrokerAdapter:

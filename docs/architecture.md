@@ -40,7 +40,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | `alphabrief-strategy` | StrategySpec 和 signals | 保留；增加 safe compiler/strategy families |
 | `alphabrief-backtest` | vectorized backtest/metrics | 保留；扩展 portfolio/walk-forward/OANDA semantics |
 | `alphabrief-risk` | deterministic RiskGate | 保留；所有执行路径必须接入完整 context |
-| `alphabrief-execution` | PaperBroker、OANDA、Alpaca、routing、recon、scheduler | 重构为 OANDA-only runtime；test fake 移入测试边界 |
+| `alphabrief-execution` | PaperBroker、OANDA、recon、scheduler | M01-W03 后为 OANDA-only runtime port；routing/simulated 已删除，test fake 只在测试边界 |
 | `alphabrief-trader` | committee、snapshot、daily cycle、execution backend | 保留；改为持久 cycle state machine |
 | `alphabrief-gym` | training environments | 保留为 advisory/research，不能直连 execution |
 | `alphabrief-review` | post-trade review | 保留并接入 OANDA ledger/observation |
@@ -51,24 +51,28 @@ scheduler entry point；`electron` 只负责本地 backend lifecycle 和窗口�
 
 ### 2.2 Current Execution Path
 
-当前代码是多券商路由，而不是最终结构：
+M01-W01..W03 已把生产执行路径收敛为 OANDA-only、fail-closed：
 
 ```text
 API/CLI broker factory
        |
-RoutingBrokerAdapter
-  | OANDA for underscore symbols
-  | Alpaca for equities/crypto
-  + SimulatedBrokerAdapter when credentials are absent
+  OANDA credentials configured?
+    yes -> OandaPaperAdapter (practice constant only)
+    no  -> fail-closed null adapter (reports not ready; cannot submit)
 ```
 
-这带来三个不可接受的事实：
+RoutingBrokerAdapter、SimulatedBrokerAdapter 与 `broker/routing.py` 已从
+生产代码删除；本地内存成交只存在于显式 local paper mode
+（`LocalPaperExecutionBackend`，operator 选择，不是缺凭证回退）。剩余
+事实：
 
-1. 缺凭证时“外部模拟盘”可能在本地内存成交，观察结果并非 OANDA；
-2. routing 以 symbol 形态猜 venue，不能以账户真实 instruments 为权威；
-3. routing account snapshot 不能正确表达多个 venue 的统一账户事实。
+1. OANDA adapter 仍以常量 practice URL 工作，缺凭证绝不本地成交；
+2. 完整账户 instruments 权威、candle/pricing/stream、订单生命周期与
+   对账仍由 M04-M07 落地；
+3. 统一 OANDA runtime authority（API/CLI/scheduler 共享）由 M01-W04
+   落地。
 
-M01 会删除这条生产路径，目标为：
+M04-M07 目标结构（accepted target decision，尚未完成）：
 
 ```text
 OandaRuntime singleton

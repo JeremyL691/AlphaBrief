@@ -80,8 +80,10 @@ def test_null_adapter_read_probes_return_zero_shape() -> None:
     assert account.equity == Decimal("0")
     assert account.buying_power == Decimal("0")
     assert account.currency == "USD"
+    # M01-W03: an unconfigured broker runtime reports not ready.
     health = asyncio.run(adapter.health())
-    assert health.healthy is True
+    assert health.healthy is False
+    assert "not configured" in health.detail
 
 
 def test_module_imports_without_credentials(

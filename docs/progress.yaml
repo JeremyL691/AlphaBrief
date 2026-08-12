@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-13T04:30:00+08:00"
+updated_at: "2026-08-13T05:00:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -59,7 +59,7 @@ current_baseline:
     policy_provider: oanda_paper
     oanda_adapter_present: true
     alpaca_adapter_present: false
-    production_simulated_fallback_present: true
+    production_simulated_fallback_present: false
     oanda_complete_instrument_discovery: false
     durable_oanda_transaction_cursor: false
     complete_reconciliation: false
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M01
-  work_item_id: M01-W03
+  work_item_id: M01-W04
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M01-W02-FINAL-GATE
-  next_action: remove production broker routing and simulated fallback
+  last_verified_gate: M01-W03-FINAL-GATE
+  next_action: unify API, CLI, and scheduler OANDA runtime ownership
 
 milestones:
   M00: DONE
@@ -99,9 +99,10 @@ work_item_states:
   M00-W01: DONE
   M01-W01: DONE
   M01-W02: DONE
+  M01-W03: DONE
 
 latest_validation:
-  completed_at: "2026-08-13T04:30:00+08:00"
+  completed_at: "2026-08-13T05:00:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -109,9 +110,9 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 1404
+      passed: 1392
       failed: 0
-      warnings: 9
+      warnings: 11
     restricted_sandbox:
       passed: 1394
       environment_failed: 12
@@ -212,5 +213,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M01-W02
-last_ledger_record: R-20260813-M01-W02
+last_completed_round: R-20260813-M01-W03
+last_ledger_record: R-20260813-M01-W03
