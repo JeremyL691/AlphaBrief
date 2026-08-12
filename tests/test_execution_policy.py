@@ -464,9 +464,6 @@ def test_missing_oanda_credentials_fail_closed_without_order_or_fill(
     monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_BASE_URL", raising=False)
 
     # A client cannot even be constructed without credentials, so no HTTP
     # request and no order/fill can be generated.

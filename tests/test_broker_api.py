@@ -21,14 +21,11 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
-    # No Alpaca / OANDA credentials in the default suite -> null adapter.
+    # No OANDA credentials in the default suite -> null adapter.
     # Reset first so a cred-bearing test from elsewhere cannot leak its
-    # adapter. Both broker credential sets are cleared because the
-    # auto-load step in ``alphabrief_api.__init__`` may have populated
-    # them from the project's local ``.env`` on developer workstations.
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_BASE_URL", raising=False)
+    # adapter. Credentials are cleared because the auto-load step in
+    # ``alphabrief_api.__init__`` may have populated them from the
+    # project's local ``.env`` on developer workstations.
     monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
     _reset_broker_adapter()

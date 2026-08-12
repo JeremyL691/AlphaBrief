@@ -1,17 +1,16 @@
-"""Routed broker adapter: multi-venue paper execution.
+"""Routed broker adapter: OANDA practice paper execution (M01-W02).
 
-The policy universe spans venues that no single broker covers — OANDA
-practice serves FX / metals / index CFDs, Alpaca paper serves US
-equities and crypto. :class:`RoutingBrokerAdapter` picks the venue per
-symbol and degrades to the built-in :class:`SimulatedBrokerAdapter`
-when a venue's credentials are missing, so the system stays usable out
-of the box.
+The policy universe is served by one venue — OANDA v20 practice.
+:class:`RoutingBrokerAdapter` delegates every symbol to the OANDA
+adapter and degrades to the built-in :class:`SimulatedBrokerAdapter`
+when credentials are missing, so the current baseline stays usable.
+The routed composition and the simulated fallback are removed by
+milestone M01-W03; until then this module is the OANDA-only carrier.
 
 Symbol classes (internal AlphaBrief identifiers):
 
 * ``XXX_YYY`` (e.g. ``EUR_USD``, ``XAU_USD``, ``US30_USD``) → OANDA
-* contains ``-`` (e.g. ``BTC-USD``) → Alpaca crypto
-* plain ticker (e.g. ``AAPL``) → Alpaca equity
+* any other identifier also resolves to OANDA practice
 
 The simulated adapter fills orders at a synthetic reference price
 (default ``$100`` unless overridden via :meth:`record_reference_price`),
@@ -20,7 +19,6 @@ which keeps the fallback deterministic and documented as synthetic.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -49,15 +47,10 @@ from alphabrief_execution.broker.port import (
     SubmitResult,
 )
 
-_OANDA_SYMBOL_RE = re.compile(r"^[A-Z0-9]+_[A-Z0-9]{3}$")
-
 
 def route_symbol_to_venue(symbol: str) -> str:
-    """Return the venue name (``oanda_paper`` / ``alpaca_paper``) for a symbol."""
-    normalized = symbol.strip().upper()
-    if _OANDA_SYMBOL_RE.match(normalized):
-        return "oanda_paper"
-    return "alpaca_paper"
+    """Return the execution venue for a symbol — always OANDA practice."""
+    return "oanda_paper"
 
 
 class SimulatedBrokerAdapter(BrokerAdapter):
@@ -202,23 +195,21 @@ class _BrokerSimulatedError(Exception):
 
 
 class RoutingBrokerAdapter(BrokerAdapter):
-    """Multi-venue paper adapter that routes each symbol to its venue.
+    """OANDA practice paper adapter with a simulated no-credential fallback.
 
-    Venue adapters are optional: a missing venue falls back to the
-    simulated adapter so execution always works. The wrapped adapters
-    are built lazily by the caller via the ``build_*`` factory hooks.
+    The wrapped adapter is built lazily by the caller via the ``build_*``
+    factory hooks. The routed composition itself is removed by milestone
+    M01-W03.
     """
 
     def __init__(
         self,
         *,
         oanda: BrokerAdapter | None = None,
-        alpaca: BrokerAdapter | None = None,
         simulated: BrokerAdapter | None = None,
         venue_for: Callable[[str], str] = route_symbol_to_venue,
     ) -> None:
         self._oanda = oanda
-        self._alpaca = alpaca
         self._simulated = simulated or SimulatedBrokerAdapter()
         self._venue_for = venue_for
 
@@ -233,8 +224,6 @@ class RoutingBrokerAdapter(BrokerAdapter):
         venue = self.venue_for_symbol(symbol)
         if venue == "oanda_paper":
             return self._oanda or self._simulated
-        if venue == "alpaca_paper":
-            return self._alpaca or self._simulated
         return self._simulated
 
     def record_reference_price(self, symbol: str, price: Decimal) -> None:
@@ -247,20 +236,15 @@ class RoutingBrokerAdapter(BrokerAdapter):
     # ------------------------------------------------------------------
 
     async def health(self) -> BrokerHealth:
-        venues: list[str] = []
         if self._oanda is not None:
-            venues.append("oanda")
-        if self._alpaca is not None:
-            venues.append("alpaca")
-        if not venues:
             return BrokerHealth(
                 healthy=True,
-                detail="simulated paper broker (no external credentials)",
+                detail="oanda practice adapter",
                 checked_at=datetime.now(UTC),
             )
         return BrokerHealth(
             healthy=True,
-            detail=f"routed paper venues: {', '.join(venues)} (+simulated fallback)",
+            detail="simulated paper broker (no external credentials)",
             checked_at=datetime.now(UTC),
         )
 
@@ -324,7 +308,7 @@ class RoutingBrokerAdapter(BrokerAdapter):
         return await live[0].get_account()
 
     def _live_adapters(self) -> list[BrokerAdapter]:
-        return [a for a in (self._oanda, self._alpaca) if a is not None]
+        return [a for a in (self._oanda,) if a is not None]
 
 
 # ---------------------------------------------------------------------------
