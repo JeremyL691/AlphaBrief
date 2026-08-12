@@ -252,6 +252,20 @@ transition table 已写入 docs/autonomous_loop.md §4.1 附录。
 范围说明：本 round 无 allowlist 外路径。full pytest 1476 passed（+7 controller/meta-gate 测试）。
 M02 里程碑全部 6 个 work items DONE；下一个 READY item 为 M03-W01（依赖 M02-W06 ✓）。
 
+#### M03-W01 已闭环证据（R-20260813-M03-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M03-W01-01 | empty、current-baseline、fixture schema 迁移到同一 latest version | `alphabrief_api.db.migrations`（versioned ledger + ordered apply）；empty DB、pre-migration DB（无 ledger 直接建表）、apply+drop+apply fixture 全部收敛到 v1；`test_database_migrations.py` + `test_api_store.py` |
+| AC-M03-W01-02 | 重跑不改变数据；中断迁移原子回滚 | `migrate` 每迁移一个事务（tables+ledger 一起 COMMIT/ROLLBACK）；broken migration 后无 partial table；重复 apply 后数据行不变 |
+| AC-M03-W01-03 | newer/corrupt schema 启动失败且无 partial writes | `check_compatibility`（unknown applied version / 超过 expected_latest → SchemaCompatibilityError）；`apply_schema` 先 check 后 migrate |
+
+工程说明：DuckDB 在“同 catalog 多连接、显式事务内 CREATE INDEX”场景存在
+dependency-tracking quirk（index 被另一连接 drop 后 commit 失败）。处理：
+(1) migration 的 index DDL 移到事务提交后 autocommit 幂等执行；(2) store
+`clear()` 改为 drop 后重连；(3) `drop_schema` 显式先 drop indexes。full
+pytest 1488 passed（+12 migration/store 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

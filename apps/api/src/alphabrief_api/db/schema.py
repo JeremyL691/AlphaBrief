@@ -8,6 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from alphabrief_api.db.migrations import (
+    Migration,
+    check_compatibility,
+    migrate,
+)
+
 # ---------------------------------------------------------------------------
 # Table: symbols
 # ---------------------------------------------------------------------------
@@ -493,15 +499,75 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
 # Schema helpers
 # ---------------------------------------------------------------------------
 
+#: M03-W01: the baseline DDL set becomes migration v1. Table DDL is the
+#: transactional unit; index DDL runs idempotently after the commit
+#: (DuckDB cannot commit CREATE INDEX inside an explicit transaction when
+#: another open connection dropped the same index). Every later schema
+#: change appends a new Migration instead of editing these statements.
+_TABLE_STATEMENTS: tuple[str, ...] = tuple(
+    statement
+    for statement in _SCHEMA_STATEMENTS
+    if "CREATE INDEX" not in statement
+)
+_INDEX_STATEMENTS: tuple[str, ...] = tuple(
+    statement
+    for statement in _SCHEMA_STATEMENTS
+    if "CREATE INDEX" in statement
+)
+
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(
+        version=1,
+        name="baseline-v1",
+        statements=_TABLE_STATEMENTS,
+        index_statements=_INDEX_STATEMENTS,
+    ),
+)
+
+_LATEST_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)
+
 
 def apply_schema(connection: Any) -> None:
-    """Create all tables (idempotent)."""
-    for stmt in _SCHEMA_STATEMENTS:
-        connection.execute(stmt)
+    """Migrate the database to the latest schema version.
+
+    Runs the startup compatibility check (a newer or corrupt schema fails
+    closed) and then applies every pending migration atomically and
+    idempotently (M03-W01).
+    """
+    check_compatibility(connection, migrations=MIGRATIONS)
+    migrate(connection, migrations=MIGRATIONS)
+
+
+def current_schema_version(connection: Any) -> int:
+    """Return the applied schema version (0 for a fresh database)."""
+    from alphabrief_api.db.migrations import current_schema_version as _current
+
+    return _current(connection)
+
+
+def latest_schema_version() -> int:
+    """Return the latest version this build knows how to migrate to."""
+    return _LATEST_SCHEMA_VERSION
 
 
 def drop_schema(connection: Any) -> None:
-    """Drop all tables (for test isolation)."""
+    """Drop all tables (for test isolation).
+
+    The migration ledger is dropped first so a subsequent
+    ``apply_schema`` re-applies every migration instead of skipping the
+    recorded versions. Indexes are dropped explicitly before their
+    tables: a long-lived DuckDB catalog can otherwise keep a deleted
+    index dependency that fails the next transactional commit.
+    """
+    connection.execute("DROP TABLE IF EXISTS schema_migrations")
+    connection.execute("DROP INDEX IF EXISTS idx_strategy_signals_strategy_ts")
+    connection.execute("DROP INDEX IF EXISTS idx_strategy_admissions_strategy_created")
+    connection.execute(
+        "DROP INDEX IF EXISTS idx_account_equity_snapshots_account_captured"
+    )
+    connection.execute("DROP INDEX IF EXISTS idx_ai_daily_cycles_day")
+    connection.execute("DROP INDEX IF EXISTS idx_ai_committee_votes_role_created")
+    connection.execute("DROP INDEX IF EXISTS idx_ai_order_attempts_cycle")
     connection.execute("DROP TABLE IF EXISTS ai_order_attempts")
     connection.execute("DROP TABLE IF EXISTS ai_committee_votes")
     connection.execute("DROP TABLE IF EXISTS ai_daily_cycles")
@@ -527,8 +593,11 @@ def drop_schema(connection: Any) -> None:
 
 
 __all__ = [
+    "MIGRATIONS",
     "apply_schema",
+    "current_schema_version",
     "drop_schema",
+    "latest_schema_version",
     "CREATE_ACCOUNT_EQUITY_SNAPSHOTS_INDEX",
     "CREATE_ACCOUNT_EQUITY_SNAPSHOTS_TABLE",
     "CREATE_AI_COMMITTEE_VOTES_INDEX",
