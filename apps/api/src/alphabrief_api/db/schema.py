@@ -522,6 +522,53 @@ MIGRATIONS: tuple[Migration, ...] = (
         statements=_TABLE_STATEMENTS,
         index_statements=_INDEX_STATEMENTS,
     ),
+    Migration(
+        version=2,
+        name="versioned-bar-facts",
+        statements=(
+            # M03-W02: bars become immutable, versioned facts. The primary
+            # key includes data_version and source so different versions of
+            # the same symbol+timestamp coexist; fact_id is the
+            # content-addressed identity computed by the store. Legacy rows
+            # are backfilled with a stable content hash.
+            """
+            CREATE TABLE bars_v2 (
+                symbol          VARCHAR NOT NULL,
+                timestamp       TIMESTAMPTZ NOT NULL,
+                open            DECIMAL(38, 18) NOT NULL,
+                high            DECIMAL(38, 18) NOT NULL,
+                low             DECIMAL(38, 18) NOT NULL,
+                close           DECIMAL(38, 18) NOT NULL,
+                volume          DECIMAL(38, 18) NOT NULL,
+                source          VARCHAR NOT NULL,
+                data_version    VARCHAR NOT NULL,
+                fact_id         VARCHAR NOT NULL,
+                ingested_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY     (symbol, timestamp, data_version, source)
+            )
+            """,
+            """
+            INSERT INTO bars_v2 (
+                symbol, timestamp, open, high, low, close, volume,
+                source, data_version, fact_id
+            )
+            SELECT
+                symbol, timestamp, open, high, low, close, volume,
+                source, data_version,
+                'legacy|' || sha256(
+                    concat(
+                        CAST(symbol AS VARCHAR), '|',
+                        CAST(timestamp AS VARCHAR), '|',
+                        CAST(source AS VARCHAR), '|',
+                        CAST(data_version AS VARCHAR)
+                    )
+                )
+            FROM bars
+            """,
+            "DROP TABLE bars",
+            "ALTER TABLE bars_v2 RENAME TO bars",
+        ),
+    ),
 )
 
 _LATEST_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)

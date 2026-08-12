@@ -75,11 +75,12 @@ class NewsStore:
 
         self._conn.executemany(
             """
-            INSERT OR REPLACE INTO news_headlines (
+            INSERT INTO news_headlines (
                 headline_id, published_at, symbols, category, source,
                 title, summary, url, sentiment, data_version
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (headline_id) DO NOTHING
             """,
             rows,
         )
