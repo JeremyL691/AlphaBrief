@@ -51,6 +51,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | `market_snapshot` store | immutable cycle market snapshots | M05-W05 起：migration v4 表；确定性 manifest（source IDs + quality rules + quality version）；7 类 quality rules → non-executable verdict；原子 publish + lineage 链；后继 ingestion 不改变已引用 snapshot |
 | M05 里程碑 | OANDA market data | W01 candles、W02 pricing/conversions、W03 stream、W04 sessions/holidays、W05 immutable snapshots 全部落地；W06 本地 gates 通过，T7 practice evidence PENDING（CODE_COMPLETE，M06 继承 external_evidence_pending） |
 | `oanda/orders` | strict order contracts | M06-W01 起：signed units（buy+/sell-、zero 拒）、4 类 order type、FOK/IOC/GTC/GTD（DAY 拒）、dependent orders（TP/SL/trailing/GSLO）`*OnFill` 精确序列化；price/distance 从 instrument metadata 精确规范化，超精度拒绝；无 `side` 字段 |
+| `oanda/order_ops` | order command/query port | M06-W02 起：create（clientExtensions.id 幂等）/get/list（分页）/cancel/replace（pending-only，stale/race fail-closed）；typed responses + request correlation；classified errors（invalid_request_id/unknown_order/order_state_invalid） |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |

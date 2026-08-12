@@ -490,6 +490,17 @@ M05-W06 为 CODE_COMPLETE；M05 里程碑 CODE_COMPLETE，M06 激活并继续继
 hypothesis 依赖（未声明 dependency 不引入）。full pytest 1700 passed（+23
 order 测试）。
 
+#### M06-W02 已闭环证据（R-20260813-M06-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M06-W02-01 | create/get/list(paginated)/cancel/replace 产生精确 typed responses 与正确 state transitions | `OrderOpsClient` 全流程测试（create→PENDING、get 全字段、list 分页 has_more、cancel→CANCELLED、replace→新 order id）（`test_oanda_order_operations.py` + in-memory mock broker） |
+| AC-M06-W02-02 | invalid request IDs、unknown orders、race conditions、stale replaces 以 classified errors fail closed | `invalid_request_id`（空 id）、`unknown_order`（404→分类）、`order_state_invalid`（FILLED 不能 cancel；read 与 replace 之间 state 变化 → 拒绝） |
+| AC-M06-W02-03 | 每个 response 保留 request correlation；retries 不重复下单（create 对 clientExtensions.id 幂等） | `request_id` 贯穿所有结果（create/get/list/cancel/replace）；同 client_order_id 二次 create 返回同一 broker_order_id 且 `reused=True`，broker 侧仅 1 单 |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1708 passed（+8
+order ops 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
