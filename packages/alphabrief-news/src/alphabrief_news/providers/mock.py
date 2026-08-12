@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from alphabrief_news.providers.base import NewsProviderError, NewsProviderErrorCode
@@ -17,8 +17,12 @@ from alphabrief_news.types import (
 class MockNewsProvider:
     """Deterministic news provider that returns canned headlines.
 
-    The provider does not perform network calls. It filters by query symbols
-    and the requested time window, then returns up to ``query.limit`` rows.
+    The provider does not perform network calls. It filters by query
+    symbols and the requested time window, then returns up to
+    ``query.limit`` rows. Simulator behavior: canned headlines whose
+    publication date falls outside the requested window are shifted to
+    the window's end (minus one hour) so the mock behaves like a live
+    feed for any window the caller asks for.
     """
 
     def __init__(self, seed_headlines: list[NewsHeadline] | None = None) -> None:
@@ -33,17 +37,27 @@ class MockNewsProvider:
             )
 
         symbol_set = set(query.symbols)
-        results = [
-            headline
-            for headline in self._headlines
-            if symbol_set.intersection(headline.symbols)
-            and query.start <= headline.published_at < query.end
-        ]
+        results: list[NewsHeadline] = []
+        for headline in self._headlines:
+            if not symbol_set.intersection(headline.symbols):
+                continue
+            published_at = headline.published_at
+            if not (query.start <= published_at < query.end):
+                published_at = query.end - timedelta(hours=1)
+            results.append(
+                headline.model_copy(update={"published_at": published_at})
+            )
         return results[: query.limit]
 
 
 class MockMacroProvider:
-    """Deterministic macro provider that returns canned indicators."""
+    """Deterministic macro provider that returns canned indicators.
+
+    Simulator behavior: when a canned indicator's release date falls
+    outside the requested window, the release date is shifted to the
+    window's end (minus one day) so the mock behaves like a live feed
+    for any window the caller asks for.
+    """
 
     def __init__(self, seed_indicators: list[MacroIndicator] | None = None) -> None:
         self._indicators: list[MacroIndicator] = seed_indicators or []
@@ -57,12 +71,16 @@ class MockMacroProvider:
             )
 
         indicator_set = set(query.indicators)
-        results = [
-            indicator
-            for indicator in self._indicators
-            if indicator.indicator_id in indicator_set
-            and query.start <= indicator.released_at < query.end
-        ]
+        results: list[MacroIndicator] = []
+        for indicator in self._indicators:
+            if indicator.indicator_id not in indicator_set:
+                continue
+            released_at = indicator.released_at
+            if not (query.start <= released_at < query.end):
+                released_at = query.end - timedelta(days=1)
+            results.append(
+                indicator.model_copy(update={"released_at": released_at})
+            )
         return results
 
 

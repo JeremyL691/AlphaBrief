@@ -183,6 +183,8 @@ def list_indicators(
     offset: int = Query(default=0, ge=0),
 ) -> MacroIndicatorsResponse:
     """List stored macro indicators with optional filters."""
+    from alphabrief_api.db.merged import merge_dedupe, open_snapshot_store
+
     start_dt = _parse_iso_to_utc(start, field_name="start") if start else None
     end_dt = _parse_iso_to_utc(end, field_name="end") if end else None
 
@@ -194,6 +196,27 @@ def list_indicators(
         limit=limit,
         offset=offset,
     )
+
+    # Merge scheduler-generated indicators with the API DB.
+    snapshot_store = open_snapshot_store(MacroStore)
+    if snapshot_store is not None:
+        try:
+            indicators = merge_dedupe(
+                list(indicators),
+                list(
+                    snapshot_store.list_indicators(
+                        indicator_id=indicator_id,
+                        start=start_dt,
+                        end=end_dt,
+                        limit=limit,
+                        offset=offset,
+                    )
+                ),
+                key=lambda i: (i.indicator_id, i.released_at),
+                sort_key=lambda i: i.released_at,
+            )
+        finally:
+            snapshot_store.close()
 
     summaries = [
         MacroIndicatorSummary(

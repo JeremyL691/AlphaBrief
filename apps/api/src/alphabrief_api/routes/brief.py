@@ -208,18 +208,25 @@ def generate_brief(body: BriefGenerateRequest) -> dict[str, object]:
         input_text = body.input_text
         prompt_version = body.prompt_version
 
-    result = generate_daily_alpha_brief(
-        gateway,
-        input_text=input_text,
-        prompt_version=prompt_version,
-    )
+    result = None
+    # Real providers occasionally deviate from the strict brief schema;
+    # retry a few times before surfacing a 422.
+    for _attempt in range(3):
+        result = generate_daily_alpha_brief(
+            gateway,
+            input_text=input_text,
+            prompt_version=prompt_version,
+        )
+        if result.ok and result.brief is not None:
+            break
 
-    if not result.ok:
+    if result is None or not result.ok:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"brief generation failed: {result.error_code or 'unknown'} — "
-                f"{result.error_message or 'no detail'}"
+                "brief generation failed: "
+                f"{result.error_code or 'unknown' if result else 'unknown'} — "
+                f"{result.error_message or 'no detail' if result else 'no detail'}"
             ),
         )
 
@@ -288,7 +295,21 @@ def _build_research_context_builder() -> ResearchContextBuilder:
 @router.get("/history", response_model=BriefHistoryResponse)
 def list_brief_history() -> BriefHistoryResponse:
     """List all generated daily brief summaries."""
+    from alphabrief_api.db.merged import merge_dedupe, open_snapshot_store
+
     store = _get_brief_store()
+    briefs = list(store.list_briefs())
+    snapshot_store = open_snapshot_store(BriefStore)
+    if snapshot_store is not None:
+        try:
+            briefs = merge_dedupe(
+                briefs,
+                list(snapshot_store.list_briefs()),
+                key=lambda b: b["id"],
+                sort_key=lambda b: b["created_at"],
+            )
+        finally:
+            snapshot_store.close()
     summaries = [
         BriefSummary(
             brief_id=b["id"],
@@ -296,7 +317,7 @@ def list_brief_history() -> BriefHistoryResponse:
             generated_at=b["created_at"],
             headline=b["headline"],
         )
-        for b in store.list_briefs()
+        for b in briefs
     ]
     return BriefHistoryResponse(briefs=summaries)
 
