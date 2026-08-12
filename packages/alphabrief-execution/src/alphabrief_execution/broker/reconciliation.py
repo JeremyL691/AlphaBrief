@@ -48,7 +48,7 @@ class ReconResult:
 
 @dataclass
 class ReconcilerConfig:
-    """Per-scope freeze policy. Mirrors FINAL_ACCEPTANCE_REPORT §8.1."""
+    """Per-scope freeze policy pending the M07 reconciliation redesign."""
 
     # When True, a snapshot with any match=False raises a freeze.
     freeze_on_diff: dict[str, bool] = field(

@@ -6,7 +6,7 @@ risk committee's veto/override advice, the synthesized trade plan, and
 the end-to-end daily-cycle record. They do not call providers, read
 databases, place orders, or touch risk / execution code.
 
-Safety contract (mirrors PROJECT_RULES.md):
+Safety contract (mirrors AGENTS.md):
 
 * The committee only ever produces *OrderIntent candidates*. It never
   produces an ``Order``. An intent becomes an order only after a

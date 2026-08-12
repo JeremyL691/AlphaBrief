@@ -25,7 +25,8 @@ from alphabrief_execution.broker.errors import BrokerAuthError
 # ---------------------------------------------------------------------------
 
 #: Default Alpaca Paper endpoint. The live endpoint is intentionally not
-#: exposed anywhere in this module — see PROJECT_RULES.
+#: exposed anywhere in this module - see AGENTS.md. This module is scheduled
+#: for deletion in blueprint milestone M01.
 DEFAULT_BASE_URL = "https://paper-api.alpaca.markets"
 
 #: Default per-request timeout in seconds.
