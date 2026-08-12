@@ -70,6 +70,9 @@ def test_openai_provider_adapter_returns_success_on_valid_response() -> None:
     }
     headers = cast(dict[str, str], captured["headers"])
     assert headers["Authorization"] == "Bearer sk-test"
+    assert next(v for k, v in headers.items() if k.lower() == "user-agent") == (
+        "openai-python/1.30.0"
+    )
     assert response.provider == "openai"
     assert response.model == "gpt-3.5-turbo"
     assert response.output_text == "OpenAI model response"

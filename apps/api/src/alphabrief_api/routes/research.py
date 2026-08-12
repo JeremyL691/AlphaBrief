@@ -207,8 +207,21 @@ def create_debate(body: DebateRequest) -> dict[str, object]:
 @router.get("/debate", response_model=DebateHistoryResponse)
 def list_debates() -> DebateHistoryResponse:
     """List all debate records."""
+    from alphabrief_api.db.merged import merge_dedupe, open_snapshot_store
+
     store = _get_debate_store()
-    records = store.list_debate_records()
+    records = list(store.list_debate_records())
+    snapshot_store = open_snapshot_store(DebateStore)
+    if snapshot_store is not None:
+        try:
+            records = merge_dedupe(
+                records,
+                list(snapshot_store.list_debate_records()),
+                key=lambda r: r["id"],
+                sort_key=lambda r: r["created_at"],
+            )
+        finally:
+            snapshot_store.close()
     summaries = [
         DebateSummary(
             debate_id=r["id"],

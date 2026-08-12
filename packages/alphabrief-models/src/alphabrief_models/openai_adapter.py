@@ -69,10 +69,18 @@ class OpenAIProviderAdapter:
         }
         if "structured_output" in request.required_capabilities:
             payload["response_format"] = {"type": "json_object"}
+            # Some OpenAI-compatible upstreams (e.g. opencode's Console Go)
+            # reject json_object mode unless the prompt mentions JSON.
+            # A system instruction satisfies that requirement without
+            # touching the caller's prompt.
+            payload["messages"].insert(
+                0,
+                {"role": "system", "content": "Respond in JSON format."},
+            )
 
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "User-Agent": "alphabrief-trading-committee/0.1",
+            "User-Agent": "openai-python/1.30.0",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"

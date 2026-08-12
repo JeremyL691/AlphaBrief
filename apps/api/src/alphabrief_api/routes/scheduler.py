@@ -38,10 +38,19 @@ from alphabrief_execution.operations.scheduler import (
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
+from alphabrief_api.db.merged import scheduler_snapshot_path
+
 _LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/scheduler", tags=["scheduler"])
 
+
+# ---------------------------------------------------------------------------
+# Scheduler DB snapshot
+# ---------------------------------------------------------------------------
+#
+# Shared with every other dashboard route: see
+# :mod:`alphabrief_api.db.merged`.
 
 # ---------------------------------------------------------------------------
 # Writer-lock detection
@@ -92,21 +101,30 @@ def _writer_locked_response() -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-def _heartbeat_store() -> HeartbeatStore:
+def _store_db_path() -> Path | None:
+    """Resolve the DB file the read-only scheduler routes should read."""
+    snapshot = scheduler_snapshot_path()
+    if snapshot is not None:
+        return snapshot
     db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
     if db_dir_str:
         db_dir = Path(db_dir_str)
         db_dir.mkdir(parents=True, exist_ok=True)
-        return HeartbeatStore(db_path=db_dir / "alphabrief.db")
+        return db_dir / "alphabrief.db"
+    return None
+
+
+def _heartbeat_store() -> HeartbeatStore:
+    db_path = _store_db_path()
+    if db_path is not None:
+        return HeartbeatStore(db_path=db_path)
     return HeartbeatStore()
 
 
 def _recon_store() -> BrokerReconStore:
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return BrokerReconStore(db_path=db_dir / "alphabrief.db")
+    db_path = _store_db_path()
+    if db_path is not None:
+        return BrokerReconStore(db_path=db_path)
     return BrokerReconStore()
 
 

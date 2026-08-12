@@ -83,8 +83,14 @@ class ExecutionBackend(Protocol):
 class LocalPaperExecutionBackend:
     """Execution backend that delegates to the local ``PaperBroker``."""
 
-    def __init__(self, broker: PaperBroker) -> None:
+    def __init__(
+        self,
+        broker: PaperBroker,
+        *,
+        max_order_value: Decimal | None = None,
+    ) -> None:
         self._broker = broker
+        self._max_order_value = max_order_value
 
     def estimate_quantity(
         self,
@@ -95,12 +101,21 @@ class LocalPaperExecutionBackend:
         if reference_price <= 0:
             raise ExecutionBackendError("reference_price must be positive")
         if intent.quantity is not None:
-            return intent.quantity
+            return _clamp_quantity(
+                intent.quantity,
+                reference_price=reference_price,
+                max_order_value=self._max_order_value,
+            )
         if intent.target_position_pct is None:
             return None
         if intent.side == "buy":
-            return (self._broker.portfolio.cash * intent.target_position_pct) / (
+            estimated = (self._broker.portfolio.cash * intent.target_position_pct) / (
                 reference_price
+            )
+            return _clamp_quantity(
+                estimated,
+                reference_price=reference_price,
+                max_order_value=self._max_order_value,
             )
         if intent.target_position_pct == 0:
             return self._broker.portfolio.position_quantity(intent.symbol)
@@ -135,8 +150,14 @@ class LocalPaperExecutionBackend:
 class ExternalPaperExecutionBackend:
     """Execution backend that submits to a configured external paper adapter."""
 
-    def __init__(self, adapter: BrokerAdapter) -> None:
+    def __init__(
+        self,
+        adapter: BrokerAdapter,
+        *,
+        max_order_value: Decimal | None = None,
+    ) -> None:
         self._adapter = adapter
+        self._max_order_value = max_order_value
 
     def estimate_quantity(
         self,
@@ -147,12 +168,23 @@ class ExternalPaperExecutionBackend:
         if reference_price <= 0:
             raise ExecutionBackendError("reference_price must be positive")
         if intent.quantity is not None:
-            return intent.quantity
+            return _clamp_quantity(
+                intent.quantity,
+                reference_price=reference_price,
+                max_order_value=self._max_order_value,
+            )
         if intent.target_position_pct is None:
             return None
         if intent.side == "buy":
             account = _run_blocking(self._adapter.get_account())
-            return (account.buying_power * intent.target_position_pct) / reference_price
+            estimated = (account.buying_power * intent.target_position_pct) / (
+                reference_price
+            )
+            return _clamp_quantity(
+                estimated,
+                reference_price=reference_price,
+                max_order_value=self._max_order_value,
+            )
         if intent.target_position_pct == 0:
             positions = _run_blocking(self._adapter.get_positions())
             for position in positions:
@@ -234,6 +266,26 @@ def _resolve_external_quantity(
             raise ExecutionBackendError("risk decision max_quantity is zero")
         return min(estimated_quantity, decision.max_quantity)
     return estimated_quantity
+
+
+def _clamp_quantity(
+    quantity: Decimal,
+    *,
+    reference_price: Decimal,
+    max_order_value: Decimal | None,
+) -> Decimal:
+    """Clamp an estimated quantity to the USD notional cap (tighten-only).
+
+    The RiskGate rejects orders whose notional exceeds the policy
+    ``max_order_notional``; clamping the *estimate* to the cap before
+    risk evaluation keeps auto-execution functional instead of blocked.
+    """
+    if max_order_value is None or max_order_value <= 0:
+        return quantity
+    if reference_price <= 0:
+        return quantity
+    cap_quantity = max_order_value / reference_price
+    return min(quantity, cap_quantity)
 
 
 def _run_blocking[T](awaitable: Coroutine[Any, Any, T]) -> T:

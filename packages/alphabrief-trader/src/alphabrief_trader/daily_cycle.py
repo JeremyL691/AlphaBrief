@@ -100,6 +100,7 @@ class DailyTradingCycle:
         enabled: bool | None = None,
         clock: Callable[[], datetime] | None = None,
         cycle_id_factory: Callable[[], str] | None = None,
+        max_order_value: Decimal | None = None,
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -115,8 +116,10 @@ class DailyTradingCycle:
         self._risk_gate = risk_gate
         self._broker = broker
         self._execution_backend = execution_backend or LocalPaperExecutionBackend(
-            broker
+            broker,
+            max_order_value=max_order_value,
         )
+        self._max_order_value = max_order_value
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -146,6 +149,7 @@ class DailyTradingCycle:
         all_votes: list[CommitteeVote] = []
         all_plans: list[TradePlan] = []
         all_attempts: list[OrderAttempt] = []
+        committee_role_errors: list[str] = []
         overall_outcome: CycleOutcome = "skipped_no_intent"
 
         if not self._enabled:
@@ -194,6 +198,7 @@ class DailyTradingCycle:
             result = self._committee.run(payload)
             all_votes.extend(result.votes)
             if not result.ok or result.plan is None:
+                committee_role_errors.extend(result.role_errors)
                 continue
             plan = result.plan
             all_plans.append(plan)
@@ -224,10 +229,14 @@ class DailyTradingCycle:
                 )
             elif all_plans:
                 overall_outcome = "skipped_no_intent"
+            elif committee_role_errors:
+                overall_outcome = "provider_error"
             else:
                 overall_outcome = "skipped_no_consensus"
 
-        summary = self._build_summary(all_plans, all_attempts, overall_outcome)
+        summary = self._build_summary(
+            all_plans, all_attempts, overall_outcome, committee_role_errors
+        )
         record = DailyCycleRecord(
             cycle_id=cycle_id,
             trading_day=trading_day,
@@ -428,13 +437,17 @@ class DailyTradingCycle:
         plans: list[TradePlan],
         attempts: list[OrderAttempt],
         outcome: CycleOutcome,
+        role_errors: list[str] | None = None,
     ) -> str:
         executed = sum(1 for a in attempts if a.outcome == "executed")
         blocked = sum(1 for a in attempts if a.outcome.startswith("blocked"))
+        suffix = ""
+        if outcome == "provider_error" and role_errors:
+            suffix = f"; roles=[{', '.join(role_errors)}]"
         return (
             f"outcome={outcome}; plans={len(plans)}; "
             f"executed={executed}; blocked={blocked}; "
-            f"total_attempts={len(attempts)}"
+            f"total_attempts={len(attempts)}{suffix}"
         )
 
 

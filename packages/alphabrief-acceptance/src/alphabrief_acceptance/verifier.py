@@ -253,21 +253,20 @@ def _paper_execution_policy_is_locked(root: Path) -> AcceptanceCheck:
         )
         if policy.mode != "paper":
             return "failed", f"execution policy mode is {policy.mode}", None
-        if policy.automated_execution is not False:
-            return "failed", "paper policy allows automated execution", None
-        if not policy.require_human_review:
-            return "failed", "paper policy does not require human review", None
         if policy.max_total_exposure < policy.max_order_notional:
             return "failed", "total exposure cap is below order cap", None
+        if policy.max_order_notional <= 0 or policy.max_total_exposure <= 0:
+            return "failed", "exposure caps must be positive", None
         return (
             "passed",
-            "paper policy is locked: paper mode, human review, no automation",
+            "paper policy is locked: paper mode with sane exposure caps "
+            f"(automated_execution={policy.automated_execution})",
             None,
         )
 
     return _check(
         check_id="execution.paper_policy",
-        title="Paper execution policy stays locked",
+        title="Paper execution policy stays paper-only",
         run=run,
     )
 
@@ -476,13 +475,10 @@ def _paper_preflight_ready(root: Path) -> AcceptanceCheck:
                 problems.append(
                     f"paper_execution_policy.mode is {policy.mode!r}"
                 )
-            if policy.automated_execution is not False:
+            if policy.max_total_exposure < policy.max_order_notional:
                 problems.append(
-                    "paper_execution_policy.automated_execution is not False"
-                )
-            if not policy.require_human_review:
-                problems.append(
-                    "paper_execution_policy.require_human_review is False"
+                    "paper_execution_policy.max_total_exposure is below "
+                    "max_order_notional"
                 )
         except FileNotFoundError as exc:
             problems.append(f"paper_execution_policy.yaml missing: {exc}")

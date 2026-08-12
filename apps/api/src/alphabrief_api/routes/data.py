@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphabrief_api.db.market_data import MarketDataStore
+from alphabrief_api.db.merged import merge_dedupe, open_snapshot_store
 
 # ---------------------------------------------------------------------------
 # Persistent data store (DuckDB-backed)
@@ -301,7 +302,18 @@ def list_symbols() -> SymbolsResponse:
     """List all symbols currently loaded in the persistent data store."""
 
     store = _get_store()
-    rows = store.get_symbols()
+    rows = list(store.get_symbols())
+    snapshot_store = open_snapshot_store(MarketDataStore)
+    if snapshot_store is not None:
+        try:
+            rows = merge_dedupe(
+                rows,
+                list(snapshot_store.get_symbols()),
+                key=lambda r: str(r["symbol"]),
+                sort_key=lambda r: str(r["symbol"]),
+            )
+        finally:
+            snapshot_store.close()
     summaries: list[SymbolSummary] = [
         SymbolSummary(
             symbol=str(row["symbol"]),
@@ -328,7 +340,27 @@ def get_bars(
 
     store = _get_store()
     if not store.symbol_exists(symbol):
-        raise HTTPException(status_code=404, detail=f"symbol {symbol!r} not loaded")
+        # Fall back to the scheduler-DB snapshot: the AI scheduler
+        # ingests bars the API database never sees.
+        snapshot_store = open_snapshot_store(MarketDataStore)
+        if snapshot_store is None or not snapshot_store.symbol_exists(symbol):
+            raise HTTPException(status_code=404, detail=f"symbol {symbol!r} not loaded")
+        try:
+            total = snapshot_store.get_bar_count(symbol)
+            if offset >= total and total > 0:
+                raise HTTPException(
+                    status_code=416, detail="offset exceeds total bar count"
+                )
+            json_bars = snapshot_store.get_bars(symbol, limit=limit, offset=offset)
+        finally:
+            snapshot_store.close()
+        return BarsResponse(
+            symbol=symbol,
+            total_count=total,
+            offset=offset,
+            limit=limit,
+            bars=json_bars,
+        )
 
     total = store.get_bar_count(symbol)
 

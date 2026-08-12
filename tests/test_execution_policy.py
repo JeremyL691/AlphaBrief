@@ -50,16 +50,17 @@ def _configured_policy_text() -> str:
 
 
 def test_checked_in_execution_policy_is_paper_only_and_locked() -> None:
-    """Round 0063: default paper policy is now OANDA FX + metals + index CFDs.
+    """Round 0065: default policy is routed multi-asset auto-execution.
 
-    Locks the reviewed OANDA boundary documented in
-    docs/development_plans/0063-default-paper-policy-oanda-fx.md. Edit that
-    plan and this assertion together when the universe changes.
+    FX / metals / index CFDs route to OANDA, US equities and crypto route
+    to Alpaca (or the built-in simulator when credentials are absent).
+    Paper mode and live-trading lock are unchanged; automated execution
+    is allowed inside paper mode only.
     """
     policy = load_paper_execution_policy("config/paper_execution_policy.yaml")
 
     assert policy.mode == "paper"
-    assert policy.provider == "oanda_paper"
+    assert policy.provider == "routed"
     assert policy.market == "multi_asset"
     assert policy.symbols == (
         # FX Majors
@@ -70,12 +71,16 @@ def test_checked_in_execution_policy_is_paper_only_and_locked() -> None:
         "XAU_USD", "XAG_USD",
         # Index CFDs (US + EU + JP)
         "US30_USD", "SPX500_USD", "NAS100_USD", "DE30_EUR", "JP225_USD",
+        # US Equities (Alpaca)
+        "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "SPY", "QQQ",
+        # Crypto (Alpaca)
+        "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
     )
     assert policy.order_types == ("market", "limit")
-    assert policy.max_order_notional == Decimal("10000")
-    assert policy.max_total_exposure == Decimal("50000")
-    assert policy.require_human_review is True
-    assert policy.automated_execution is False
+    assert policy.max_order_notional == Decimal("2000")
+    assert policy.max_total_exposure == Decimal("20000")
+    assert policy.require_human_review is False
+    assert policy.automated_execution is True
 
 
 @pytest.mark.parametrize(
@@ -198,9 +203,9 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
     _reset_risk_gate()
     gate = _get_risk_gate()
     gate.clock = lambda: POLICY_NOW  # session-in, fresh signal
-    # Round 0063: default universe is OANDA FX/metals/index CFDs. Use a
-    # representative instrument from the new allowlist. The order value
-    # stays well under max_order_notional=10000 units.
+    # Round 0065: default universe is routed multi-asset (FX + equities +
+    # crypto). Use a representative instrument from each class; order value
+    # stays well under max_order_notional=2000 USD.
     allowed = OrderIntent(
         intent_id="policy-eurusd",
         source="manual",
@@ -211,35 +216,58 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
         rationale="policy boundary test",
         created_at=POLICY_NOW,
     )
-    blocked_symbol = allowed.model_copy(update={"symbol": "BTC-USD"})
+    allowed_crypto = allowed.model_copy(
+        update={"symbol": "BTC-USD", "quantity": Decimal("0.01")}
+    )
+    allowed_equity = allowed.model_copy(
+        update={"symbol": "AAPL", "quantity": Decimal("5")}
+    )
+    blocked_symbol = allowed.model_copy(update={"symbol": "NFLX"})
     blocked_value = allowed.model_copy(update={"quantity": Decimal("99999")})
 
-    ctx = _empty_account_context(symbol="EUR_USD", mark=Decimal("1.14"))
+    ctx_eur = _empty_account_context(symbol="EUR_USD", mark=Decimal("1.14"))
+    ctx_btc = _empty_account_context(symbol="BTC-USD", mark=Decimal("60000"))
+    ctx_aapl = _empty_account_context(symbol="AAPL", mark=Decimal("230"))
     allowed_decision = gate.evaluate(
-        allowed, estimated_price=Decimal("1.14"), account_context=ctx
+        allowed, estimated_price=Decimal("1.14"), account_context=ctx_eur
+    )
+    crypto_decision = gate.evaluate(
+        allowed_crypto, estimated_price=Decimal("60000"), account_context=ctx_btc
+    )
+    equity_decision = gate.evaluate(
+        allowed_equity, estimated_price=Decimal("230"), account_context=ctx_aapl
     )
     blocked_symbol_decision = gate.evaluate(
-        blocked_symbol, estimated_price=Decimal("100"), account_context=ctx
+        blocked_symbol, estimated_price=Decimal("100"), account_context=ctx_eur
     )
     blocked_value_decision = gate.evaluate(
-        blocked_value, estimated_price=Decimal("1.14"), account_context=ctx
+        blocked_value, estimated_price=Decimal("1.14"), account_context=ctx_eur
     )
     assert allowed_decision.approved is True
-    assert allowed_decision.requires_human_review is True
+    assert allowed_decision.requires_human_review is False
+    assert crypto_decision.approved is True
+    assert equity_decision.approved is True
     assert blocked_symbol_decision.approved is False
     assert blocked_value_decision.approved is False
 
 
-@pytest.mark.parametrize("symbol", [
-    # Round 0063: sample from the new OANDA multi-asset universe. All entries
-    # are sized so 1 unit stays well under max_order_notional=10000 units even
-    # on the priciest instrument in the set (XAU_USD at ~4100). Index CFDs
-    # (US30/SPX500/NAS100) are intentionally excluded here because their
-    # 1-unit USD notional is in the 5k-30k range; their allowlist membership
-    # is covered indirectly by the checked-in policy test and broker API tests.
-    "EUR_USD", "GBP_JPY", "AUD_JPY", "XAU_USD", "XAG_USD",
-])
-def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
+@pytest.mark.parametrize(
+    ("symbol", "quantity"),
+    [
+        # Round 0065: sample from the routed multi-asset universe. Quantities
+        # keep the USD notional under max_order_notional=2000 at each asset
+        # class's representative mark.
+        ("EUR_USD", Decimal("1000")),
+        ("GBP_JPY", Decimal("5")),
+        ("AUD_JPY", Decimal("10")),
+        ("XAU_USD", Decimal("0.4")),
+        ("XAG_USD", Decimal("30")),
+        ("AAPL", Decimal("8")),
+        ("BTC-USD", Decimal("0.02")),
+        ("ETH-USD", Decimal("0.5")),
+    ],
+)
+def test_risk_gate_accepts_extended_etf_symbols(symbol: str, quantity: Decimal) -> None:
     from alphabrief_api.routes.risk import _get_risk_gate, _reset_risk_gate
 
     _reset_risk_gate()
@@ -251,22 +279,24 @@ def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
         symbol=symbol,
         side="buy",
         order_type="market",
-        quantity=Decimal("1"),
+        quantity=quantity,
         rationale="policy boundary test",
         created_at=POLICY_NOW,
     )
 
-    # Match mark to a representative price per asset class. Quantity is 1
-    # so the order value is well under max_order_notional=10000 units even
-    # on XAU_USD (~4100 notional per unit). We only verify symbol membership
-    # in the allowlist here — order-value/leverage ceilings are covered by
-    # test_default_api_risk_gate_enforces_policy_subset.
+    # Match mark to a representative price per asset class; the quantity
+    # keeps the order notional under max_order_notional=2000 USD. We only
+    # verify symbol membership in the allowlist here — order-value ceilings
+    # are covered by test_default_api_risk_gate_enforces_policy_subset.
     mark = {
         "EUR_USD": Decimal("1.14"),
         "GBP_JPY": Decimal("217.0"),
         "AUD_JPY": Decimal("112.4"),
         "XAU_USD": Decimal("4100"),
         "XAG_USD": Decimal("59.7"),
+        "AAPL": Decimal("230"),
+        "BTC-USD": Decimal("60000"),
+        "ETH-USD": Decimal("3500"),
     }[symbol]
 
     decision = gate.evaluate(
@@ -278,7 +308,7 @@ def test_risk_gate_accepts_extended_etf_symbols(symbol: str) -> None:
     assert decision.approved is True
 
 
-@pytest.mark.parametrize("symbol", ["AAPL", "TSLA", "BTC-USD", "ETH-USD"])
+@pytest.mark.parametrize("symbol", ["NFLX", "RIVN", "LTC-USD", "PEPE-USD"])
 def test_risk_gate_rejects_unapproved_symbols(symbol: str) -> None:
     from alphabrief_api.routes.risk import _get_risk_gate, _reset_risk_gate
 

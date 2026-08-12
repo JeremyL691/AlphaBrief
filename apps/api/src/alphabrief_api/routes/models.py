@@ -119,9 +119,16 @@ def _build_evaluator(use_real: bool) -> ModelEvaluator:
     """Build an evaluator.
 
     When ``use_real`` is False (default), the FakeProviderAdapter is
-    used so tests are deterministic. Real provider wiring is out of
-    scope for this round.
+    used so tests are deterministic. When True, the evaluator uses the
+    same real provider wiring as the AI Trading Committee (env-backed
+    OpenAI/Ollama provider through ``ModelGateway``).
     """
+    if use_real:
+        from alphabrief_trader import build_ai_trading_provider
+
+        return ModelEvaluator(
+            ModelGateway([build_ai_trading_provider()])
+        )
     adapter = FakeProviderAdapter(
         provider_name="fake",
         model_name="fake-model",
@@ -444,11 +451,32 @@ def list_evaluations(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> ModelEvaluationListResponse:
     """Return recent evaluation records, optionally filtered."""
+    from alphabrief_api.db.merged import merge_dedupe, open_snapshot_store
+
     store = _get_store()
     if model_id is not None or task_type is not None:
         records = store.get_evaluations(model_id=model_id, task_type=task_type)
     else:
         records = store.list_evaluations(limit=limit, offset=0)
+    snapshot_store = open_snapshot_store(ModelEvalStore)
+    if snapshot_store is not None:
+        try:
+            if model_id is not None or task_type is not None:
+                snapshot_records = snapshot_store.get_evaluations(
+                    model_id=model_id, task_type=task_type
+                )
+            else:
+                snapshot_records = snapshot_store.list_evaluations(
+                    limit=limit, offset=0
+                )
+            records = merge_dedupe(
+                list(records),
+                list(snapshot_records),
+                key=lambda r: r["id"],
+                sort_key=lambda r: r["evaluated_at"],
+            )
+        finally:
+            snapshot_store.close()
     summaries = [
         ModelEvaluationSummary(
             id=str(r["id"]),

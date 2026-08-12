@@ -307,6 +307,11 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setenv("ALPHABRIEF_AI_MARKET_DATA_SOURCE", "yahoo")
         monkeypatch.setenv("ALPHABRIEF_AI_NEWS_SOURCE", "rss")
         monkeypatch.setenv("ALPHABRIEF_AI_NEWS_FEEDS", "marketwatch-rss")
+        # Pin a small universe so the test stays focused on the ingestion
+        # pipeline (the default universe now spans FX + equities + crypto).
+        monkeypatch.setenv(
+            "ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD,GBP_USD,USD_JPY"
+        )
 
         class _MarketProvider:
             provider_name = "test-market"
@@ -622,3 +627,40 @@ class TestSchedulerRunsAiTask:
             "EUR_USD",
             "GBP_USD",
         )
+
+
+class TestResearchContentFactory:
+    def test_generates_macro_and_evaluation(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Macro indicators and model evaluations are deterministic and
+        # provider-independent; briefs/debates need a real provider whose
+        # output matches the brief/debate schemas (the conservative fake
+        # returns committee-vote shaped output), so they are exercised in
+        # the deployed environment instead.
+        from alphabrief_api.db import MacroStore
+        from alphabrief_api.db.model_eval import ModelEvalStore
+        from alphabrief_cli.scheduler_commands import _research_content_factory
+
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ALPHABRIEF_AI_MODEL_PROVIDER", raising=False)
+
+        handler = _research_content_factory(db_path=isolated_data_dir)
+
+        async def _run() -> None:
+            await handler()
+
+        asyncio.run(_run())
+
+        database = isolated_data_dir / "alphabrief.db"
+        macro_store = MacroStore(db_path=database)
+        eval_store = ModelEvalStore(db_path=database)
+        try:
+            indicators = macro_store.list_indicators(limit=50)
+            assert any(i.indicator_id == "GDP" for i in indicators)
+            evaluations = eval_store.list_evaluations(limit=10)
+            assert len(evaluations) >= 1
+        finally:
+            macro_store.close()
+            eval_store.close()

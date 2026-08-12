@@ -1,23 +1,23 @@
 # Reviewed paper-only operating boundary. This file contains no credentials and
 # never authorizes broker calls; all execution still requires RiskGate.
 #
-# Default broker: OANDA v20 practice (paper). Alpaca remains an optional operator
-# override by editing `provider` and `symbols` together.
-# See docs/development_plans/0063-default-paper-policy-oanda-fx.md.
+# Default broker: routed — FX / metals / index CFDs go to OANDA v20 practice;
+# US stocks and crypto go to Alpaca paper. When a broker's credentials are not
+# configured, its asset class degrades to the built-in simulated paper broker
+# so the system stays usable out of the box. See docs/paper_broker_setup.md.
 #
-# Universe covers 19 OANDA instruments across FX majors/crosses, metals, and
-# index CFDs (US30 / SPX500 / NAS100 cover the "美股" exposure the operator
-# asked for; DAX and Nikkei are added for cross-region diversification).
+# Universe: 35 instruments across FX majors/crosses, metals, index CFDs, US
+# equities, and crypto. Symbols are internal AlphaBrief identifiers — Yahoo
+# serves them natively (AAPL, BTC-USD, EURUSD=X) and the routed broker adapter
+# maps each class to the right venue.
 #
-# Units: OANDA counts contracts in "units" (1 standard lot = 100,000 units,
-# 1 mini lot = 10,000 units, 1 micro lot = 1,000 units). max_order_notional and
-# max_total_exposure below are stated in units — the RiskGate translates them
-# to USD notional using the live OANDA mid-price at evaluation time.
+# Money units: max_order_notional and max_total_exposure are USD notional
+# (quantity x reference price). The RiskGate enforces them as dollar caps.
 mode: paper
-provider: oanda_paper
+provider: routed
 market: multi_asset
 symbols:
-  # FX Majors
+  # FX Majors (OANDA)
   - EUR_USD
   - GBP_USD
   - USD_JPY
@@ -25,36 +25,48 @@ symbols:
   - AUD_USD
   - USD_CAD
   - NZD_USD
-  # FX Crosses
+  # FX Crosses (OANDA)
   - EUR_GBP
   - EUR_JPY
   - GBP_JPY
   - AUD_JPY
   - CHF_JPY
-  # Metals
+  # Metals (OANDA)
   - XAU_USD
   - XAG_USD
-  # Index CFDs (US + EU + JP)
+  # Index CFDs (OANDA)
   - US30_USD
   - SPX500_USD
   - NAS100_USD
   - DE30_EUR
   - JP225_USD
+  # US Equities (Alpaca)
+  - AAPL
+  - MSFT
+  - NVDA
+  - TSLA
+  - AMZN
+  - META
+  - GOOGL
+  - AMD
+  - SPY
+  - QQQ
+  # Crypto (Alpaca)
+  - BTC-USD
+  - ETH-USD
+  - SOL-USD
+  - XRP-USD
+  - DOGE-USD
 order_types: [market, limit]
 timezone: America/New_York
 trading_days: [mon, tue, wed, thu, fri]
-# FX trades Sun 22:00 UTC -> Fri 22:00 UTC. We keep operator-timezone 09:30-16:00
-# fields for US-style read-only window; RiskGate defers session checks to the
-# OANDA broker for FX/index instruments and uses these fields only for any
-# future US equity additions.
 session_start: "00:00"
 session_end: "23:59"
-# 10,000 units = 1 mini lot. On EUR_USD at ~1.14, that is roughly $11,400
-# notional; on XAU_USD at ~4100, 10,000 units would be excessive, so the
-# RiskGate also enforces a USD notional cap derived from live mid-price.
-# Operators who want stricter caps should lower max_order_notional to
-# 1,000 (micro lot) or 5,000 (half mini).
-max_order_notional: "10000"
-max_total_exposure: "50000"
-require_human_review: true
-automated_execution: false
+# USD notional caps per order / total exposure.
+max_order_notional: "2000"
+max_total_exposure: "20000"
+# Auto-execution: AI plans and manual paper orders execute immediately once
+# the deterministic RiskGate approves them (paper mode only; live trading
+# stays locked). Ethics veto, exposure caps, and the kill switch still bind.
+require_human_review: false
+automated_execution: true
