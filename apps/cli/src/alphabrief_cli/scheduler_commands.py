@@ -46,16 +46,7 @@ from alphabrief_execution import (
     PortfolioState,
 )
 from alphabrief_execution.broker.port import (
-    AccountSnapshot,
     BrokerAdapter,
-    BrokerHealth,
-    BrokerOrderStatus,
-    CancelResult,
-    Fill,
-    OrderState,
-    Position,
-    SubmitRequest,
-    SubmitResult,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.broker.reconciliation import ReconciliationRunner
@@ -315,103 +306,25 @@ def freezes_cmd(
 # ---------------------------------------------------------------------------
 
 
-class _NullBrokerAdapter(BrokerAdapter):
-    """Dev-mode adapter used when no OANDA credentials are set.
-
-    Every probe returns an empty result so the reconcile task succeeds
-    and the scheduler stays running, but the runtime reports not ready
-    and cannot place orders — the scheduler never executes through this
-    adapter (``ReconciliationRunner`` only calls ``list_orders`` /
-    ``get_positions`` / ``get_account``).
-    """
-
-    async def health(self) -> BrokerHealth:
-        return BrokerHealth(
-            healthy=False,
-            detail="broker runtime not configured (no OANDA credentials)",
-            checked_at=datetime.now(UTC),
-        )
-
-    async def submit(
-        self, request: SubmitRequest, *, client_order_id: str
-    ) -> SubmitResult:
-        raise NotImplementedError("null adapter does not accept orders")
-
-    async def cancel(self, broker_order_id: str) -> CancelResult:
-        raise NotImplementedError("null adapter does not cancel orders")
-
-    async def get_order(self, broker_order_id: str) -> OrderState:
-        raise NotImplementedError("null adapter has no order state")
-
-    async def list_orders(
-        self, status: BrokerOrderStatus | None = None
-    ) -> list[OrderState]:
-        return []
-
-    async def list_fills(self, since: datetime | None = None) -> list[Fill]:
-        return []
-
-    async def get_positions(self) -> list[Position]:
-        return []
-
-    async def get_account(self) -> AccountSnapshot:
-        return AccountSnapshot(
-            account_id="null-adapter",
-            cash=Decimal("0"),
-            equity=Decimal("0"),
-            buying_power=Decimal("0"),
-            currency="USD",
-            captured_at=datetime.now(UTC),
-        )
-
-
 def _oanda_is_configured() -> bool:
     """Return True when both OANDA credentials are present in the environment."""
-    return bool(
-        os.environ.get("ALPHABRIEF_OANDA_TOKEN")
-        and os.environ.get("ALPHABRIEF_OANDA_ACCOUNT_ID")
-    )
+    from alphabrief_execution.broker.runtime import oanda_is_configured
+
+    return oanda_is_configured()
 
 
 def _build_adapter() -> BrokerAdapter:
-    """Build the fail-closed OANDA practice adapter for the runtime.
+    """Return the process-scoped OANDA practice runtime adapter.
 
-    OANDA practice is the only execution venue (M01-W03). Without OANDA
-    credentials the runtime resolves a not-ready null adapter that cannot
-    submit, cancel, or read order state; no in-memory execution path is
-    composed here.
+    M01-W04: the API lifespan, CLI broker commands, and the scheduler
+    resolve the same runtime factory and persistent data directory
+    authority, so in-memory idempotency state cannot diverge between
+    entry points. Missing OANDA credentials fail closed to a not-ready
+    null adapter that cannot submit.
     """
-    if _oanda_is_configured():
-        return _build_oanda_adapter()
-    return _NullBrokerAdapter()
+    from alphabrief_execution.broker.runtime import get_broker_runtime
 
-
-def _build_oanda_adapter() -> BrokerAdapter:
-    from pathlib import Path as _Path
-
-    from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
-    from alphabrief_execution.broker.oanda.client import OandaHttpClient
-    from alphabrief_execution.broker.oanda.config import (
-        DEFAULT_BASE_URL,
-        DEFAULT_MAX_RETRIES,
-        DEFAULT_RETRY_BACKOFF_SECONDS,
-        DEFAULT_TIMEOUT_SECONDS,
-        OandaPaperConfig,
-        load_oanda_paper_config,
-    )
-
-    config_path = _Path("config/oanda_paper.yaml")
-    if config_path.exists():
-        oanda_config = load_oanda_paper_config(config_path)
-    else:
-        oanda_config = OandaPaperConfig(
-            base_url=DEFAULT_BASE_URL,
-            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-            max_retries=DEFAULT_MAX_RETRIES,
-            retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-        )
-    client = OandaHttpClient(config=oanda_config)
-    return OandaPaperAdapter(client=client)
+    return get_broker_runtime().adapter
 
 
 def _refuse_if_live_trading_unlocked() -> None:

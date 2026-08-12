@@ -51,26 +51,27 @@ scheduler entry point；`electron` 只负责本地 backend lifecycle 和窗口�
 
 ### 2.2 Current Execution Path
 
-M01-W01..W03 已把生产执行路径收敛为 OANDA-only、fail-closed：
+M01-W01..W04 已把生产执行路径收敛为 OANDA-only、fail-closed，并由
+`alphabrief_execution.broker.runtime` 提供进程级共享 runtime authority：
 
 ```text
-API/CLI broker factory
+API/CLI broker factory  ->  get_broker_runtime().adapter
        |
   OANDA credentials configured?
     yes -> OandaPaperAdapter (practice constant only)
     no  -> fail-closed null adapter (reports not ready; cannot submit)
 ```
 
-RoutingBrokerAdapter、SimulatedBrokerAdapter 与 `broker/routing.py` 已从
-生产代码删除；本地内存成交只存在于显式 local paper mode
-（`LocalPaperExecutionBackend`，operator 选择，不是缺凭证回退）。剩余
-事实：
+API lifespan、CLI broker commands 与 scheduler 解析同一个 runtime factory
+和 persistent data directory（`resolve_data_dir`，`ALPHABRIEF_DATA_DIR` →
+`~/.alphabrief/data`）；进程内只有一个 adapter 实例，idempotency mapping
+在 shutdown 时 flush 到 broker recon store，不因关闭而丢弃。剩余事实：
 
 1. OANDA adapter 仍以常量 practice URL 工作，缺凭证绝不本地成交；
 2. 完整账户 instruments 权威、candle/pricing/stream、订单生命周期与
    对账仍由 M04-M07 落地；
-3. 统一 OANDA runtime authority（API/CLI/scheduler 共享）由 M01-W04
-   落地。
+3. durable idempotency 的完整 seeding/cursor 语义由 M07 落地（M01-W04
+   只保证 shutdown 不丢弃 mapping）。
 
 M04-M07 目标结构（accepted target decision，尚未完成）：
 

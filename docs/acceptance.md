@@ -157,6 +157,19 @@ Work queue topology validator 必须检测遗漏和重复但冲突的 requiremen
 mode（operator 选择），不是缺凭证回退，保持不动；full pytest 1392 passed（routing 原 12
 个测试由 5 个 negative-gate 测试替代，无断言弱化）。
 
+#### M01-W04 已闭环证据（R-20260813-M01-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M01-W04-01 | API lifespan、CLI broker commands、scheduler 解析同一个 runtime factory 和 persistent data directory authority | 新增 `alphabrief_execution.broker.runtime`（`BrokerRuntime`/`get_broker_runtime`/`resolve_data_dir`）；API `get_broker_adapter` 与 CLI `_build_adapter` 都委托共享 runtime；`tests/test_broker_commands.py` 覆盖 data-dir authority、offline status/reconcile、process singleton |
+| AC-M01-W04-02 | 两个 entry point 不能暴露冲突的 in-memory account state | API adapter 与 scheduler adapter 是同一实例（`is` 断言），idempotency mapping 通过一个 entry point 注册、另一个可见；scheduler 每 cycle 不再新建 adapter |
+| AC-M01-W04-03 | shutdown 关闭 OANDA clients 和 stores 且不丢弃 durable mappings | `BrokerRuntime.close()` 先 `flush_idempotency()`（upsert 到 recon store）再关闭 store；测试验证 close 后 mapping 行持久存在 |
+
+范围说明：本 round 无 allowlist 外路径。queue 声明的 targeted 文件 `tests/test_broker_commands.py`
+原先不存在，已按 CLI broker commands 真实表面新建（data-dir authority + offline status/reconcile +
+invalid-scope + shared runtime 用例）；full pytest 1399 passed（+7 新测试）。durable idempotency
+的完整 seeding/cursor 语义属 M07。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

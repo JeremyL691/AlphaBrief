@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 
@@ -27,6 +28,16 @@ _PRODUCTION_ROOTS = ("apps", "packages")
 _ROUTING_MODULE = (
     "packages/alphabrief-execution/src/alphabrief_execution/broker/routing.py"
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_runtime() -> Iterator[None]:
+    """Ensure the shared runtime cannot leak an adapter between tests."""
+    from alphabrief_execution.broker.runtime import reset_broker_runtime
+
+    reset_broker_runtime()
+    yield
+    reset_broker_runtime()
 
 
 def _production_source_files() -> list[Path]:
