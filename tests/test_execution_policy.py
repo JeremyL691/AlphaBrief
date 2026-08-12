@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from alphabrief_core import OrderIntent, load_paper_execution_policy, load_settings
+from alphabrief_execution.broker.runtime import NullBrokerAdapter
 from alphabrief_risk import AccountExposureContext
 from pydantic import ValidationError
 
@@ -484,7 +485,7 @@ def test_missing_oanda_credentials_fail_closed_without_order_or_fill(
 
     broker_adapter._reset_broker_adapter()
     adapter = broker_adapter.get_broker_adapter()
-    assert isinstance(adapter, broker_adapter._NullBrokerAdapter)
+    assert isinstance(adapter, NullBrokerAdapter)
     with pytest.raises(NotImplementedError):
         asyncio.run(
             adapter.submit(

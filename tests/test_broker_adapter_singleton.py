@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 from alphabrief_api import broker_adapter
 from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+from alphabrief_execution.broker.runtime import NullBrokerAdapter
 
 
 @pytest.fixture(autouse=True)
@@ -34,7 +35,7 @@ def test_no_credentials_returns_null_adapter(
     monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     adapter = broker_adapter.get_broker_adapter()
-    assert isinstance(adapter, broker_adapter._NullBrokerAdapter)
+    assert isinstance(adapter, NullBrokerAdapter)
     assert broker_adapter.has_live_broker() is False
 
 
@@ -66,12 +67,12 @@ def test_reset_clears_cached_singleton(
     monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     broker_adapter._reset_broker_adapter()
     rebuilt = broker_adapter.get_broker_adapter()
-    assert isinstance(rebuilt, broker_adapter._NullBrokerAdapter)
+    assert isinstance(rebuilt, NullBrokerAdapter)
     assert broker_adapter.has_live_broker() is False
 
 
 def test_null_adapter_read_probes_return_zero_shape() -> None:
-    adapter = broker_adapter._NullBrokerAdapter()
+    adapter = NullBrokerAdapter()
     positions = asyncio.run(adapter.get_positions())
     assert positions == []
     account = asyncio.run(adapter.get_account())
@@ -97,4 +98,4 @@ def test_module_imports_without_credentials(
     broker_adapter._reset_broker_adapter()
     # Re-resolving the adapter exercises the no-creds factory path end to end.
     adapter = broker_adapter.get_broker_adapter()
-    assert isinstance(adapter, broker_adapter._NullBrokerAdapter)
+    assert isinstance(adapter, NullBrokerAdapter)
