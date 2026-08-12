@@ -375,6 +375,17 @@ instruments/metadata 测试）。
 instrument_catalog_snapshots/rows 表（`test_instrument_catalog_migrations.py`）。
 full pytest 1565 passed（+9 catalog 测试）。
 
+#### M04-W04 已闭环证据（R-20260813-M04-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M04-W04-01 | fixtures 覆盖 Currency、Metal、index/commodity/bond/equity CFD 与 unknown，输出确定性 category + taxonomy-version | `classify_instrument` 10 组 parametrized fixtures（CURRENCY/METAL/INDEX_CFD/COMMODITY_CFD/BOND_CFD/EQUITY_CFD/CRYPTO_CFD/OTHER_CFD）；`classify_snapshot` 全行覆盖 |
+| AC-M04-W04-02 | 未识别 broker type 或 display pattern 保持 unknown 可见（raw value），不消失于 catalog counts/search | OTHER_CFD 保留 raw_type/display_name/basis；持久化 catalog 中 unknown instrument 仍在 projection 计数与分类结果中（`test_instrument_taxonomy.py` + catalog store 集成） |
+| AC-M04-W04-03 | taxonomy 变更产生新 derived version，且不 mutate raw instrument snapshot | `TAXONOMY_VERSION = "oanda-taxonomy-1"` 常量版本化；classification 前后 `InstrumentMetadata.model_dump()` 逐字段相等（frozen 不可变） |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1581 passed（+16
+taxonomy 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
