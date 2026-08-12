@@ -569,6 +569,30 @@ MIGRATIONS: tuple[Migration, ...] = (
             "ALTER TABLE bars_v2 RENAME TO bars",
         ),
     ),
+    Migration(
+        version=3,
+        name="instrument-catalog-snapshots",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS instrument_catalog_snapshots (
+                snapshot_id     TEXT PRIMARY KEY,
+                account_id_hash TEXT NOT NULL,
+                content_hash    TEXT NOT NULL,
+                diff_json       JSON NOT NULL DEFAULT '{}',
+                fetched_at      TIMESTAMPTZ NOT NULL,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS instrument_catalog_rows (
+                snapshot_id     TEXT NOT NULL,
+                name            TEXT NOT NULL,
+                metadata_json   JSON NOT NULL,
+                PRIMARY KEY (snapshot_id, name)
+            )
+            """,
+        ),
+    ),
 )
 
 _LATEST_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)

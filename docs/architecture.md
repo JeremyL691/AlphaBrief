@@ -40,6 +40,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | storage 里程碑 | M03 完成 | versioned migrations、immutable facts、atomic cycle checkpoints、writer lease、verified backup/restore 全部落地；crash recovery boundary suite 通过 |
 | `oanda/preflight` | fail-closed account preflight | M04-W01 起：typed profile（Decimal margins + capability flags + scrubbed account hash + UTC retrieved_at）；六类分类失败；无 token/完整 account ID 外泄 |
 | `oanda/instruments` | complete instruments contract | M04-W02 起：每 row → 严格 `InstrumentMetadata`（Decimal-safe、raw type/unknown fields 保留于 versioned raw payload）；缺/坏 required fields 拒绝整个 snapshot |
+| `instrument_catalog` store | versioned catalog snapshots + diffs | M04-W03 起：migration v3 表；publish 原子（content hash/account correlation/fetched_at UTC/diff 一起提交）；replay 幂等；projection 从 immutable rows 重建并与最新 snapshot 逐字节一致 |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |

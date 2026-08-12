@@ -363,6 +363,18 @@ full pytest 1541 passed（+10 preflight 测试）。
 范围说明：本 round 无 allowlist 外路径。full pytest 1556 passed（+15
 instruments/metadata 测试）。
 
+#### M04-W03 已闭环证据（R-20260813-M04-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M04-W03-01 | snapshot、instrument rows、content hash、account correlation、fetched_at UTC、diff 在 failure injection 下一起 publish 或全部不 publish | `publish_snapshot` 单事务（snapshot 行 + rows + diff + fetched_at 一起 COMMIT/ROLLBACK）；row serialization failure 后无 snapshot/rows 残留（`test_instrument_catalog_store.py`） |
+| AC-M04-W03-02 | 相同内容 replay 幂等；additions/removals/reactivations/metadata changes 产生可查询历史且不覆盖旧版本 | content_hash 去重（同内容返回同一 snapshot_id）；diff 记录 added/removed/metadata_changed；每版 rows 独立保留（`list_snapshots` 2 版共存） |
+| AC-M04-W03-03 | current projection 从 immutable facts 重建且与最新完整 snapshot 的 count/hashes 完全一致 | `current_projection`（最新 snapshot 的 rows 重建）+ `projection_matches_latest_snapshot`（规范化 content hash 逐字节相等） |
+
+范围说明：本 round 无 allowlist 外路径。Migration v3 新增
+instrument_catalog_snapshots/rows 表（`test_instrument_catalog_migrations.py`）。
+full pytest 1565 passed（+9 catalog 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
