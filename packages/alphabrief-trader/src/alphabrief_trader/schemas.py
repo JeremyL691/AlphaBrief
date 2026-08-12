@@ -39,6 +39,7 @@ CycleOutcome = Literal[
     "executed",
     "skipped_no_consensus",
     "skipped_no_intent",
+    "provider_error",
     "blocked_risk_gate",
     "blocked_human_review",
     "blocked_ethics",

@@ -3372,3 +3372,67 @@ human-review safety boundaries.
 6. No order-capable AI command was invoked. The current CLI has no
    `ai daily-cycle --dry-run` command, so a zero-side-effect CLI dry-run
    remains a future enhancement rather than a claimed validation step.
+## 0064 — Production Repair: AI Trading, Alert Flood, Dashboard Observability
+
+Goal: repair the deployed (`~/.alphabrief`) paper-trading system, which was
+running but effectively dead: the AI Trading Committee produced zero votes
+for 13 consecutive cycles, the scheduler had flooded its alerts table with
+~1.3M rows, and the dashboard could not observe any scheduler/AI state.
+
+### Changes
+
+1. **AI committee restored.** The deployed `run_scheduler.sh` and the repo
+   `.env` carried a 13-character redacted `OPENAI_API_KEY` placeholder
+   (`sk-te9...tB6e`); every committee model call returned 401 and every
+   cycle silently recorded `skipped_no_consensus`. Wired the real key (same
+   `https://opencode.ai/zen/go` endpoint, verified 200) into the deployed
+   wrapper and `.env` (gitignored). End-to-end verification: the scheduler's
+   daily cycle now records real `deepseek-v4-flash` votes and plans.
+2. **Visible provider failures.** `CommitteeResult` gains `role_errors`
+   (stable codes, no raw provider text); when every role call fails the
+   cycle records the new `provider_error` outcome (plus roles in the
+   summary) instead of a misleading `skipped_no_consensus`. The dashboard
+   renders a `PROVIDER ERROR` badge for these cycles.
+3. **Freeze alert dedupe.** `OperationsScheduler` now emits at most one
+   "open freeze detected" warning per freeze event per task, then polls
+   silently. Previously every 5s short-poll wrote a new alert row (the
+   July 1 → Aug 12 freeze produced 1,297,161 rows). The deployed DB was
+   exported/imported to reclaim ~220MB; 2 rows retained.
+4. **AI cycle task timeout.** `ai_daily_cycle` timeout raised 120s → 900s.
+   The cycle includes pre-cycle market/news ingestion plus one committee
+   run per symbol (4 role calls, up to 30s each); 120s could trip the
+   scheduler auto-freeze on a slow provider.
+5. **API AI observability.** `/api/v1/ai/{status,history,cycles/{id},attempts}`
+   serve the scheduler's exported `ai_cycle_*.json` files when
+   `ALPHABRIEF_AI_OBSERVATION_DIR` is set (the API process cannot open the
+   scheduler's writer-locked DuckDB). `run_api.sh` sets it; the AI
+   dashboard now shows real cycles instead of `cycle_count=0`.
+6. **API scheduler observability.** `/api/v1/scheduler/*` serve a
+   periodically refreshed copy of the scheduler DB when
+   `ALPHABRIEF_SCHEDULER_DB_DIR` is set (DuckDB single-writer; the API
+   previously read its own empty DB). Refresh TTL 10s, lock-serialized,
+   graceful 503 fallback preserved.
+7. **Deployment reproducibility.** Added versioned launchd wrapper
+   references (`scripts/deployment/run_api.sh`, `run_scheduler.sh`,
+   `daily_check.sh`, placeholder secrets only) and documented the
+   deployment layout + env contract in `docs/paper_broker_setup.md` §4.7.
+   Fixed `daily_check.sh` path inconsistencies (report + markers now live
+   in the observation dir).
+
+### Validation
+
+1. Full `pytest`: **1379 passed**, 9 existing warnings.
+2. `.venv/bin/ruff check .`: passed.
+3. `.venv/bin/mypy`: 233 source files clean.
+4. `.venv/bin/alphabrief acceptance verify --compact`: **11/11** passed.
+5. Production restart: scheduler + API relaunched via launchd; scheduler
+   reconciles every 60s (heartbeat run_count growing), alerts table stays
+   at 2 rows, no new freeze-spam.
+6. Production AI cycle (scheduler startup, real key): cycle
+   `aic_9fb4490f17c5` recorded 11 votes / 3 plans across
+   `EUR_USD,GBP_USD,USD_JPY`; outcome `skipped_no_intent` (model
+   consensus: watch/skip — no trade intent), exported to
+   `~/.alphabrief/reports/paper_observation/ai_cycle_2026-08-12.json`.
+7. Live API: `/api/v1/ai/status` shows real cycle count; `/api/v1/ai/history`
+   lists scheduler cycles; `/api/v1/scheduler/status` reports
+   `heartbeat_count=2`, `alerts_total=2`, `open_freeze_count=0`.

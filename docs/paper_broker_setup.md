@@ -251,6 +251,56 @@ External paper submission remains fail-closed:
 5. The AI `intent_id` is used as the broker `client_order_id` for
    adapter idempotency.
 
+### 4.7 Deployment layout (launchd)
+
+Reference launchd wrappers ship in the repo under
+`scripts/deployment/` and are the versioned source of the production
+deployment:
+
+| Repo script | Production copy | Runs |
+|---|---|---|
+| `run_api.sh` | `~/.alphabrief/run_api.sh` | `alphabrief serve serve` on `127.0.0.1:8000` |
+| `run_scheduler.sh` | `~/.alphabrief/run_scheduler.sh` | `alphabrief scheduler run --reconcile-interval 60` |
+| `daily_check.sh` | `~/.alphabrief/daily_check.sh` | daily observation checkpoint |
+
+The production copies live outside the repo (`~/.alphabrief/`) to avoid
+macOS TCC permission issues on Desktop. Deployment steps:
+
+1. Sync the source checkout to `~/.alphabrief/alphabrief-src` (the
+   wrappers set `PYTHONPATH` against it, mirroring `pyproject.toml`
+   `[tool.pytest] pythonpath`).
+2. Copy the three scripts from `scripts/deployment/` to `~/.alphabrief/`
+   and fill in the real secrets in `run_scheduler.sh`
+   (`ALPHABRIEF_OANDA_TOKEN`, `ALPHABRIEF_OANDA_ACCOUNT_ID`,
+   `OPENAI_API_KEY`) — the repo copies carry placeholders on purpose.
+3. Create the launchd agents (`com.alphabrief.api.plist`,
+   `com.alphabrief.scheduler.plist`) with `RunAtLoad` + `KeepAlive`,
+   `WorkingDirectory=/tmp`, and the wrapper as `ProgramArguments`.
+
+Key environment wiring:
+
+- `SSL_CERT_FILE=/etc/ssl/cert.pem` — the framework Python build needs
+  an explicit CA bundle; without it every broker/model TLS call fails
+  with `CERTIFICATE_VERIFY_FAILED`.
+- The API uses `ALPHABRIEF_DATA_DIR=~/.alphabrief/api-data` (separate
+  DB from the scheduler; DuckDB is single-writer) and
+  `ALPHABRIEF_AI_OBSERVATION_DIR=~/.alphabrief/reports/paper_observation`
+  so the `/api/v1/ai/*` read-only endpoints serve the scheduler's
+  exported `ai_cycle_*.json` files instead of an empty local DB.
+- `ALPHABRIEF_SCHEDULER_DB_DIR=~/.alphabrief/data` makes the
+  `/api/v1/scheduler/*` read-only endpoints serve a periodically
+  refreshed copy of the scheduler's own DB (refresh TTL 10s), because
+  the API process cannot open the writer-locked file directly.
+- The scheduler uses `ALPHABRIEF_DATA_DIR=~/.alphabrief/data` and
+  exports one `ai_cycle_<trading_day>.json` per cycle plus
+  `ai_cycle_error_*.json` for failed cycles into the observation dir.
+
+Health signals: `GET /health` (API), the scheduler `reconcile`
+heartbeat and recon snapshots (all `*_match=true`), and
+`GET /api/v1/ai/status` (cycle count should grow daily). A cycle that
+cannot reach the model provider records `outcome=provider_error` in the
+export and dashboard instead of a misleading `skipped_no_consensus`.
+
 ## 5. Starting the 30-Day Run
 
 The recommended invocation:

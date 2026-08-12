@@ -196,12 +196,17 @@ Run all checks before committing:
 alphabrief acceptance verify
 ```
 
-Current result: Round 0063 OANDA-first default-paper alignment passes;
-the full pytest run reaches **1361 passing tests**. Ruff is clean,
-strict Mypy is clean across **253 source files**, and the project
-acceptance verifier is green (`verify` 11/11, `preflight`
-`--scope paper` 1/1). The development log records the latest
-verified run and its environment constraints.
+Current result: Round 0064 production repair passes; the full pytest run
+reaches **1379 passing tests**. Ruff is clean, strict Mypy is clean
+across **233 source files**, and the project acceptance verifier is
+green (`verify` 11/11, `preflight` `--scope paper` 1/1). Round 0064
+restored the deployed AI Trading Committee (real provider key, visible
+`provider_error` outcomes instead of silent zero-vote cycles), deduped
+freeze alerts (1.3M-row flood removed), widened the `ai_daily_cycle`
+task timeout, and made the dashboard serve live scheduler/AI state via
+`ALPHABRIEF_AI_OBSERVATION_DIR` and `ALPHABRIEF_SCHEDULER_DB_DIR`. The
+development log records the latest verified run and its environment
+constraints.
 
 ## Paper Broker Setup
 
