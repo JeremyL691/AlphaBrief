@@ -135,6 +135,19 @@ authorization headers、bearer/token/api_key/secret、完整 OANDA account
 ID（`\d{3}-\d{3}-\d{7,}-\d{3}`）与可配置 sensitive patterns
 （REQ-OPS-002）。
 
+#### 4.1.3 Scope/Safety/Test-Delta Gates（M02-W04）
+
+`alphabrief_acceptance.autonomous_gates`：
+
+- `scope_gate_violations(contract, changed_paths)` —— 任何 changed path
+  不在 resolved allowlist 或在 resolved forbidden paths 内即失败；
+- `safety_gate_violations(changed_files)` —— live host、
+  `live_trading_enabled` selection、other-broker/removed execution
+  surface、`_reference_sources` import、seeded secrets 任一出现即失败；
+- `delta_gate_violations(...)` —— 删除测试、新增
+  skip/xfail/noqa/type-ignore、改动 pyproject.toml/ruff/mypy config
+  需要显式 authorization，否则失败。
+
 ### 4.2 Milestone State
 
 ```text

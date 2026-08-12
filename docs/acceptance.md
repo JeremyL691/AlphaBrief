@@ -221,6 +221,16 @@ transition table 已写入 docs/autonomous_loop.md §4.1 附录。
 
 范围说明：本 round 无 allowlist 外路径。full pytest 1439 passed（+10 runner/scrub 测试）。
 
+#### M02-W04 已闭环证据（R-20260813-M02-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M02-W04-01 | resolved allowlist 外的 changed path 使 scope gate 失败 | `scope_gate_violations(contract, changed_paths)`（glob 匹配含 `**` 跨目录与裸文件名）；allowlist 内通过、allowlist 外失败、forbidden paths（`_reference_sources/**`）失败 |
+| AC-M02-W04-02 | live hosts、other broker production references、reference imports、seeded secrets 使 safety gate 失败 | `safety_gate_violations(changed_files)`：live host/`live_trading_enabled` selection、`alpaca`/routing/simulated surfaces、`_reference_sources` import、bearer/token/api_key/secret/完整 account ID 模式；clean content 通过 |
+| AC-M02-W04-03 | 删除测试、新增 skip/xfail/noqa/type-ignore 或弱化 quality config 需要显式 authorization 否则失败 | `delta_gate_violations`（deleted test 路径、changed content markers、pyproject.toml/ruff/mypy config）；`authorized_paths`/`authorized_markers` 显式豁免 |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1459 passed（+20 gate 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
