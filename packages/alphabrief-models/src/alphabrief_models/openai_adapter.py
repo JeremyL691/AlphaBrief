@@ -72,7 +72,7 @@ class OpenAIProviderAdapter:
 
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "User-Agent": "alphabrief-trading-committee/0.1",
+            "User-Agent": "openai-python/1.30.0",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
