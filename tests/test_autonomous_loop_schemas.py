@@ -60,7 +60,7 @@ def test_current_progress_parses_under_strict_schema(
 
     assert _re.match(r"^M\d+-W\d+$", progress.current.work_item_id)
     assert progress.milestones["M01"] == "DONE"
-    assert progress.milestones["M02"] == "ACTIVE"
+    assert progress.milestones["M02"] == "DONE"
     assert progress.work_item_states["M01-W05"] == "DONE"
 
 
