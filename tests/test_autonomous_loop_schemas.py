@@ -55,8 +55,9 @@ def test_current_progress_parses_under_strict_schema(
 ) -> None:
     """AC-M02-W01-01: the current progress file satisfies the schema."""
     assert progress.schema_version == 1
-    assert progress.current.work_item_id == "M02-W01"
+    assert progress.current.work_item_id == "M02-W02"
     assert progress.milestones["M01"] == "DONE"
+    assert progress.milestones["M02"] == "ACTIVE"
     assert progress.work_item_states["M01-W05"] == "DONE"
 
 
