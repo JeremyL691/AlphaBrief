@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import signal
 import sys
@@ -62,6 +63,7 @@ from alphabrief_execution.operations.scheduler import (
     AlertSink,
     HeartbeatStore,
     OperationsScheduler,
+    ScheduledTask,
     SchedulerConfig,
     SchedulerStartupBlockedError,
     build_default_tasks,
@@ -73,6 +75,7 @@ from alphabrief_trader import (
     StoredMarketSnapshotBuilder,
     TradingCommittee,
     build_ai_trading_committee,
+    build_ai_trading_provider,
     is_ai_external_paper_enabled,
     is_ai_trading_enabled,
 )
@@ -884,6 +887,188 @@ def _write_ai_cycle_error(exc: Exception) -> None:
     )
 
 
+def _research_content_factory(
+    *, db_path: Path
+) -> Callable[[], Awaitable[None]]:
+    """Build the daily research-content generator bound to ``db_path``.
+
+    Produces macro indicators, a daily alpha brief, a multi-perspective
+    debate, and a model evaluation into the scheduler DB so the
+    dashboard's News/Macro/Briefs/Debates/Models pages have live,
+    auto-refreshing content. All model calls go through the same
+    ``ModelGateway`` provider wiring as the AI Trading Committee.
+    """
+
+    async def _handler() -> None:
+        from alphabrief_api.db import (
+            BriefStore as _BriefStore,
+        )
+        from alphabrief_api.db import (
+            MacroStore as _MacroStore,
+        )
+        from alphabrief_api.db import (
+            ModelEvalStore as _EvalStore,
+        )
+        from alphabrief_api.db.debates import (
+            DebateStore as _DebateStore,
+        )
+        from alphabrief_models import ModelGateway, ModelRequest
+        from alphabrief_models.briefs import DailyAlphaBrief
+        from alphabrief_models.daily import coerce_daily_brief
+        from alphabrief_models.evaluation import ModelEvaluator
+        from alphabrief_models.evaluation_datasets import get_dataset_by_id
+        from alphabrief_models.prompts import render_brief_prompt_v2
+        from alphabrief_models.structured_output import parse_structured_output
+        from alphabrief_news.providers import (
+            MockMacroProvider,
+            build_default_mock_macro,
+        )
+        from alphabrief_news.types import MacroFetchQuery
+        from alphabrief_research.orchestrator import DebateOrchestrator
+        from alphabrief_research.schemas import DebateQuestion
+
+        database = db_path / "alphabrief.db"
+        macro_store = _MacroStore(db_path=database)
+        brief_store = _BriefStore(db_path=database)
+        debate_store = _DebateStore(db_path=database)
+        eval_store = _EvalStore(db_path=database)
+        try:
+            trading_day = date.today().isoformat()
+            universe = _ai_scheduler_universe()
+            gateway = ModelGateway(providers=[build_ai_trading_provider()])
+
+            # 1. Macro indicators — mock provider (FRED requires a key).
+            provider = MockMacroProvider(
+                seed_indicators=build_default_mock_macro(
+                    ["GDP", "CPI", "UNEMPLOYMENT", "FEDFUNDS", "INDPRO"]
+                )
+            )
+            end = datetime.now(UTC)
+            start = end - timedelta(days=90)
+            indicators = provider.fetch_indicators(
+                MacroFetchQuery(
+                    indicators=["GDP", "CPI", "UNEMPLOYMENT", "FEDFUNDS", "INDPRO"],
+                    start=start,
+                    end=end,
+                    data_version="content-v1",
+                )
+            )
+            macro_store.insert_indicators(indicators)
+
+            # 2. Daily alpha brief through the real provider. The v2
+            # template embeds the exact DailyAlphaBrief JSON schema;
+            # real models occasionally deviate from it, so retry a few
+            # times and fall back to a lenient coercion of the raw JSON.
+            rendered = render_brief_prompt_v2(
+                "daily_alpha_brief",
+                "v2",
+                {
+                    "trading_day": trading_day,
+                    "market_data_context": (
+                        f"Universe under review: {', '.join(universe)}."
+                    ),
+                    "news_context": "(auto-refreshed by the scheduler)",
+                    "macro_context": "(auto-refreshed by the scheduler)",
+                    "sentiment_summary": "(none)",
+                },
+            )
+            brief = None
+            raw_output: str | None = None
+            for _attempt in range(3):
+                gateway_result = gateway.invoke(
+                    ModelRequest(
+                        request_id=f"content_brief_{_attempt}",
+                        task_type="daily_brief",
+                        prompt_version=rendered.prompt_version,
+                        input_text=rendered.input_text,
+                        required_capabilities=["structured_output"],
+                    )
+                )
+                if gateway_result.response is None:
+                    continue
+                raw_output = gateway_result.response.output_text
+                parsed = parse_structured_output(
+                    gateway_result.response,
+                    target=DailyAlphaBrief,
+                )
+                if parsed.ok and parsed.parsed is not None:
+                    brief = parsed.parsed
+                    break
+            if brief is None and raw_output:
+                brief = coerce_daily_brief(
+                    raw_output, trading_day=trading_day, universe=universe
+                )
+            if brief is not None:
+                brief_data = brief.model_dump(mode="json")
+                brief_store.save_brief(brief_data, brief_id=brief_data["brief_id"])
+            else:
+                logging.getLogger(__name__).warning(
+                    "research_content: daily brief generation failed "
+                    "(no parseable model output)"
+                )
+
+            # 3. Multi-perspective research debate.
+            question = DebateQuestion(
+                question=(
+                    f"Daily research debate: what is the {trading_day} "
+                    "outlook for the paper universe?"
+                ),
+                symbol=None,
+                time_horizon="5 trading days",
+                perspectives=["technical", "fundamental", "risk", "judge"],
+            )
+            debate_result = DebateOrchestrator(gateway).debate(question)
+            if debate_result.ok and debate_result.record is not None:
+                debate_store.save_debate_record(
+                    question=debate_result.record.question.model_dump(
+                        mode="json"
+                    ),
+                    responses=[
+                        r.model_dump(mode="json")
+                        for r in debate_result.record.responses
+                    ],
+                    consensus=(
+                        debate_result.record.consensus.model_dump(mode="json")
+                        if debate_result.record.consensus
+                        else {}
+                    ),
+                )
+
+            # 4. Model evaluation against a bundled dataset.
+            try:
+                dataset = get_dataset_by_id("daily_brief_v1")
+            except KeyError:
+                dataset = None
+            if dataset is not None:
+                model_name = os.environ.get(
+                    "ALPHABRIEF_AI_MODEL_NAME", "gpt-4o-mini"
+                )
+                eval_result = ModelEvaluator(gateway).run_dataset(
+                    model_id=f"openai:{model_name}",
+                    dataset=dataset,
+                    sample_count=5,
+                )
+                eval_store.save_evaluation(
+                    model_id=eval_result.model_id,
+                    provider=eval_result.provider,
+                    task_type=eval_result.task_type,
+                    eval_dataset=eval_result.dataset_id,
+                    sample_count=eval_result.sample_count,
+                    json_valid_rate=eval_result.json_valid_rate,
+                    schema_pass_rate=eval_result.schema_pass_rate,
+                    hallucination_rate=eval_result.hallucination_rate,
+                    avg_latency_ms=eval_result.avg_latency_ms,
+                    avg_cost_estimate=eval_result.avg_cost_estimate,
+                )
+        finally:
+            macro_store.close()
+            brief_store.close()
+            debate_store.close()
+            eval_store.close()
+
+    return _handler
+
+
 def _ai_cycle_factory(
     *, db_path: Path
 ) -> Callable[[], Awaitable[None]]:
@@ -1034,10 +1219,24 @@ def run_cmd(
         else:
             db_path = Path.home() / ".alphabrief" / "data"
         ai_handler = _ai_cycle_factory(db_path=db_path)
+        content_handler = _research_content_factory(db_path=db_path)
 
         tasks = build_default_tasks(
             on_reconcile=_on_reconcile,
             on_ai_cycle=ai_handler,
+        )
+        # Register the daily research-content task (macro indicators,
+        # daily brief, debate, model evaluation) so the dashboard content
+        # pages stay populated automatically.
+        tasks.append(
+            ScheduledTask(
+                name="research_content",
+                interval_seconds=86_400.0,
+                handler=content_handler,
+                timeout_seconds=900.0,
+                max_retries=1,
+                enabled=False,
+            )
         )
         # Override the reconcile task interval if the user asked for a
         # different value. This rebuilds the list so the rest of the
@@ -1050,12 +1249,16 @@ def run_cmd(
             )
             for task in tasks
         ]
-        # Activate the AI cycle task only when the feature flag is on;
-        # otherwise it stays a registered-but-disabled entry so the
-        # operator can see the task in `scheduler tasks`.
+        # Activate the AI cycle and content tasks only when the feature
+        # flag is on; otherwise they stay registered-but-disabled so the
+        # operator can see them in `scheduler tasks`.
         if is_ai_trading_enabled():
             tasks = [
-                replace(task, enabled=True) if task.name == "ai_daily_cycle" else task
+                (
+                    replace(task, enabled=True)
+                    if task.name in {"ai_daily_cycle", "research_content"}
+                    else task
+                )
                 for task in tasks
             ]
 
@@ -1066,7 +1269,13 @@ def run_cmd(
             recon_runner=runner,
             recon_store=recon_store,
             config=SchedulerConfig(
-                reconcile_on_start=True,
+                # The startup reconcile runs as the first tick of the
+                # ``reconcile`` task (tasks fire immediately on start),
+                # concurrently with the AI cycle and content tasks. A
+                # blocking ``reconcile_on_start`` would stall the whole
+                # scheduler behind broker connectivity (transient OANDA
+                # SSL timeouts hung startup for minutes).
+                reconcile_on_start=False,
                 max_consecutive_failures=max_consecutive_failures,
             ),
         )

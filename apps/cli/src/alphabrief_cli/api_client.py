@@ -396,3 +396,28 @@ __all__ = [
     "is_api_running",
     "print_api_unavailable_hint",
 ]
+
+
+def api_post(path: str, body: dict[str, Any]) -> dict[str, Any]:
+    """POST *body* to an API endpoint (no auth). Returns the JSON response.
+
+    Raises ``SystemExit(1)`` with the API's error detail on failure so
+    CLI commands surface the same message the dashboard would.
+    """
+    url = f"{_base_url()}{path}"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120.0) as resp:
+            return _decode(resp)
+    except urllib.error.HTTPError as exc:
+        detail = _try_detail(exc)
+        print(f"API {path} failed ({exc.code}): {detail}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        print(f"API {path} unreachable: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc

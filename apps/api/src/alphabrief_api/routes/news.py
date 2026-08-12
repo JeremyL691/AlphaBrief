@@ -198,6 +198,8 @@ def list_headlines(
     offset: int = Query(default=0, ge=0),
 ) -> NewsHeadlinesResponse:
     """List stored news headlines with optional filters."""
+    from alphabrief_api.db.merged import merge_dedupe, open_snapshot_store
+
     start_dt = _parse_iso_to_utc(start, field_name="start") if start else None
     end_dt = _parse_iso_to_utc(end, field_name="end") if end else None
 
@@ -209,6 +211,28 @@ def list_headlines(
         limit=limit,
         offset=offset,
     )
+
+    # Merge scheduler-ingested headlines (RSS feeds) with the API DB so
+    # the dashboard shows both sources.
+    snapshot_store = open_snapshot_store(NewsStore)
+    if snapshot_store is not None:
+        try:
+            headlines = merge_dedupe(
+                list(headlines),
+                list(
+                    snapshot_store.list_headlines(
+                        symbol=symbol,
+                        start=start_dt,
+                        end=end_dt,
+                        limit=limit,
+                        offset=offset,
+                    )
+                ),
+                key=lambda h: h.headline_id,
+                sort_key=lambda h: h.published_at,
+            )
+        finally:
+            snapshot_store.close()
 
     summaries = [
         NewsHeadlineSummary(

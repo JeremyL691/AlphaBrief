@@ -1702,17 +1702,21 @@ def test_news_fetch_invalid_date() -> None:
     assert response.status_code == 422
 
 
-def test_news_fetch_empty_result() -> None:
+def test_news_fetch_simulator_serves_any_window() -> None:
+    # The mock provider is a simulator: canned headlines are placed
+    # inside the requested window, so recent windows (the dashboard
+    # default) return data instead of 404.
     response = client.post(
         "/api/v1/news/fetch",
         json={
             "source": "mock",
             "symbols": ["AAPL"],
-            "start": "2023-01-01T00:00:00",
-            "end": "2023-01-02T00:00:00",
+            "start": "2026-01-01T00:00:00",
+            "end": "2026-01-02T00:00:00",
         },
     )
-    assert response.status_code == 404
+    assert response.status_code == 201
+    assert response.json()["headline_count"] >= 1
 
 
 def test_news_fetch_custom_data_version() -> None:
@@ -1822,17 +1826,21 @@ def test_macro_fetch_invalid_date() -> None:
     assert response.status_code == 422
 
 
-def test_macro_fetch_empty_result() -> None:
+def test_macro_fetch_simulator_serves_any_window() -> None:
+    # The mock provider is a simulator: canned values are placed inside
+    # the requested window, so recent windows (the dashboard default)
+    # return data instead of 404.
     response = client.post(
         "/api/v1/macro/fetch",
         json={
             "source": "mock",
             "indicators": ["CPIAUCSL"],
-            "start": "2023-01-01T00:00:00",
-            "end": "2023-01-02T00:00:00",
+            "start": "2026-01-01T00:00:00",
+            "end": "2026-01-02T00:00:00",
         },
     )
-    assert response.status_code == 404
+    assert response.status_code == 201
+    assert response.json()["indicator_count"] == 1
 
 
 def test_macro_list_and_get_indicator() -> None:

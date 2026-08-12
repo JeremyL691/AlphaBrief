@@ -13,6 +13,7 @@ from alphabrief_cli.acceptance_commands import acceptance_app
 from alphabrief_cli.ai_commands import ai_app
 from alphabrief_cli.audit_commands import audit_app
 from alphabrief_cli.backtest_commands import backtest_app
+from alphabrief_cli.bootstrap_commands import bootstrap_app
 from alphabrief_cli.brief_commands import brief_app
 from alphabrief_cli.broker_commands import broker_app
 from alphabrief_cli.data_commands import data_app
@@ -46,6 +47,7 @@ app.add_typer(risk_app, name="risk")
 app.add_typer(audit_app, name="audit")
 app.add_typer(review_app, name="review")
 app.add_typer(strategy_app, name="strategy")
+app.add_typer(bootstrap_app, name="bootstrap")
 app.add_typer(broker_app, name="broker")
 app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(serve_app, name="serve")

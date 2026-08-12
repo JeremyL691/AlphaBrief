@@ -297,7 +297,7 @@ def test_scheduler_routes_serve_scheduler_db_snapshot(
     """ALPHABRIEF_SCHEDULER_DB_DIR points the read-only scheduler routes
     at a refreshed copy of the scheduler's own DB (which the API process
     cannot open directly while the scheduler holds the writer lock)."""
-    from alphabrief_api.routes import scheduler as scheduler_routes
+    from alphabrief_api.db.merged import reset_snapshot_cache
 
     sched_dir = tmp_path / "scheduler_data"
     sched_dir.mkdir()
@@ -311,7 +311,7 @@ def test_scheduler_routes_serve_scheduler_db_snapshot(
     # The API's own data dir points elsewhere; the snapshot must win.
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path / "api_data"))
     monkeypatch.setenv("ALPHABRIEF_SCHEDULER_DB_DIR", str(sched_dir))
-    scheduler_routes._snapshot_state = None
+    reset_snapshot_cache()
     client = TestClient(create_app())
     try:
         res = client.get("/api/v1/scheduler/heartbeats")
@@ -329,7 +329,7 @@ def test_scheduler_routes_serve_scheduler_db_snapshot(
         assert body["heartbeat_count"] == 1
         assert body["open_freeze_count"] == 1
     finally:
-        scheduler_routes._snapshot_state = None
+        reset_snapshot_cache()
 
 
 def test_scheduler_routes_fallback_to_local_data_dir_without_snapshot_env(
@@ -348,3 +348,79 @@ def test_scheduler_routes_fallback_to_local_data_dir_without_snapshot_env(
     assert res.status_code == 200
     assert len(res.json()["heartbeats"]) == 1
     assert res.json()["heartbeats"][0]["task_name"] == "local"
+
+
+def test_dashboard_routes_merge_scheduler_db_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """News/Macro/Brief/Debate/Model routes merge scheduler-DB content
+    (via the snapshot) with the API's own DB when
+    ALPHABRIEF_SCHEDULER_DB_DIR is set."""
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from alphabrief_api.db import (
+        MacroStore,
+        NewsStore,
+    )
+    from alphabrief_api.db.merged import reset_snapshot_cache
+
+    # Seed a "scheduler" DB with one row per content type.
+    sched_dir = tmp_path / "scheduler_data"
+    sched_dir.mkdir()
+    from alphabrief_news import MacroIndicator, NewsHeadline
+
+    news = NewsStore(db_path=sched_dir / "alphabrief.db")
+    news.insert_headlines(
+        [
+            NewsHeadline(
+                headline_id="sched-news-1",
+                published_at=datetime(2026, 8, 12, 9, 0, tzinfo=UTC),
+                symbols=["EUR_USD"],
+                category="macro",
+                source="Sched Wire",
+                title="Scheduler-ingested headline",
+                summary="",
+                url="https://example.test/1",
+                sentiment="positive",
+                data_version="sched-v1",
+            )
+        ]
+    )
+    news.close()
+    macro = MacroStore(db_path=sched_dir / "alphabrief.db")
+    macro.insert_indicators(
+        [
+            MacroIndicator(
+                indicator_id="GDP",
+                released_at=datetime(2026, 8, 12, 9, 0, tzinfo=UTC),
+                name="Gross Domestic Product",
+                value=Decimal("3.1"),
+                unit="percent",
+                source="mock",
+                data_version="sched-v1",
+            )
+        ]
+    )
+    macro.close()
+
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path / "api_data"))
+    monkeypatch.setenv("ALPHABRIEF_SCHEDULER_DB_DIR", str(sched_dir))
+    reset_snapshot_cache()
+    client = TestClient(create_app())
+    try:
+        res = client.get("/api/v1/news/headlines?limit=50")
+        assert res.status_code == 200
+        titles = [h["title"] for h in res.json()["headlines"]]
+        assert "Scheduler-ingested headline" in titles
+
+        res = client.get("/api/v1/macro/indicators?limit=50")
+        assert res.status_code == 200
+        ids = [i["indicator_id"] for i in res.json()["indicators"]]
+        assert "GDP" in ids
+
+        res = client.get("/api/v1/data/symbols")
+        assert res.status_code == 200
+    finally:
+        reset_snapshot_cache()
