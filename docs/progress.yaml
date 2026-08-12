@@ -1,12 +1,12 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-13T08:30:00+08:00"
+updated_at: "2026-08-13T09:00:00+08:00"
 
 project:
   status: IN_PROGRESS
   execution_mode: DEVELOPMENT
-  controller_enforced: false
+  controller_enforced: true
   approved_mode: AUTONOMOUS_BLUEPRINT_MODE
   human_step_approval_required: false
   agent_questions_allowed: false
@@ -68,17 +68,18 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M02-W06
+  work_item_id: M03-W01
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M02-W05-FINAL-GATE
-  next_action: close the loop-controller meta-gate
+  last_verified_gate: M02-W06-FINAL-GATE
+  next_action: introduce versioned database migrations
 
 milestones:
   M00: DONE
   M01: DONE
-  M02: ACTIVE
+  M02: DONE
+  M03: ACTIVE
   M03: BACKLOG
   M04: BACKLOG
   M05: BACKLOG
@@ -107,9 +108,10 @@ work_item_states:
   M02-W03: DONE
   M02-W04: DONE
   M02-W05: DONE
+  M02-W06: DONE
 
 latest_validation:
-  completed_at: "2026-08-13T08:30:00+08:00"
+  completed_at: "2026-08-13T09:00:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -117,7 +119,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 1469
+      passed: 1476
       failed: 0
       warnings: 12
     restricted_sandbox:
@@ -220,5 +222,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M02-W05
-last_ledger_record: R-20260813-M02-W05
+last_completed_round: R-20260813-M02-W06
+last_ledger_record: R-20260813-M02-W06

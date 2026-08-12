@@ -241,6 +241,17 @@ transition table 已写入 docs/autonomous_loop.md §4.1 附录。
 
 范围说明：本 round 无 allowlist 外路径。full pytest 1469 passed（+10 recovery 测试）。
 
+#### M02-W06 已闭环证据（R-20260813-M02-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M02-W06-01 | synthetic passing item 推进、带 trailers commit、append 一行 ledger、选择正确 next item | `controller_run` 全流程（synthetic git repo：M99-W01 DONE、milestone M99 DONE、M98 ACTIVE、next=M98-W01；commit trailers `AlphaBrief-Round/Work-Item/Requirements`；ledger 恰一行且 `controller_enforced=true`；tree clean） |
+| AC-M02-W06-02 | synthetic failing 或 acceptance-mutating item 不能 self-certify DONE | failing（exit 1）→ FAILED，无 commit/ledger/progress 变更；acceptance mutation（相对 baseline commit 指纹变化）→ BLOCKED_ACCEPTANCE_MUTATION；scope violation → BLOCKED_SCOPE |
+| AC-M02-W06-03 | controller enforcement enabled 下全仓 + acceptance gates 通过 | full pytest 1476 passed exit 0；ruff/mypy exit 0；`acceptance verify` 11/11；progress 的 `controller_enforced` 在 M02 完成后置 true |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1476 passed（+7 controller/meta-gate 测试）。
+M02 里程碑全部 6 个 work items DONE；下一个 READY item 为 M03-W01（依赖 M02-W06 ✓）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

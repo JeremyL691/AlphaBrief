@@ -161,6 +161,20 @@ ID（`\d{3}-\d{3}-\d{7,}-\d{3}`）与可配置 sensitive patterns
   达上限 → QUARANTINE；被 QUARANTINE 的 item 不影响 independent
   selection。
 
+#### 4.1.5 Loop Controller Pipeline（M02-W06）
+
+`alphabrief_acceptance.loop_controller.controller_run()` 把
+preflight（strict schemas + contract）、evidence runner（exit-code
+truth）、scope/safety/test-delta gates、acceptance freeze（相对
+baseline commit 的指纹，round 内 mutation 会被 BLOCK）、ledger append、
+progress/milestone 推进、带 trailers 的 Git commit 和 next-item
+selection 串成一条确定性流水线；CLI 入口为 `alphabrief acceptance
+loop <item> <round> <message> [--dry-run]`。任何 agent-authored result
+field 都不能产生 PASS/FAIL。
+
+M02 完成后 `controller_enforced: true`；从 M03 起状态 transition、
+命令捕获、scope gate 与 ledger append 由 controller 执行。
+
 ### 4.2 Milestone State
 
 ```text
