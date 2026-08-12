@@ -41,6 +41,44 @@ def _db_path() -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Fact identity
+# ---------------------------------------------------------------------------
+
+
+def bar_fact_id(
+    *,
+    symbol: str,
+    timestamp: datetime,
+    source: str,
+    data_version: str,
+    open: Decimal,
+    high: Decimal,
+    low: Decimal,
+    close: Decimal,
+    volume: Decimal,
+) -> str:
+    """Return the deterministic content address of one bar fact.
+
+    Identical content always produces the same fact ID, so re-ingesting
+    an identical fact is a no-op while different versions coexist with
+    their own identity and lineage (M03-W02).
+    """
+    import hashlib
+
+    canonical = (
+        f"{symbol}|{_utc_iso(timestamp)}|{source}|{data_version}|"
+        f"{open}|{high}|{low}|{close}|{volume}"
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _utc_iso(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
 # MarketDataStore
 # ---------------------------------------------------------------------------
 
@@ -76,17 +114,21 @@ class MarketDataStore:
         source: str,
         data_version: str,
     ) -> int:
-        """Insert or replace bars for a single symbol.
+        """Append immutable, versioned bar facts (M03-W02).
 
-        Any existing bars for the same ``(symbol, timestamp)`` pair are
-        replaced.  Returns the number of bars inserted.
+        Every bar becomes a content-addressed fact: the primary key is
+        ``(symbol, timestamp, data_version, source)`` and ``fact_id`` is
+        the deterministic content hash, so different source versions of
+        the same symbol+timestamp coexist and re-ingesting identical
+        facts is a no-op instead of an overwrite. Returns the number of
+        newly inserted facts.
         """
         if not bars:
             return 0
 
         symbol = bars[0].symbol
+        before = self._count_bars(symbol)
 
-        # Build tuples for batch insert
         rows: list[tuple[object, ...]] = []
         for bar in bars:
             rows.append(
@@ -100,16 +142,28 @@ class MarketDataStore:
                     bar.volume,
                     source,
                     data_version,
+                    bar_fact_id(
+                        symbol=bar.symbol,
+                        timestamp=bar.timestamp,
+                        source=source,
+                        data_version=data_version,
+                        open=bar.open,
+                        high=bar.high,
+                        low=bar.low,
+                        close=bar.close,
+                        volume=bar.volume,
+                    ),
                 )
             )
 
         self._conn.executemany(
             """
-            INSERT OR REPLACE INTO bars (
+            INSERT INTO bars (
                 symbol, timestamp, open, high, low, close,
-                volume, source, data_version
+                volume, source, data_version, fact_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (symbol, timestamp, data_version, source) DO NOTHING
             """,
             rows,
         )
@@ -135,7 +189,13 @@ class MarketDataStore:
             ],
         )
 
-        return len(bars)
+        return self._count_bars(symbol) - before
+
+    def _count_bars(self, symbol: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM bars WHERE symbol = ?", [symbol]
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     # ------------------------------------------------------------------
     # Read — symbols
@@ -189,11 +249,21 @@ class MarketDataStore:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, object]]:
-        """Return OHLCV bars for *symbol* with pagination."""
+        """Return OHLCV bars for *symbol* with pagination.
+
+        The decision view serves the latest data version per timestamp
+        (M03-W02); versioned facts remain queryable via
+        :meth:`get_bar_facts`.
+        """
         rows = self._conn.execute(
             """SELECT symbol, timestamp, open, high, low, close,
                       volume, source, data_version
-               FROM bars WHERE symbol = ?
+               FROM bars
+               WHERE symbol = ?
+               QUALIFY row_number() OVER (
+                   PARTITION BY symbol, timestamp
+                   ORDER BY data_version DESC, source
+               ) = 1
                ORDER BY timestamp
                LIMIT ? OFFSET ?""",
             [symbol, limit, offset],
@@ -215,9 +285,15 @@ class MarketDataStore:
         ]
 
     def get_bar_count(self, symbol: str) -> int:
-        """Return the number of bars stored for *symbol*."""
+        """Return the number of decision-view bars for *symbol*.
+
+        Counts distinct (symbol, timestamp) pairs — one per timestamp in
+        the deduplicated latest-version view (M03-W02).
+        """
         row = self._conn.execute(
-            "SELECT COUNT(*) FROM bars WHERE symbol = ?", [symbol]
+            "SELECT COUNT(DISTINCT symbol || '|' || timestamp) "
+            "FROM bars WHERE symbol = ?",
+            [symbol],
         ).fetchone()
         return int(row[0]) if row else 0
 
@@ -233,11 +309,21 @@ class MarketDataStore:
     # ------------------------------------------------------------------
 
     def get_bar_models(self, symbol: str) -> list[Bar]:
-        """Return OHLCV bars as ``Bar`` domain objects (no pagination)."""
+        """Return OHLCV bars as ``Bar`` domain objects (no pagination).
+
+        When multiple immutable versions of the same bar coexist, the
+        latest ``data_version`` wins per ``(symbol, timestamp)`` so
+        decision inputs see one bar per timestamp.
+        """
         rows = self._conn.execute(
             """SELECT symbol, timestamp, open, high, low, close,
                       volume, source, data_version
-               FROM bars WHERE symbol = ?
+               FROM bars
+               WHERE symbol = ?
+               QUALIFY row_number() OVER (
+                   PARTITION BY symbol, timestamp
+                   ORDER BY data_version DESC, source
+               ) = 1
                ORDER BY timestamp""",
             [symbol],
         ).fetchall()
@@ -254,6 +340,44 @@ class MarketDataStore:
                 source=str(row[7]),
                 data_version=str(row[8]),
             )
+            for row in rows
+        ]
+
+    def get_bar_facts(
+        self,
+        symbol: str,
+        timestamp: datetime,
+    ) -> list[dict[str, Any]]:
+        """Return every immutable version of one bar fact.
+
+        Each row carries its content-addressed ``fact_id``, lineage
+        (``source``/``data_version``), and UTC ``ingested_at``, ordered
+        by data version, so historical snapshots can reconstruct the
+        exact facts they referenced (M03-W02).
+        """
+        rows = self._conn.execute(
+            """SELECT symbol, timestamp, open, high, low, close,
+                      volume, source, data_version, fact_id, ingested_at
+               FROM bars
+               WHERE symbol = ? AND timestamp = ?
+               ORDER BY data_version, source""",
+            [symbol, timestamp],
+        ).fetchall()
+
+        return [
+            {
+                "symbol": str(row[0]),
+                "timestamp": _ensure_dt_tz(row[1]),
+                "open": _decimal_to_str(row[2]),
+                "high": _decimal_to_str(row[3]),
+                "low": _decimal_to_str(row[4]),
+                "close": _decimal_to_str(row[5]),
+                "volume": _decimal_to_str(row[6]),
+                "source": str(row[7]),
+                "data_version": str(row[8]),
+                "fact_id": str(row[9]),
+                "ingested_at": _ensure_dt_tz(row[10]),
+            }
             for row in rows
         ]
 

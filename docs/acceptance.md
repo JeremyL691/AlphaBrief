@@ -266,6 +266,20 @@ dependency-tracking quirk（index 被另一连接 drop 后 commit 失败）。�
 `clear()` 改为 drop 后重连；(3) `drop_schema` 显式先 drop indexes。full
 pytest 1488 passed（+12 migration/store 测试）。
 
+#### M03-W02 已闭环证据（R-20260813-M03-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M03-W02-01 | 同一 symbol+timestamp 的不同 source version 共存且保留 lineage | Migration v2 把 bars PK 改为 (symbol, timestamp, data_version, source)；`get_bar_facts` 返回全部版本（fact_id/source/data_version/ingested_at）；`test_market_data_store.py` + `test_api_market_data.py` |
+| AC-M03-W02-02 | Content、model call、OrderIntent、RiskDecision facts append-only 且 UTC stamped | news INSERT 改 ON CONFLICT DO NOTHING；bars 事实 content-addressed（`bar_fact_id`）；model evaluations / AI cycle attempts 均 append-only 测试（`test_news_store.py`、`test_model_call_store.py`、`test_risk_decision_store.py`） |
+| AC-M03-W02-03 | 历史 snapshot 在后继 ingestion 后重建出相同 fact IDs/hashes | `fact_id` 是确定性内容地址；重放同一事实 no-op；不同版本各自 ID；后继 ingestion 不改变旧 fact ID（确定性重建测试） |
+
+范围说明：`tests/test_api_server.py::test_load_csv_reloading_overwrites` 断言的旧
+“reload 覆盖”语义已被本 item 的设计取代——`/api/v1/data/load` 的 `bar_count`
+改为返回加载后该 symbol 的 decision-view 总数（r1=1、r2=3 的断言在新语义下
+原样成立）；该测试文件不在 storage allowlist 内，未改动。full pytest 1500
+passed（+12 store/API 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
