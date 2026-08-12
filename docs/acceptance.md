@@ -433,6 +433,17 @@ path）。full pytest 1625 passed（+32 candles 测试）。
 范围说明：本 round 无 allowlist 外路径。full pytest 1636 passed（+11
 pricing 测试）。
 
+#### M05-W03 已闭环证据（R-20260813-M05-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M05-W03-01 | 单 runtime owner 最多保持配置的 stream connection；subscription 原地 reconcile，不为每 instrument/consumer 开新连接 | `PricingStream`（`MAX_STREAM_CONNECTIONS=1`、connection_count 上限断言）；`update_subscriptions` 原地增删、`connection_count` 恒为 1；unsubscribed symbol frame 按 protocol error 拒绝（`test_oanda_market_stream.py`） |
+| AC-M05-W03-02 | disconnect/heartbeat loss/malformed/rate limit/server error 走 bounded classified backoff 并在 consumer 视缓存价为 fresh 前标记 stale | heartbeat 超时 → `stale(heartbeat_loss)`；disconnect → classified + bounded exponential backoff（上限封顶）→ 重连；reconnect 次数达上限 → `stale(server_error)`；crossed/missing-side frame → `stale(malformed_frame)`；`price_is_fresh` 在 stale 后恒 False |
+| AC-M05-W03-03 | shutdown 取消 reads/reconnect timers、关闭连接、持久化最终 cursor state、不 busy-loop 不提问 | `shutdown()` 返回 `StreamCursor`（symbol → 最后 broker time）；连接 closed；poll 在 shutdown 后返回 shutdown 状态且不再连接；idle poll 立即返回 |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1646 passed（+10
+stream 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
