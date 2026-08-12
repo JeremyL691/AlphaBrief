@@ -501,6 +501,18 @@ order 测试）。
 范围说明：本 round 无 allowlist 外路径。full pytest 1708 passed（+8
 order ops 测试）。
 
+#### M06-W03 已闭环证据（R-20260813-M06-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M06-W03-01 | 每个 transition fixture 产生 immutable ordered facts，带 broker transaction ID、related ID、UTC 时间、quantity/price/reason/financing、correlation ID | `OrderTransition` frozen 模型（extra=forbid、Decimal-only、float 拒绝、occurred_at 强制 UTC）；fixture 全字段断言 + DuckDB 持久化后重读一致（`test_oanda_order_transitions.py`） |
+| AC-M06-W03-02 | immediate fill/pending/partial fill/cancel/reject/expire/reissue/reduce/close/dependent create-cancel 确定性投影、无 impossible jumps | `apply_transition` 状态机：CREATED→PARTIAL_FILL→FILLED 累积 open/filled；CANCELLED/REJECTED/EXPIRED；REISSUED 保持投影身份（related_id 记录新 broker order id）；REDUCED/CLOSED 仅允许自 FILLED/PARTIALLY_FILLED；DEPENDENT_* 不改父订单；FILLED→PENDING 等跳变拒绝 |
+| AC-M06-W03-03 | duplicate/out-of-order/malformed/conflicting facts 幂等忽略或 quarantine，绝不改 terminal fact 或虚构 fill | duplicate transition_id → applied=False 不落库；terminal state（FILLED/CANCELLED/REJECTED/EXPIRED/CLOSED）被后继 transition 触碰 → quarantine 表记录、投影不变；PARTIAL_FILL/REDUCE/CLOSE 无前置订单 → quarantine（不虚构 open quantity）；malformed kind/float/after_state 冲突 → 构造期或应用期拒绝 |
+
+范围说明：本 round 无 allowlist 外路径。修复路径集中在
+`broker/oanda/transitions.py`（initial-fill 投影、union 返回类型、行宽）；
+full pytest 1722 passed（+14 transition 测试）；ruff/mypy 全仓 clean。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

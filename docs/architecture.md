@@ -52,6 +52,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | M05 里程碑 | OANDA market data | W01 candles、W02 pricing/conversions、W03 stream、W04 sessions/holidays、W05 immutable snapshots 全部落地；W06 本地 gates 通过，T7 practice evidence PENDING（CODE_COMPLETE，M06 继承 external_evidence_pending） |
 | `oanda/orders` | strict order contracts | M06-W01 起：signed units（buy+/sell-、zero 拒）、4 类 order type、FOK/IOC/GTC/GTD（DAY 拒）、dependent orders（TP/SL/trailing/GSLO）`*OnFill` 精确序列化；price/distance 从 instrument metadata 精确规范化，超精度拒绝；无 `side` 字段 |
 | `oanda/order_ops` | order command/query port | M06-W02 起：create（clientExtensions.id 幂等）/get/list（分页）/cancel/replace（pending-only，stale/race fail-closed）；typed responses + request correlation；classified errors（invalid_request_id/unknown_order/order_state_invalid） |
+| `oanda/transitions` + `transition_store` | order transition facts + projection store | M06-W03 起：CREATED/FILLED/PARTIAL_FILL/CANCELLED/REJECTED/EXPIRED/REISSUED/REDUCED/CLOSED/DEPENDENT_* 作为 immutable facts（broker transaction id/related id/UTC/Decimal）；`apply_transition` 确定性投影（immediate fill 直落 FILLED、terminal 不可变、REDUCE/CLOSE 仅限 filled trade、REISSUED 保持身份）；DuckDB append-only 存储，duplicate 幂等忽略、conflict/out-of-order quarantine，绝不虚构 fill |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |
