@@ -444,6 +444,17 @@ pricing 测试）。
 范围说明：本 round 无 allowlist 外路径。full pytest 1646 passed（+10
 stream 测试）。
 
+#### M05-W04 已闭环证据（R-20260813-M05-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M05-W04-01 | Currency/Metal/各 CFD 类别/unknown、overnight boundaries、DST、weekends、configured holidays 有确定性 session verdict fixtures | `CATEGORY_SESSIONS` 8 类窗口（FX overnight Mon 21:00→Fri 21:00、CFD Mon 00:00→Fri 21:00、Crypto 24x7）；week-minute 圆环算法（overnight wrap 确定性）；holiday calendar 关闭；UTC-fixed（DST 无影响）；窗口表 ≥3 个不同窗口（非单一全局窗口）（`test_oanda_market_sessions.py`、`test_instrument_sessions.py`） |
+| AC-M05-W04-02 | broker tradeable=false、catalog inactive、session closed、stale evidence、unknown calendar state 全部对新敞口 fail closed | `evaluate_exposure_readiness` 五类 fail-closed 分支各有测试（not tradeable/inactive/closed/stale/unknown） |
+| AC-M05-W04-03 | 无 execution-relevant path 只依赖单一 global Mon-Fri start/end window | session 表按 category 区分（≥3 不同窗口）；catalog taxonomy 驱动 instrument 的 session（Crypto Sunday ready、Currency/Index Sunday closed） |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1661 passed（+15
+sessions 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
