@@ -293,6 +293,19 @@ storage profile globs 内（与 test_broker_commands.py 相同的 queue gap 先�
 按声明文件名新建并纳入本 round 的 documented forced path；其余 changed paths
 全部在 allowlist 内。full pytest 1510 passed（+10 checkpoint/rebuild 测试）。
 
+#### M03-W04 已闭环证据（R-20260813-M03-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M03-W04-01 | 只有有效 lease owner 能写；expired ownership 在 takeover 后不能 commit | `writer_lease`（acquire/renew/validate/assert_write_authorized/release，SQL CAS on owner+token+expiry）；expiry 后 takeover 成功、旧 token 失效、`assert_write_authorized` 抛 `WriterLeaseError`；renew 只对当前 owner 生效 |
+| AC-M03-W04-02 | 无 lease 时 read-only API 调用可用且不能 mutate storage | `open_readonly`（DuckDB `read_only=True` 结构性只读）：无 lease 读 OK，任何 INSERT 在引擎层失败 |
+| AC-M03-W04-03 | 并发进程串行化或清晰失败，无 DB 损坏 | 双连接（模拟双进程）测试：第二个 owner 被干净拒绝（非异常风暴），双方仍可完整读取数据 |
+
+范围说明：queue 声明的 targeted 文件 `tests/test_database_writer_lease.py` 不在
+storage profile globs 内（同前例），按声明文件名新建并纳入 documented forced
+path；其余 changed paths 全部在 allowlist 内。full pytest 1517 passed（+7
+lease 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
