@@ -317,6 +317,29 @@ lease 测试）。
 范围说明：本 round 无 allowlist 外路径（`tests/test_backup_*.py` 均在 storage
 profile globs 内）。full pytest 1527 passed（+10 backup/retention 测试）。
 
+#### M03-W06 已闭环证据（R-20260813-M03-W06）— M03 里程碑 gate
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M03-W06-01 | 每个声明 persistence boundary 的 failure injection 留下 old/new 完整状态且 projection rebuild 通过 | migration 失败 → 旧 schema 完整、无 partial table；cycle save 失败 → 旧 projection 仍逐字节 rebuild、新 cycle 不存在；restart 从最后持久 gate 恢复（`test_storage_crash_recovery.py`） |
+| AC-M03-W06-02 | clean isolated backup restore 通过全部 storage integrity checks | backup → restore → schema version == latest、tables integrity、cycle projection rebuild 逐字节一致、writer lease 保留（`test_storage_crash_recovery.py` + `test_backup_restore.py`） |
+| AC-M03-W06-03 | 全仓 pytest、static、acceptance gates 通过，M03 traceability 完整 | full pytest 1531 exit 0；ruff/mypy exit 0；`acceptance verify` 11/11；REQ-PLAT-004..009 映射见下方 |
+
+#### M03 Requirement Traceability（M03-W01..W06）
+
+| Requirement | 代码/证据 |
+|---|---|
+| REQ-PLAT-004（versioned migrations, fail closed） | M03-W01：`migrations.py`（ordered/transactional/idempotent + `check_compatibility`） |
+| REQ-PLAT-005（关键写入事务边界） | M03-W02/W03：bars facts append-only；`save_cycle` 单事务（cycle+votes+attempts） |
+| REQ-PLAT-006（单写者协调） | M03-W04：`writer_lease`（renewable CAS lease + `open_readonly`） |
+| REQ-PLAT-007（每日备份/保留/校验/restore） | M03-W05：`backup.py`（atomic backup + manifest hashes + retention + isolated restore） |
+| REQ-PLAT-008（UTC 记录） | M03-W02：facts 全部 UTC stamped（ingested_at/created_at/evaluated_at） |
+| REQ-PLAT-009（关键 ID 跨层可追踪） | M03-W02/W03：fact_id 内容寻址；checkpoint output_ids；projection 从 facts 重建 |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1531 passed（+4 crash-recovery
+测试）。M03 里程碑全部 6 个 work items DONE；下一个 READY item 为 M04-W01
+（依赖 M03-W06 ✓）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
