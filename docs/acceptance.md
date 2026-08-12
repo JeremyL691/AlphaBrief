@@ -200,6 +200,17 @@ M01 里程碑全部 5 个 work items DONE；下一个 READY item 为 M02-W01（�
 
 范围说明：本 round 无 allowlist 外路径。full pytest 1417 passed（+14 schema 测试）。
 
+#### M02-W02 已闭环证据（R-20260813-M02-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M02-W02-01 | selection 按 dependency、priority、ID 稳定，且绝不选 blocked dependency | `select_next_work_item`（ACTIVE milestone 内 READY items，deps ∈ {DONE, CODE_COMPLETE}，按 (priority, id) 排序）；重复调用结果一致；unsatisfied dependency 不被选择 |
+| AC-M02-W02-02 | BACKLOG->DONE 及其他非法 transition 被拒绝且不 mutate progress | `LEGAL_TRANSITIONS` 显式表（forward/rollback/external-evidence/blocking/repair）；`apply_transition` 冻结输入（frozen schema + 前后 dump 相等断言）；DONE terminal、未知 item 拒绝 |
+| AC-M02-W02-03 | milestone/project transition 需要声明 aggregate gates | `milestone_gate_passes`（gate work item + 全部 required items；M15/M16/M17 只接受 DONE）；`project_engineering_ready`（M01..M15 全部 DONE） |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1429 passed（+12 state machine 测试）。
+transition table 已写入 docs/autonomous_loop.md §4.1 附录。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

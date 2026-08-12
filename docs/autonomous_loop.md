@@ -105,6 +105,23 @@ BLOCKED_EXTERNAL -> READY            # 外部条件后来满足
 
 不允许直接跳过中间 gate，也不允许 `BACKLOG -> DONE`。
 
+#### 4.1.1 机器执行表（M02-W02）
+
+`alphabrief_acceptance.autonomous_state_machine.LEGAL_TRANSITIONS` 是
+唯一合法 transition 表：forward path（BACKLOG->READY->PLANNING->
+PLAN_GATE->IMPLEMENTING->TESTING->SELF_REVIEW->DOCUMENTING->FINAL_GATE->
+COMMITTING->DONE）、rollbacks（TESTING/SELF_REVIEW/FINAL_GATE ->
+IMPLEMENTING）、external-evidence flow（FINAL_GATE->CODE_COMPLETE->
+RUNTIME_VALIDATING->FINAL_GATE/DONE、BLOCKED_EXTERNAL->READY）、blocking
+entries（executing states -> BLOCKED_EXTERNAL/BLOCKED_SAFETY/
+BLOCKED_DECISION）与 repair ceilings（IMPLEMENTING/TESTING/SELF_REVIEW
+-> QUARANTINED -> FAILED）。QUARANTINED/FAILED/SUPERSEDED 是 terminal。
+
+`apply_transition()` 拒绝表外 transition 且不 mutate 输入 progress；
+`select_next_work_item()` 按 (priority, id) 确定性选择 READY items；
+`milestone_gate_passes()`/`project_engineering_ready()` 执行 aggregate
+gates（M15/M16/M17 只接受 DONE，不接受 CODE_COMPLETE）。
+
 ### 4.2 Milestone State
 
 ```text
