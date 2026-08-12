@@ -16,14 +16,14 @@ Snapshot: 2026-08-13, commit `61ad0eea05c4164ea0ab0dd229caf9ae2b1ac464` (M01 OAN
 
 | Area | What exists now | Important limitation |
 |---|---|---|
-| Market data | CSV/Parquet loaders, Yahoo/Binance/Alpha Vantage providers, quality checks, features, DuckDB storage | Bar identity overwrites same-symbol timestamps; OANDA account-wide discovery and immutable versions are not complete |
+| Market data | CSV/Parquet loaders, Yahoo/Binance/Alpha Vantage providers, quality checks, features, DuckDB storage with versioned immutable bar facts | OANDA account-wide discovery is not complete (M04); providers are not OANDA-native |
 | News and macro | RSS, SEC, FRED, mock/social-sentiment providers, storage and brief inputs | Daily production freshness, source reliability, sentiment calibration, and untrusted-content defenses are incomplete |
 | Models | ModelGateway, Fake/OpenAI/Ollama adapters, structured output, evaluation/router, Kronos interface | Some API paths still default to FakeProvider; calls/fallbacks are not universally durable |
 | Research | Daily briefs, evidence objects, multi-role debate, AI trading committee | Research-to-order provenance and prompt-injection isolation are not end-to-end complete |
 | Strategy/backtest | StrategySpec registry, moving-average strategy, vectorized single-asset backtest, metrics, gym environments | Conditions are not compiled, API IS/OOS is incomplete, portfolio/event-driven/walk-forward surfaces need closure |
 | Risk | Symbol/order/exposure/loss/drawdown/news-aware rule primitives | AI auto-execution does not yet pass the full account and news context into every RiskGate call |
 | Execution | In-memory paper broker (explicit local mode), OANDA practice adapter, shared process runtime, reconciliation stores | M01 cutover complete: OANDA practice is the only execution venue; OANDA lifecycle coverage, persistence, and reconciliation are incomplete |
-| Operations | Scheduler, heartbeats, alerts, API/CLI, nine dashboard pages, Electron wrapper | Scheduler/control-plane truth, crash recovery, observability, and 30-day evidence are incomplete |
+| Operations | Scheduler, heartbeats, alerts, API/CLI, nine dashboard pages, Electron wrapper; versioned storage migrations, writer lease, and verified backups | Scheduler/control-plane truth, observability, and 30-day evidence are incomplete |
 
 At the baseline, the repository exposed 18 CLI command groups with 57
 subcommands, 86 OpenAPI endpoints, and nine dashboard routes. The quality run

@@ -80,6 +80,16 @@ CREATE TABLE IF NOT EXISTS ai_discipline_config (
 )
 """
 
+CREATE_CYCLE_CHECKPOINTS_TABLE = """
+CREATE TABLE IF NOT EXISTS cycle_checkpoints (
+    cycle_id        TEXT PRIMARY KEY,
+    phase           TEXT NOT NULL,
+    phase_order     INTEGER NOT NULL,
+    output_ids_json JSON NOT NULL DEFAULT '{}',
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AI_DAILY_CYCLES_TABLE,
     CREATE_AI_DAILY_CYCLES_INDEX,
@@ -88,6 +98,7 @@ _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AI_ORDER_ATTEMPTS_TABLE,
     CREATE_AI_ORDER_ATTEMPTS_INDEX,
     CREATE_AI_DISCIPLINE_CONFIG_TABLE,
+    CREATE_CYCLE_CHECKPOINTS_TABLE,
 )
 
 
@@ -101,6 +112,7 @@ def apply_ai_trading_schema(connection: Any) -> None:
 def drop_ai_trading_schema(connection: Any) -> None:
     """Drop only AI trading tables, leaving the rest of the DB intact."""
 
+    connection.execute("DROP TABLE IF EXISTS cycle_checkpoints")
     connection.execute("DROP TABLE IF EXISTS ai_order_attempts")
     connection.execute("DROP TABLE IF EXISTS ai_committee_votes")
     connection.execute("DROP TABLE IF EXISTS ai_daily_cycles")
@@ -109,6 +121,7 @@ def drop_ai_trading_schema(connection: Any) -> None:
 
 __all__ = [
     "CREATE_AI_COMMITTEE_VOTES_INDEX",
+    "CREATE_CYCLE_CHECKPOINTS_TABLE",
     "CREATE_AI_COMMITTEE_VOTES_TABLE",
     "CREATE_AI_DAILY_CYCLES_INDEX",
     "CREATE_AI_DAILY_CYCLES_TABLE",

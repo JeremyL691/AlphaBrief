@@ -259,8 +259,10 @@ def get_data_status() -> DataStatus:
 def load_market_data(body: DataLoadRequest) -> DataLoadResponse:
     """Load OHLCV market data from a local CSV or Parquet file.
 
-    The loaded bars are persisted in DuckDB keyed by symbol.
-    Re-loading the same symbol overwrites existing data.
+    The loaded bars are persisted in DuckDB as immutable versioned facts
+    (M03-W02): re-loading identical facts is a no-op, different versions
+    coexist, and ``bar_count`` reports the total decision-view bars
+    available for the symbol after the load.
     """
     file_path = Path(body.file_path)
     if not file_path.is_file():
@@ -285,9 +287,10 @@ def load_market_data(body: DataLoadRequest) -> DataLoadResponse:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     store = _get_store()
-    bar_count = store.insert_bars(
+    store.insert_bars(
         bars, source=body.source, data_version=body.data_version
     )
+    bar_count = store.get_bar_count(body.symbol)
 
     return DataLoadResponse(
         symbol=body.symbol,

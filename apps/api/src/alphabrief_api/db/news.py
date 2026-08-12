@@ -75,11 +75,12 @@ class NewsStore:
 
         self._conn.executemany(
             """
-            INSERT OR REPLACE INTO news_headlines (
+            INSERT INTO news_headlines (
                 headline_id, published_at, symbols, category, source,
                 title, summary, url, sentiment, data_version
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (headline_id) DO NOTHING
             """,
             rows,
         )
@@ -136,6 +137,11 @@ class NewsStore:
     def clear(self) -> None:
         """Drop and recreate all tables (for test isolation)."""
         drop_schema(self._conn)
+        # A fresh connection has a clean catalog: reusing a long-lived
+        # connection across drop/recreate cycles can leave DuckDB
+        # dependency entries that fail the next transactional commit.
+        self._conn.close()
+        self._conn = duckdb.connect(str(self._db_path))
         apply_schema(self._conn)
 
     def close(self) -> None:
