@@ -1,0 +1,444 @@
+# OANDA Practice 30-Day Observation Runbook
+
+版本：2026-08-13.1
+适用：M15 Engineering Readiness Gate 通过后的 M16
+禁止：在当前 multi-broker/routed 基线直接开始计时
+
+## 1. Purpose
+
+本手册定义如何安全地运行和验收真实连续 30 个日历日的 OANDA v20 practice
+模拟盘。它不是开户指南，也不保证策略收益。观察目标是证明：
+
+- 正式产品链每天可恢复运行；
+- 数据、新闻、情绪、讨论、风险、执行/不交易、对账和日报可追溯；
+- 没有重复订单、无审批订单、live/其他券商访问或跨日未解释差异；
+- 周末、休市、网络故障、模型故障和进程重启能安全处理；
+- 备份可恢复；
+- 系统不会为了产生交易而忽略风险。
+
+## 2. Start Eligibility
+
+只有 `docs/progress.yaml` 同时满足以下条件才允许创建 observation：
+
+```text
+project_status = ENGINEERING_READY
+M01..M15 = DONE
+current production broker = oanda_paper
+live trading = forbidden/unreachable
+other broker references = 0
+production simulated fallback = 0
+full local quality gate = PASS
+controlled OANDA practice E2E = PASS
+backup restore drill = PASS
+unresolved P0/P1 = 0
+Git tree = clean
+```
+
+当前 2026-08-13 基线不满足这些条件，不能把旧 Alpaca/OANDA routed 数据计入
+正式观察。
+
+## 3. OANDA Account Boundary
+
+### 3.1 Required Secrets
+
+只在 runtime environment/approved secret store 设置：
+
+```text
+ALPHABRIEF_OANDA_TOKEN
+ALPHABRIEF_OANDA_ACCOUNT_ID
+```
+
+禁止把值写入 `.env.example`、YAML、Markdown、Git、日志、artifact、截图或最终
+报告。证据只保存：
+
+- account ID 的不可逆短 hash；
+- OANDA RequestID 的 hash 或允许的 request correlation；
+- practice host constant；
+- 非敏感账户 currency/division/capability summary。
+
+### 3.2 Hosts
+
+允许：
+
+```text
+https://api-fxpractice.oanda.com
+https://stream-fxpractice.oanda.com
+```
+
+任何 `fxtrade` host 或 runtime-selectable live environment 都是 P0 safety event，
+立即停止观察并 freeze。
+
+### 3.3 Instrument Scope
+
+Day 0 同步配置账户的 `/instruments` 完整响应。catalog 必须记录所有返回品种和
+类型，不以本手册硬编码清单替代。观察期间：
+
+- 每日检测新增/下架/metadata 变化；
+- 所有目录品种可在 API/UI 查看；
+- AI 每天只分析经过数据质量、可交易性、流动性、风险和预算过滤的有界候选；
+- 账户不提供的类别标记 unsupported，不路由其他券商；
+- `OTHER_CFD` 仍可见，并记录 taxonomy reason/version。
+
+## 4. Day 0 - Freeze and Commissioning
+
+### 4.1 Freeze Build
+
+记录并锁定：
+
+- Git commit and tree hash；
+- blueprint/work queue/progress schema versions；
+- Python/Node/OS versions；
+- lock/dependency hashes；
+- database schema version；
+- execution/risk/news/model/template/taxonomy versions；
+- config hashes（不含 secrets）；
+- model provider/profile names；
+- account hash and home currency；
+- instrument catalog version/count/category counts；
+- start timezone and UTC timestamps。
+
+创建唯一 `observation_id`，所有后续 daily evidence 必须引用。
+
+### 4.2 Full Preflight
+
+M15 必须实现一个确定性 preflight command。最终 command contract：
+
+```bash
+.venv/bin/alphabrief acceptance preflight --scope oanda-observation --compact
+```
+
+它应只读验证：
+
+1. practice REST/stream hosts locked；
+2. token/account present但不输出；
+3. configured account details 可读且适合 v20 client extensions；
+4. instrument catalog 非空且完整同步；
+5. quote/candle freshness；
+6. news/macro/sentiment providers 和 degradation policy；
+7. ModelGateway production provider；
+8. risk policy/version/kill/freeze；
+9. scheduler single leader；
+10. database migration/writer lease；
+11. transaction cursor and reconciliation clean；
+12. backup destination writable and last restore drill；
+13. secret scrub/static no-live/no-other-broker gates；
+14. alert sink local persistence；
+15. current Git/config matches frozen build。
+
+任何 required check 失败都不能开始 Day 1。
+
+### 4.3 Controlled Practice E2E
+
+只通过正式应用路径执行一个最小受控场景：
+
+```text
+fresh snapshot
+-> deterministic test proposal
+-> OrderIntent
+-> full RiskGate
+-> persisted approved RiskDecision
+-> smallest valid practice order
+-> broker transaction observed
+-> cancel/close as applicable
+-> reconciliation clean
+-> no residual unintended order/position
+```
+
+要求：
+
+- 使用 catalog 中明确允许、当前 tradeable、点差正常的 instrument；
+- quantity 为账户允许的最小安全规模且低于 observation risk cap；
+- 使用独立 cycle/client ID；
+- agent 不得直接 curl OANDA 下单；
+- cleanup 失败立即 freeze，不开始观察；
+- E2E evidence 含完整 ID chain 和脱敏 OANDA request/transaction reference。
+
+### 4.4 Initial Backup and Restore
+
+停止 writer，创建 backup，校验 hash，在临时 data directory restore，然后运行只读
+projection/reconciliation/acceptance。成功后销毁临时 restore（不销毁原 backup）。
+
+## 5. Observation Risk Envelope
+
+观察期 risk limits 由 versioned policy 定义，不在本手册写死金额。必须满足：
+
+- 明显小于 practice account capacity；
+- per-order、per-instrument、per-category、gross/net、margin、daily loss、drawdown
+  均有 cap；
+- candidate budget 和最大 daily new intents 有 cap；
+- market data stale、non-tradeable、wide spread、low liquidity 拒绝；
+- news/macro high-risk windows size down/reject；
+- execution freeze/kill switch 可立即阻止新开仓；
+- reduce-only close path 独立审计；
+- policy 改变会触发 observation reset 评估。
+
+不以收益或订单数量为目标。
+
+## 6. Daily Operating Sequence
+
+每个日历日必须产生一个 `DailyObservationRecord`。Market closed 也要记录，但不运行
+不合时宜的交易。
+
+### 6.1 Start-of-Day Check
+
+1. scheduler leader/heartbeat；
+2. process and database health；
+3. practice host/account hash/build hash；
+4. transaction cursor monotonicity and startup reconciliation；
+5. open orders/trades/positions/account/NAV/margin；
+6. unresolved freeze/alerts/incidents；
+7. latest backup；
+8. instrument catalog diff；
+9. market/news/model provider health；
+10. daily risk counters/high-water mark restored。
+
+任一 safety/reconciliation required check 失败：继续研究可允许，但 execution freeze。
+
+### 6.2 Ingestion Evidence
+
+记录：
+
+- candle/quote snapshot ID、coverage、gaps、freshness、incomplete count；
+- bid/ask/spread/tradeable/liquidity/conversion coverage；
+- news source success/failure、dedupe counts、newest/oldest age；
+- macro events/revisions；
+- sentiment direction/strength/disagreement/sample/freshness；
+- untrusted-content/injection scan results；
+- degradation/no-trade triggers。
+
+### 6.3 Candidate and Discussion Evidence
+
+记录完整目录数量、各过滤阶段数量、最终候选以及每个 skipped reason。对每个实际
+讨论候选保留：
+
+- common snapshot/evidence manifest；
+- all role turns/model call IDs；
+- citations and validation；
+- thesis/anti-thesis/dissent；
+- confidence/horizon/invalidation；
+- model/schema/fallback/cost/latency；
+- final `no_trade` or proposal。
+
+### 6.4 Risk and Execution Evidence
+
+每个 proposal：
+
+- intent ID and immutable hash；
+- broker-fresh account/risk context ID；
+- rule-by-rule RiskDecision；
+- approved/rejected/max quantity/reasons；
+- submitted request mapping（如 approved）；
+- OANDA order/transaction/trade/fill references；
+- partial/reject/cancel/expire/dependent order transitions；
+- realized/unrealized/financing/fees；
+- no-trade/reject 也必须进入日报。
+
+### 6.5 End-of-Day Check
+
+1. sync through latest transaction ID；
+2. compare orders、transactions/fills、trades、positions、balance/NAV/margin；
+3. verify all external orders map to local intents and decisions；
+4. verify all approved intents resolve to broker/no-submit reason；
+5. duplicate detector；
+6. calculate exposure/P&L/drawdown in home currency；
+7. close/deduplicate alerts or carry incident；
+8. create daily backup/hash；
+9. generate daily report/evidence manifest；
+10. mark day QUALIFIED, QUALIFIED_NO_TRADE, PARTIAL, FAILED, or RESET_REQUIRED。
+
+## 7. Valid No-Trade Days
+
+以下可以是合格日：
+
+- weekend/holiday/all candidates market closed；
+- no instrument passes data/spread/liquidity filter；
+- committee returns grounded no-trade；
+- RiskGate rejects all proposals；
+- execution frozen but research/reconciliation/report evidence complete；
+- model/provider unavailable and policy correctly fails to no-trade。
+
+必须记录原因、输入和 gate。空白记录或“今天没交易”一句话不合格。
+
+## 8. Weekly Gates
+
+### End of Days 7, 14, 21, 28
+
+自动生成 weekly scorecard：
+
+| Metric | Required interpretation |
+|---|---|
+| calendar records | 每天存在，不允许静默缺口 |
+| active market cycles | 成功/no-trade/failed 分类 |
+| duplicate client/intent/order | 必须 0 |
+| order without approved persisted decision | 必须 0 |
+| unmapped broker event | 必须 0 或同日 closed incident |
+| transaction cursor gaps/regressions | 必须 0 |
+| reconciliation differences | 不允许跨日 unresolved |
+| stale quote/news cycles | 必须 no-trade/frozen，不得仍下单 |
+| model schema/citation failures | 有界降级且无非法 intent |
+| backup success | 每日 |
+| alert acknowledgement/resolution | P0/P1 同日处置 |
+| live/other broker network attempts | 必须 0 |
+| discovered instrument coverage | 与账户 response 一致 |
+
+### Required Drills
+
+- Week 1：scheduler/process restart during non-submit phase；
+- Week 2：restore latest backup to isolated directory；
+- Week 3：simulated 429/5xx/network loss/model failure using approved fault injection，
+  不直接破坏真实 account；
+- Week 4：restart/reconcile with open/pending practice state if naturally present，或
+  controlled minimal scenario。
+
+Drill 不能留下未清理订单或持仓。
+
+## 9. Incident Classification
+
+### P0 - Immediate Safety Stop and Window Reset
+
+- live endpoint/account attempt；
+- Alpaca/other broker/production simulator execution；
+- order without persisted approved RiskDecision；
+- duplicate order caused by retry/restart；
+- secret leakage；
+- RiskGate reject but order submitted；
+- uncontrolled/unmapped external order；
+- corrupted unrecoverable audit evidence。
+
+动作：kill/freeze new orders、保存脱敏证据、对账和降险、标记
+`RESET_REQUIRED`、创建 repair item。不得自动 unfreeze。
+
+### P1 - Critical Reliability, Usually Reset
+
+- transaction gap/incorrect cursor；
+- cross-day unexplained reconciliation diff；
+- wrong side/quantity/price/order semantics；
+- persistent state lost after restart；
+- backup cannot restore；
+- stale/non-tradeable quote still leads to submit；
+- daily loss/margin/exposure rule calculation wrong。
+
+### P2 - Significant but Evaluated
+
+- one provider outage with correct no-trade degradation；
+- alert delivery failure while local alert persists；
+- UI/API projection stale but execution truth safe；
+- report generation delay with all raw evidence intact。
+
+P2 是否重置取决于是否影响 requirement evidence；决定和理由写 ledger。
+
+### P3 - Non-Semantic
+
+- copy/layout/visual defect；
+- additive scrubbed logging；
+- documentation clarification。
+
+有完整 regression 时通常不重置，但仍记录 release hash change。
+
+## 10. Change Control During Observation
+
+- observation build 默认冻结；
+- 任何 code/config/model template/policy change 先创建 work item；
+- 运行 full relevant gates、controlled practice check、reconciliation；
+- P0/P1 或 risk/execution/persistence/cycle semantics change 从下一完整日重计 30 天；
+- dependency security update按影响评估，但不能以“只是依赖”自动免重置；
+- 不在同一工作树混入未验证实验；
+- 不 force/rewite main history；
+- 每个新 build 有 immutable hash and incident/change reference。
+
+## 11. Evidence Layout
+
+最终 M15 controller 应生成 gitignored artifacts：
+
+```text
+.agent-artifacts/observation/<observation-id>/
+  day-00/
+  day-01/
+    manifest.json
+    preflight.json
+    data-quality.json
+    content-snapshot.json
+    cycle-summary.json
+    risk-summary.json
+    broker-summary-redacted.json
+    reconciliation.json
+    portfolio.json
+    alerts.json
+    backup.json
+    command-results.json
+  weekly-01/
+  incidents/
+  final/
+```
+
+`manifest.json` 记录每个文件 SHA-256。原始敏感 response 不进入可共享 artifact；
+需要保留的本地 evidence 必须加密/限制权限并使用 scrubbed manifest 公开索引。
+
+## 12. Day 30 Final Gate
+
+Day 30 end-of-day 后：
+
+1. 停止新 cycle，允许 account sync/reconcile；
+2. 关闭/保留自然持仓按预先 risk policy 执行，不为报告随意平仓；
+3. 完整 transaction/order/trade/position/account reconciliation；
+4. duplicate/unapproved/live/other-broker/static scans；
+5. full local test/lint/type/acceptance/security；
+6. fresh backup + isolated restore drill；
+7. verify 30 daily manifests and weekly gates；
+8. verify qualified window 没有 required reset；
+9. 生成 evidence-derived final scorecard；
+10. 进入 M17，不直接宣称 COMPLETE。
+
+最低通过标准：
+
+```text
+30/30 daily records
+0 duplicate external orders
+0 external order without approved persisted RiskDecision
+0 live or other-broker attempt
+0 unexplained cross-day reconciliation difference
+0 unresolved P0/P1
+100% broker events mapped or explicitly resolved
+100% completed cycles have data/content/decision/risk/recon/report chain
+daily backups present and final restore successful
+```
+
+盈利、Sharpe 或交易次数不属于稳定性通过标准。
+
+## 13. Stop/Resume Operations
+
+优雅停止顺序：freeze new execution -> stop new cycles -> let in-flight uncertain submit
+resolve -> transaction sync -> reconcile -> persist checkpoints -> backup -> release lease。
+
+恢复顺序：acquire lease -> validate build/schema/config -> restore daily counters/cursor ->
+account details/catalog -> sync changes -> full reconcile -> resolve uncertain submissions ->
+health/preflight -> resume research -> explicit execution unfreeze if clean。
+
+机器重启后不得只凭 scheduler heartbeat 自动开新仓。
+
+## 14. Zero-Intervention Boundaries
+
+M15 必须交付一个由同一 scheduler leader 持有的持久 observation supervisor。Day 0
+启动时它注册 start-of-day、daily gate、weekly drill 和 Day 30 gate，保存 `next_run_at`、
+lease、attempt 和结果；进程重启后从数据库恢复，而不是依赖一个持续占用 coding-agent
+turn 的 sleep。正式观察只允许在 supervisor restart/recovery test 通过后开始。
+
+Coding agent 到达真实时间边界时写 `WAITING_EXTERNAL` 后退出当前 turn；supervisor 继续
+生成 runtime evidence。支持 recurring wake 的宿主应按 `next_run_at` 自动再次调用
+Prompt C/observation verifier；不支持自动唤醒的宿主被记录为 external orchestration
+blocker，不能把人工补写或未来日期当作替代。一次初始启动之外，每日记录、周 gate、
+重启恢复和 Day 30 close 都不得要求人工点击或确认。
+
+无人值守 loop 完成所有确定性检查，不向 owner 提问。以下情况使用预定行为：
+
+- OANDA practice secrets 不存在或失效：标记 `BLOCKED_EXTERNAL`，不尝试寻找或
+  生成 secrets，继续所有独立工作；
+- 账户暂停、合规限制或 OANDA service-side issue：保持 execution freeze，按退避
+  定时重查，不请求人工选择；
+- P0 safety event：自动创建修复 work item；只有修复门禁、受控 practice E2E、
+  完整对账和连续三个 clean reconciliation 都通过后才按规则恢复，并重置观察窗；
+- blueprint scope/safety policy change：拒绝执行并记录 out-of-scope；
+- destructive recovery 或无法证明无数据损失：不执行破坏操作，记录 blocker。
+
+Agent 不为以上事项或任何逐轮步骤提问。所有剩余依赖被阻塞时，输出机器可读 blocker
+并停止；外部状态变化后的下一次启动按恢复协议继续。

@@ -1,0 +1,215 @@
+schema_version: 1
+blueprint_version: "2026-08-13.1"
+queue_id: alphabrief-oanda-final
+updated_at: "2026-08-13T03:13:45+08:00"
+
+project:
+  status: IN_PROGRESS
+  execution_mode: DEVELOPMENT
+  controller_enforced: false
+  approved_mode: AUTONOMOUS_BLUEPRINT_MODE
+  human_step_approval_required: false
+  agent_questions_allowed: false
+  branch: main
+  auto_continue: true
+  auto_commit: true
+  auto_push: false
+
+target_policy:
+  broker: oanda
+  oanda_environment: practice
+  live_trading: forbidden
+  other_brokers: forbidden
+  production_simulated_fallback: forbidden
+  model_calls_through_gateway_only: true
+  risk_decision_required_before_order: true
+  real_observation_calendar_days: 30
+  ui_preset:
+    name: Soft
+    design_variance: 5
+    motion_intensity: 5
+    visual_density: 5
+
+current_baseline:
+  captured_at: "2026-08-13T00:00:00+08:00"
+  commit: c0d16c23fb80fd2239ab9aad1d48c0421d21aa2a
+  branch: main
+  statement: >-
+    The checked-in runtime is still a routed OANDA plus Alpaca plus in-memory
+    simulated-fallback system. OANDA-only is an approved target, not a completed
+    fact. Formal 30-day observation must not start from this baseline.
+  surfaces:
+    cli_groups: 18
+    cli_subcommands: 57
+    openapi_endpoints: 86
+    dashboard_routes: 9
+  quality:
+    pytest:
+      passed: 1389
+      failed: 12
+      warning_count: 9
+      failure_classification: >-
+        Restricted sandbox denied localhost binds in Alpaca-adapter and broker
+        live-API HTTP tests; no business assertion failure was observed. This
+        classification still requires revalidation in an approved environment.
+    ruff: PASS
+    mypy: PASS
+    legacy_acceptance: "11/11 PASS; static/local checks only"
+  current_execution:
+    policy_provider: routed
+    oanda_adapter_present: true
+    alpaca_adapter_present: true
+    production_simulated_fallback_present: true
+    oanda_complete_instrument_discovery: false
+    durable_oanda_transaction_cursor: false
+    complete_reconciliation: false
+    formal_observation_started: false
+
+current:
+  round_id: null
+  milestone_id: M01
+  work_item_id: M01-W01
+  phase: READY
+  base_commit: null
+  attempt: 0
+  last_verified_gate: M00-FINAL-GATE
+  next_action: resolve HEAD as base commit and start the OANDA-only hard cutover
+
+milestones:
+  M00: DONE
+  M01: ACTIVE
+  M02: BACKLOG
+  M03: BACKLOG
+  M04: BACKLOG
+  M05: BACKLOG
+  M06: BACKLOG
+  M07: BACKLOG
+  M08: BACKLOG
+  M09: BACKLOG
+  M10: BACKLOG
+  M11: BACKLOG
+  M12: BACKLOG
+  M13: BACKLOG
+  M14: BACKLOG
+  M15: BACKLOG
+  M16: BACKLOG
+  M17: BACKLOG
+
+work_item_states:
+  M00-W01: DONE
+  M01-W01: READY
+
+latest_validation:
+  completed_at: "2026-08-13T03:13:45+08:00"
+  controller_enforced: false
+  targeted_docs_acceptance:
+    passed: 22
+    failed: 0
+    warnings: 7
+  full_pytest:
+    approved_loopback_environment:
+      passed: 1406
+      failed: 0
+      warnings: 9
+    restricted_sandbox:
+      passed: 1394
+      environment_failed: 12
+      failure_classification: localhost_bind_permission_denied
+  ruff: PASS
+  mypy: PASS
+  acceptance: "11/11 PASS"
+  work_queue:
+    milestones: 18
+    work_items: 112
+    requirements: 104
+    acceptance_predicates: 338
+    topology: PASS
+
+known_gaps:
+  - id: GAP-001
+    severity: P0
+    owner_milestone: M08
+    summary: AI auto-execution does not supply full account and news risk context to RiskGate.
+    status: OPEN
+  - id: GAP-002
+    severity: P0
+    owner_milestone: M01
+    summary: Missing external credentials can silently fall back to an in-memory simulated broker.
+    status: OPEN
+  - id: GAP-003
+    severity: P0
+    owner_milestone: M06
+    summary: OANDA sell requests use positive units plus an unsupported side field instead of signed units.
+    status: OPEN
+  - id: GAP-004
+    severity: P0
+    owner_milestone: M06
+    summary: OANDA fill synchronization mixes datetime and TransactionID semantics and cannot reliably resume.
+    status: OPEN
+  - id: GAP-005
+    severity: P1
+    owner_milestone: M01
+    summary: Alpaca, routed broker, and production simulated fallback remain in runtime code and configuration.
+    status: OPEN
+  - id: GAP-006
+    severity: P1
+    owner_milestone: M04
+    summary: OANDA account-level instrument discovery and complete metadata catalog are absent.
+    status: OPEN
+  - id: GAP-007
+    severity: P1
+    owner_milestone: M05
+    summary: OANDA-native candles, pricing, liquidity, conversions, and streaming are absent.
+    status: OPEN
+  - id: GAP-008
+    severity: P1
+    owner_milestone: M07
+    summary: Broker idempotency, account truth, and reconciliation are not durable or complete.
+    status: OPEN
+  - id: GAP-009
+    severity: P1
+    owner_milestone: M03
+    summary: Market-data versions can overwrite the same symbol and timestamp and storage lacks formal migrations and restore proof.
+    status: OPEN
+  - id: GAP-010
+    severity: P1
+    owner_milestone: M10
+    summary: Some production-facing research paths default to FakeProvider and model calls are not universally durable.
+    status: OPEN
+  - id: GAP-011
+    severity: P1
+    owner_milestone: M11
+    summary: Daily cycle is not a durable per-phase state machine and scheduler status surfaces disagree.
+    status: OPEN
+  - id: GAP-012
+    severity: P1
+    owner_milestone: M12
+    summary: Strategy conditions, real IS/OOS, walk-forward product surfaces, portfolio costs, and overfitting audits are incomplete.
+    status: OPEN
+  - id: GAP-013
+    severity: P1
+    owner_milestone: M16
+    summary: No qualified real 30-calendar-day OANDA practice observation exists.
+    status: OPEN
+
+blockers: []
+
+observation:
+  status: NOT_STARTED
+  eligibility: BLOCKED_BY_M01_TO_M15
+  observation_id: null
+  frozen_commit: null
+  required_calendar_days: 30
+  elapsed_calendar_days: 0
+  qualified_calendar_days: 0
+  active_market_days: 0
+  no_trade_days: 0
+  failed_days: 0
+  reset_count: 0
+  duplicate_orders: null
+  unapproved_orders: null
+  unexplained_cross_day_diffs: null
+  live_or_other_broker_attempts: null
+
+last_completed_round: R-20260813-M00-DOCS
+last_ledger_record: R-20260813-M00-DOCS

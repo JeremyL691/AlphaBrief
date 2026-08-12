@@ -1,0 +1,381 @@
+# AlphaBrief Acceptance and Traceability Contract
+
+版本：2026-08-13.1
+原则：验收证明可观察行为，不证明收益。所有 required acceptance 均不允许 waiver。
+
+## 1. Evidence Hierarchy
+
+从弱到强：
+
+```text
+E0 prose/design claim                         # 不能验收
+E1 static source/config inspection            # 只证明结构
+E2 deterministic unit/property test           # 证明局部逻辑
+E3 integration/contract/fault-injection test  # 证明本地组合
+E4 full repository quality/negative gate      # 证明回归边界
+E5 controlled OANDA practice E2E              # 证明外部 practice contract
+E6 real calendar-day observation evidence     # 证明连续运行
+```
+
+高层 acceptance 不能由低于声明等级的 evidence 替代。Mock OANDA 最多 E3；文档写着
+“已完成”仍然只是 E0。
+
+每份 evidence 至少包含：
+
+- evidence ID；
+- work item/requirement/acceptance IDs；
+- exact command/scenario；
+- UTC start/end；
+- exit code/outcome；
+- passed/failed/skipped counts（适用时）；
+- frozen commit/config/schema versions；
+- scrubbed artifact path and SHA-256；
+- external account/build correlation hash（E5/E6）；
+- expiry/revalidation rule。
+
+## 2. Global Safety Acceptance
+
+这些 gate 在 M01 后每个 execution-related milestone 和最终验收都必须 PASS：
+
+| Gate ID | Predicate | Minimum evidence |
+|---|---|---|
+| SAFE-001 | production graph 没有 Alpaca、other broker 或 simulated fallback | E4 static graph/import/config scan + composition test |
+| SAFE-002 | production execution 只可连接 OANDA practice REST/stream constants | E4 negative host tests + network allowlist scan |
+| SAFE-003 | live host/mode/account selector 不可配置、不可达 | E4 mutation/negative tests |
+| SAFE-004 | 缺 OANDA credentials fail closed 且不会本地假成交 | E3 end-to-end composition test |
+| SAFE-005 | 每个 external order 有 persisted approved RiskDecision | E3 ledger invariant + E5 practice chain |
+| SAFE-006 | rejected/stale/missing/mismatched decision 无 submit path | E3 property/integration negative tests |
+| SAFE-007 | AI/news/web content 不能直接调用 broker 或改变 policy | E4 prompt-injection/tool boundary suite |
+| SAFE-008 | provider calls 只经过 ModelGateway | E4 import/call graph gate |
+| SAFE-009 | tracked files/log artifacts 无 secrets/完整 account ID | E4 secret/scrub scan |
+| SAFE-010 | runtime code 不 import/copy `_reference_sources` | E4 import/path/similarity policy gate |
+| SAFE-011 | retry/restart 不重复 external order | E3 fault injection + E5 controlled practice |
+| SAFE-012 | `no_trade` 可正常完成，不存在 activity quota 强迫下单 | E3 cycle behavior tests |
+
+任一 SAFE gate FAIL 时项目不能进入 OBSERVING。
+
+## 3. Quality Gate Commands
+
+当前仓库基础命令：
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+.venv/bin/mypy
+.venv/bin/alphabrief acceptance verify --compact
+```
+
+M02 controller 必须保存真实 exit code 和 artifact hash。Milestone 可以增加命令，不能
+通过删目录、`-k` 排除失败、永久 skip、ignore 或降低配置取代基础门禁。
+
+Local sandbox 若禁止 localhost bind，结果只能标 `ENVIRONMENT_BLOCKED`，并在允许
+loopback 的隔离环境复验；不能把 12 个 HTTP tests 删除或永久跳过。
+
+## 4. Requirement Ownership Matrix
+
+需求正文在蓝图第 5 节。每个 requirement 必须在 `docs/work_items.yaml` 的至少一个
+required item 出现，并在完成时有 acceptance evidence。
+
+| Requirement range | Primary milestone | Required evidence focus |
+|---|---|---|
+| REQ-PLAT-001..003 | M01/M03 | strict config、practice lock、secret boundary |
+| REQ-PLAT-004..009 | M03 | migrations、atomicity、writer、backup、UTC、correlation |
+| REQ-OANDA-001..005 | M04 | account/instrument discovery、taxonomy、catalog UI/API |
+| REQ-OANDA-006..011 | M05 | candles/pricing/stream、quality、sessions、immutable lineage |
+| REQ-NEWS-001..009 | M09 | provenance、dedupe、macro、sentiment、untrusted content |
+| REQ-AI-001..010 | M10 | ModelGateway、durability、committee、citations、injection |
+| REQ-STRAT-001..008 | M12 | safe DSL、portfolio/walk-forward、costs、leakage |
+| REQ-RISK-001..010 | M08 | full account context、exposure、loss、news、persisted decision |
+| REQ-EXEC-001..004 | M06 | official order/trade/position lifecycle |
+| REQ-EXEC-005..012 | M06/M07 | idempotency、transactions、reconciliation、restart、telemetry |
+| REQ-CYCLE-001..010 | M11 | persistent cycle、leader、candidate budget、scheduler truth |
+| REQ-UI-001..002 | M13 | API/CLI contracts and safe writes |
+| REQ-UI-003..010 | M14 | Soft UI、all states、trace、a11y、Electron、controls |
+| REQ-OPS-001..008 | M15 | logs、alerts、scrub、timeouts、recovery、preflight、security |
+| REQ-OBS-001..007 | M16/M17 | real 30 days and evidence-derived final report |
+
+Work queue topology validator 必须检测遗漏和重复但冲突的 requirement ownership。
+
+## 5. Milestone Gates
+
+### M00 Documentation Authority
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M00-01 | 旧 Phase/Round/duplicated docs 不在工作树 | file manifest/static test |
+| AC-M00-02 | 新权威 Markdown links 不断链，YAML/NDJSON 可解析 | doc link + parser tests |
+| AC-M00-03 | acceptance/scaffold 只要求新文档和 OANDA preflight contract | targeted tests |
+| AC-M00-04 | progress 明确 current routed/Alpaca truth 未完成迁移 | schema + content assertion |
+| AC-M00-05 | business trading behavior 未被本轮修改 | changed-path scope gate |
+
+### M01 OANDA-Only Cutover
+
+- Alpaca/routing/sim fallback production references exactly zero；
+- only practice host constants；
+- missing/invalid credentials and account fail closed；
+- API/CLI/scheduler share OANDA runtime；
+- no fake external execution；
+- full regression + SAFE-001..004。
+
+### M02 Loop Controller
+
+- work/progress schema/topology validation；
+- illegal transition rejected；
+- actual diff outside allowlist rejected；
+- commands use real exit codes and hashed artifacts；
+- acceptance frozen during round；
+- gate-modifying item cannot self-certify；
+- dirty-user-change and compaction recovery tests；
+- commit trailer/ledger integration；
+- failure ceilings terminate loops。
+
+### M03 Storage and Recovery
+
+- empty install/current migration/repeated migration pass；
+- immutable data versions and lineage；
+- atomic cycle/risk/order/cursor transitions under injected crash；
+- concurrent writer conflict safe；
+- backup checksum + isolated restore drill；
+- projection rebuild equals stored current view。
+
+### M04 Account and Instrument Catalog
+
+- configured practice account validated；
+- all `/instruments` fixture/real response rows persisted exactly once per version；
+- metadata precision/size/margin/stop fields complete；
+- CURRENCY/METAL/CFD subclasses/unknown taxonomy visible；
+- delist/change creates history；
+- API/CLI counts equal store and account response；
+- E5 contract evidence for configured account。
+
+### M05 Market Data
+
+- official granularity/components/pagination fixtures；
+- no incomplete candle in completed decision snapshot；
+- bid/ask/spread/liquidity/tradeable/conversion preserved；
+- stale/stream gap detected and blocks execution；
+- category/session/holiday behavior tested；
+- immutable snapshot manifest reproducible；
+- rate/connection budgets tested；
+- E5 quote/candle evidence across every returned OANDA type and available category。
+
+### M06 OANDA Lifecycle
+
+- signed units buy/sell property tests；
+- supported order types/TIF/dependent orders exact request/response contracts；
+- no silent DAY/TIF conversion；
+- unit/price/distance precision per instrument；
+- fill/cancel/reject/reissue/partial/expire transitions；
+- trade/position full/partial close；
+- error/429/5xx/timeout/unknown outcome；
+- paginated list and redacted HTTP metadata；
+- controlled E5 minimal lifecycle scenarios。
+
+### M07 Idempotency and Reconciliation
+
+- same cycle 100 replays <= 1 external order；
+- transaction cursor monotonic/gap recovery/restart；
+- order/fill/trade/position/account/financing projections match fixtures；
+- legitimate remote state not falsely mismatched；
+- injected unknown/missing/money/position diff freezes；
+- restart from every submission transition；
+- API reconcile uses real service, no all-match placeholder；
+- E5 restart/reconcile proof。
+
+### M08 Risk
+
+- all execution paths require full broker-fresh context；
+- instrument precision/min/max/tradeable/freshness gates；
+- home-currency gross/net/category/currency/concentration property matrix；
+- margin/leverage/daily loss/drawdown/consecutive loss；
+- spread/liquidity/news/macro/health/freeze/backup rules；
+- reduce-only semantics；
+- immutable per-rule decision and input hash；
+- backend rejects changed/expired/missing/rejected decision；
+- full SAFE-005/006。
+
+### M09 News and Sentiment
+
+- provider cassette reliability/degradation；
+- canonical URL/hash/similarity dedupe；
+- entity links with confidence；
+- macro actual/forecast/revision；
+- sentiment direction/strength/disagreement/sample/freshness；
+- injection payload cannot change tool/policy behavior；
+- stale/coverage failure produces no-trade risk input；
+- licensing/retention tests；
+- daily snapshot reproducible。
+
+### M10 AI Committee
+
+- production path cannot default FakeProvider；
+- durable model call + template/config hash；
+- bounded timeout/retry/fallback and no-model no-trade；
+- all role turns and dissent persisted；
+- schema/citation validation 100% for accepted output；
+- invalid output bounded repair then no-trade；
+- same cycle key no duplicate executable intent；
+- prompt injection/model evaluation suite；
+- full SAFE-007/008。
+
+### M11 Daily Cycle
+
+- persisted state machine legal transitions；
+- crash/restart at every phase；
+- scheduler single leader；
+- research continues under execution freeze；
+- candidate budget and skip reasons；
+- catch-up expiry/no duplicate；
+- no-trade/reject/closed/stale normal outcomes；
+- immediate reconcile and complete daily report；
+- API/CLI tasks/running/last/next identical；
+- controlled E5 end-to-end day smoke。
+
+### M12 Strategy and Backtest
+
+- safe DSL cannot execute arbitrary code；
+- strategy-family fixtures；
+- real IS/OOS and walk-forward exposed in API/CLI；
+- portfolio/category/risk/cost semantics；
+- spread/slippage/financing/margin/session/reject model；
+- metric and attribution golden tests；
+- lookahead/leakage/overfit fixtures；
+- same version reproducibility；
+- no strategy/Gym/Kronos execution bypass。
+
+### M13 API/CLI
+
+- versioned schemas/error envelopes/pagination；
+- complete required resources；
+- write idempotency/audit；
+- no arbitrary broker proxy；
+- API/CLI schema parity；
+- stale/frozen/partial states；
+- OpenAPI snapshot and auth/local boundary decision documented/tested。
+
+### M14 UI/Electron
+
+- owner Soft 5/5/5 audit and tokens；
+- all target navigation/pages and trace explorer；
+- live server data only, fake/stale/partial/offline explicit；
+- 320/768/1024/1440 visual and interaction tests；
+- light/dark、keyboard、focus、semantic、contrast、screen reader、reduced motion；
+- no emoji icons/em-dash UI copy/filler identities/gradient buttons；
+- Electron readiness/port conflict/shutdown/error propagation；
+- before/after evidence。
+
+### M15 Engineering Readiness
+
+- full pytest/Ruff/Mypy/acceptance/security all exit 0 in approved environment；
+- structured logs/metrics/health/alerts scrubbed；
+- rate/timeout/fault/restart/SIGTERM drills；
+- daily backup and isolated restore；
+- secret/dependency/static safety scans；
+- all M01-M15 requirements trace complete；
+- controlled OANDA practice E2E cleans up and reconciles；
+- Day 0 runbook rehearsal；
+- unresolved P0/P1 = 0。
+
+### M16 Observation
+
+Use `docs/oanda_30_day_runbook.md` exact daily/weekly/final predicates. Minimum E6:
+
+```text
+30/30 calendar manifests
+0 duplicate orders
+0 order without approved persisted RiskDecision
+0 live/other-broker attempts
+0 unexplained cross-day reconciliation diffs
+0 unresolved P0/P1
+100% broker events mapped/resolved
+daily backups + final restore
+qualified window not invalidated
+```
+
+### M17 Final Acceptance
+
+- every required requirement/work item/milestone PASS；
+- current full gates re-run；
+- fresh install/start/preflight；
+- final backup restore；
+- evidence-derived report hashes verify；
+- README/blueprint/architecture/runbook truth audit；
+- clean main tree and release artifact；
+- final state `COMPLETE_PAPER_ONLY`，live remains locked。
+
+## 6. Change and Regression Rules
+
+### 6.1 Test Delta Gate
+
+每轮记录 tests added/deleted/skipped/xfail。默认拒绝：
+
+- 删除覆盖相关行为的 test；
+- 增加 skip/xfail；
+- 把 exact exception 变 broad；
+- 把 external/practice evidence 换 mock；
+- 降低 assertions；
+- 修改 pytest/mypy/ruff exclude；
+- 只运行能过的子集却宣称 full gate。
+
+确需改变旧错误预期（例如当前 OANDA sell payload 测试固化了错误）时，work item
+必须引用官方 contract，并新增 negative/round-trip test，不能只改一行 expected value。
+
+### 6.2 Gate Change Rule
+
+acceptance/controller 自身修改是 safety-critical governance item：
+
+- 保存 pre-change gate results；
+- acceptance hash freeze；
+- 有 meta-tests 证明不会非法放行；
+- 不能只用改后的 runner 给自身 PASS；
+- milestone gate 需要独立 full regression。
+
+### 6.3 External Evidence Expiry
+
+以下会使相关 E5/E6 过期：
+
+- execution/risk/persistence/cycle semantics change；
+- OANDA account/division/capability change；
+- credential/account replacement；
+- schema migration affecting evidence continuity；
+- critical dependency/transport change；
+- P0/P1 incident；
+- frozen build hash change according to runbook reset rules。
+
+## 7. Final Result Schema
+
+M17 生成机器结果：
+
+```yaml
+FINAL_ACCEPTANCE_RESULT:
+  blueprint_version: 2026-08-13.1
+  frozen_commit: sha
+  status: COMPLETE_PAPER_ONLY | FAILED | BLOCKED_EXTERNAL
+  requirements:
+    total: 0
+    passed: 0
+    failed: 0
+    missing: 0
+  milestones:
+    done: []
+    incomplete: []
+  quality:
+    pytest_exit: 0
+    ruff_exit: 0
+    mypy_exit: 0
+    acceptance_exit: 0
+  safety:
+    live_attempts: 0
+    other_broker_attempts: 0
+    unapproved_orders: 0
+    duplicate_orders: 0
+  observation:
+    required_calendar_days: 30
+    qualified_calendar_days: 30
+    unresolved_p0_p1: 0
+    unexplained_cross_day_diffs: 0
+  evidence_manifest_sha256: sha256:...
+  live_trading_remains_locked: true
+```
+
+任意 required 值 unknown/missing/TBD/waived 时 status 不能 COMPLETE。

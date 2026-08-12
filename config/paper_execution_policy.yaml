@@ -4,9 +4,10 @@
 # Default broker: routed — FX / metals / index CFDs go to OANDA v20 practice;
 # US stocks and crypto go to Alpaca paper. When a broker's credentials are not
 # configured, its asset class degrades to the built-in simulated paper broker
-# so the system stays usable out of the box. See docs/paper_broker_setup.md.
+# so the current baseline stays usable. This fallback is explicitly temporary
+# and must be deleted by blueprint milestone M01 before formal observation.
 #
-# Universe: 35 instruments across FX majors/crosses, metals, index CFDs, US
+# Universe: 34 instruments across FX majors/crosses, metals, index CFDs, US
 # equities, and crypto. Symbols are internal AlphaBrief identifiers — Yahoo
 # serves them natively (AAPL, BTC-USD, EURUSD=X) and the routed broker adapter
 # maps each class to the right venue.

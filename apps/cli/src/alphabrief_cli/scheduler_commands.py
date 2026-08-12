@@ -1095,7 +1095,7 @@ def _ai_cycle_factory(
         # cycles (the AI store is currently the same DB as the broker
         # recon store). ponytail:scheduler_ai_duckdb_lock — see
         # upgrade path note in
-        # docs/development_plans/0057-phase-26-ai-trader-closeout.md.
+        # The final migration contract is blueprint milestone M11.
         database = db_path / "alphabrief.db"
         store = _Store(db_path=database)
         market_store = _MarketDataStore(db_path=database)

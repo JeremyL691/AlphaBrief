@@ -4,7 +4,7 @@
 # from environment variables:
 #   ALPHABRIEF_ALPACA_KEY
 #   ALPHABRIEF_ALPACA_SECRET
-# See PROJECT_RULES: keys must never be committed, logged, or embedded.
+# Historical config pending deletion in blueprint M01. Never store keys here.
 base_url: https://paper-api.alpaca.markets
 request_timeout_seconds: 5.0
 max_order_attempts: 3

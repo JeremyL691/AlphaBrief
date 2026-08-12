@@ -30,10 +30,9 @@ _reference_sources/
 .codegraph/
 .codebase-memory/
 
-# Per-round development plans stay local, except the scaffold record
-# required by repository scaffold tests.
-docs/development_plans/*
-!docs/development_plans/0001-repo-scaffold.md
+# Autonomous loop checkpoints and command artifacts stay local.
+.agent-state/
+.agent-artifacts/
 
 # Editor and IDE artifacts
 .idea/
