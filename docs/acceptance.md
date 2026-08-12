@@ -466,6 +466,18 @@ sessions 测试）。
 范围说明：本 round 无 allowlist 外路径。full pytest 1673 passed（+12
 snapshot/lineage 测试）。
 
+#### M05-W06 已闭环证据（R-20260813-M05-W06）— M05 里程碑 gate
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M05-W06-01 | fixture/fault suites 证明 granularity、components、pagination、stream budgets、freshness、sessions、quality、snapshot reproducibility、immutable lineage 覆盖每类返回 instrument 与可用 category | M05-W01..W05 全部本地 suites 重跑通过（candles/pricing/stream/sessions/snapshot/lineage + API 集成共 84 项）；e2e fixture suite 覆盖 M/B/A 三组件 36 facts + sessions/readiness |
+| AC-M05-W06-02 | 配置的 practice run 记录 scrubbed E5 candle/quote evidence 并发布一个完整 immutable snapshot | **T7 PENDING（external_evidence_pending）**：本地无 OANDA credentials；`test_controlled_practice_market_data_run` 无凭证时断言 fail-closed，有凭证时执行 preflight→candles→pricing→catalog→snapshot publish 并打印 scrubbed E5 summary；mock 不冒充 practice evidence |
+| AC-M05-W06-03 | 缺凭证/unavailable categories/外部 outage → 显式 ENVIRONMENT_BLOCKED 或 partial evidence，无 synthetic data/fallback prices/提问/false completion | 无凭证 preflight `missing_credentials` 断言；malformed candle frame 本地 fail-closed；进度标记 CODE_COMPLETE 而非 DONE |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1677 passed（+4 e2e 测试）。
+M05-W06 为 CODE_COMPLETE；M05 里程碑 CODE_COMPLETE，M06 激活并继续继承
+`external_evidence_pending`。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

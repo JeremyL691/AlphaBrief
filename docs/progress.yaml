@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-13T20:30:00+08:00"
+updated_at: "2026-08-13T21:10:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,13 +68,13 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M05-W06
+  work_item_id: M06-W01
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M05-W05-FINAL-GATE
-  next_action: prove market snapshot correctness and close M05
-  external_evidence_pending: M04-W06 T7 practice catalog evidence
+  last_verified_gate: M05-W06-FINAL-GATE
+  next_action: define strict OANDA order and dependent-order contracts
+  external_evidence_pending: M04-W06 T7 practice catalog evidence; M05-W06 T7 practice market-data evidence
 
 milestones:
   M00: DONE
@@ -82,7 +82,8 @@ milestones:
   M02: DONE
   M03: DONE
   M04: CODE_COMPLETE
-  M05: ACTIVE
+  M05: CODE_COMPLETE
+  M06: ACTIVE
   M03: BACKLOG
   M04: BACKLOG
   M05: BACKLOG
@@ -129,9 +130,10 @@ work_item_states:
   M05-W03: DONE
   M05-W04: DONE
   M05-W05: DONE
+  M05-W06: CODE_COMPLETE
 
 latest_validation:
-  completed_at: "2026-08-13T20:30:00+08:00"
+  completed_at: "2026-08-13T21:10:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -139,7 +141,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 1673
+      passed: 1677
       failed: 0
       warnings: 12
     restricted_sandbox:
@@ -242,5 +244,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M05-W05
-last_ledger_record: R-20260813-M05-W05
+last_completed_round: R-20260813-M05-W06
+last_ledger_record: R-20260813-M05-W06
