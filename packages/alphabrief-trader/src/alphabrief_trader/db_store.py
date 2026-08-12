@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -92,12 +92,26 @@ class AiTradingStore:
     # ------------------------------------------------------------------
 
     def save_cycle(self, record: DailyCycleRecord) -> str:
-        """Persist a full cycle + its votes and attempts.
+        """Persist a full cycle + its votes and attempts, atomically.
 
         Returns the ``cycle_id``. The cycle row stores the full
         ``DailyCycleRecord`` JSON; child tables denormalize votes and
-        attempts for fast queries.
+        attempts for fast queries. The cycle, its votes, and its attempts
+        commit in one transaction: a failure rolls everything back, so a
+        partially recorded cycle can never exist (M03-W03, REQ-PLAT-005).
         """
+        cycle_id = record.cycle_id
+        self._conn.execute("BEGIN")
+        try:
+            self._insert_cycle_facts(record)
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        return cycle_id
+
+    def _insert_cycle_facts(self, record: DailyCycleRecord) -> None:
+        """Insert the cycle row, votes, and attempts (within one transaction)."""
         cycle_id = record.cycle_id
         self._conn.execute(
             """
@@ -165,8 +179,6 @@ class AiTradingStore:
                     attempt.created_at,
                 ],
             )
-
-        return cycle_id
 
     def get_cycle(self, cycle_id: str) -> dict[str, Any] | None:
         """Return the full cycle record JSON, or ``None``."""
@@ -383,6 +395,168 @@ class AiTradingStore:
             self._conn.close()
         except Exception:
             pass
+
+
+#: Legal cycle phase order — checkpoints only advance monotonically and
+#: resume from the last persisted gate (REQ-CYCLE-002).
+CYCLE_PHASE_ORDER: tuple[str, ...] = (
+    "ingest",
+    "snapshot",
+    "committee",
+    "risk",
+    "execute",
+    "record",
+)
+
+
+class CycleCheckpointStore:
+    """Compare-and-set cycle checkpoints over append-only facts (M03-W03).
+
+    Each checkpoint row records the phase a cycle reached plus the
+    output fact IDs produced up to that gate. Advances are compare-and-
+    set: a writer whose expected phase does not match the stored phase
+    (a stale writer) is rejected, and phase changes must be strictly
+    monotonic. Projections rebuild from the fact tables and compare
+    byte-for-byte with the stored record after JSON normalization.
+    """
+
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        if db_path is None:
+            db_path = _db_path()
+        self._db_path = Path(db_path)
+        self._conn = duckdb.connect(str(self._db_path))
+        apply_ai_trading_schema(self._conn)
+
+    def checkpoint(
+        self,
+        cycle_id: str,
+        phase: str,
+        *,
+        output_ids: dict[str, Any] | None = None,
+        expected_phase: str | None = None,
+    ) -> bool:
+        """Advance the cycle checkpoint atomically; False on stale or illegal.
+
+        Raises ``ValueError`` for phases outside :data:`CYCLE_PHASE_ORDER`.
+        A stale writer (``expected_phase`` does not match the stored
+        phase) and every non-monotonic transition are rejected without
+        mutating the checkpoint.
+        """
+        if phase not in CYCLE_PHASE_ORDER:
+            raise ValueError(
+                f"unknown cycle phase {phase!r}; expected one of "
+                f"{CYCLE_PHASE_ORDER}"
+            )
+        target_order = CYCLE_PHASE_ORDER.index(phase)
+
+        current = self.get_checkpoint(cycle_id)
+        current_phase = current["phase"] if current else None
+        current_order = (
+            CYCLE_PHASE_ORDER.index(current_phase)
+            if current_phase in CYCLE_PHASE_ORDER
+            else -1
+        )
+        if expected_phase is not None and current_phase != expected_phase:
+            return False
+        if current is not None and target_order <= current_order:
+            return False
+
+        payload = json.dumps(output_ids or {}, sort_keys=True)
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO cycle_checkpoints (
+                cycle_id, phase, phase_order, output_ids_json, updated_at
+            )
+            VALUES (?, ?, ?, ?::JSON, ?)
+            ON CONFLICT (cycle_id) DO UPDATE SET
+                phase = EXCLUDED.phase,
+                phase_order = EXCLUDED.phase_order,
+                output_ids_json = EXCLUDED.output_ids_json,
+                updated_at = EXCLUDED.updated_at
+            """,
+            [cycle_id, phase, target_order, payload, now],
+        )
+        return True
+
+    def get_checkpoint(self, cycle_id: str) -> dict[str, Any] | None:
+        """Return the stored checkpoint for *cycle_id*, or ``None``."""
+        row = self._conn.execute(
+            """SELECT cycle_id, phase, phase_order, output_ids_json, updated_at
+               FROM cycle_checkpoints WHERE cycle_id = ?""",
+            [cycle_id],
+        ).fetchone()
+        if row is None:
+            return None
+        output: object = row[3]
+        if isinstance(output, str):
+            output_ids = json.loads(output)
+        else:
+            output_ids = output
+        return {
+            "cycle_id": str(row[0]),
+            "phase": str(row[1]),
+            "phase_order": int(row[2]),
+            "output_ids": output_ids,
+            "updated_at": str(row[4]),
+        }
+
+    def rebuild_projection(self, cycle_id: str) -> dict[str, Any] | None:
+        """Reconstruct the cycle record from its append-only fact rows.
+
+        The base facts come from ``ai_daily_cycles``; votes and attempts
+        are rebuilt from their own immutable fact tables so the current
+        projection is always derivable from the facts.
+        """
+        base = AiTradingStore(db_path=self._db_path).get_cycle(cycle_id)
+        if base is None:
+            return None
+        votes = [
+            json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            for row in self._conn.execute(
+                """SELECT vote_json FROM ai_committee_votes
+                   WHERE cycle_id = ? ORDER BY vote_index""",
+                [cycle_id],
+            ).fetchall()
+        ]
+        attempts = [
+            json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            for row in self._conn.execute(
+                """SELECT attempt_json FROM ai_order_attempts
+                   WHERE cycle_id = ? ORDER BY intent_id""",
+                [cycle_id],
+            ).fetchall()
+        ]
+        return {**base, "votes": votes, "attempts": attempts}
+
+    def projection_matches_stored(self, cycle_id: str) -> bool:
+        """Return True when the rebuilt projection equals the stored record.
+
+        Both sides are normalized with ``sort_keys`` and ``default=str``
+        so the comparison is byte-for-byte after normalization
+        (AC-M03-W03-02).
+        """
+        stored = AiTradingStore(db_path=self._db_path).get_cycle(cycle_id)
+        rebuilt = self.rebuild_projection(cycle_id)
+        if stored is None or rebuilt is None:
+            return False
+        return _normalize(stored) == _normalize(rebuilt)
+
+    def clear(self) -> None:
+        """Drop and recreate AI-trading tables (for test isolation)."""
+        drop_ai_trading_schema(self._conn)
+        apply_ai_trading_schema(self._conn)
+
+    def close(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+
+def _normalize(value: Any) -> str:
+    """Canonical JSON serialization for byte-for-byte comparison."""
+    return json.dumps(value, sort_keys=True, default=str)
 
 
 def _today_iso() -> str:

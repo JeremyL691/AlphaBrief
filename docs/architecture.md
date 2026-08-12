@@ -34,6 +34,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 |---|---|---|
 | `alphabrief-core` | domain schemas、settings、paper policy | 保留；policy 收敛为 OANDA practice-only |
 | `alphabrief-api db` | DuckDB stores + versioned migration framework | M03-W01 起 schema 由 ordered/transactional/idempotent migrations 管理；newer/corrupt schema 启动 fail closed |
+| `alphabrief-trader db` | AI cycle facts + `CycleCheckpointStore` | M03-W03 起 cycle+votes+attempts 单事务提交；checkpoint 为 CAS/单调推进；projection 从 facts 重建并与 stored 逐字节一致 |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |

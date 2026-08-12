@@ -280,6 +280,19 @@ pytest 1488 passed（+12 migration/store 测试）。
 原样成立）；该测试文件不在 storage allowlist 内，未改动。full pytest 1500
 passed（+12 store/API 测试）。
 
+#### M03-W03 已闭环证据（R-20260813-M03-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M03-W03-01 | cycle transition 与 referenced outputs 在 failure injection 下一起 commit 或全部不 commit | `AiTradingStore.save_cycle` 改为单事务（BEGIN/COMMIT/ROLLBACK，cycle+votes+attempts）；serialization failure injection 后无 cycle/vote/attempt 残留（`test_cycle_checkpoint_store.py`） |
+| AC-M03-W03-02 | 当前 projection 从 facts 重建，normalization 后与 stored projection 逐字节相等 | `CycleCheckpointStore.rebuild_projection`（从 ai_daily_cycles + votes/attempts fact tables 重建）+ `projection_matches_stored`（`json.dumps(sort_keys, default=str)` 规范化比较）；后继 cycle ingestion 不改变旧 projection（`test_projection_rebuild.py`） |
+| AC-M03-W03-03 | compare-and-set 拒绝 stale writers 与非法 phase transitions | `checkpoint(cycle_id, phase, expected_phase=...)`：expected 不匹配 → False 且 checkpoint 不变；非单调 transition（向后/重复）→ False；未知 phase → ValueError；单调推进 + output_ids 持久化 |
+
+范围说明：queue 声明的 targeted 文件 `tests/test_projection_rebuild.py` 不在
+storage profile globs 内（与 test_broker_commands.py 相同的 queue gap 先例），
+按声明文件名新建并纳入本 round 的 documented forced path；其余 changed paths
+全部在 allowlist 内。full pytest 1510 passed（+10 checkpoint/rebuild 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
