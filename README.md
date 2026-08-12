@@ -1,294 +1,150 @@
 # AlphaBrief
 
-AlphaBrief is a local-first, model-agnostic research workbench for
-quantitative market research, backtesting, simulation, paper trading, risk
-review, audit, and post-trade review.
+AlphaBrief is a local-first market research and paper-trading workstation. It
+combines market/news/macro ingestion, structured model research, strategy and
+backtest tooling, deterministic risk checks, broker execution, scheduling,
+audit storage, a FastAPI/CLI surface, and a local Electron dashboard.
 
-```
-market data -> research -> hypothesis -> StrategySpec -> backtest
--> simulation -> paper trading -> risk audit -> review
-```
+The approved final target is narrower than the historical codebase:
+**OANDA v20 practice only, no Alpaca, no live trading, and no silent simulated
+broker fallback**. The migration is planned in the final blueprint and is not
+yet complete.
 
-## Status
+## Current Verified Baseline
 
-Through Round 0066, AlphaBrief is implemented, deployed, and verified as a
-**multi-asset auto-executing paper-trading workbench** that is usable out of
-the box. The AI Trading Committee trades FX, metals, index CFDs, US
-equities, and crypto across routed paper venues (OANDA practice + Alpaca
-paper, with a built-in simulator fallback when credentials are absent).
-Every dashboard page is populated by an auto-refreshing content pipeline.
-The project remains paper-only: live trading stays locked.
+Snapshot: 2026-08-13, commit `c0d16c23fb80fd2239ab9aad1d48c0421d21aa2a`.
 
-- **Phase 1 — Core.** Domain models, CSV/Parquet OHLCV loaders, in-memory
-  data quality checks, no-lookahead features, StrategySpec schema, and a
-  vectorized backtester with fees, slippage, equity curve, trades, and
-  metrics.
-- **Phase 2 — ModelGateway and research briefs.** Gateway contracts, a
-  fake provider for tests, a local Ollama provider adapter, model
-  registry and profile selection, prompt template versioning, structured
-  output parser, MarketBrief, SymbolBrief, and DailyAlphaBrief
-  generation.
-- **Phase 3 — Risk and paper trading.** OrderIntent, RiskDecision,
-  RiskGate, KillSwitch, OrderRouter, FillSimulator, PortfolioState,
-  PaperBroker, and ExecutionAuditLog. Every OrderIntent passes RiskGate
-  before reaching the paper broker.
-- **Phase 4 — Trading environment.** Gymnasium-style `reset`/`step`
-  interface with discrete actions, observations, transition rewards,
-  transaction costs, slippage, a random-policy baseline, a buy-and-hold
-  baseline, and a strategy comparison report.
-- **Phase 5 — Review center.** Snapshot aggregation across strategies,
-  backtests, briefs, model calls, paper portfolio, audit log, and risk
-  data, plus plain-text viewers and deterministic daily/weekly journal
-  generation.
-- **Phase 6 — Web API surface.** FastAPI server exposing health, data,
-  backtest, research, paper, risk, review, and dashboard endpoints,
-  launched from the CLI.
-- **Phase 7 — Persistent storage.** DuckDB-backed stores for market
-  data, backtest reports, briefs, paper portfolio, audit logs, and
-  review snapshots, so all API state survives restarts.
-- **Phase 8 — Multi-model research committee.** Debate schemas,
-  `DebateOrchestrator` that routes a question to multiple model
-  perspectives and aggregates a consensus, DuckDB persistence, the
-  `alphabrief research debate` CLI command, and
-  `POST /api/v1/research/debate`.
-- **Phase 9 — Real market data providers.** Key-less HTTP adapters for
-  Yahoo Finance and Binance with a shared retry policy and an expanded
-  interval set, plus the `alphabrief data fetch` CLI command and
-  `POST /api/v1/data/fetch` endpoint that persist bars to the existing
-  DuckDB store.
-- **Phase 10 — News & Macro Data Layer.** Structured news headline
-  and macro-economic indicator schemas, provider protocols, mock
-  providers, RSS/Atom reader with free feed allowlist, DuckDB
-  persistence, and full CLI/API surface. 58 new tests.
-- **Phase 11 — Research integration, more data sources, trading
-  env V2, multi-page dashboard.** News/macro context injection into
-  research briefs and debate prompts, FRED/SEC/Sentiment/AlphaVantage
-  providers, multi-asset continuous-action trading environment with
-  short/leverage/liquidity/market-impact support, and five-page
-  vanilla HTML dashboard. 108 new tests.
-- **Phase 12 — External evidence + risk context.** Deterministic
-  news/macro → risk tightening layer, strategy external evidence
-  declaration and per-signal `SignalEvidence`, structured research
-  context summary, and gymnasium EnvV2 episode reports with cost
-  breakdowns. 62 new tests.
-- **Phase 13 — RiskContext → RiskGate wiring.** `RiskGate` accepts an
-  optional `RiskContextDecision` and applies it in a tighten-only
-  manner. `PaperBroker` blocks auto-execution when the merged
-  decision requires human review. The audit log records the
-  risk-context metadata.
-- **Phase 14 — Model evaluation & performance intelligence.**
-  `ModelEvaluator` runs automated JSON/schema/hallucination
-  evaluations against bundled local datasets through `ModelGateway`.
-  `ModelRouter` adds cost/latency/performance-aware routing on top
-  of the existing capability-based registry. The
-  `model_evaluations` DuckDB table plus `ModelEvalStore` persist
-  every record, and the new `/api/v1/models/*` endpoints and
-  `alphabrief model {evaluate,performance,route,compare}` commands
-  expose the full surface. The dashboard gains a Model Performance
-  card grid and a dedicated `/dashboard/models` page. 87 new tests.
-- **Phases 15–19 — Strategy lifecycle and paper-broker operations.**
-  Strategy specifications and signals are persistent, versioned artifacts;
-  the reviewed paper-only execution policy, broker-neutral adapters,
-  reconciliation store, scheduler operations surface, and account-level
-  exposure guard are implemented. The exposure guard is fail-closed and
-  tighten-only: it cannot relax an existing RiskGate decision.
-- **Phase 20 — API-side broker observability.** The API process can
-  expose read-only paper-broker positions and account snapshots through
-  the broker adapter singleton. The surface never submits orders.
-- **Phase 21 — Account-level risk hardening.** Runtime risk checks now
-  cover per-symbol exposure, concentration, leverage, price deviation,
-  market-open state, signal age, duplicate orders, daily loss, and
-  drawdown floor. These checks are fail-closed and tighten-only.
-- **Phase 22 — Kronos forecast integration.** Kronos is available as
-  an optional market-forecasting provider through `ModelGateway` via
-  `market_forecast` and `time_series_forecasting`. Forecasts are
-  structured and advisory only; they never create signals, order
-  intents, risk decisions, orders, or broker activity.
-- **Phase 23 — Project acceptance closeout.** A read-only
-  `alphabrief_acceptance` package verifies the project-level safety and
-  delivery invariants. The verifier is exposed through
-  `alphabrief acceptance verify` and `GET /api/v1/acceptance/verify`,
-  and it checks required docs, importable runtime packages, paper-only
-  defaults, RiskGate's live lock, advisory-only Kronos forecasts,
-  reference-source isolation, provider SDK boundaries, and quality
-  tooling configuration. The same package ships a scoped paper-broker
-  pre-flight check via `alphabrief acceptance preflight --paper`
-  and `GET /api/v1/acceptance/preflight?scope=paper`; it confirms the
-  30-day observation runbook (`docs/paper_broker_setup.md`) is in place
-  and that the OANDA-first broker env-var names, paper execution policy,
-  and broker config files are wired up.
-- **Phase 24 — Pre-paper-trading hardening.** Every CLI command
-  (16 groups, 35 subcommands) and every API route (70 endpoints)
-  was exercised end-to-end. Six real defects were found and fixed
-  in this round: `brief daily` was emitting no structured payload
-  and always failing at the parser; `strategy record-signal
-  --from-yaml` rejected YAML-parsed ISO timestamps because PyYAML
-  coerced them to `datetime`; `model list`, `risk status`, `review
-  list`, and `paper status` were `not yet implemented` placeholders
-  even though the data sources they would consume already exist.
-  All four CLI surfaces now read from the real stores / registry
-  they shadow. The store-level timestamp coercion in
-  `StrategySignalStore` is documented and widen-only (no schema
-  change, no relaxed validation). 1223 tests pass; no behavior
-  change to `RiskGate`, the paper execution policy, or any
-  read-only broker adapter.
+| Area | What exists now | Important limitation |
+|---|---|---|
+| Market data | CSV/Parquet loaders, Yahoo/Binance/Alpha Vantage providers, quality checks, features, DuckDB storage | Bar identity overwrites same-symbol timestamps; OANDA account-wide discovery and immutable versions are not complete |
+| News and macro | RSS, SEC, FRED, mock/social-sentiment providers, storage and brief inputs | Daily production freshness, source reliability, sentiment calibration, and untrusted-content defenses are incomplete |
+| Models | ModelGateway, Fake/OpenAI/Ollama adapters, structured output, evaluation/router, Kronos interface | Some API paths still default to FakeProvider; calls/fallbacks are not universally durable |
+| Research | Daily briefs, evidence objects, multi-role debate, AI trading committee | Research-to-order provenance and prompt-injection isolation are not end-to-end complete |
+| Strategy/backtest | StrategySpec registry, moving-average strategy, vectorized single-asset backtest, metrics, gym environments | Conditions are not compiled, API IS/OOS is incomplete, portfolio/event-driven/walk-forward surfaces need closure |
+| Risk | Symbol/order/exposure/loss/drawdown/news-aware rule primitives | AI auto-execution does not yet pass the full account and news context into every RiskGate call |
+| Execution | In-memory paper broker, OANDA practice adapter, Alpaca paper adapter, routed/fallback adapter, reconciliation stores | This is still multi-broker code; OANDA lifecycle coverage, persistence, and reconciliation are incomplete |
+| Operations | Scheduler, heartbeats, alerts, API/CLI, nine dashboard pages, Electron wrapper | Scheduler/control-plane truth, crash recovery, observability, and 30-day evidence are incomplete |
 
-## Safety Boundary
+At the baseline, the repository exposed 18 CLI command groups with 57
+subcommands, 86 OpenAPI endpoints, and nine dashboard routes. The quality run
+produced 1,389 passing tests plus 12 local-HTTP test failures caused by the
+restricted sandbox refusing a `127.0.0.1` bind; Ruff and Mypy passed. These are
+baseline facts, not final acceptance.
 
-AlphaBrief is research-first and paper-first. It is not a live-trading
-bot, a high-frequency trading system, or a wrapper around one model
-provider.
+## Final Product Boundary
 
-1. Model calls must go through `ModelGateway`.
-2. Business modules must not call provider SDKs directly.
-3. Models cannot place orders or override risk controls.
-4. Research outputs may produce structured reports, hypotheses,
-   StrategySpec drafts, or OrderIntent drafts only.
-5. Every OrderIntent must pass RiskGate before paper execution.
-6. Live trading is disabled by default and out of scope for the MVP.
-7. API keys and broker keys must never be committed, logged, or embedded
-   in prompts.
+The completed product must:
+
+1. use only a configured OANDA practice account for external execution;
+2. discover the account's actual tradable instruments dynamically instead of
+   promising a hard-coded regional catalogue;
+3. cover every asset category returned as tradable by that account, including
+   currencies, metals, and any index, commodity, bond, crypto, or share CFDs the
+   account/division exposes;
+4. ingest fresh market data, financial news, macro context, and market
+   sentiment every day;
+5. persist an auditable multi-role AI discussion and a structured `no_trade` or
+   `OrderIntent` result;
+6. require a deterministic, persisted RiskDecision before any OANDA order;
+7. support the necessary OANDA order, trade, position, transaction, pricing,
+   and reconciliation lifecycle without duplicate orders after retries or
+   restarts;
+8. provide CLI, API, Soft-style responsive dashboard, alerts, recovery, and
+   evidence generation;
+9. survive a real 30-calendar-day OANDA practice observation period;
+10. keep live trading permanently unreachable.
+
+Instrument availability varies by OANDA legal division and account. AlphaBrief
+therefore treats `GET /v3/accounts/{accountID}/instruments` as the authority and
+must show unsupported categories honestly rather than emulate them elsewhere.
 
 ## Repository Layout
 
+```text
+apps/
+  api/                     FastAPI and dashboard
+  cli/                     Typer CLI and scheduler entry points
+packages/
+  alphabrief-core/         domain schemas and policy
+  alphabrief-data/         bars, providers, quality, features
+  alphabrief-news/         news and sentiment ingestion
+  alphabrief-models/       ModelGateway and model adapters
+  alphabrief-research/     briefs and debate
+  alphabrief-strategy/     strategy specifications and signals
+  alphabrief-backtest/     backtesting and metrics
+  alphabrief-risk/         deterministic risk gate
+  alphabrief-execution/    paper/OANDA execution and operations
+  alphabrief-trader/       AI committee and daily cycle
+  alphabrief-gym/          training environments
+  alphabrief-review/       post-trade review
+  alphabrief-acceptance/   deterministic project gates
+electron/                  local desktop wrapper
+config/                    non-secret policy and OANDA practice config
+docs/                      authoritative development and operating documents
+tests/                     unit, integration, contract, and acceptance tests
 ```
-apps/        API, CLI, and worker surfaces.
-packages/    AlphaBrief-owned Python packages.
-strategies/  Strategy specs and experiments.
-tests/       Unit and boundary tests.
-docs/        Architecture, roadmap, risk model, and development log.
-reports/     Local report output placeholders.
-notebooks/   Local analysis workspace placeholders.
-scripts/     Utility scripts.
-```
-
-Runtime packages under `packages/*/src`:
-
-- `alphabrief_core`
-- `alphabrief_data` (with the `providers` subpackage)
-- `alphabrief_strategy`
-- `alphabrief_backtest`
-- `alphabrief_models`
-- `alphabrief_research`
-- `alphabrief_risk`
-- `alphabrief_execution`
-- `alphabrief_gym`
-- `alphabrief_review`
-- `alphabrief_acceptance`
 
 ## Local Setup
 
-Requirements:
-
-- Python 3.12+
-- A virtual environment
+Requirements: Python 3.12+, a virtual environment, and Node.js only when using
+the Electron wrapper.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+cp .env.example .env
 ```
 
-## Quality Gates
-
-Run all checks before committing:
+Never put credentials in tracked YAML or source files. For an external practice
+account, set these in the runtime environment:
 
 ```bash
-.venv/bin/python -m pytest
+ALPHABRIEF_OANDA_TOKEN=...
+ALPHABRIEF_OANDA_ACCOUNT_ID=...
+```
+
+Until milestone M01 removes the historical routes, do not assume that all
+runtime surfaces are already OANDA-only. Follow the current status in
+`docs/progress.yaml`.
+
+## Common Commands
+
+```bash
+.venv/bin/alphabrief --help
+.venv/bin/alphabrief serve serve
+.venv/bin/alphabrief scheduler status
+.venv/bin/alphabrief acceptance verify --compact
+.venv/bin/python -m pytest -q
 .venv/bin/ruff check .
 .venv/bin/mypy
-alphabrief acceptance verify
 ```
 
-Current result: Round 0066 passes; the full pytest run reaches
-**1401 passing tests**. Ruff is clean, strict Mypy is clean across
-**236 source files**, and the project acceptance verifier is green
-(`verify` 11/11, `preflight` `--scope paper` 1/1). Rounds 0064-0066
-restored the deployed AI Trading Committee (real provider key, visible
-`provider_error` outcomes), deduped freeze alerts, widened the
-`ai_daily_cycle` timeout, unlocked multi-asset auto-execution with
-routed brokers, and activated every dashboard page via the
-`research_content` task, snapshot-merged reads
-(`ALPHABRIEF_SCHEDULER_DB_DIR`), and `alphabrief bootstrap all`. The
-development log records the latest verified run and its environment
-constraints.
+The Electron shell is optional:
 
-## Paper Broker Setup
-
-The external paper-trading adapter defaults to **OANDA v20 practice**;
-Alpaca Paper remains an optional compatibility path. To attach AlphaBrief to
-a paper account:
-
-1. Read the runbook: [`docs/paper_broker_setup.md`](docs/paper_broker_setup.md).
-2. Create an OANDA v20 demo/practice account.
-3. Copy `.env.example` to `.env` and fill in `ALPHABRIEF_OANDA_TOKEN`
-   and `ALPHABRIEF_OANDA_ACCOUNT_ID` (placeholders in `.env.example`).
-4. Run the pre-flight:
-
-   ```bash
-   .venv/bin/alphabrief acceptance preflight --paper
-   .venv/bin/alphabrief broker status
-   .venv/bin/alphabrief scheduler status
-   ```
-
-5. Start the 30-day run:
-
-   ```bash
-   .venv/bin/alphabrief scheduler run --reconcile-interval 60
-   ```
-
-The runbook covers daily and weekly observation checkpoints, freeze
-handling, and end-of-run reporting. Live trading remains disabled by
-default and locked by `RiskGate`; the scheduler refuses to start with
-`ALPHABRIEF_LIVE_TRADING_ENABLED=true`.
-
-## Reference Source Policy
-
-Reference projects under `_reference_sources/` are local-only research
-material. They are intentionally ignored by Git and must not be pushed to
-this repository.
-
-Allowed use:
-
-- Read reference projects to understand behavior, product flows, and
-  module boundaries.
-- Convert observations into natural-language notes under
-  `docs/reference_notes/`.
-- Implement AlphaBrief-owned behavior from those notes using original
-  names, interfaces, tests, and structure.
-
-Forbidden use:
-
-- Importing from `_reference_sources/`.
-- Copying, translating, or lightly rewriting reference source files.
-- Copying prompts, comments, test cases, class names, function names, or
-  file structure.
-
-## Configuration
-
-Use `.env.example` as the local template. Do not commit real secrets.
-
-```
-ALPHABRIEF_ENV=local
-ALPHABRIEF_LOG_LEVEL=INFO
-ALPHABRIEF_LIVE_TRADING_ENABLED=false
-ALPHABRIEF_DATA_DIR=data/local
-ALPHABRIEF_REPORTS_DIR=reports/generated
-ALPHABRIEF_AUDIT_LOG_DIR=reports/audit
+```bash
+cd electron
+npm install
+npm start
 ```
 
-## Documentation
+## Authoritative Documents
 
-- `ALPHABRIEF_PRODUCT_BLUEPRINT.md`
-- `ALPHABRIEF_DEVELOPMENT_CADENCE.md`
-- `PROJECT_RULES.md`
-- `docs/architecture.md`
-- `docs/roadmap.md`
-- `docs/model_gateway.md`
-- `docs/risk_model.md`
-- `docs/paper_broker_setup.md`
-- `docs/development_log.md`
+Read in this order when developing:
 
-## Availability
+1. [Agent contract](AGENTS.md)
+2. [Current progress](docs/progress.yaml)
+3. [Final product blueprint](ALPHABRIEF_PRODUCT_BLUEPRINT.md)
+4. [Machine work queue](docs/work_items.yaml)
+5. [Autonomous loop protocol](docs/autonomous_loop.md)
+6. [Current and target architecture](docs/architecture.md)
+7. [Acceptance and traceability](docs/acceptance.md)
+8. [OANDA 30-day runbook](docs/oanda_30_day_runbook.md)
 
-This project is private and not open source. No public license is granted
-at this stage. All rights are reserved unless a license is added later.
+Old phase plans, development logs, duplicated risk/model notes, and snapshot
+acceptance reports were intentionally removed. Git history is the archive.
+
+## Safety Notice
+
+AlphaBrief is research software, not financial advice. The repository is
+designed for paper trading only. Do not connect it to a live endpoint or use
+practice results as evidence of future profitability.

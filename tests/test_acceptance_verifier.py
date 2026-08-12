@@ -20,7 +20,7 @@ def test_acceptance_report_passes_current_repo() -> None:
         "models.kronos_advisory",
         "safety.reference_isolation",
         "safety.provider_sdk_imports",
-        "docs.final_report_current",
+        "docs.blueprint_current",
         "quality.tooling_configured",
         "paper.preflight",
     }
@@ -50,7 +50,7 @@ def test_preflight_passes_current_repo() -> None:
 
 def test_preflight_fails_when_runbook_missing(tmp_path: Path) -> None:
     _seed_minimal_repo(tmp_path)
-    (tmp_path / "docs" / "paper_broker_setup.md").unlink()
+    (tmp_path / "docs" / "oanda_30_day_runbook.md").unlink()
 
     report = build_preflight_report(tmp_path, scope="paper")
 
@@ -58,7 +58,7 @@ def test_preflight_fails_when_runbook_missing(tmp_path: Path) -> None:
     preflight = report.checks[0]
     assert preflight.status == "failed"
     assert preflight.check_id == "paper.preflight"
-    assert "paper_broker_setup.md" in (preflight.detail or "")
+    assert "oanda_30_day_runbook.md" in (preflight.detail or "")
 
 
 def test_preflight_fails_when_env_var_name_missing(tmp_path: Path) -> None:
@@ -72,8 +72,8 @@ def test_preflight_fails_when_env_var_name_missing(tmp_path: Path) -> None:
     assert report.passed is False
     preflight = report.checks[0]
     assert preflight.status == "failed"
-    assert "ALPHABRIEF_ALPACA_KEY" in (preflight.detail or "")
-    assert "ALPHABRIEF_ALPACA_SECRET" in (preflight.detail or "")
+    assert "ALPHABRIEF_OANDA_TOKEN" in (preflight.detail or "")
+    assert "ALPHABRIEF_OANDA_ACCOUNT_ID" in (preflight.detail or "")
 
 
 def test_preflight_fails_when_paper_policy_missing(tmp_path: Path) -> None:
@@ -99,11 +99,11 @@ def _seed_minimal_repo(tmp_path: Path) -> None:
     """Create just enough files at ``tmp_path`` for pre-flight to partially work."""
 
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "paper_broker_setup.md").write_text(
-        "# Paper Broker Setup\n", encoding="utf-8"
+    (tmp_path / "docs" / "oanda_30_day_runbook.md").write_text(
+        "# OANDA 30-Day Runbook\n", encoding="utf-8"
     )
     (tmp_path / ".env.example").write_text(
-        "ALPHABRIEF_ALPACA_KEY=\nALPHABRIEF_ALPACA_SECRET=\n",
+        "ALPHABRIEF_OANDA_TOKEN=\nALPHABRIEF_OANDA_ACCOUNT_ID=\n",
         encoding="utf-8",
     )
     (tmp_path / "config").mkdir()
@@ -111,7 +111,14 @@ def _seed_minimal_repo(tmp_path: Path) -> None:
         "\n".join(
             [
                 "mode: paper",
-                "provider: alpaca_paper",
+                "provider: oanda_paper",
+                "market: fx",
+                "symbols: [EUR_USD]",
+                "order_types: [market]",
+                "timezone: America/New_York",
+                "trading_days: [mon, tue, wed, thu, fri]",
+                "session_start: '00:00'",
+                "session_end: '23:59'",
                 "require_human_review: true",
                 "automated_execution: false",
                 "max_order_notional: \"100\"",
@@ -121,8 +128,8 @@ def _seed_minimal_repo(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    (tmp_path / "config" / "alpaca_paper.yaml").write_text(
-        "base_url: https://paper-api.alpaca.markets\n"
+    (tmp_path / "config" / "oanda_paper.yaml").write_text(
+        "base_url: https://api-fxpractice.oanda.com\n"
         "request_timeout_seconds: 5.0\n"
         "max_order_attempts: 3\n"
         "retry_backoff_seconds: 0.25\n",
