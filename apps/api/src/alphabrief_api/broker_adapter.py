@@ -63,15 +63,16 @@ class _NullBrokerAdapter(BrokerAdapter):
     """No-op broker adapter used when no OANDA credentials are configured.
 
     Read probes return empty / zero snapshots so the API boots and the
-    scheduler stays healthy in dev and CI. The API only ever reads
-    through this adapter — ``submit`` / ``cancel`` / ``get_order`` raise
-    ``NotImplementedError`` to make accidental order placement impossible.
+    scheduler stays healthy in dev and CI, but the runtime reports not
+    ready and never places orders — ``submit`` / ``cancel`` / ``get_order``
+    raise ``NotImplementedError`` to make accidental order placement
+    impossible.
     """
 
     async def health(self) -> BrokerHealth:
         return BrokerHealth(
-            healthy=True,
-            detail="null adapter (no broker credentials configured)",
+            healthy=False,
+            detail="broker runtime not configured (no OANDA credentials)",
             checked_at=datetime.now(UTC),
         )
 
