@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-13T13:50:00+08:00"
+updated_at: "2026-08-13T14:30:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M04-W02
+  work_item_id: M04-W03
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M04-W01-FINAL-GATE
-  next_action: implement the complete OANDA instruments contract
+  last_verified_gate: M04-W02-FINAL-GATE
+  next_action: persist versioned instrument catalog snapshots and diffs
 
 milestones:
   M00: DONE
@@ -117,9 +117,10 @@ work_item_states:
   M03-W05: DONE
   M03-W06: DONE
   M04-W01: DONE
+  M04-W02: DONE
 
 latest_validation:
-  completed_at: "2026-08-13T13:50:00+08:00"
+  completed_at: "2026-08-13T14:30:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -127,7 +128,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 1541
+      passed: 1556
       failed: 0
       warnings: 12
     restricted_sandbox:
@@ -230,5 +231,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M04-W01
-last_ledger_record: R-20260813-M04-W01
+last_completed_round: R-20260813-M04-W02
+last_ledger_record: R-20260813-M04-W02

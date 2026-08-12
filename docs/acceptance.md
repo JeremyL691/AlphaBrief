@@ -352,6 +352,17 @@ profile globs 内）。full pytest 1527 passed（+10 backup/retention 测试）�
 token/account_id 注入参数（缺省回退 env），供 preflight 与测试使用。
 full pytest 1541 passed（+10 preflight 测试）。
 
+#### M04-W02 已闭环证据（R-20260813-M04-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M04-W02-01 | 每个 response row 恰好一个 strict metadata object（name/displayName/raw type/precisions/sizes/margin/pipLocation/stop-distance） | `parse_instruments_response` → `InstrumentMetadata`（frozen + extra=forbid；display_precision/trade_units_precision/pip_location 为 int；6 个 Decimal 字段；optional trailing-stop distances）；全字段断言（`test_oanda_market_instruments_client.py`、`test_instrument_metadata.py`） |
+| AC-M04-W02-02 | unknown fields 保留在 versioned raw payload；缺/坏 required fields 拒绝整个 snapshot，无 partial publication | `raw_payload` 逐行保留（含 futureField）；任一 row 缺 marginRate/name/type 或 precision 非法 → `InstrumentParseError` 且无任何 instrument 输出；空/畸形响应被拒 |
+| AC-M04-W02-03 | 解析/规范化 Decimal-safe，绝不从 symbol 命名推断 precision/size | float 输入被拒（parse 与 model 两层）；`XPT_USD` 等带点/横线符号仍使用响应中的显式字段；JSON 序列化保持 Decimal 字符串 |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1556 passed（+15
+instruments/metadata 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
