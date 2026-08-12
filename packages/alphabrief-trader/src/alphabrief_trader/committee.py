@@ -76,7 +76,9 @@ class CommitteeResult(BaseModel):
     The daily cycle inspects ``ok``, ``plan`` (when ok), and the raw
     ``votes`` for the audit record. ``error_message`` is a stable
     string code the operator can branch on; it is never the raw
-    provider error text.
+    provider error text. ``role_errors`` lists the roles that failed
+    and why (stable codes, no raw provider text), so an all-failed
+    cycle can be told apart from a genuine no-consensus outcome.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -86,6 +88,7 @@ class CommitteeResult(BaseModel):
     votes: list[CommitteeVote] = Field(default_factory=list)
     error_message: str | None = None
     error_role: CommitteeRole | None = None
+    role_errors: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +150,7 @@ class TradingCommittee:
             )
             result = self._gateway.invoke(request)
             if result.response is None or result.record.status != "succeeded":
-                role_errors.append(role)
+                role_errors.append(f"{role}: provider_call_failed")
                 continue
             parsed: StructuredOutputResult[_PartialCommitteeVote] = (
                 parse_structured_output(
@@ -155,7 +158,8 @@ class TradingCommittee:
                 )
             )
             if not parsed.ok or parsed.parsed is None:
-                role_errors.append(role)
+                code = parsed.error_code or "structured_output_parse_failed"
+                role_errors.append(f"{role}: {code}")
                 continue
 
             p = parsed.parsed
@@ -180,6 +184,7 @@ class TradingCommittee:
                 ok=False,
                 error_message="no_committee_votes",
                 error_role=None,
+                role_errors=role_errors,
             )
 
         manager_vote = _select_manager(votes)
