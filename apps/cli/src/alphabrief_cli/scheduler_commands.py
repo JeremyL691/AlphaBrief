@@ -378,79 +378,93 @@ def _alpaca_is_configured() -> bool:
 
 
 def _build_adapter() -> BrokerAdapter:
-    """Pick the appropriate broker adapter for the runtime environment.
+    """Build the routed broker adapter for the runtime environment.
 
-    OANDA credentials win over Alpaca credentials so non-US operators can
-    use the OANDA demo account without unsetting Alpaca keys. If neither
-    credential set is present, fall back to :class:`_NullBrokerAdapter`,
-    which lets the scheduler run in dev / CI without a live broker
-    connection.
+    FX / metals / index CFDs route to OANDA practice when its credentials
+    are present; US equities and crypto route to Alpaca paper when its
+    credentials are present. Any venue without credentials degrades to
+    the built-in simulated paper broker, so the scheduler always has a
+    working execution path.
     """
-    if _oanda_is_configured():
-        from pathlib import Path as _Path
+    from alphabrief_execution.broker.routing import (
+        RoutingBrokerAdapter,
+        SimulatedBrokerAdapter,
+    )
 
-        from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
-        from alphabrief_execution.broker.oanda.client import OandaHttpClient
-        from alphabrief_execution.broker.oanda.config import (
-            DEFAULT_BASE_URL,
-            DEFAULT_MAX_RETRIES,
-            DEFAULT_RETRY_BACKOFF_SECONDS,
-            DEFAULT_TIMEOUT_SECONDS,
-            OandaPaperConfig,
-            load_oanda_paper_config,
+    oanda = _build_oanda_adapter() if _oanda_is_configured() else None
+    alpaca = _build_alpaca_adapter() if _alpaca_is_configured() else None
+    return RoutingBrokerAdapter(
+        oanda=oanda,
+        alpaca=alpaca,
+        simulated=SimulatedBrokerAdapter(),
+    )
+
+
+def _build_oanda_adapter() -> BrokerAdapter:
+    from pathlib import Path as _Path
+
+    from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+    from alphabrief_execution.broker.oanda.client import OandaHttpClient
+    from alphabrief_execution.broker.oanda.config import (
+        DEFAULT_BASE_URL,
+        DEFAULT_MAX_RETRIES,
+        DEFAULT_RETRY_BACKOFF_SECONDS,
+        DEFAULT_TIMEOUT_SECONDS,
+        OandaPaperConfig,
+        load_oanda_paper_config,
+    )
+
+    config_path = _Path("config/oanda_paper.yaml")
+    if config_path.exists():
+        oanda_config = load_oanda_paper_config(config_path)
+    else:
+        oanda_config = OandaPaperConfig(
+            base_url=DEFAULT_BASE_URL,
+            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            max_retries=DEFAULT_MAX_RETRIES,
+            retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
         )
+    client = OandaHttpClient(config=oanda_config)
+    return OandaPaperAdapter(client=client)
 
-        config_path = _Path("config/oanda_paper.yaml")
-        if config_path.exists():
-            oanda_config = load_oanda_paper_config(config_path)
-        else:
-            oanda_config = OandaPaperConfig(
-                base_url=DEFAULT_BASE_URL,
-                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-                max_retries=DEFAULT_MAX_RETRIES,
-                retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-            )
-        client = OandaHttpClient(config=oanda_config)
-        return OandaPaperAdapter(client=client)
 
-    if _alpaca_is_configured():
-        # Local import so the CLI doesn't require Alpaca config to be
-        # present at module import time. The config file is loaded
-        # from the default path; tests that exercise the live path
-        # should set the env vars and the config file location.
-        from pathlib import Path as _Path
+def _build_alpaca_adapter() -> BrokerAdapter:
+    # Local import so the CLI doesn't require Alpaca config to be
+    # present at module import time. The config file is loaded
+    # from the default path; tests that exercise the live path
+    # should set the env vars and the config file location.
+    from pathlib import Path as _Path
 
-        from alphabrief_execution.broker.alpaca.adapter import (
-            AlpacaPaperAdapter,
+    from alphabrief_execution.broker.alpaca.adapter import (
+        AlpacaPaperAdapter,
+    )
+    from alphabrief_execution.broker.alpaca.client import (
+        AlpacaHttpClient,
+    )
+    from alphabrief_execution.broker.alpaca.config import (
+        DEFAULT_BASE_URL,
+        DEFAULT_MAX_RETRIES,
+        DEFAULT_RETRY_BACKOFF_SECONDS,
+        DEFAULT_TIMEOUT_SECONDS,
+        AlpacaPaperConfig,
+        load_alpaca_paper_config,
+    )
+
+    config_path = _Path("config/alpaca_paper.yaml")
+    if config_path.exists():
+        alpaca_config = load_alpaca_paper_config(config_path)
+    else:
+        # Dev fallback: explicit defaults rather than a default
+        # constructor because AlpacaPaperConfig fields are
+        # required (no default values).
+        alpaca_config = AlpacaPaperConfig(
+            base_url=DEFAULT_BASE_URL,
+            timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            max_retries=DEFAULT_MAX_RETRIES,
+            retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
         )
-        from alphabrief_execution.broker.alpaca.client import (
-            AlpacaHttpClient,
-        )
-        from alphabrief_execution.broker.alpaca.config import (
-            DEFAULT_BASE_URL,
-            DEFAULT_MAX_RETRIES,
-            DEFAULT_RETRY_BACKOFF_SECONDS,
-            DEFAULT_TIMEOUT_SECONDS,
-            AlpacaPaperConfig,
-            load_alpaca_paper_config,
-        )
-
-        config_path = _Path("config/alpaca_paper.yaml")
-        if config_path.exists():
-            alpaca_config = load_alpaca_paper_config(config_path)
-        else:
-            # Dev fallback: explicit defaults rather than a default
-            # constructor because AlpacaPaperConfig fields are
-            # required (no default values).
-            alpaca_config = AlpacaPaperConfig(
-                base_url=DEFAULT_BASE_URL,
-                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-                max_retries=DEFAULT_MAX_RETRIES,
-                retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-            )
-        alpaca_client = AlpacaHttpClient(config=alpaca_config)
-        return AlpacaPaperAdapter(client=alpaca_client)
-    return _NullBrokerAdapter()
+    alpaca_client = AlpacaHttpClient(config=alpaca_config)
+    return AlpacaPaperAdapter(client=alpaca_client)
 
 
 def _refuse_if_live_trading_unlocked() -> None:
@@ -502,11 +516,22 @@ def _build_ai_committee() -> TradingCommittee:
     return build_ai_trading_committee()
 
 
-# Keep the scheduler's default cycle aligned with the checked-in OANDA
-# practice execution policy. The broader policy allowlist includes metals and
-# index CFDs, while the default AI cycle intentionally starts with three
-# liquid FX majors; operators can expand it via ALPHABRIEF_AI_SCHEDULER_UNIVERSE.
-_AI_SCHEDULER_UNIVERSE = ("EUR_USD", "GBP_USD", "USD_JPY")
+# Default AI cycle universe: a liquid multi-asset mix across the routed
+# venues — FX majors (OANDA), crypto (Alpaca), and US equities (Alpaca).
+# Operators can expand or replace it via ALPHABRIEF_AI_SCHEDULER_UNIVERSE.
+_AI_SCHEDULER_UNIVERSE = (
+    "EUR_USD",
+    "GBP_USD",
+    "USD_JPY",
+    "BTC-USD",
+    "ETH-USD",
+    "SOL-USD",
+    "AAPL",
+    "NVDA",
+    "TSLA",
+    "SPY",
+    "QQQ",
+)
 _AI_SCHEDULER_UNIVERSE_ENV = "ALPHABRIEF_AI_SCHEDULER_UNIVERSE"
 _AI_PRE_CYCLE_INGEST_ENV = "ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED"
 _AI_MARKET_DATA_SOURCE_ENV = "ALPHABRIEF_AI_MARKET_DATA_SOURCE"
@@ -794,9 +819,16 @@ def _configured_broker_provider_name() -> str | None:
 def _assert_external_policy_matches_broker(
     policy: PaperExecutionPolicy,
 ) -> None:
-    """Fail closed when external AI paper config is internally inconsistent."""
+    """Fail closed when external AI paper config is internally inconsistent.
+
+    ``routed`` policies are valid with any subset of broker credentials
+    (venues without credentials degrade to the simulated paper broker).
+    Single-venue policies still require their credentials.
+    """
 
     configured = _configured_broker_provider_name()
+    if policy.provider == "routed":
+        return
     if configured is None:
         raise RuntimeError(
             "ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED=true requires OANDA or "
@@ -920,7 +952,10 @@ def _ai_cycle_factory(
                 )
             )
             execution_backend = (
-                ExternalPaperExecutionBackend(_build_adapter())
+                ExternalPaperExecutionBackend(
+                    _build_adapter(),
+                    max_order_value=policy.max_order_notional,
+                )
                 if is_ai_external_paper_enabled()
                 else None
             )
@@ -934,6 +969,7 @@ def _ai_cycle_factory(
                 else None,
                 execution_backend=execution_backend,
                 enabled=is_ai_trading_enabled(),
+                max_order_value=policy.max_order_notional,
             )
             cycle.run(list(universe))
             _write_ai_cycle_result(store.get_latest_cycle())

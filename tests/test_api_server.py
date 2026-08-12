@@ -838,10 +838,10 @@ def _load_eur_usd_bars(tmp_path: Path, close: str = "1.14") -> None:
     assert resp.status_code == 201, resp.text
 
 
-def test_paper_submit_order_requires_human_review_by_default(tmp_path: Path) -> None:
+def test_paper_submit_order_executes_automatically(tmp_path: Path) -> None:
     _load_eur_usd_bars(tmp_path)
-    # Round 0063: default universe is OANDA multi-asset. Use EUR_USD so the
-    # allowlist check passes and we land on the "human review required" branch.
+    # Round 0065: auto-execution is enabled in paper mode — an approved
+    # order fills immediately without human review.
     response = client.post(
         "/api/v1/paper/orders",
         json={
@@ -853,8 +853,10 @@ def test_paper_submit_order_requires_human_review_by_default(tmp_path: Path) -> 
         },
     )
 
-    assert response.status_code == 422
-    assert "human review" in response.json()["detail"].lower()
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "filled"
+    assert body["symbol"] == "EUR_USD"
 
 
 def test_paper_submit_order_persists_audit_events(tmp_path: Path) -> None:
@@ -874,10 +876,11 @@ def test_paper_submit_order_persists_audit_events(tmp_path: Path) -> None:
     assert response.status_code == 200
     body = response.json()
     assert len(body["entries"]) > 0
-    # The Phase 16 policy records a decision but blocks auto-execution.
+    # Round 0065: auto-execution is enabled, so the full order lifecycle
+    # is recorded.
     event_types = {e["event_type"] for e in body["entries"]}
     assert "risk_decision_recorded" in event_types
-    assert "order_created" not in event_types
+    assert "order_created" in event_types
 
 
 def test_paper_submit_order_creates_portfolio_snapshot(tmp_path: Path) -> None:
@@ -892,12 +895,13 @@ def test_paper_submit_order_creates_portfolio_snapshot(tmp_path: Path) -> None:
         },
     )
 
-    # Human review blocks auto-execution, so the portfolio is unchanged.
+    # Round 0065: the order auto-executes, so the portfolio is updated.
     response = client.get("/api/v1/paper/portfolio")
     assert response.status_code == 200
     body = response.json()
-    assert body["cash"] == "100000"
-    assert body["positions"] == []
+    assert body["cash"] != "100000"
+    assert len(body["positions"]) == 1
+    assert body["positions"][0]["symbol"] == "SPY"
 
 
 # ---------------------------------------------------------------------------
@@ -927,23 +931,23 @@ def test_risk_config_returns_200() -> None:
     assert body["trading_enabled"] is True
     assert body["live_trading_enabled"] is False
     assert body["enabled_strategies"] == []
-    # Round 0063: default allowlist is the 19-instrument OANDA multi-asset
-    # universe is documented in the Round 0063 OANDA paper-policy plan.
+    # Round 0065: default allowlist is the 35-symbol routed multi-asset
+    # universe (FX + metals + index CFDs + US equities + crypto).
     assert body["symbol_allowlist"] == sorted([
         "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD",
         "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CHF_JPY",
         "XAU_USD", "XAG_USD",
         "US30_USD", "SPX500_USD", "NAS100_USD", "DE30_EUR", "JP225_USD",
+        "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "SPY", "QQQ",
+        "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
     ])
-    # OANDA units: 10,000 units = 1 mini lot. The /risk/config endpoint
-    # surfaces ``max_order_value`` derived from max_order_notional × 1.0
-    # reference USD per unit, so 10,000 units reads back as "10000".
-    assert body["max_order_value"] == "10000"
+    # Round 0065: caps are USD notional; auto-execution is enabled.
+    assert body["max_order_value"] == "2000"
     # Phase 19: the runtime account-exposure cap from PaperExecutionPolicy.
-    assert body["max_total_exposure"] == "50000"
-    assert body["require_human_review"] is True
+    assert body["max_total_exposure"] == "20000"
+    assert body["require_human_review"] is False
     # Phase 21 R21.2/R21.3 fields are surfaced with paper defaults.
-    assert body["max_symbol_exposure"] == "50000"
+    assert body["max_symbol_exposure"] == "20000"
     assert body["max_concentration_pct"] == "1.0"
     assert body["max_leverage"] == "1.0"
     assert body["max_price_deviation_pct"] == "0.05"
