@@ -23,6 +23,68 @@ from alphabrief_data import (
 
 data_app = typer.Typer(help="Manage market data ingestion and quality checks.")
 
+
+@data_app.command("catalog")
+def catalog_cmd(
+    search: str | None = typer.Option(  # noqa: B008
+        None,
+        "--search",
+        help="Case-insensitive name or display-name search.",
+    ),
+    category: str | None = typer.Option(  # noqa: B008
+        None,
+        "--category",
+        help="Filter by taxonomy category (e.g. CURRENCY, INDEX_CFD, OTHER_CFD).",
+    ),
+    active_only: bool = typer.Option(  # noqa: B008
+        False,
+        "--active-only",
+        help="Only instruments active in the current projection.",
+    ),
+    page: int = typer.Option(  # noqa: B008
+        1,
+        "--page",
+        min=1,
+        help="Page number (1-based).",
+    ),
+    page_size: int = typer.Option(  # noqa: B008
+        100,
+        "--page-size",
+        min=1,
+        max=10000,
+        help="Page size.",
+    ),
+    pretty: bool = typer.Option(  # noqa: B008
+        True,
+        "--pretty/--compact",
+        help="Pretty-print JSON output.",
+    ),
+) -> None:
+    """Query the persisted account instrument catalog.
+
+    Read-only: the same deterministic query function the API uses, so
+    totals, filters, metadata, taxonomy, active state, catalog version,
+    and freshness are identical for the same query.
+    """
+    import json
+
+    from alphabrief_api.db.instrument_catalog import InstrumentCatalogStore
+
+    result = InstrumentCatalogStore().query(
+        search=search,
+        category=category,
+        active_only=active_only,
+        page=page,
+        page_size=page_size,
+    )
+    json.dump(
+        result.model_dump(mode="json"),
+        sys.stdout,
+        indent=2 if pretty else None,
+        sort_keys=True,
+    )
+    sys.stdout.write("\n")
+
 ProviderSource = Literal["yahoo", "binance", "alphavantage"]
 
 

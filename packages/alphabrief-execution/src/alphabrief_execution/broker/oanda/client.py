@@ -80,10 +80,16 @@ class OandaHttpClient:
         *,
         config: OandaPaperConfig,
         http_send: Callable[[Request, float], bytes] | None = None,
+        token: str | None = None,
+        account_id: str | None = None,
     ) -> None:
         self._config = config
         self._http_send = http_send or _default_http_send
-        self._token, self.account_id = read_oanda_credentials()
+        if token is None or account_id is None:
+            self._token, self.account_id = read_oanda_credentials()
+        else:
+            self._token = token
+            self.account_id = account_id
 
     # ------------------------------------------------------------------
     # Public surface

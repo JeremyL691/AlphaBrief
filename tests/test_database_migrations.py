@@ -182,24 +182,28 @@ def test_newer_schema_fails_startup(
         check_compatibility(connection, migrations=(_GOOD_V1,))
 
     # A build that knows v1..v3 but only supports v2 rejects the newer v3.
-    v3 = Migration(
-        version=3,
-        name="test-v3",
-        statements=("CREATE TABLE IF NOT EXISTS t_v3 (id INTEGER PRIMARY KEY)",),
+    v_future = Migration(
+        version=99,
+        name="test-v99",
+        statements=("CREATE TABLE IF NOT EXISTS t_v99 (id INTEGER PRIMARY KEY)",),
     )
-    migrate(connection, migrations=(_GOOD_V1, _GOOD_V2, v3))
+    migrate(connection, migrations=(_GOOD_V1, _GOOD_V2, v_future))
+    # A build that does not know v99 sees it as an unknown applied version.
+    with pytest.raises(SchemaCompatibilityError, match="unknown to this build"):
+        check_compatibility(connection, migrations=(_GOOD_V1, _GOOD_V2))
+    # A build that knows v99 but only supports v2 rejects it as newer.
     with pytest.raises(SchemaCompatibilityError, match="newer"):
         check_compatibility(
             connection,
-            migrations=(_GOOD_V1, _GOOD_V2, v3),
+            migrations=(_GOOD_V1, _GOOD_V2, v_future),
             expected_latest=2,
         )
 
-    # The startup path (apply_schema with the real v1-only build) also
-    # fails closed before any write.
+    # The startup path (apply_schema with the real build) also fails
+    # closed before any write: applied version 99 is unknown to it.
     with pytest.raises(SchemaCompatibilityError):
         apply_schema(connection)
-    assert current_schema_version(connection) == 3
+    assert current_schema_version(connection) == 99
 
 
 def test_corrupt_schema_fails_startup(
