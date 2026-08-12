@@ -1,4 +1,4 @@
-"""Deterministic OANDA-only production boundary gates (M01-W01).
+"""Deterministic OANDA-only production boundary gates (M01-W01..W05).
 
 This module proves the *selected* production configuration cannot express
 any execution venue other than the OANDA practice account: the execution
@@ -8,12 +8,16 @@ settings. Every check is a positive assertion — the loaders are strict
 validation, and the raw selector-line scan below guards against a future
 loader that stops validating.
 
-Dormant unselected files are out of scope here; the milestone-wide graph
-gate (M01-W05) covers the absence of unused venues in the repository.
+M01-W05 adds the milestone-wide safety scan (:func:`production_safety_
+violations`) that maps SAFE-001..003 structurally and leaves SAFE-004 to
+the composition tests (missing credentials fail closed with no local
+fill).
 """
 
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 from typing import get_args
 
@@ -142,4 +146,114 @@ def _unexpected_selector_lines(text: str, source: Path) -> list[str]:
     return violations
 
 
-__all__ = ["production_boundary_violations"]
+# ---------------------------------------------------------------------------
+# M01-W05 milestone-wide safety scan (SAFE-001..004)
+# ---------------------------------------------------------------------------
+
+#: Production source roots scanned for forbidden execution imports.
+_PRODUCTION_SCAN_ROOTS = ("apps", "packages")
+
+#: Execution-relevant paths scanned for host literals.
+_EXECUTION_SCAN_PATHS = (
+    "packages/alphabrief-execution",
+    "apps/api/src/alphabrief_api/broker_adapter.py",
+    "apps/cli/src/alphabrief_cli/scheduler_commands.py",
+)
+
+#: The only remote host production execution may reach.
+_ALLOWED_EXECUTION_HOSTS: frozenset[str] = frozenset(
+    {"api-fxpractice.oanda.com"}
+)
+
+#: Loopback hosts permitted for test/dev mock overrides.
+_LOOPBACK_HOST_MARKERS: tuple[str, ...] = ("127.0.0.1", "localhost", "oanda.test")
+
+#: Module path segments and names that must not appear in production imports.
+_FORBIDDEN_IMPORT_SEGMENTS: frozenset[str] = frozenset(
+    {"alpaca", "routing", "simulated"}
+)
+_FORBIDDEN_IMPORT_NAMES: frozenset[str] = frozenset(
+    {"RoutingBrokerAdapter", "SimulatedBrokerAdapter", "route_symbol_to_venue"}
+)
+
+_URL_LITERAL_RE = re.compile(r"https?://([^\s\"'`]+)")
+
+
+def production_safety_violations(root: Path | str) -> list[str]:
+    """Return deterministic violations of the M01 OANDA-only safety gates.
+
+    SAFE-001: the production graph imports no other-broker, routing, or
+    in-memory execution surface.
+    SAFE-002: production execution code only references the OANDA practice
+    host, with loopback test overrides excepted.
+    SAFE-003: production configuration cannot select a live host, another
+    broker, routing, or any in-memory substitute (config boundary scan).
+    SAFE-004: missing credentials fail closed with no local fill — proven
+    by the composition tests, not by a structural scan.
+    """
+    root_path = Path(root)
+    problems: list[str] = list(production_boundary_violations(root_path))
+    problems.extend(_forbidden_import_violations(root_path))
+    problems.extend(_execution_host_violations(root_path))
+    return problems
+
+
+def _production_python_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for spec in _PRODUCTION_SCAN_ROOTS:
+        folder = root / spec
+        if folder.exists():
+            files.extend(folder.rglob("*.py"))
+    return files
+
+
+def _forbidden_import_violations(root: Path) -> list[str]:
+    violations: list[str] = []
+    for path in _production_python_files(root):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+                names.extend(alias.name for alias in node.names)
+            else:
+                continue
+            for name in names:
+                segments = name.split(".")
+                if (
+                    any(segment in _FORBIDDEN_IMPORT_SEGMENTS for segment in segments)
+                    or name in _FORBIDDEN_IMPORT_NAMES
+                ):
+                    violations.append(
+                        f"{path.relative_to(root)} imports forbidden "
+                        f"execution surface {name!r}"
+                    )
+    return violations
+
+
+def _execution_host_violations(root: Path) -> list[str]:
+    violations: list[str] = []
+    for spec in _EXECUTION_SCAN_PATHS:
+        path = root / spec
+        if not path.exists():
+            continue
+        files = [path] if path.is_file() else path.rglob("*.py")
+        for file in files:
+            text = file.read_text(encoding="utf-8")
+            for match in _URL_LITERAL_RE.finditer(text):
+                host = match.group(1).split("/", 1)[0].split(":", 1)[0]
+                if host in _ALLOWED_EXECUTION_HOSTS:
+                    continue
+                if any(marker in host for marker in _LOOPBACK_HOST_MARKERS):
+                    continue
+                violations.append(
+                    f"{file.relative_to(root)} references execution host {host!r}"
+                )
+    return violations
+
+
+__all__ = [
+    "production_boundary_violations",
+    "production_safety_violations",
+]
