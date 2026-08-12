@@ -148,6 +148,19 @@ ID（`\d{3}-\d{3}-\d{7,}-\d{3}`）与可配置 sensitive patterns
   skip/xfail/noqa/type-ignore、改动 pyproject.toml/ruff/mypy config
   需要显式 authorization，否则失败。
 
+#### 4.1.4 Recovery Verdicts（M02-W05）
+
+`alphabrief_acceptance.autonomous_recovery`：
+
+- `classify_recovery(checkpoint, head_commit, dirty_paths, contract)` ——
+  base==HEAD 且 dirty ⊆ allowlist → RESUME（必须重跑
+  `last_verified_gate`）；无 checkpoint + clean → SELECT_NEXT；dirty 无法
+  唯一归属（无 checkpoint / 超出 allowlist / base mismatch）→ STOP /
+  BLOCK；本模块只分类，绝不 reset/checkout/clean/stash/commit；
+- `classify_failure_ceiling(...)` —— same-failure 达上限或 total repair
+  达上限 → QUARANTINE；被 QUARANTINE 的 item 不影响 independent
+  selection。
+
 ### 4.2 Milestone State
 
 ```text

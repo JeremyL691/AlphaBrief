@@ -231,6 +231,16 @@ transition table 已写入 docs/autonomous_loop.md §4.1 附录。
 
 范围说明：本 round 无 allowlist 外路径。full pytest 1459 passed（+20 gate 测试）。
 
+#### M02-W05 已闭环证据（R-20260813-M02-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M02-W05-01 | checkpoint 的 base、dirty paths、allowlist 一致时，先重跑 last gate 再 RESUME | `classify_recovery`：base==HEAD 且 dirty ⊆ allowlist → RESUME（`re_run_gate` 携带 checkpoint 的 last_verified_gate）；base mismatch → BLOCK |
+| AC-M02-W05-02 | dirty paths 缺失或归属模糊时安全停止，不做 reset/checkout/clean/stash/commit、不提问 | 无 checkpoint + dirty → STOP；dirty 超出 allowlist → STOP；checkpoint 无 gate → STOP；模块只分类不执行任何 git 操作 |
+| AC-M02-W05-03 | 重复失败上限产生 QUARANTINED，independent work 仍可选 | `classify_failure_ceiling`（same-failure 3 次或 total 5 次 → QUARANTINE）；QUARANTINED item 不被 selection 选中且不报错 |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1469 passed（+10 recovery 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
