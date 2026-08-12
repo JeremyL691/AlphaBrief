@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-13T07:00:00+08:00"
+updated_at: "2026-08-13T07:30:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M02-W03
+  work_item_id: M02-W04
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M02-W02-FINAL-GATE
-  next_action: capture command evidence and scrub artifacts
+  last_verified_gate: M02-W03-FINAL-GATE
+  next_action: enforce scope, safety, and test-delta gates
 
 milestones:
   M00: DONE
@@ -104,9 +104,10 @@ work_item_states:
   M01-W05: DONE
   M02-W01: DONE
   M02-W02: DONE
+  M02-W03: DONE
 
 latest_validation:
-  completed_at: "2026-08-13T07:00:00+08:00"
+  completed_at: "2026-08-13T07:30:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -114,7 +115,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 1429
+      passed: 1439
       failed: 0
       warnings: 12
     restricted_sandbox:
@@ -217,5 +218,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M02-W02
-last_ledger_record: R-20260813-M02-W02
+last_completed_round: R-20260813-M02-W03
+last_ledger_record: R-20260813-M02-W03

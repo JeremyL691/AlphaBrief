@@ -211,6 +211,16 @@ M01 里程碑全部 5 个 work items DONE；下一个 READY item 为 M02-W01（�
 范围说明：本 round 无 allowlist 外路径。full pytest 1429 passed（+12 state machine 测试）。
 transition table 已写入 docs/autonomous_loop.md §4.1 附录。
 
+#### M02-W03 已闭环证据（R-20260813-M02-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M02-W03-01 | PASS/FAIL 只来自 process exit code，agent-authored result field 不能提供 | `run_command` 从 `proc.returncode` 派生 `passed`；`CommandEvidence` model validator 拒绝 `passed` 与 exit_code/timed_out 矛盾的记录；`true`→pass、`false`→fail、`exit 42`→exit_code 42 |
+| AC-M02-W03-02 | logs/manifests 脱敏 token、authorization headers、account IDs 和配置的 sensitive patterns | `autonomous_scrub`（authorization/bearer/token/api_key/secret/OANDA account ID/纯数字串 patterns）；artifact 只含 scrubbed bytes，SHA-256 计算于 scrubbed 内容；custom pattern 注入测试 |
+| AC-M02-W03-03 | timeout 终止整个 child process group 并产生 classified failed evidence | `start_new_session=True` + `killpg`（SIGTERM → grace → SIGKILL）；`sleep 30` 在 1s timeout 后 timed_out=True、passed=False、classification="timeout"，`pgrep` 证明无残留进程 |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1439 passed（+10 runner/scrub 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

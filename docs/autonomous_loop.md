@@ -122,6 +122,19 @@ BLOCKED_DECISION）与 repair ceilings（IMPLEMENTING/TESTING/SELF_REVIEW
 `milestone_gate_passes()`/`project_engineering_ready()` 执行 aggregate
 gates（M15/M16/M17 只接受 DONE，不接受 CODE_COMPLETE）。
 
+#### 4.1.2 命令证据 runner 与脱敏（M02-W03）
+
+`alphabrief_acceptance.autonomous_runner.run_command()` 在独立 process
+group 运行声明命令，捕获 stdout+stderr 到 scrubbed artifact，PASS/FAIL
+只从真实 exit code 派生（`CommandEvidence.passed` 与 exit_code 矛盾会被
+schema 拒绝）；timeout 时终止整个 process group 并产生
+`failure_classification="timeout"` 的 failed evidence。
+
+`alphabrief_acceptance.autonomous_scrub` 在 artifact 落盘与 hash 前脱敏：
+authorization headers、bearer/token/api_key/secret、完整 OANDA account
+ID（`\d{3}-\d{3}-\d{7,}-\d{3}`）与可配置 sensitive patterns
+（REQ-OPS-002）。
+
 ### 4.2 Milestone State
 
 ```text
