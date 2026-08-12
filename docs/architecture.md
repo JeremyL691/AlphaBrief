@@ -48,6 +48,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | `oanda/pricing` | batch pricing + conversions | M05-W02 起：确定性分块（默认 50/上限 500）、ladders/spread/liquidity/tradeable/closeout/conversion/broker time/correlation 全保留；quality validation fail-closed；显式 per-instrument coverage（partial 永不视为 complete snapshot） |
 | `oanda/stream` | bounded stale-aware pricing stream | M05-W03 起：单连接 owner + 原地 subscription reconcile；classified bounded backoff（disconnect/heartbeat/malformed/rate/server）；stale 先于消费 freshness 判定；shutdown 返回最终 cursor 供持久化 |
 | `oanda/sessions` | category-aware sessions/holidays/tradeability | M05-W04 起：8 类窗口（FX overnight、CFD、Crypto 24x7、holidays、UTC-fixed）；`evaluate_exposure_readiness` 对 tradeable/catalog/session/stale/unknown 全 fail-closed；不再依赖单一全局 weekday window |
+| `market_snapshot` store | immutable cycle market snapshots | M05-W05 起：migration v4 表；确定性 manifest（source IDs + quality rules + quality version）；7 类 quality rules → non-executable verdict；原子 publish + lineage 链；后继 ingestion 不改变已引用 snapshot |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |

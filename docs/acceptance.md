@@ -455,6 +455,17 @@ stream 测试）。
 范围说明：本 round 无 allowlist 外路径。full pytest 1661 passed（+15
 sessions 测试）。
 
+#### M05-W05 已闭环证据（R-20260813-M05-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M05-W05-01 | 相同 immutable inputs + quality-policy version 产生相同 snapshot ID/manifest hash/source IDs/quality results/normalized serialization | `build_market_snapshot` 确定性（snapshot_id/manifest_hash 由 normalized inputs + quality version 派生）；双构建全等断言（built_at 为 wall-clock 元数据、排除于 manifest，规范化比较）；quality version 不同 → 不同 snapshot；publish 幂等（`test_market_data_snapshot_store.py`） |
+| AC-M05-W05-02 | incomplete candles/stale quotes/missing conversion/catalog mismatch/unacceptable gaps/abnormal spread/partial coverage 产生显式 rule results 和 non-executable verdict | 7 类 quality rules 各有 fail 测试（incomplete/stale/mismatch/gaps>30min/spread>5%/not-ready）；executable 只在全部 rule passed 时为 True |
+| AC-M05-W05-03 | 后继 ingestion 创建新 facts 与新 lineage-linked snapshot，不改变已被 decision 引用的 snapshot | `MarketSnapshotStore`（migration v4 表）原子 publish；lineage 链查询（v3→v2→v1）；已存 v1 逐字段不变（`test_market_data_lineage.py`） |
+
+范围说明：本 round 无 allowlist 外路径。full pytest 1673 passed（+12
+snapshot/lineage 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
