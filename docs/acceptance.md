@@ -410,6 +410,18 @@ M04-W06 为 CODE_COMPLETE（缺 T7 practice evidence）；M04 里程碑 CODE_COM
 M05 激活并继承 `external_evidence_pending`（按 autonomous_loop §5.1，M00-M15
 工程项可把 CODE_COMPLETE 当 code dependency satisfied）。
 
+#### M05-W01 已闭环证据（R-20260813-M05-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M05-W01-01 | fixtures 覆盖全部官方 granularity、M/B/A 组合、count/time ranges、daily/weekly alignment、pagination boundaries、UTC timestamps | 21 个 granularity parametrized parse；M/B/A 三组件同 row 各自成 fact；count/from/to/dailyAlignment/weeklyAlignment 传入 URL 断言；UTC 规范化（`test_oanda_market_candles.py`） |
+| AC-M05-W01-02 | bid/ask/mid OHLC + volume + complete flags Decimal-safe，不 collapse 组件、不覆盖其他 source version | 每组件独立 `OandaCandle`（component 保留）；float 输入拒绝；缺失组件价格拒绝；两个 candle source versions 在 store 中按 (symbol, timestamp, data_version, source) 共存（`test_market_data_store.py` 集成） |
+| AC-M05-W01-03 | pagination bounded 且 duplicate-free；incomplete candles 可查询 raw facts 但排除出 completed decision inputs | `count <= 5000` 上限；重复 (time, component) 拒绝而非合并；`completed_only()` 过滤；`next_from_time` 供分页 |
+
+范围说明：progress 的 `current` 新增 `external_evidence_pending` 字段（§5.1 标记），
+`CurrentRoundSchema` 同步接受该字段（loop-controller schema 的文档化 forced
+path）。full pytest 1625 passed（+32 candles 测试）。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
