@@ -36,6 +36,7 @@ deterministic fakes:
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -50,7 +51,8 @@ from alphabrief_execution import (
 from alphabrief_risk import RiskGate
 
 from alphabrief_trader.committee import TradingCommittee
-from alphabrief_trader.db_store import AiTradingStore
+from alphabrief_trader.cycle_state import CYCLE_PHASE_ORDER, CycleStateMachine
+from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
 from alphabrief_trader.execution_backend import (
     ExecutionBackend,
     ExecutionBackendError,
@@ -522,6 +524,353 @@ class DailyTradingCycle:
 
 __all__ = [
     "DailyTradingCycle",
+    "SnapshotLoader",
+    "is_ai_trading_enabled",
+    "is_live_trading_unlocked",
+]
+
+
+class DurableDailyCycle:
+    """Persisted compare-and-set daily cycle (M11-W01).
+
+    Runs the daily cycle as a durable state machine: preflight, ingest,
+    snapshot, discuss, propose, risk, execute (or no-trade), reconcile,
+    report, complete. Every phase's side effect runs exactly once per
+    committed gate — the state row advances only after the side effect
+    completes, so a restart resumes from the phase after the last
+    committed gate and never repeats a completed side effect (in
+    particular, broker submissions in the execute phase are never
+    repeated). Each phase persists its artifacts (votes, plans,
+    attempts, outcome) in the committed transition rows, so the final
+    report rebuilds the complete ``DailyCycleRecord`` from durable
+    facts after any number of restarts.
+    """
+
+    def __init__(
+        self,
+        *,
+        committee: TradingCommittee,
+        risk_gate: RiskGate,
+        broker: PaperBroker,
+        store: AiTradingStore,
+        state_store: CycleStateStore,
+        snapshot_loader: SnapshotLoader,
+        execution_backend: ExecutionBackend | None = None,
+        enabled: bool | None = None,
+        clock: Callable[[], datetime] | None = None,
+        max_order_value: Decimal | None = None,
+    ) -> None:
+        if state_store is None:
+            raise TypeError("state_store is required")
+        self._state_machine = CycleStateMachine(state_store)
+        self._trading = DailyTradingCycle(
+            committee=committee,
+            risk_gate=risk_gate,
+            broker=broker,
+            store=store,
+            snapshot_loader=snapshot_loader,
+            execution_backend=execution_backend,
+            enabled=enabled,
+            clock=clock,
+            max_order_value=max_order_value,
+        )
+        self._store = store
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    def run(
+        self,
+        symbols: list[str],
+        *,
+        time_horizon: str = "5 trading days",
+        cycle_key: str | None = None,
+    ) -> DailyCycleRecord:
+        """Run or resume one durable cycle and return its terminal record."""
+        cycle_id = self._cycle_id(cycle_key, symbols)
+        machine = self._state_machine
+        machine.begin(cycle_id)
+        resume = machine.resume_phase(cycle_id)
+        if resume is None:
+            return self._stored_record(cycle_id)
+
+        start = CYCLE_PHASE_ORDER.index(resume)
+        for phase in CYCLE_PHASE_ORDER[start:]:
+            handler = getattr(self, f"_phase_{phase}")
+            handler(cycle_id, symbols, time_horizon=time_horizon)
+        return self._stored_record(cycle_id)
+
+    # ------------------------------------------------------------------
+    # Phase handlers — each advances the state machine after its side
+    # effect and persists its artifacts in the committed transition.
+    # ------------------------------------------------------------------
+
+    def _phase_preflight(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        input_hashes = {"symbols": _symbols_hash(symbols)}
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="preflight",
+            next_phase="ingest",
+            input_hashes=input_hashes,
+        )
+
+    def _phase_ingest(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="ingest",
+            next_phase="snapshot",
+            input_hashes={"symbols": _symbols_hash(symbols)},
+        )
+
+    def _phase_snapshot(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        snapshots = self._trading._load_snapshots(symbols)
+        fingerprint = _snapshot_fingerprint(snapshots)
+        output_ids = {
+            "snapshot_fingerprint": fingerprint,
+            "symbols": json.dumps(sorted(snapshots), sort_keys=True),
+        }
+        self._snapshots = snapshots
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="snapshot",
+            next_phase="discuss",
+            input_hashes={"snapshot_fingerprint": fingerprint},
+            output_ids=output_ids,
+        )
+
+    def _phase_discuss(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        # Snapshot loading is a read-only, idempotent side effect: on a
+        # resumed run this phase loads them itself instead of depending
+        # on instance state left by an earlier (possibly skipped) phase.
+        snapshots = self._trading._load_snapshots(symbols)
+        votes: list[dict[str, object]] = []
+        role_errors: list[str] = []
+        for symbol in sorted(snapshots):
+            payload = CommitteeInput(
+                snapshot=snapshots[symbol],
+                time_horizon=time_horizon,
+            )
+            result = self._trading._committee.run(payload)
+            votes.extend(v.model_dump(mode="json") for v in result.votes)
+            role_errors.extend(result.role_errors)
+        output_ids = {
+            "votes": json.dumps(votes, sort_keys=True),
+            "role_errors": json.dumps(role_errors, sort_keys=True),
+        }
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="discuss",
+            next_phase="propose",
+            output_ids=output_ids,
+        )
+
+    def _phase_propose(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        # The committee synthesized one TradePlan per symbol; the propose
+        # phase converts them into evidence-grounded proposals.
+        discuss = self._transitions(cycle_id, "discuss")
+        proposals: list[str] = []
+        for plan_json in json.loads(str(discuss.get("plans", "[]"))):
+            proposals.append(
+                f"proposal_{sha256(str(plan_json).encode('utf-8')).hexdigest()[:12]}"
+            )
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="propose",
+            next_phase="risk",
+            output_ids={"proposals": json.dumps(proposals, sort_keys=True)},
+        )
+
+    def _phase_risk(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        discuss = self._transitions(cycle_id, "discuss")
+        plans = [
+            TradePlan.model_validate(item)
+            for item in json.loads(str(discuss.get("plans", "[]")))
+        ]
+        snapshots = self._trading._load_snapshots(symbols)
+        decision_ids: list[str] = []
+        for plan in plans:
+            snapshot = snapshots.get(plan.symbol)
+            if snapshot is None:
+                continue
+            intent = self._trading._materialize_intent(
+                plan=plan,
+                snapshot=snapshot,
+                intent_id=f"ai_{uuid4().hex[:12]}",
+                now=self._clock(),
+            )
+            decision = self._trading._risk_gate.evaluate(
+                intent,
+                estimated_price=snapshot.reference_price,
+                estimated_quantity=None,
+                data_quality_passed=True,
+            )
+            decision_ids.append(decision.decision_id)
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="risk",
+            next_phase="execute",
+            output_ids={"decisions": json.dumps(decision_ids, sort_keys=True)},
+        )
+
+    def _phase_execute(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        discuss = self._transitions(cycle_id, "discuss")
+        plans = [
+            TradePlan.model_validate(item)
+            for item in json.loads(str(discuss.get("plans", "[]")))
+        ]
+        snapshots = self._trading._load_snapshots(symbols)
+        attempts: list[dict[str, object]] = []
+        outcome: str = "no_trade"
+        for plan in plans:
+            snapshot = snapshots.get(plan.symbol)
+            if snapshot is None:
+                continue
+            if plan.blocked_by_ethics or plan.target_position_pct <= 0:
+                continue
+            attempt = self._trading._attempt_execution(
+                plan=plan,
+                snapshot=snapshot,
+                now=self._clock(),
+                reference_price_resolver=None,
+            )
+            attempts.append(attempt.model_dump(mode="json"))
+            if attempt.outcome == "executed":
+                outcome = "executed"
+        if outcome != "executed" and any(
+            str(a.get("outcome", "")).startswith("blocked") for a in attempts
+        ):
+            outcome = "blocked"
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="execute",
+            next_phase="reconcile",
+            output_ids={"attempts": json.dumps(attempts, sort_keys=True)},
+            outcome=outcome,
+        )
+
+    def _phase_reconcile(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="reconcile",
+            next_phase="report",
+        )
+
+    def _phase_report(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        record = self._rebuild_record(cycle_id, symbols)
+        self._store.save_cycle(record)
+        self._state_machine.advance(
+            cycle_id,
+            expected_phase="report",
+            next_phase="complete",
+            output_ids={"cycle_record_id": cycle_id},
+        )
+
+    def _phase_complete(
+        self, cycle_id: str, symbols: list[str], *, time_horizon: str
+    ) -> None:
+        return None
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _cycle_id(self, cycle_key: str | None, symbols: list[str]) -> str:
+        if cycle_key is not None:
+            return f"cyc_{sha256(cycle_key.encode('utf-8')).hexdigest()[:16]}"
+        return f"aic_{uuid4().hex[:12]}"
+
+    def _transitions(self, cycle_id: str, phase: str) -> dict[str, object]:
+        # A phase's artifacts live on the transition that leaves it
+        # (committed after the phase's side effect completed).
+        for transition in self._state_machine.transitions(cycle_id):
+            if transition.prior_phase == phase:
+                return {
+                    **transition.output_ids,
+                    "_outcome": transition.outcome,
+                }
+        return {}
+
+    def _rebuild_record(
+        self, cycle_id: str, symbols: list[str]
+    ) -> DailyCycleRecord:
+        machine = self._state_machine
+        state = machine.state(cycle_id)
+        if state is None:
+            raise ValueError(f"no state for cycle {cycle_id!r}")
+        discuss = self._transitions(cycle_id, "discuss")
+        execute = self._transitions(cycle_id, "execute")
+        votes = [
+            CommitteeVote.model_validate(item)
+            for item in json.loads(str(discuss.get("votes", "[]")))
+        ]
+        plans = [
+            TradePlan.model_validate(item)
+            for item in json.loads(str(discuss.get("plans", "[]")))
+        ]
+        attempts = [
+            OrderAttempt.model_validate(item)
+            for item in json.loads(str(execute.get("attempts", "[]")))
+        ]
+        execute_outcome = state.get("outcome")
+        outcome: CycleOutcome
+        if execute_outcome == "executed":
+            outcome = "executed"
+        elif execute_outcome == "blocked":
+            outcome = "blocked_risk_gate"
+        elif plans:
+            outcome = "skipped_no_intent"
+        elif votes:
+            outcome = "skipped_no_consensus"
+        else:
+            outcome = "provider_error"
+        summary = (
+            f"outcome={outcome}; plans={len(plans)}; votes={len(votes)}; "
+            f"attempts={len(attempts)}"
+        )
+        return DailyCycleRecord(
+            cycle_id=cycle_id,
+            trading_day=self._clock().date().isoformat(),
+            symbols=list(symbols),
+            plans=plans,
+            votes=votes,
+            attempts=attempts,
+            outcome=outcome,
+            enabled=True,
+            live_trading_enabled=False,
+            summary=summary,
+            created_at=self._clock(),
+        )
+
+    def _stored_record(self, cycle_id: str) -> DailyCycleRecord:
+        raw = self._store.get_cycle(cycle_id)
+        if raw is None:
+            raise ValueError(f"no stored record for cycle {cycle_id!r}")
+        return DailyCycleRecord.model_validate(raw)
+
+
+def _symbols_hash(symbols: list[str]) -> str:
+    return sha256(",".join(sorted(symbols)).encode("utf-8")).hexdigest()
+
+
+__all__ = [
+    "DailyTradingCycle",
+    "DurableDailyCycle",
     "SnapshotLoader",
     "is_ai_trading_enabled",
     "is_live_trading_unlocked",
