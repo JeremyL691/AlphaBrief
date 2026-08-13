@@ -702,3 +702,17 @@ pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissi
   `operations restore-drill --latest --isolated --compact`。
 - 真实 30 天观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令如实输出
   fail-closed（proofs 0/7、invariants 0/5、backup_integrity False），绝不伪造。
+
+## M17-W01: evidence-derived final acceptance report — R-20260813-M17-W01
+
+- `generate_final_report`（`REPORT_EVIDENCE_SOURCES` 6 项 +
+  `REPORT_COUNT_FIELDS` 12 项）：一切计数与引用来自不可变证据；缺证据即
+  fail-closed（passed=false、计数 0），绝不手写通过数（REQ-OBS-006）。
+- `scan_report_content`（`FORBIDDEN_REPORT_MARKERS` + `LIVE_CLAIM_MARKERS`）：
+  扫描 bearer/token/authorization/account-id/裸账号、waiver/TBD、live 暗示；
+  报告固定声明 OANDA practice-only（REQ-OBS-007）。
+- CLI：`observation report --output reports/generated/final_acceptance.json
+  --compact`、`observation report --output
+  reports/generated/final_acceptance.md --format markdown --compact`；
+  双格式 manifest hash 一致（可复现）。
+- 真实 OANDA practice T7 证据 PENDING：报告如实输出 NOT_PASSED。

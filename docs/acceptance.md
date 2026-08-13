@@ -2409,3 +2409,34 @@ backup_integrity=False），绝不伪造观察证据。全量 pytest：3238 tota
 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
 M10-W03）；ruff/mypy 全仓 clean；acceptance 11/11；runtime 3 命令均 exit 0。
 下一 READY item：M17-W01。
+
+#### M17-W01 已闭环证据（R-20260813-M17-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M17-W01-01 | Reports derive every requirement, work item, acceptance result, quality count, safety invariant, observation metric, incident, and known limitation from referenced immutable evidence rather than handwritten totals | `tests/test_observation_final_report.py`（M17-W01 契约声明文件）：`REPORT_EVIDENCE_SOURCES` 恰好 6 项（requirements_map/database_facts/loop_ledger/test_results/oanda_practice_evidence/observation_artifact_hashes）；`REPORT_COUNT_FIELDS` 恰好 12 项；`generate_final_report`——`test_full_evidence_passes`、`test_missing_source_fails_closed`（无 source → 全 not referenced）、`test_no_supplied_evidence_means_zero_counts`（无证据 → 计数全 0，绝不手写）、`test_partial_sources_fail_the_report`、`test_counts_are_typed_and_frozen`、`test_deterministic` |
+| AC-M17-W01-02 | A second generation from the same frozen inputs produces identical normalized content and manifest hashes while any missing, changed, duplicate, or unverified input fails closed | `tests/test_evidence_manifest.py`（M17-W01 契约声明文件）：`test_identical_frozen_inputs_give_identical_hash`、`test_changed_count_changes_the_hash`、`test_changed_source_reference_changes_the_hash`、`test_missing_evidence_fails_closed`、`test_unverified_input_is_never_assumed`（无 truth 的 source 绝不假设已引用）、`test_hash_is_stable_across_runs`；runtime 双格式（json + markdown）manifest hash 相同（cbe78057…） |
+| AC-M17-W01-03 | The report contains no secret, full account ID, authorization value, unlicensed news body, waiver, TBD, unsupported completion claim, or implication that live trading is enabled | `tests/test_final_report_redaction.py`（M17-W01 契约声明文件）：`FORBIDDEN_REPORT_MARKERS`（waiver/tbd）与 `LIVE_CLAIM_MARKERS`（live trading is enabled/live mode is active/go live）声明；`scan_report_content`——`test_clean_content_passes`、`test_bearer_token_is_caught`、`test_token_value_is_caught`、`test_authorization_value_is_caught`、`test_full_account_id_is_caught`、`test_bare_full_account_number_is_caught`、`test_waiver_is_caught`、`test_tbd_is_caught`、`test_live_trading_claim_is_caught`、`test_practice_only_statement_is_not_caught`、`test_deterministic`；runtime 报告 content_clean=true |
+
+#### M17 Requirement Traceability（M17-W01）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OBS-006 | `generate_final_report`：全部计数与 source 引用来自证据，缺证据即 fail-closed；`REPORT_COUNT_FIELDS` 12 项 + manifest hash（sha256 of normalized content） |
+| REQ-OBS-007 | 报告模板固定声明 "OANDA practice-only; live trading, other brokers, and production simulation remain forbidden and unreachable"；`LIVE_CLAIM_MARKERS` 扫描保证无 live 暗示 |
+
+范围说明：`tests/test_observation_final_report.py`、`tests/test_evidence_manifest.py`、
+`tests/test_final_report_redaction.py` 为 M17-W01 契约声明的测试文件（targeted
+command 声明，documented forced path）；`alphabrief_core/observation_controller.py`
+（新增 REPORT_EVIDENCE_SOURCES/REPORT_COUNT_FIELDS/ReportSource/FinalReport/
+generate_final_report/FORBIDDEN_REPORT_MARKERS/LIVE_CLAIM_MARKERS/
+ReportContentVerdict/scan_report_content）与 `apps/cli/observation_commands.py`
+（新增 `report --output --format json|markdown` 命令）为契约声明的既有模块扩展
+（observation profile：max_production_files=0，实际 0 个新生产文件）；
+`reports/generated/final_acceptance.json|.md` 为 observation profile 允许的
+generated artifacts（fail-closed 快照：passed=false、0/6 sources referenced、
+content_clean=true、manifest hash 双格式一致）。真实 OANDA practice T7 证据
+PENDING——报告如实输出 NOT_PASSED，绝不伪造通过数。全量 pytest：3265 total
+（3246 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
+M10-W03）；ruff/mypy 全仓 clean；acceptance 11/11；runtime 2 命令均 exit 0。
+下一 READY item：M17-W02。
