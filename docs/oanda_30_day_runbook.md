@@ -487,6 +487,15 @@ alarm 复发会生成新的 freeze 记录（detail digest + occurrence sequence�
 - **completed submit 后的 blocking diff**：只冻结新开仓（`blocking_diff`
   freeze，evidence_refs 指回 ledger submit），外部订单本身是不可变终态。
 
+**M07-W07 T7 重启演练**（有 practice 凭证时）：受控场景提交最小风险订单 →
+模拟进程重启（全新进程、同一 durable 文件）→ 解析同一外部订单与 transactions
+→ cursor 推进 + projection 重建 → 与真实 account summary/positions/orders
+typed 对账（必须 clean）→ cleanup 平仓 → 写脱敏 E5 evidence（仅 sha256
+hashes，不含 token 与完整 account ID）。任一环节异常（gap、对账 diff、
+cleanup UNRESOLVED）→ freeze 或 FAIL，不得继续观察。无凭证时保持
+ENVIRONMENT_BLOCKED 且 `external_evidence_pending`，mock 输出不得冒充
+practice evidence。
+
 ## 14. Zero-Intervention Boundaries
 
 M15 必须交付一个由同一 scheduler leader 持有的持久 observation supervisor。Day 0

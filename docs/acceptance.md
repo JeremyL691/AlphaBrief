@@ -654,6 +654,22 @@ durable runner；`ReconciliationRunner` 对 null adapter fail closed。进度数
 subprocess）。full pytest 1881 passed（+21 新测试）；ruff/mypy 全仓 clean；
 acceptance 11/11。
 
+#### M07-W07 已闭环证据（R-20260813-M07-W07）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M07-W07-01 | 确定性套件证明 100 重放至多一个 submit、原子 cursor 恢复、正确 projections、合法远端状态处理、每一类注入 diff、freeze 规则，以及从每个 transition 的 restart | 六套 M07 组件套件全绿（targeted 63 passed）：`test_oanda_idempotency.py`（100 重放单一 identity）、`test_oanda_restart_recovery.py`（八个 fault point restart + 100 跨进程重放）、`test_oanda_transaction_cursor.py`（原子 cursor + gap recovery）、`test_broker_remote_projection.py`（golden projection 精确重建）、`test_broker_reconciliation_matrix.py`（每类注入 diff 的 typed severity）、`test_broker_freeze.py`（六类 alarm freeze + evidence-only unfreeze）；新增聚合链测试 `test_aggregate_restart_chain_reconciles_clean`（`test_oanda_reconciliation_e2e.py`）：crash after send → restart 按 query 解析（同一 broker_order_id、post_count==1）→ cursor 原子推进到 6001 → projection 重建（order FILLED、trade/position OPEN）→ 与合法远端视图 typed reconcile clean → 零残留 freeze |
+| AC-M07-W07-02 | 受控 practice scenario 经历进程 restart，解析同一外部订单与 transactions，对账 account truth，清理 exposure，并存储脱敏 E5 hashes | T7 harness `test_controlled_practice_restart_scenario`（`test_oanda_reconciliation_e2e.py`）：有凭证时执行真实 practice 流程——SubmitWorkflow 提交最小风险订单 → 全新进程（同一 durable 文件）restart → reused=True 且同一 broker_order_id → transactions_since + cursor advance（facts_consumed≥1、零 gap）→ projection rebuild → 与 account summary/positions/orders 的真实远端视图 Reconciler clean → close trade cleanup → 写脱敏 E5 evidence（broker_order hash 与 transaction id hashes 各为 sha256 前 16 位，断言文件不含 token 与完整 account ID）。**无凭证 → 断言 ENVIRONMENT_BLOCKED 后返回，round 记录 `external_evidence_pending`（M07-W07 T7）**；mock 输出绝不冒充 practice evidence；M07 保持 CODE_COMPLETE |
+| AC-M07-W07-03 | 缺凭证、unresolved remote state、nonzero blocking diff、cleanup 失败或外部 outage 使系统保持 frozen 或 ENVIRONMENT_BLOCKED，无 fallback、waiver、询问或 DONE | `test_missing_credentials_fail_closed_environment_blocked`：`PracticeScenarioRunner(client=None)` → ENVIRONMENT_BLOCKED，approved/broker_order_id/cleanup_result 全 None，detail 含 credential（无 fake fill、无 fallback、无询问）；`test_blocking_diff_and_unresolved_remote_state_freeze_never_done`：completed submit 后 blocking reconciliation diff → FROZEN（blocking_diff freeze 落库、ledger COMPLETED 不可变）；send 失败 + 查询失败（unresolved remote state）→ ledger FROZEN + 新开仓 freeze、post_count 恒 1（绝不盲重试）；cleanup 失败 → `PracticeScenarioRunner` FAIL 语义（M06-W07 已证，无 waiver）；静态扫描：所有 reconcile 入口（API/CLI/scheduler）共用 runner 的 null-adapter fail-closed 守卫，任何路径无 input()/确认提示 |
+
+范围说明：`tests/test_oanda_reconciliation_e2e.py` 为 M07-W07 契约声明的
+runtime 测试缺失文件，按 M07-W05 既有先例创建（documented forced path）；
+本地确定性 gate 全绿，T7 practice 分支无凭证时断言 fail-closed 并记录
+external_evidence_pending。full pytest 1885 passed（+4 E2E 测试，首轮一次
+telemetry 测试 flake 后重跑全绿，与本 round 文件无关）；ruff/mypy 全仓
+clean（328 source files）；acceptance 11/11。M07 里程碑 → CODE_COMPLETE，
+下一 READY item：M08-W01。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
