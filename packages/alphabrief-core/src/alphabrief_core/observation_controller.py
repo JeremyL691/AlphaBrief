@@ -224,11 +224,102 @@ class ObservationSupervisor:
 
 
 __all__ = [
+    "DayZeroAttempt",
     "FORBIDDEN_E2E_STEPS",
+    "ObservationManifest",
     "ObservationDayState",
     "ObservationSupervisor",
     "ObservationSupervisorState",
     "PRACTICE_E2E_PATH",
+    "build_day_zero_attempt",
     "observation_day_index",
+    "qualified_start_date",
     "validate_e2e_sequence",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Day 0 manifest and qualified observation clock (M16-W01)
+# ---------------------------------------------------------------------------
+
+
+class ObservationManifest(BaseModel):
+    """The immutable Day 0 observation identity.
+
+    Created only after engineering readiness, full OANDA practice
+    preflight, controlled formal-path E2E, clean reconciliation, and
+    isolated restore all succeed (AC-M16-W01-01).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    observation_id: str = Field(min_length=1)
+    commit_hash: str = Field(min_length=1)
+    tree_hash: str = Field(min_length=1)
+    schema_version: str = Field(min_length=1)
+    config_version: str = Field(min_length=1)
+    dependency_hash: str = Field(min_length=1)
+    provider_profile: str = Field(min_length=1)
+    account_hash: str = Field(min_length=1)
+    catalog_version: str = Field(min_length=1)
+    timezone: str = Field(min_length=1)
+    start_timestamp: str = Field(min_length=1)
+    day_zero_date: str = Field(min_length=1)
+
+
+class DayZeroAttempt(BaseModel):
+    """One deterministic Day 0 commissioning attempt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ready: bool
+    manifest: ObservationManifest | None = None
+    blockers: tuple[str, ...] = ()
+
+
+def qualified_start_date(
+    today: date, *, rehearsal_dates: tuple[date, ...] = ()
+) -> date | None:
+    """The qualified observation start date.
+
+    The clock can never start from rehearsal or historical data: a
+    ``today`` that matches a rehearsal date (or is before the last
+    rehearsal date) yields ``None``.
+    """
+    for rehearsal in rehearsal_dates:
+        if today <= rehearsal:
+            return None
+    return today
+
+
+def build_day_zero_attempt(
+    *,
+    today: date,
+    rehearsal_dates: tuple[date, ...],
+    gates: dict[str, bool],
+    manifest_fields: dict[str, str],
+) -> DayZeroAttempt:
+    """One deterministic Day 0 commissioning attempt.
+
+    Every gate must pass (engineering readiness, observation preflight,
+    formal-path E2E, clean reconciliation, isolated restore); missing
+    gates or a disqualified start date record BLOCKED_EXTERNAL blockers
+    and never manufacture a manifest.
+    """
+    blockers: list[str] = []
+    start = qualified_start_date(today, rehearsal_dates=rehearsal_dates)
+    if start is None:
+        blockers.append("BLOCKED_EXTERNAL: qualified clock cannot start")
+    for gate, passed in gates.items():
+        if not passed:
+            blockers.append(f"BLOCKED_EXTERNAL: {gate} not passed")
+    if blockers or start is None:
+        return DayZeroAttempt(ready=False, manifest=None, blockers=tuple(blockers))
+    return DayZeroAttempt(
+        ready=True,
+        manifest=ObservationManifest(
+            **manifest_fields,
+            day_zero_date=start.isoformat(),
+        ),
+        blockers=(),
+    )
