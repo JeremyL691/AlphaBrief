@@ -180,4 +180,111 @@ def verify_day_cmd(
     )
 
 
+@observation_app.command("verify-window")
+def verify_window_cmd(
+    from_day: int = typer.Option(1, "--from-day", min=0, max=30),
+    through_day: int = typer.Option(7, "--through-day", min=0, max=30),
+    compact: bool = typer.Option(True, "--compact/--pretty"),
+) -> None:
+    """Verify the real-calendar day window.
+
+    Days qualify only after Day 0 is frozen; without the frozen
+    manifest the window is BLOCKED_EXTERNAL.
+    """
+    from datetime import date
+
+    from alphabrief_core.observation_controller import (
+        build_daily_record,
+        qualified_start_date,
+    )
+
+    start = qualified_start_date(
+        date.today(), rehearsal_dates=(date(2026, 8, 13), date(2026, 8, 14))
+    )
+    if start is None:
+        emit_json(
+            {
+                "from_day": from_day,
+                "through_day": through_day,
+                "qualified": False,
+                "status": "BLOCKED_EXTERNAL",
+            },
+            pretty=not compact,
+        )
+        return
+    records = [
+        build_daily_record(
+            day=day,
+            calendar_date="",
+            evidence_truth={},
+            daily_manifest_hash=None,
+        )
+        for day in range(from_day, through_day + 1)
+    ]
+    emit_json(
+        {
+            "from_day": from_day,
+            "through_day": through_day,
+            "qualified": True,
+            "records": [record.model_dump(mode="json") for record in records],
+        },
+        pretty=not compact,
+    )
+
+
+@observation_app.command("drill")
+def drill_cmd(
+    week: int = typer.Option(1, "--week", min=1),
+    scenario: str = typer.Option(
+        "scheduler-restart", "--scenario", help="Drill scenario."
+    ),
+    compact: bool = typer.Option(True, "--compact/--pretty"),
+) -> None:
+    """Run the non-submit scheduler restart drill for one week."""
+    from alphabrief_core.recovery import run_recovery_drill
+
+    drill = run_recovery_drill(scenario=scenario, boundary_truth={})
+    emit_json(
+        {
+            "week": week,
+            "scenario": scenario,
+            "passed": drill.passed,
+            "submits": 0,
+            "boundaries": [
+                {"boundary": b.boundary, "verdict": b.verdict}
+                for b in drill.boundaries
+            ],
+        },
+        pretty=not compact,
+    )
+
+
+@observation_app.command("weekly-gate")
+def weekly_gate_cmd(
+    week: int = typer.Option(1, "--week", min=1),
+    compact: bool = typer.Option(True, "--compact/--pretty"),
+) -> None:
+    """Run one week's scorecard gate (fail-closed without truth)."""
+    from alphabrief_core.observation_controller import run_weekly_gate
+
+    gate = run_weekly_gate(week=week, days_qualified=0, truth={})
+    emit_json(
+        {
+            "week": week,
+            "days_qualified": gate.days_qualified,
+            "passed": gate.passed,
+            "zero_duplicate_orders": gate.zero_duplicate_orders,
+            "zero_unapproved_orders": gate.zero_unapproved_orders,
+            "zero_live_or_other_broker_attempts": (
+                gate.zero_live_or_other_broker_attempts
+            ),
+            "monotonic_cursor": gate.monotonic_cursor,
+            "zero_unresolved_cross_day_difference": (
+                gate.zero_unresolved_cross_day_difference
+            ),
+        },
+        pretty=not compact,
+    )
+
+
 __all__ = ["observation_app"]
