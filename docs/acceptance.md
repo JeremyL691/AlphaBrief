@@ -1039,3 +1039,19 @@ source files）；acceptance 11/11。下一 READY item：M08-W07。
 DuckDB 锁，测试绝不触碰真实数据目录）。full pytest 2017 passed（+14 新
 测试）；ruff/mypy 全仓 clean（350 source files）；acceptance 11/11。下一
 READY item：M08-W08。
+
+#### M08-W08 已闭环证据（R-20260813-M08-W08）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M08-W08-01 | property/boundary/combination/restart/mutation suites 覆盖每条 REQ-RISK rule，AI 与 manual 路径使用 identical fresh context、rule evaluation、persisted decisions、backend binding | M08 全部九套确定性套件聚合运行（targeted 117 passed）：broker context（M08-W01）、instrument constraints（W02）、exposure matrix/currency aggregation（W03）、margin/loss drawdown/loss streak（W04）、market conditions（W05）、operational blocks/reduce-only（W06）、decision binding/store（W07）——每条 REQ-RISK-001..010 都有 boundary/combination/restart（store 重开）/mutation（inputs hash 变更）覆盖；AI 路径（`ExternalPaperExecutionBackend`）与 manual 路径（`routes/paper.py`）的 parity 由 `test_risk_execution_paths.py`/`test_paper_execution.py`/`test_ai_trader_execution_backend.py` 聚合证明（34 passed）：同一 context 服务、同一规则求值、同一 decision-binding service、同一 backend invariant |
+| AC-M08-W08-02 | SAFE-005/006 通过；受控 practice scenario 证明 approved decision→order 链与 rejected/stale/mismatched 零 unauthorized submits | SAFE-005：`test_safe_005_order_has_persisted_consumed_decision`——backend submit 后 store 中必有 approved+consumed 的 decision record，adapter 恰好收到 1 单；SAFE-006：`test_safe_006_rejected_and_consumed_decisions_never_submit`（approved=False / already-consumed 两例，adapter.requests==[]）、`test_safe_006_stale_decision_never_submits`（expired record → ExecutionBackendError）、`test_safe_006_mismatched_inputs_never_submit`（post-approval quantity 变更 → 拒绝且零 submit）；`test_controlled_practice_risk_chain`（T7 harness，`tests/test_risk_oanda_practice_e2e.py`）：有凭证时 approved decision 经真实 OANDA adapter 提交并 consume、rejected decision 零 unauthorized submits（adapter mapping 计数不变）、写脱敏 E5 evidence（sha256 hashes，无 token/account id）；**无凭证 → 断言 ENVIRONMENT_BLOCKED 后记录 `external_evidence_pending`（M08-W08 T7）**，M08 保持 CODE_COMPLETE |
+| AC-M08-W08-03 | 缺凭证、stale account truth、unresolved freeze、failed cleanup、external outage 保持 blocked，无 mock pass、waiver、fallback、询问或 milestone DONE | `test_missing_credentials_fail_closed`：`PracticeScenarioRunner(client=None)` → ENVIRONMENT_BLOCKED（approved/broker_order_id/cleanup 全 None，detail 含 credential）；stale context/blocking diff/freeze/unresolved 覆盖由 M08-W01/W05/W06 套件继承（context builder stale/frozen 拒绝、operational blocks 8 条件、reduce-only preconditions）；M08 里程碑 = CODE_COMPLETE 而非 DONE（T7 pending），静态扫描确认无 fallback/waiver/询问路径 |
+
+范围说明：`tests/test_risk_oanda_practice_e2e.py` 为 M08-W08 契约声明的 runtime
+测试缺失文件（按 M07-W05 既有先例创建，documented forced path）；本地
+deterministic gate 全绿（SAFE-005/006、缺凭证 fail-closed），T7 practice
+risk-chain 分支无凭证时断言 fail-closed 并记录 external_evidence_pending。
+M08 里程碑 → CODE_COMPLETE。full pytest 2024 passed（+7 E2E 测试）；
+ruff/mypy 全仓 clean（351 source files）；acceptance 11/11。下一 READY
+item：M09-W01。
