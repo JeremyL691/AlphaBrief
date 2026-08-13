@@ -155,16 +155,46 @@ def status_cmd(
         heartbeats_rows = heartbeats.list_heartbeats()
         open_freezes = recon.list_freezes(only_open=True)
         recent_alerts = heartbeats.list_alerts(limit=500)
+        runtime = _read_runtime_truth()
         payload = {
             "heartbeat_count": len(heartbeats_rows),
             "open_freeze_count": len(open_freezes),
             "alerts_total": len(recent_alerts),
             "running": False,
+            "leader_id": runtime.get("leader_id") if runtime else None,
+            "active_config": runtime.get("active_config") if runtime else {},
+            "running_phase": runtime.get("running_phase") if runtime else None,
+            "heartbeat_at": _iso(runtime.get("heartbeat_at")) if runtime else None,
+            "last_outcome": runtime.get("last_outcome") if runtime else None,
+            "next_due_at": _iso(runtime.get("next_due_at")) if runtime else None,
         }
     finally:
         heartbeats.close()
         recon.close()
     _dump(payload, pretty=pretty)
+
+
+def _iso(value: object) -> str | None:
+    """Render a datetime as ISO-8601 for JSON output."""
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())
+    return str(value)
+
+
+def _read_runtime_truth() -> dict[str, object] | None:
+    """Read the persisted scheduler runtime truth, or ``None``."""
+    try:
+        from alphabrief_trader.runtime_truth import RuntimeTruthStore
+
+        store = RuntimeTruthStore()
+        try:
+            return store.read()
+        finally:
+            store.close()
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
