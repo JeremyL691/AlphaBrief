@@ -1125,3 +1125,18 @@ forced path）；既有 `tests/test_sentiment.py`（RuleBasedSentimentAnalyzer�
 契约声明的缺失测试文件（documented forced paths）。full pytest 2090 passed
 （+13 新测试）；ruff/mypy 全仓 clean（367 source files）；acceptance 11/11。
 下一 READY item：M09-W06。
+
+#### M09-W06 已闭环证据（R-20260813-M09-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M09-W06-01 | snapshot 在一个 immutable version ID 与 hash 下记录 news、macro、sentiment、entity-link、quality、freshness、source-version IDs | `build_regime_snapshot` + `RegimeSnapshot`（新 `alphabrief_news/regime_snapshot.py`，`test_market_regime_snapshot.py`）：snapshot_id==version_id（"regime-v1-{hash[:16]}"）、content_hash=sha256 of normalized payload；news/macro/sentiment/entity_link_ids、quality_verdicts、freshness_verdicts、source_versions（排序的 (source, version) 对）全部落 snapshot；相同输入 → 相同 id/hash/逐字段相等；输入变化 → id 变化；`RegimeSnapshotStore` DuckDB append-only、duplicate persist 幂等、restart 后完整保留 |
+| AC-M09-W06-02 | partial-source failure 与 stale critical coverage 产生确定性 degraded/blocked verdicts 带 missing-source reasons，绝不合成 replacement facts | `DegradationPolicy(critical_sources, critical_input_kinds)`：全部 source ok → healthy；非关键源失败 → degraded（reason "macro-b: fetch failed, missing, or stale"）；关键源失败 → blocked（即使其他源 ok）；非 fresh 的 freshness verdict（kind∈critical_input_kinds）→ blocked、否则 degraded（reason "news (stale): ..."）；missing 只记录 reason——news_ids 等输入 ID 永不合成（断言 news_ids 保持原样）；相同输入两次构建 verdict/hash 完全一致 |
+| AC-M09-W06-03 | research context 与 news-risk context 以同一 snapshot ID 加载得到 identical evidence 与 quality verdicts | `RegimeSnapshotStore.get(snapshot_id)` 是共享 authority——research_view 与 risk_view 从同一 ID 解析出逐字段相等的 snapshot（quality_verdicts/degradation/content_hash/source_versions 全部一致）；store 持久化后任意消费者（同一进程或 restart 后）解析同一不可变记录 |
+
+范围说明：`alphabrief_news/regime_snapshot.py` 为 M09-W06 契约声明的新模块；
+`tests/test_market_regime_snapshot.py` 与 `tests/test_news_degradation.py` 为
+契约声明的缺失测试文件（documented forced paths）；`test_risk_news_context.py`
+不存在（M09-W07 gate 轮处理），integration 层以既有 sentiment/research
+context 套件运行。full pytest 2101 passed（+11 新测试）；ruff/mypy 全仓
+clean（370 source files）；acceptance 11/11。下一 READY item：M09-W07。
