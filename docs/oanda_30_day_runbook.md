@@ -614,3 +614,19 @@ pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissi
   UTC 日历首日。
 - `alphabrief observation start --runbook docs/oanda_30_day_runbook.md --compact`
   与 `alphabrief observation verify-day --day 0 --compact` 为可脚本化命令。
+
+## M16-W02: Days 1 through 7 (weekly-window contracts) — R-20260813-M16-W02
+
+- `DAILY_EVIDENCE_KINDS`（14 项）与 `build_daily_record`：缺任一项或缺失
+  daily-manifest hash 即 incomplete，绝不伪造观察证据。
+- `run_weekly_gate`：passed 由 7 天合格 + 五项零差异 invariants
+  （zero_duplicate_orders / zero_unapproved_orders /
+  zero_live_or_other_broker_attempts / monotonic_cursor /
+  zero_unresolved_cross_day_difference）推导，绝不外部注入。
+- `QUALIFIED_OUTCOMES`（6 项，全部需完整 reason）：weekend / holiday /
+  market_closed / degraded_provider / risk_gate_rejection / no_opportunity；
+  无活动配额、无合成订单路径。
+- CLI：`verify-window --from-day 1 --through-day 7`、`drill --week 1
+  --scenario scheduler-restart`（submits=0）、`weekly-gate --week 1`。
+- 真实 Days 1-7 观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令
+  如实输出 BLOCKED_EXTERNAL/WAITING_EXTERNAL。

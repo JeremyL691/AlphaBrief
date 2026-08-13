@@ -2240,3 +2240,34 @@ practice E2E 与 T7 外部证据 PENDING——Day 0 manifest 绝不 manufacture�
 BLOCKED_EXTERNAL 如实记录。全量 pytest：3134 total（3115 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （503 source files）；acceptance 11/11。下一 READY item：M16-W02。
+
+#### M16-W02 已闭环证据（R-20260813-M16-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M16-W02-01 | Days 1 through 7 each contain preflight, data, news, sentiment, committee or valid skip, intent or no-trade, risk, execution outcome, reconciliation, portfolio, alerts, heartbeat, backup, and hashed daily manifest evidence | `tests/test_observation_daily_record.py`：`DAILY_EVIDENCE_KINDS` 恰好 14 项（`test_all_fourteen_evidence_kinds_are_declared`：preflight/data/news/sentiment/committee_or_skip/intent_or_no_trade/risk/execution_outcome/reconciliation/portfolio/alerts/heartbeat/backup/daily_manifest_hash）；`build_daily_record`——`test_complete_day_with_manifest_hash`（14 项全真 + manifest hash → complete）；`test_missing_evidence_kind_marks_incomplete`/`test_missing_manifest_hash_marks_incomplete`（缺任一项 → incomplete）；`test_evidence_is_never_fabricated`（无 truth → 全 False）；`test_deterministic` |
+| AC-M16-W02-02 | Week 1 scorecard and the non-submit scheduler restart drill pass with zero duplicate orders, zero unapproved orders, zero live or other-broker attempt, monotonic cursor, and no unresolved cross-day difference | `tests/test_observation_weekly_gate.py`：`run_weekly_gate`——`test_full_truth_passes`（7 qualified days + 5 invariants → passed）；`test_missing_truth_fails_closed`（无 truth → 全 False）；`test_duplicate_orders_fail_the_gate`（任一 invariant 失败 → passed False，由 invariants 推导）；`test_deterministic`；`TestRestartDrill`（`scheduler-restart` drill 12 边界 frozen——CLI `drill` 命令 submits=0，绝不合成 submit） |
+| AC-M16-W02-03 | Weekend, holiday, market-closed, degraded-provider, RiskGate rejection, and grounded no-opportunity outcomes qualify only with complete reasons and never trigger an activity quota or synthetic order | `tests/test_observation_incidents.py`：`QUALIFIED_OUTCOMES` 恰好 6 项（`test_all_six_outcomes_are_declared`）；`classify_qualified_outcome`——`test_outcome_qualifies_with_complete_reason`（有完整 reason → qualify）；`test_outcome_without_reason_does_not_qualify`（None/空白 → 不 qualify）；`test_unknown_outcome_never_qualifies`；`test_classification_is_deterministic`；`TestNoQuotaNoSynthetic`（契约无活动配额、无订单产出路径——no-trade 为合格 outcome） |
+
+#### M16 Requirement Traceability（M16-W01..W02）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OBS-001 | W01 合格时钟/Day 0 manifest；W02 每日真实日历记录 |
+| REQ-OBS-002（每天有 preflight、数据/新闻/情绪快照、committee 或合法 skip、risk/no-trade/order、对账、portfolio、heartbeat 和日报证据） | W02 `DAILY_EVIDENCE_KINDS` 14 项 + `build_daily_record`（缺任一项 → incomplete，绝不伪造）；相关测试 |
+| REQ-OBS-003（不要求每天成交；安全拒绝和无机会是合格行为） | W02 `QUALIFIED_OUTCOMES`（weekend/holiday/market_closed/degraded_provider/risk_gate_rejection/no_opportunity 全合格）；`TestNoQuotaNoSynthetic` |
+| REQ-OBS-004 | W01 observation_id/冻结 build |
+| REQ-OBS-005（周门禁检查 uptime、cycle success、duplicate orders、reconciliation diffs、unresolved alerts、data freshness、model/schema、risk rejection 和 backup restore） | W02 `run_weekly_gate`（5 项零差异 invariants + 7 天合格）；相关测试 |
+
+范围说明：`tests/test_observation_daily_record.py`、`tests/test_observation_weekly_gate.py`、
+`tests/test_observation_incidents.py` 为 M16-W02 契约声明的测试文件（targeted
+command 声明，documented forced path）；`alphabrief_core/observation_controller.py`
+（扩展 DAILY_EVIDENCE_KINDS/ObservationDayRecord/build_daily_record/WeeklyGateResult/
+run_weekly_gate/QUALIFIED_OUTCOMES/classify_qualified_outcome）与
+`apps/cli/observation_commands.py`（`verify-window`/`drill`/`weekly-gate` runtime
+命令）为契约声明的既有模块扩展（observation profile：max_production_files=0）。
+真实 Days 1-7 观察依赖 Day 0 冻结（T7 外部证据 PENDING）——runtime 命令如实输出
+BLOCKED_EXTERNAL/WAITING_EXTERNAL，绝不伪造观察日。全量 pytest：3158 total
+（3139 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
+M10-W03）；ruff/mypy 全仓 clean（506 source files）；acceptance 11/11。
+下一 READY item：M16-W03。

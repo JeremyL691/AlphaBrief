@@ -224,7 +224,14 @@ class ObservationSupervisor:
 
 
 __all__ = [
+    "DAILY_EVIDENCE_KINDS",
     "DayZeroAttempt",
+    "ObservationDayRecord",
+    "QUALIFIED_OUTCOMES",
+    "WeeklyGateResult",
+    "build_daily_record",
+    "classify_qualified_outcome",
+    "run_weekly_gate",
     "FORBIDDEN_E2E_STEPS",
     "ObservationManifest",
     "ObservationDayState",
@@ -323,3 +330,145 @@ def build_day_zero_attempt(
         ),
         blockers=(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Daily evidence chain and weekly gate (M16-W02)
+# ---------------------------------------------------------------------------
+
+#: The required evidence kinds per observation day (AC-M16-W02-01).
+DAILY_EVIDENCE_KINDS: tuple[str, ...] = (
+    "preflight",
+    "data",
+    "news",
+    "sentiment",
+    "committee_or_skip",
+    "intent_or_no_trade",
+    "risk",
+    "execution_outcome",
+    "reconciliation",
+    "portfolio",
+    "alerts",
+    "heartbeat",
+    "backup",
+    "daily_manifest_hash",
+)
+
+
+class ObservationDayRecord(BaseModel):
+    """One day's evidence chain with its manifest hash."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    day: int = Field(ge=0, le=30)
+    calendar_date: str = Field(min_length=1)
+    evidence: dict[str, bool] = Field(default_factory=dict)
+    daily_manifest_hash: str | None = None
+    complete: bool = False
+
+
+def build_daily_record(
+    *,
+    day: int,
+    calendar_date: str,
+    evidence_truth: dict[str, bool],
+    daily_manifest_hash: str | None,
+) -> ObservationDayRecord:
+    """One deterministic daily evidence record.
+
+    Missing evidence kinds stay False — never fabricated. The record
+    is complete only when every kind has truth.
+    """
+    evidence = {
+        kind: bool(evidence_truth.get(kind, False))
+        for kind in DAILY_EVIDENCE_KINDS
+    }
+    complete = all(evidence.values()) and daily_manifest_hash is not None
+    return ObservationDayRecord(
+        day=day,
+        calendar_date=calendar_date,
+        evidence=evidence,
+        daily_manifest_hash=daily_manifest_hash,
+        complete=complete,
+    )
+
+
+class WeeklyGateResult(BaseModel):
+    """One week's scorecard and gate verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    week: int = Field(ge=1)
+    days_qualified: int = Field(ge=0)
+    passed: bool
+    zero_duplicate_orders: bool = False
+    zero_unapproved_orders: bool = False
+    zero_live_or_other_broker_attempts: bool = False
+    monotonic_cursor: bool = False
+    zero_unresolved_cross_day_difference: bool = False
+
+
+def run_weekly_gate(
+    *,
+    week: int,
+    days_qualified: int,
+    truth: dict[str, bool] | None = None,
+) -> WeeklyGateResult:
+    """One deterministic weekly gate.
+
+    Every zero-invariant must hold; missing truth fails the gate.
+    """
+    truth = truth or {}
+    invariants = {
+        "zero_duplicate_orders": bool(
+            truth.get("zero_duplicate_orders", False)
+        ),
+        "zero_unapproved_orders": bool(
+            truth.get("zero_unapproved_orders", False)
+        ),
+        "zero_live_or_other_broker_attempts": bool(
+            truth.get("zero_live_or_other_broker_attempts", False)
+        ),
+        "monotonic_cursor": bool(truth.get("monotonic_cursor", False)),
+        "zero_unresolved_cross_day_difference": bool(
+            truth.get("zero_unresolved_cross_day_difference", False)
+        ),
+    }
+    return WeeklyGateResult(
+        week=week,
+        days_qualified=days_qualified,
+        passed=days_qualified >= 7 and all(invariants.values()),
+        zero_duplicate_orders=invariants["zero_duplicate_orders"],
+        zero_unapproved_orders=invariants["zero_unapproved_orders"],
+        zero_live_or_other_broker_attempts=invariants[
+            "zero_live_or_other_broker_attempts"
+        ],
+        monotonic_cursor=invariants["monotonic_cursor"],
+        zero_unresolved_cross_day_difference=invariants[
+            "zero_unresolved_cross_day_difference"
+        ],
+    )
+
+
+#: Qualified non-trading outcomes with their required reason (AC-03).
+QUALIFIED_OUTCOMES: tuple[str, ...] = (
+    "weekend",
+    "holiday",
+    "market_closed",
+    "degraded_provider",
+    "risk_gate_rejection",
+    "no_opportunity",
+)
+
+
+def classify_qualified_outcome(
+    outcome: str, *, reason: str | None
+) -> bool:
+    """Whether one non-trading outcome qualifies.
+
+    An outcome qualifies only with a complete non-blank reason; the
+    contract never imposes an activity quota or a synthetic order.
+    """
+    if outcome not in QUALIFIED_OUTCOMES:
+        return False
+    return bool(reason and reason.strip())
