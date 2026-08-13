@@ -124,6 +124,11 @@ def list_cmd(
     start: str | None = typer.Option(None, help="Filter start (ISO-8601)."),
     end: str | None = typer.Option(None, help="Filter end (ISO-8601)."),
     limit: int = typer.Option(100, help="Maximum headlines to list."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit stable compact JSON instead of human text.",
+    ),
 ) -> None:
     """List persisted news headlines."""
     start_dt = _parse_iso_date(start) if start else None
@@ -136,6 +141,27 @@ def list_cmd(
         end=end_dt,
         limit=limit,
     )
+
+    if json_output:
+        from alphabrief_cli.contracts import emit_json
+
+        emit_json(
+            {
+                "headlines": [
+                    {
+                        "id": headline.headline_id,
+                        "published_at": (
+                            headline.published_at.astimezone(UTC).isoformat()
+                        ),
+                        "source": headline.source,
+                        "symbols": headline.symbols,
+                        "title": headline.title,
+                    }
+                    for headline in rows
+                ]
+            }
+        )
+        return
 
     if not rows:
         typer.echo("No headlines found.")
