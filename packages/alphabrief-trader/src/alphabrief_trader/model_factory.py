@@ -10,9 +10,12 @@ provider. A fake provider is available only through an explicit
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 
 from alphabrief_models import (
     FakeProviderAdapter,
+    ModelCallBudget,
+    ModelCallRecord,
     ModelCapability,
     ModelGateway,
     OllamaProviderAdapter,
@@ -42,8 +45,16 @@ class ModelProviderUnavailableError(RuntimeError):
     """
 
 
-def build_ai_trading_committee() -> TradingCommittee:
+def build_ai_trading_committee(
+    *,
+    record_sink: Callable[[ModelCallRecord], None] | None = None,
+    budget: ModelCallBudget | None = None,
+) -> TradingCommittee:
     """Build the AI Trading Committee from environment-backed providers.
+
+    ``record_sink`` and ``budget`` are forwarded to the ModelGateway so
+    production callers can persist every terminal call record and bound
+    per-request/cycle/daily model usage.
 
     Raises :class:`ModelProviderUnavailableError` when no real provider
     is configured so the caller can fail closed (for example persist a
@@ -52,7 +63,11 @@ def build_ai_trading_committee() -> TradingCommittee:
     """
 
     provider = build_ai_trading_provider()
-    gateway = ModelGateway(providers=[provider])
+    gateway = ModelGateway(
+        providers=[provider],
+        record_sink=record_sink,
+        budget=budget,
+    )
     return TradingCommittee(gateway=gateway, discipline=DisciplineConfig())
 
 

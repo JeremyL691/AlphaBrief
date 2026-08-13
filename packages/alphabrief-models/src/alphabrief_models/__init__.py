@@ -36,6 +36,8 @@ from alphabrief_models.evaluation_datasets import (
 )
 from alphabrief_models.gateway import (
     FakeProviderAdapter,
+    ModelCallBudget,
+    ModelCallClassification,
     ModelCallRecord,
     ModelCallStatus,
     ModelCapability,
@@ -47,6 +49,7 @@ from alphabrief_models.gateway import (
     ModelResponseStatus,
     ModelTaskType,
     ProviderAdapter,
+    classify_provider_error,
 )
 from alphabrief_models.kronos import (
     DeterministicKronosRuntime,
@@ -116,6 +119,8 @@ __all__ = [
     "MarketRegime",
     "MIN_JSON_VALID_RATE",
     "MIN_SCHEMA_PASS_RATE",
+    "ModelCallBudget",
+    "ModelCallClassification",
     "ModelCallRecord",
     "ModelCallStatus",
     "ModelCapability",
@@ -152,6 +157,7 @@ __all__ = [
     "build_default_prompt_registry",
     "build_kronos_evidence",
     "build_kronos_model_request",
+    "classify_provider_error",
     "eval_result_to_record",
     "forecast_with_kronos_gateway",
     "generate_daily_alpha_brief",
