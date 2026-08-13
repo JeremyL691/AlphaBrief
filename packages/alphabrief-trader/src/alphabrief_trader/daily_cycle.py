@@ -59,6 +59,12 @@ from alphabrief_trader.execution_backend import (
     ExecutionBackendResult,
     LocalPaperExecutionBackend,
 )
+from alphabrief_trader.execution_gate import (
+    ExecutionGate,
+    ExecutionMode,
+    PreflightFacts,
+)
+from alphabrief_trader.runtime_truth import RuntimeTruthStore
 from alphabrief_trader.schemas import (
     CommitteeInput,
     CommitteeVote,
@@ -559,10 +565,18 @@ class DurableDailyCycle:
         enabled: bool | None = None,
         clock: Callable[[], datetime] | None = None,
         max_order_value: Decimal | None = None,
+        preflight_facts_provider: Callable[[], PreflightFacts] | None = None,
+        runtime_store: RuntimeTruthStore | None = None,
     ) -> None:
         if state_store is None:
             raise TypeError("state_store is required")
         self._state_machine = CycleStateMachine(state_store)
+        self._execution_gate = ExecutionGate()
+        self._runtime_store = runtime_store
+        self._preflight_facts_provider = (
+            preflight_facts_provider
+            or _default_preflight_facts(enabled, risk_gate)
+        )
         self._trading = DailyTradingCycle(
             committee=committee,
             risk_gate=risk_gate,
@@ -606,12 +620,26 @@ class DurableDailyCycle:
     def _phase_preflight(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        readiness = self._execution_gate.evaluate(
+            self._preflight_facts_provider()
+        )
+        self._execution_readiness = readiness
+        if self._runtime_store is not None:
+            self._runtime_store.set_execution_mode(
+                readiness.mode.value, list(readiness.reasons)
+            )
         input_hashes = {"symbols": _symbols_hash(symbols)}
         self._state_machine.advance(
             cycle_id,
             expected_phase="preflight",
             next_phase="ingest",
             input_hashes=input_hashes,
+            output_ids={
+                "execution_mode": readiness.mode.value,
+                "execution_reasons": json.dumps(
+                    list(readiness.reasons), sort_keys=True
+                ),
+            },
         )
 
     def _phase_ingest(
@@ -650,6 +678,7 @@ class DurableDailyCycle:
         # on instance state left by an earlier (possibly skipped) phase.
         snapshots = self._trading._load_snapshots(symbols)
         votes: list[dict[str, object]] = []
+        plans: list[dict[str, object]] = []
         role_errors: list[str] = []
         for symbol in sorted(snapshots):
             payload = CommitteeInput(
@@ -659,8 +688,11 @@ class DurableDailyCycle:
             result = self._trading._committee.run(payload)
             votes.extend(v.model_dump(mode="json") for v in result.votes)
             role_errors.extend(result.role_errors)
+            if result.plan is not None:
+                plans.append(result.plan.model_dump(mode="json"))
         output_ids = {
             "votes": json.dumps(votes, sort_keys=True),
+            "plans": json.dumps(plans, sort_keys=True),
             "role_errors": json.dumps(role_errors, sort_keys=True),
         }
         self._state_machine.advance(
@@ -725,6 +757,27 @@ class DurableDailyCycle:
     def _phase_execute(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        readiness = self._execution_gate.evaluate(
+            self._preflight_facts_provider()
+        )
+        mode = readiness.mode
+        if mode != ExecutionMode.EXECUTABLE:
+            # Research phases already completed; execution is prevented
+            # before any broker invocation and the gate reasons persist.
+            self._state_machine.advance(
+                cycle_id,
+                expected_phase="execute",
+                next_phase="reconcile",
+                output_ids={
+                    "attempts": "[]",
+                    "execution_mode": mode.value,
+                    "execution_reasons": json.dumps(
+                        list(readiness.reasons), sort_keys=True
+                    ),
+                },
+                outcome="blocked",
+            )
+            return
         discuss = self._transitions(cycle_id, "discuss")
         plans = [
             TradePlan.model_validate(item)
@@ -866,6 +919,32 @@ class DurableDailyCycle:
 
 def _symbols_hash(symbols: list[str]) -> str:
     return sha256(",".join(sorted(symbols)).encode("utf-8")).hexdigest()
+
+
+def _default_preflight_facts(
+    enabled: bool | None, risk_gate: RiskGate
+) -> Callable[[], PreflightFacts]:
+    """Fail-closed default facts: execution is blocked unless every
+    gate condition is explicitly proven by the environment."""
+
+    def _facts() -> PreflightFacts:
+        return PreflightFacts(
+            trading_enabled=(
+                is_ai_trading_enabled() if enabled is None else bool(enabled)
+            ),
+            credentials_present=bool(
+                os.environ.get("ALPHABRIEF_OANDA_TOKEN")
+                and os.environ.get("ALPHABRIEF_OANDA_ACCOUNT_ID")
+            ),
+            account_truth_fresh=False,
+            reconciliation_clean=False,
+            data_fresh=False,
+            backup_ok=False,
+            model_healthy=False,
+            kill_switch_active=bool(risk_gate.kill_switch.active),
+        )
+
+    return _facts
 
 
 __all__ = [
