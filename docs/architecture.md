@@ -228,6 +228,19 @@ AI trading provider 组合（`alphabrief_trader.model_factory`）fail-closed：
 record；模型评测 API/CLI 默认走配置的真实 provider，未配置时 503/非零退出，
 `use_real_provider=false`/`--no-real-provider` 才是显式 fake 组合。
 
+每个 terminal ModelGateway 调用（success/malformed/timeout/rate_limit/
+provider_error/budget_exhausted/no_provider）生成唯一 `ModelCallRecord`：
+request/response hash、prompt version、provider/model 参数、latency、token
+counts、cost（Decimal）、retry count、schema verdict、cycle_key/snapshot_id
+correlation 与 UTC 时间戳；记录不含 raw prompt、raw response、token 或 secret。
+`ModelCallBudget` 按 request_id/cycle_key/UTC 日确定性拒绝超额调用（被拒调用
+不消耗额度、不修改已提交证据）。`ModelCallStore`（DuckDB append-only、
+call_id 幂等）通过 gateway `record_sink` 持久化；API `/ai/run` 已接入
+（`routes/ai_trading.py`），CLI/scheduler 的 sink 接线随其所属 scope 轮次补齐。
+表 DDL 为 store 本地幂等 `CREATE TABLE IF NOT EXISTS`
+（`db/schema.py` 版本化迁移 ledger 在 storage scope 外，未来 storage 轮以同名
+`IF NOT EXISTS` 迁移接管，见 `db/model_call.py` 注释）。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation

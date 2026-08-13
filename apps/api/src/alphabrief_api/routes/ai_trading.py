@@ -29,6 +29,7 @@ from alphabrief_execution import (
     PaperBroker,
     PortfolioState,
 )
+from alphabrief_models import ModelCallBudget, ModelCallRecord
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyCycleRecord,
@@ -47,12 +48,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphabrief_api.db import AiTradingStore, MarketDataStore, NewsStore
+from alphabrief_api.db.model_call import ModelCallStore
 
 # ---------------------------------------------------------------------------
 # Store + builder singletons (test-isolation via _reset_ai_state)
 # ---------------------------------------------------------------------------
 
 _store: AiTradingStore | None = None
+_call_store: ModelCallStore | None = None
 
 
 def _get_store() -> AiTradingStore:
@@ -62,12 +65,23 @@ def _get_store() -> AiTradingStore:
     return _store
 
 
+def _get_call_store() -> ModelCallStore:
+    """Return the singleton durable model-call record store."""
+    global _call_store
+    if _call_store is None:
+        _call_store = ModelCallStore()
+    return _call_store
+
+
 def _reset_ai_state() -> None:
     """Clear the singleton store (test isolation)."""
-    global _store
+    global _store, _call_store
     if _store is not None:
         _store.close()
     _store = None
+    if _call_store is not None:
+        _call_store.close()
+    _call_store = None
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +244,21 @@ router = APIRouter(prefix="/api/v1/ai", tags=["ai-trading"])
 
 
 def _build_default_committee() -> TradingCommittee:
-    """Build the configured AI Trading Committee."""
-    return build_ai_trading_committee()
+    """Build the configured AI Trading Committee.
+
+    Every terminal ModelGateway call is persisted to the durable
+    ``ModelCallStore`` and bounded by a per-request/cycle/day budget, so
+    the trading path keeps complete, replayable model evidence.
+    """
+    return build_ai_trading_committee(
+        record_sink=_persist_call_record,
+        budget=ModelCallBudget(),
+    )
+
+
+def _persist_call_record(record: ModelCallRecord) -> None:
+    """Persist one terminal gateway call record (sink callback)."""
+    _get_call_store().save_call(record)
 
 
 def _build_paper_broker() -> PaperBroker:
@@ -503,6 +530,7 @@ __all__ = [
     "AiStatusResponse",
     "_blocked_record_without_provider",
     "_cycle_payload",
+    "_persist_call_record",
     "_reset_ai_state",
     "router",
 ]

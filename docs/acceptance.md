@@ -1172,3 +1172,21 @@ clean（370 source files）；acceptance 11/11。下一 READY item：M09-W07。
 fallback（`tests/test_ai_trading_api.py` 与 `tests/test_api_server.py` 在本轮
 改动后全绿 124 passed）。full pytest 2122 passed；ruff/mypy 全仓 clean
 （375 source files）；acceptance 11/11。下一 READY item：M10-W02。
+
+#### M10-W02 已闭环证据（R-20260813-M10-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M10-W02-01 | successful/malformed/timeout/rate-limit/provider-error/budget-exhausted 调用各自持久化一条带 correlation 与 snapshot IDs 的 terminal record | `ModelCallRecord` 新增 `classification`（`success/malformed/timeout/rate_limit/provider_error/budget_exhausted/no_provider`）与 `cycle_key`/`snapshot_id`；`ModelGateway` 每条 invoke 恰好产出一条 terminal record 并经 `record_sink` 转发（`tests/test_model_gateway.py` 七个分类 fixture 逐一断言 classification/status；`tests/test_model_call_store.py` 七种 terminal 分类全部 round-trip 持久化；`tests/test_ai_trader_provider_unavailable.py::test_api_ai_run_persists_terminal_call_records` 证明 API 交易路径真实落库——classification 非空、input_hash=64 hex、task_type=symbol_research） |
+| AC-M10-W02-02 | record 包含 request/response hashes、template version、model parameters、latency、token counts、cost、retry history、schema verdict，且无敏感值 | `ModelCallRecord` 全字段：input_hash/output_hash（sha256）、prompt_version、provider/model、latency_ms、input_tokens/output_tokens、cost_estimate（Decimal，float 拒绝）、retry_count（gateway 按 request_id 累计，`test_retry_count_tracks_repeated_request_ids`）、schema_verdict、snapshot_id、cycle_key、UTC created_at；store round-trip 全字段断言（`test_model_call_store_round_trips_full_record`，DECIMAL(38,18) 数值等价）；`test_model_call_store_never_stores_raw_prompt_or_secret` 与既有 `test_model_call_record_does_not_store_raw_prompt_or_api_key` 断言序列化记录不含 input_text/output_text/api_key/Bearer/sk- |
+| AC-M10-W02-03 | per-call、per-cycle、daily budgets 确定性拒绝后续调用且保留已提交证据 | `ModelCallBudget`（per-request_id/per-cycle_key/UTC-day，clock 注入）：超限拒绝返回 `budget_exhausted` terminal record（error_type=`BudgetExhausted:request_limit/cycle_limit/daily_limit`）；被拒调用不消耗额度（重复拒绝稳定）；日界重置（`test_daily_budget_rejects_after_limit_and_resets_next_day`）；已提交证据不变（`test_budget_exhausted_records_preserve_committed_evidence`：成功 record 不被后续拒绝 mutating）；`ModelCallStore.save_call` call_id 幂等（`test_model_call_store_is_append_only_and_idempotent`：重复 save 不重复不覆盖） |
+
+范围说明：`apps/api/src/alphabrief_api/db/model_call.py`（`ModelCallStore`）与
+`tests/test_model_gateway_budget.py` 为 M10-W02 契约声明的新模块/缺失测试文件
+（documented forced paths）。`db/schema.py`（版本化迁移 ledger）在
+`models_research` scope 之外，store 以本地幂等 `CREATE TABLE IF NOT EXISTS`
+DDL 自持表结构（未来 storage-scope 轮以同名 `IF NOT EXISTS` 迁移接管，
+`test_database_migrations.py`/`test_backup_restore.py` 动态 `latest_schema_version()`
+不受影响，全绿）。sink 接线：API `/ai/run`（本轮）；CLI/scheduler sink 随其
+所属 scope 轮次补齐。full pytest 2148 passed；ruff/mypy 全仓 clean
+（377 source files）；acceptance 11/11。下一 READY item：M10-W03。
