@@ -2213,3 +2213,30 @@ commissioning E2E），按 §5.1 记录 blocker，绝不以本地 mock 冒充。
 acceptance 11/11。**M15 里程碑 → DONE（Engineering Readiness Gate 通过，build
 冻结为 practice-only；真实 30 日观察待 M16 commissioning 与 T7 外部证据）**。
 下一 READY item：M16-W01。
+
+#### M16-W01 已闭环证据（R-20260813-M16-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M16-W01-01 | Day 0 manifest fixes commit and tree hashes, schema and config versions, dependency hashes, provider profiles, account hash, catalog version, timezone, start timestamps, and one unique observation ID | `tests/test_observation_day_zero.py`：`ObservationManifest` 恰好 12 字段（`test_manifest_fixes_all_day_zero_fields`：observation_id/commit_hash/tree_hash/schema_version/config_version/dependency_hash/provider_profile/account_hash/catalog_version/timezone/start_timestamp/day_zero_date 全固定）；`test_observation_id_is_unique_per_manifest`（唯一 observation ID）；`build_day_zero_attempt` 仅在全部 gate 通过时产出 manifest（`test_blockers_never_manufacture_a_pass`——rehearsal 日/缺 gate → manifest=None） |
+| AC-M16-W01-02 | Full observation preflight, controlled practice E2E, cleanup, zero-difference reconciliation, initial backup, and isolated restore produce scrubbed manifests and valid hashes | `alphabrief acceptance practice-e2e --scenario observation-day-zero --compact` 运行成功：formal_path_required=True、credentials_present 如实、preflight/rehearsal passed 显式——绝不 false PASS；`alphabrief observation start` 仅在 engineering_readiness + observation_preflight + practice_e2e + clean_reconciliation + isolated_restore 全过时冻结 Day 0 manifest，否则记录全部 BLOCKED_EXTERNAL blocker；真实 practice E2E/clean reconciliation/restore 为 T7 级外部证据（pending，不伪造） |
+| AC-M16-W01-03 | The qualified clock cannot start from rehearsal or historical data and missing secrets, failed checks, unavailable services, or insufficient evidence record BLOCKED_EXTERNAL without prompting or manufacturing a pass | `tests/test_observation_calendar.py`：`qualified_start_date`——`test_real_date_starts_qualified`/`test_rehearsal_date_cannot_start`/`test_historical_rehearsal_blocks`/`test_no_rehearsals_allows_real_start`/`test_deterministic`（≤ 任一 rehearsal 日期 → None，时钟绝不从彩排/历史启动）；`TestSupervisorExternalState`（缺证据 → 失败日如实记录；BLOCKED_EXTERNAL 记录不伪造证据——`test_external_state_is_recorded_without_fabrication`）；`observation start`/`verify-day` runtime 命令以 BLOCKED_EXTERNAL 如实输出（start 全 6 blocker、verify-day day 0 不可 qualified） |
+
+#### M16 Requirement Traceability（M16-W01）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OBS-001（真实连续 30 日历日观察） | W01 `qualified_start_date`（真实 UTC 日历、彩排/历史不可启动）+ `ObservationManifest.day_zero_date`；相关测试 |
+| REQ-OBS-002（每天有 preflight、数据/新闻/情绪快照、committee 或合法 skip、risk/no-trade/order、对账、portfolio、heartbeat 和日报证据） | W01 Day 0 manifest 固定版本/哈希基线，为后续每日证据提供不可变锚点 |
+| REQ-OBS-004（P0/P1 或影响订单/风险/持久语义的修复会重置 qualified observation window） | W01 `observation_id` 唯一性 + 冻结 build（commit/tree hash）——任何修复改变 tree hash → 新 identity，窗口需重估 |
+
+范围说明：`tests/test_observation_day_zero.py` 与 `tests/test_observation_calendar.py`
+为 M16-W01 契约声明的测试文件（targeted command 声明，documented forced path）；
+`alphabrief_core/observation_controller.py`（扩展 ObservationManifest/
+build_day_zero_attempt/qualified_start_date）与 `apps/cli/observation_commands.py`
+（`observation start`/`observation verify-day` runtime 命令）为契约声明的既有模块
+扩展（observation profile：max_production_files=0，无新建生产文件）。真实 OANDA
+practice E2E 与 T7 外部证据 PENDING——Day 0 manifest 绝不 manufacture，全部
+BLOCKED_EXTERNAL 如实记录。全量 pytest：3134 total（3115 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（503 source files）；acceptance 11/11。下一 READY item：M16-W02。

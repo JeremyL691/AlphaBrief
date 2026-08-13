@@ -47,10 +47,14 @@ from alphabrief_core.observability import (
 from alphabrief_core.observation_controller import (
     FORBIDDEN_E2E_STEPS,
     PRACTICE_E2E_PATH,
+    DayZeroAttempt,
     ObservationDayState,
+    ObservationManifest,
     ObservationSupervisor,
     ObservationSupervisorState,
+    build_day_zero_attempt,
     observation_day_index,
+    qualified_start_date,
     validate_e2e_sequence,
 )
 from alphabrief_core.preflight import (
@@ -221,6 +225,10 @@ __all__ = [
     "scan_network_allowlist",
     "ReadinessVerdict",
     "engineering_readiness_verdict",
+    "DayZeroAttempt",
+    "ObservationManifest",
+    "build_day_zero_attempt",
+    "qualified_start_date",
     "REQUEST_BUDGETS",
     "REQUEST_FAMILIES",
     "RequestBudget",

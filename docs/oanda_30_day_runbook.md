@@ -602,3 +602,15 @@ oanda-observation --compact`、`acceptance practice-e2e --scenario
 commissioning --compact`、`operations restore-drill --latest --isolated
 --compact` 为可脚本化 runtime 命令。真实 practice E2E 与 T7 外部证据
 pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissioning。
+
+## Day 0 Commissioning (M16-W01)
+
+- Day 0 manifest（`observation_id`、commit/tree hash、schema/config/dependency
+  hash、provider profile、account hash、catalog version、timezone、start
+  timestamp）只在 engineering readiness + full observation preflight +
+  formal-path practice E2E + clean reconciliation + isolated restore 全部通过后
+  冻结；任何缺失 → 全部 BLOCKED_EXTERNAL blocker，绝不 manufacture manifest。
+- 合格时钟绝不从彩排或历史日期启动（`qualified_start_date`）；Day 0 为真实
+  UTC 日历首日。
+- `alphabrief observation start --runbook docs/oanda_30_day_runbook.md --compact`
+  与 `alphabrief observation verify-day --day 0 --compact` 为可脚本化命令。
