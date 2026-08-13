@@ -1140,3 +1140,17 @@ forced path）；既有 `tests/test_sentiment.py`（RuleBasedSentimentAnalyzer�
 不存在（M09-W07 gate 轮处理），integration 层以既有 sentiment/research
 context 套件运行。full pytest 2101 passed（+11 新测试）；ruff/mypy 全仓
 clean（370 source files）；acceptance 11/11。下一 READY item：M09-W07。
+
+#### M09-W07 已闭环证据（R-20260813-M09-W07）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M09-W07-01 | 全部 M09 fixture 套件无网络、无 waiver、无 skipped security case、无 nondeterministic snapshot 输出下通过 | M09 八套 targeted 套件聚合运行（63 passed）：ingestion（W01）、dedup+entity linking（W02）、macro（W03）、sentiment snapshot（W04）、untrusted+prompt injection（W05）、degradation+regime snapshot（W06）——全部 fixture 驱动、确定性（相同输入 byte-equivalent 输出与相同 hash 已逐一断言）、零 skip/xfail/noqa 新增；integration 六套（33 passed）含 gate 轮新增的 `test_news_api.py`/`test_news_commands.py`/`test_risk_news_context.py`（documented forced paths） |
+| AC-M09-W07-02 | REQ-NEWS-001..009 traceability 映射到 durable records、automated evidence、current progress | REQ-NEWS-001/008→ingestion（W01）；REQ-NEWS-002/003→dedup+entity linking（W02）；REQ-NEWS-004→macro release store（W03）；REQ-NEWS-005→sentiment aggregate（W04）；REQ-NEWS-006/008→untrusted sanitizer（W05）；REQ-NEWS-007/009→regime snapshot+degradation（W06）；每条 acceptance 的 evidence 逐轮落 acceptance.md 表格、progress.yaml work_item_states 全部 DONE、ledger 逐轮 ROUND record |
+| AC-M09-W07-03 | content pipeline 启用后 full repository、static、autonomous acceptance gates 全过 | full pytest 2108 passed、ruff/mypy 全仓 clean（373 source files）、acceptance 11/11（`alphabrief acceptance verify --compact` exit 0） |
+
+范围说明：`tests/test_news_api.py`、`tests/test_news_commands.py`、
+`tests/test_risk_news_context.py` 为 M09-W07 契约声明的缺失集成测试文件
+（按 M07-W05 先例创建，documented forced paths）；README 增加 M09 capability
+行。M09 里程碑 → DONE（无 T7 runtime 依赖，全部本地确定性 gate 通过）。
+下一 READY item：M10-W01。
