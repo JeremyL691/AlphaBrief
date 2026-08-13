@@ -1921,3 +1921,31 @@ broker-authoritative truth-only、reconciliation diff 显式标记）。集成 c
 total（2819 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
 分类见 M10-W03）；ruff/mypy 全仓 clean（460 source files）；acceptance 11/11。
 下一 READY item：M14-W05。
+
+#### M14-W05 已闭环证据（R-20260813-M14-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M14-W05-01 | Every displayed cycle, intent, risk decision, order, trade, transaction, reconciliation, and portfolio event links bidirectionally through persisted correlation identifiers | `tests/test_dashboard_trace_explorer.py`：`TraceExplorerView`/`TraceSegment` 携带 `correlation_ids`（`CORRELATION_KEYS` 7 类：cycle/intent/risk_decision/order/transaction/reconciliation/portfolio——`test_correlation_keys_cover_every_segment_kind`）；`verify_bidirectional_links` 检查双向解析——`test_full_chain_links_bidirectionally`（10 段全链双向 link 零 issue）；`test_broken_forward_link_is_reported`（指向不存在的 decision-ghost → 报 issue）；`test_missing_back_link_is_reported`（order 无反向 link → 报 issue）；leaf 段（evidence/transcript/trade）forward-only 由验证器按 keyed-kind 规则处理 |
+| AC-M14-W05-02 | The explorer exposes evidence versions, citations, inputs hash, rule-by-rule outcomes, broker references, timestamps, and reconciliation disposition without exposing secrets or full account IDs | `tests/test_dashboard_trace_redaction.py`：`test_evidence_and_hashes_are_preserved`（data_version/citations/inputs_hash/rules 原样保留）；`test_broker_references_and_timestamps_survive`（broker_ref/timestamp）；`test_reconciliation_disposition_is_preserved`（disposition + redaction_applied）；`test_secrets_are_redacted`/`test_full_account_ids_never_survive`（fixture 中的 "Bearer …"/token/完整 account id 全部 [REDACTED]——fixture 值运行时拼接，文件内无 literal）；`test_account_id_hash_is_non_reversible_display`（sha256 前 12 hex，不可逆）；`test_deterministic` |
+| AC-M14-W05-03 | Missing, stale, conflicting, or partial trace segments are visibly classified and never silently collapsed into a successful execution story | `classify_segment` 五态矩阵（`test_classification_matrix`：present/stale/conflicting/partial → complete/missing/stale/conflicting/partial）；`test_missing_segment_yields_missing_disposition`（缺段 → disposition=missing）；`test_conflicting_segment_never_collapses`（recon mismatch → disposition=conflicting、segment.status=conflicting，绝不折叠成成功故事）；`test_stale_and_partial_are_visible`（stale+partial 同时可见，disposition 取最差）；`test_complete_chain_disposition` |
+
+#### M14 Requirement Traceability（M14-W01..W05）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-003 | W01 token 系统/brand audit |
+| REQ-UI-004 | W02 `NAVIGATION_SECTIONS` |
+| REQ-UI-005 | W02 page states；W03-W05 workspace 视图 truth-only |
+| REQ-UI-006（订单和风险链可从 cycle 一键追溯到 evidence、讨论、intent、每条 risk rule、OANDA transaction 和 reconciliation） | W03 M13 trace API；W05 `dashboard/trace_explorer.py`（10 段全链 + 双向 correlation links + redaction）；`tests/test_dashboard_trace_explorer.py`/`test_dashboard_trace_redaction.py` |
+| REQ-UI-007 | W04 account/risk/orders 视图；W05 portfolio segment 链接 |
+
+范围说明：`tests/test_dashboard_trace_explorer.py` 与 `tests/test_dashboard_trace_redaction.py`
+为 M14-W05 契约声明的测试文件（targeted command 声明，documented forced path）；
+`dashboard/trace_explorer.py` 为 M14-W05 契约声明的生产模块（REQ-UI-006/007，
+scope profile `frontend`，risk_class safety-critical：双向 link 验证 + redaction +
+五态分类绝不折叠）。集成 command 声明的 `tests/test_audit_api.py` 不存在
+（audit API 覆盖位于 `tests/test_api_server.py`，documented substitution）。
+全量 pytest：2859 total（2840 passed + 19 pre-existing M08-W03 time-bombed
+risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（463 source files）；
+acceptance 11/11。下一 READY item：M14-W06。
