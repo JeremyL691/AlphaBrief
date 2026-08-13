@@ -86,12 +86,14 @@ def test_cli_status_command_offline_prints_counts(
     result = _run_cli(["scheduler", "status"], env=isolated_data_dir)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload == {
-        "heartbeat_count": 0,
-        "open_freeze_count": 0,
-        "alerts_total": 0,
-        "running": False,
-    }
+    assert payload["heartbeat_count"] == 0
+    assert payload["open_freeze_count"] == 0
+    assert payload["alerts_total"] == 0
+    assert payload["running"] is False
+    # The runtime-truth fields are present but empty offline.
+    assert payload["leader_id"] is None
+    assert payload["running_phase"] is None
+    assert payload["active_config"] == {}
 
 
 def test_cli_heartbeats_command_offline_prints_empty(

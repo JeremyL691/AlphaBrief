@@ -31,12 +31,14 @@ def test_scheduler_status_returns_zero_counts_when_empty(
     response = client.get("/api/v1/scheduler/status")
     assert response.status_code == 200
     body = response.json()
-    assert body == {
-        "heartbeat_count": 0,
-        "open_freeze_count": 0,
-        "alerts_total": 0,
-        "running": False,
-    }
+    assert body["heartbeat_count"] == 0
+    assert body["open_freeze_count"] == 0
+    assert body["alerts_total"] == 0
+    assert body["running"] is False
+    # Runtime-truth fields are present but empty.
+    assert body["leader_id"] is None
+    assert body["running_phase"] is None
+    assert body["active_config"] == {}
 
 
 def test_scheduler_heartbeats_empty_when_no_tasks_have_run(

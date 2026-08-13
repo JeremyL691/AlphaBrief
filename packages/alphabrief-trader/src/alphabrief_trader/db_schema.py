@@ -120,6 +120,28 @@ CREATE INDEX IF NOT EXISTS idx_cycle_state_transitions_cycle
     ON cycle_state_transitions (cycle_id, phase_order, created_at)
 """
 
+CREATE_SCHEDULER_LEASE_TABLE = """
+CREATE TABLE IF NOT EXISTS scheduler_lease (
+    holder_id       TEXT NOT NULL,
+    acquired_at     TIMESTAMPTZ NOT NULL,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    version         INTEGER NOT NULL DEFAULT 1
+)
+"""
+
+CREATE_SCHEDULER_RUNTIME_TABLE = """
+CREATE TABLE IF NOT EXISTS scheduler_runtime (
+    row_id          INTEGER PRIMARY KEY CHECK (row_id = 1),
+    leader_id       TEXT,
+    active_config_json JSON NOT NULL DEFAULT '{}',
+    running_phase   TEXT,
+    heartbeat_at    TIMESTAMPTZ,
+    last_outcome    TEXT,
+    next_due_at     TIMESTAMPTZ,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AI_DAILY_CYCLES_TABLE,
     CREATE_AI_DAILY_CYCLES_INDEX,
@@ -132,6 +154,8 @@ _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_CYCLE_STATE_TABLE,
     CREATE_CYCLE_STATE_TRANSITIONS_TABLE,
     CREATE_CYCLE_STATE_TRANSITIONS_INDEX,
+    CREATE_SCHEDULER_LEASE_TABLE,
+    CREATE_SCHEDULER_RUNTIME_TABLE,
 )
 
 
@@ -145,6 +169,8 @@ def apply_ai_trading_schema(connection: Any) -> None:
 def drop_ai_trading_schema(connection: Any) -> None:
     """Drop only AI trading tables, leaving the rest of the DB intact."""
 
+    connection.execute("DROP TABLE IF EXISTS scheduler_runtime")
+    connection.execute("DROP TABLE IF EXISTS scheduler_lease")
     connection.execute("DROP TABLE IF EXISTS cycle_state_transitions")
     connection.execute("DROP TABLE IF EXISTS cycle_state")
     connection.execute("DROP TABLE IF EXISTS cycle_checkpoints")
@@ -166,6 +192,8 @@ __all__ = [
     "CREATE_AI_DISCIPLINE_CONFIG_TABLE",
     "CREATE_AI_ORDER_ATTEMPTS_INDEX",
     "CREATE_AI_ORDER_ATTEMPTS_TABLE",
+    "CREATE_SCHEDULER_LEASE_TABLE",
+    "CREATE_SCHEDULER_RUNTIME_TABLE",
     "apply_ai_trading_schema",
     "drop_ai_trading_schema",
 ]

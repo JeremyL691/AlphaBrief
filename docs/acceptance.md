@@ -1316,3 +1316,22 @@ scheduler（M11-W02/W03 leader/runtime-truth 轮次接线，本轮已记录于
 architecture.md）。全量 pytest：2214 total（2195 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓
 clean（389 source files）；acceptance 11/11。下一 READY item：M11-W02。
+
+#### M11-W02 已闭环证据（R-20260813-M11-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M11-W02-01 | 同一 store 上两个 scheduler 进程恰好一个活跃 leader、一个 non-writing follower | `SchedulerLeaderLease`（`scheduler_lease` 表）：`acquire` CAS（未过期 lease 归属他人 → False）；`test_two_competitors_produce_one_leader`（a 获取后 b 失败、is_leader a=True/b=False、leader()==a）；`test_lease_survives_store_restart`（restart 后 a 仍 leader、b 仍被拒） |
+| AC-M11-W02-02 | lease 过期/丢失阻止 former leader 在 new leader 接管前启动另一阶段或 broker 提交 | `renew` 只允许当前 holder 且必须在过期前（UPDATE 后重读验证 expiry 实际延长——DuckDB 无 rowcount）；`test_expired_lease_allows_takeover`（过期后 is_leader=False、renew=False、b 可接管）；`test_non_holder_cannot_renew`（b 续期 a 的 lease → False）；`test_release_hands_leadership_over`+`test_foreign_release_rejected`；`test_leader_can_renew_and_keep_leadership`（30s 后续期成功、60s 内仍 leader）——leader 的 guard 在 renew/is_leader False 后无法继续阶段/提交 |
+| AC-M11-W02-03 | API 与 CLI task status 从同一 persisted authority 暴露 active config、leader ID、running phase、heartbeat、last outcome、next due time | `RuntimeTruthStore`（`scheduler_runtime` 单行，`test_update_and_read_round_trip`、`test_runtime_truth_survives_store_restart`、`test_heartbeat_updates_only_the_leader`）；API `GET /api/v1/scheduler/status` 新增 leader_id/active_config/running_phase/heartbeat_at/last_outcome/next_due_at（`test_status_exposes_runtime_truth`，空 store → None/{}，`test_status_has_null_runtime_when_absent`）；CLI `scheduler status` 输出同一字段（`test_cli_status_exposes_runtime_truth`，datetime ISO 序列化）；`test_cli_status_matches_api_surface` 逐字段断言 CLI 与 API 一致 |
+
+范围说明：`alphabrief_trader/scheduler_leader.py`、`alphabrief_trader/runtime_truth.py`、
+`tests/test_scheduler_leader.py`、`tests/test_scheduler_runtime_truth.py` 为
+M11-W02 契约声明的新模块/缺失测试文件（targeted command 声明，documented
+forced paths）；`routes/scheduler.py` `/status` 与 CLI `status` 仅新增字段
+（既有字段不变，`test_scheduler.py`/`test_scheduler_api.py`/
+`test_scheduler_cli.py` 既有断言更新为含新字段的逐键断言）。scheduler 进程
+的 lease 续期循环与 durable cycle 接线随 M11-W03/W05 轮次补齐。全量 pytest：
+2249 total（2230 passed + 19 pre-existing M08-W03 time-bombed risk fixture
+失败，分类见 M10-W03）；ruff/mypy 全仓 clean（393 source files）；
+acceptance 11/11。下一 READY item：M11-W03。

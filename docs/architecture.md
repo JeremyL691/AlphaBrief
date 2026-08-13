@@ -313,6 +313,19 @@ restart 后仍完整）。begin 亦记录初始 transition（prior=None），使
 都有审计行。API `/ai/run` 仍用 one-shot `DailyTradingCycle`（M11-W02/W03
 在 scheduler/leader 轮次接入 durable cycle）。
 
+Scheduler 单领导者与运行时真相（M11-W02）：`SchedulerLeaderLease`
+（`scheduler_lease` 表）提供可续期持久 lease——同一 store 上两个 scheduler
+进程恰好一个活跃 leader（acquire CAS：未过期 lease 归属他人时失败）；只有
+当前 holder 能在过期前续期（renew 校验 expiry 实际延长），lease 过期/丢失后
+former leader 的续期与 is_leader 全部失败，新 leader 才能在过期后接管——因此
+former leader 在新 leader 接管前无法启动另一阶段或 broker 提交。
+`RuntimeTruthStore`（`scheduler_runtime` 单行）持久化 active config、
+leader ID、running phase、heartbeat、last outcome 与 next due time；
+API `GET /api/v1/scheduler/status` 与 CLI `scheduler status` 均从同一
+persisted authority 读取这些字段（无 runtime 时返回 None/{}），保证所有
+展示面反映同一执行运行时。scheduler 进程的 lease 循环接线随 M11-W03/
+W05 轮次补齐。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation
