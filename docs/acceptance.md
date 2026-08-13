@@ -1405,3 +1405,19 @@ adapter 的 broker-fresh inputs 采集随 M13/M15 轮次接入。全量 pytest�
 2316 total（2297 passed + 19 pre-existing M08-W03 time-bombed risk fixture
 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（405 source files）；
 acceptance 11/11。下一 READY item：M11-W07。
+
+#### M11-W07 已闭环证据（R-20260813-M11-W07）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M11-W07-01 | 每个 completed cycle 引用 daily brief、transcript 或 legal skip、proposal 或 no-trade、risk result、broker outcome、reconciliation、portfolio snapshot、alerts、data-quality summary | `build_cycle_report`（`cycle_report.py`）从 transition IDs 组装 `DailyCycleReport`；`test_completed_cycle_references_all_evidence`（outcome/proposal_ids 或 no_trade_reason/decision_ids/broker_order_ids/reconciliation_id/portfolio_snapshot/alert_summary/data_quality_summary/transcript_id 或 transcript_skip_reason 全引用）；`test_no_trade_cycle_references_no_trade_reason`（blocked → no_trade_reason 带 gate reasons、broker_order_ids 空）；discuss 阶段持久化 `transcript_id`（votes hash）与 `transcript_skip_reason`（无 votes → no_committee_votes） |
+| AC-M11-W07-02 | 从 immutable IDs 重建 report 产生 byte-equivalent normalized content，不能替换为更新证据 | `normalized_json` 排除 build-time report_id/created_at，仅覆盖 immutable transition 派生字段；`test_report_id_is_deterministic`（同 cycle 两次构建相同 id 与 normalized）；`test_rebuild_is_byte_equivalent`（不同 clock 重建 → 相同 report_id 与 normalized_json）；`test_newer_evidence_cannot_substitute`（后续 cycle 运行后 frozen report 的 id/normalized 不变） |
+| AC-M11-W07-03 | Scheduler API 与 CLI 暴露同一 cycle outcome、phase timestamps、heartbeat、failure classification、last run、next due time，与 persisted runtime state 一致 | `RuntimeTruthStore` 扩展 `phase_started_at`/`failure_classification`（`test_phase_timestamps_and_classification_survive_restart`）；API `GET /api/v1/scheduler/status` 与 CLI `scheduler status` 均输出同组字段（`test_status_exposes_runtime_truth` 增补 phase_started_at/failure_classification；`test_cli_status_matches_api_surface` 逐字段一致） |
+
+范围说明：`alphabrief_trader/cycle_report.py`、
+`tests/test_daily_cycle_reporting.py` 为 M11-W07 契约声明的新模块/缺失测试
+文件（targeted command 声明，documented forced paths）；`test_scheduler_runtime_truth.py`
+扩展（既有 forced path 同族更新）。全量 pytest：2334 total（2315 passed +
+19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
+ruff/mypy 全仓 clean（407 source files）；acceptance 11/11。下一 READY
+item：M11-W08。

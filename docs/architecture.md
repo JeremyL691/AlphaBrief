@@ -377,6 +377,18 @@ report 之前对每次 broker outcome 运行注入的 reconciler，把
 `ReconciliationEvidence`（attempt/order ids/matched/account snapshot）
 持久化在 reconcile transition——对账证据先于 report 完成落库。
 
+每日证据与报告（M11-W07）：`build_cycle_report`（`cycle_report.py`）仅从
+immutable transition IDs 构建 `DailyCycleReport`——daily brief、transcript
+（或 legal skip：`transcript_skip_reason`）、proposal 或 no_trade（含
+reasons）、decision chain、broker outcome、reconciliation、portfolio
+snapshot、alerts 与 data-quality summary，`report_id` = normalized content
+hash（排除 build-time 的 report_id/created_at）；**rebuild 从相同 IDs 产生
+byte-equivalent normalized content 且 report_id 不变**——新证据无法替换旧
+report（frozen report 不受后续 cycle 影响）。`RuntimeTruthStore` 扩展
+`phase_started_at` 与 `failure_classification`；API `/status` 与 CLI
+`scheduler status` 暴露同一组 persisted runtime 字段（cycle outcome、phase
+timestamps、heartbeat、failure classification、last run、next due）。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation

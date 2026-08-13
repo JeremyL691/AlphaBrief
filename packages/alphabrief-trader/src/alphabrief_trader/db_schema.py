@@ -135,8 +135,10 @@ CREATE TABLE IF NOT EXISTS scheduler_runtime (
     leader_id       TEXT,
     active_config_json JSON NOT NULL DEFAULT '{}',
     running_phase   TEXT,
+    phase_started_at TIMESTAMPTZ,
     heartbeat_at    TIMESTAMPTZ,
     last_outcome    TEXT,
+    failure_classification TEXT,
     next_due_at     TIMESTAMPTZ,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
