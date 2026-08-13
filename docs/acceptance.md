@@ -994,3 +994,17 @@ item：M08-W04。
 全部 CAS/evidence-backed（M08-W06 将接入 daily cycle 持久化链）；RiskGate
 零改动。full pytest 1970 passed（+25 新测试）；ruff/mypy 全仓 clean（341
 source files）；acceptance 11/11。下一 READY item：M08-W05。
+
+#### M08-W05 已闭环证据（R-20260813-M08-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M08-W05-01 | boundary 测试覆盖 spread absolute/relative limits、quoted liquidity、projected slippage、high-impact event windows、affected currencies/categories、sentiment severity/coverage/disagreement/freshness/uncertainty | `evaluate_market_conditions`（新 `alphabrief_risk/market_conditions.py`，`test_risk_market_conditions.py`）：spread_absolute（0.00020≤0.0003 pass / 0.00050 fail）、spread_relative（0.000182≤0.001 pass / 0.009 fail）、liquidity（1e6≥1e6 pass / 5e5 fail）、slippage（0.001≤0.005 pass / 0.01 fail）、event_window（symbol/currency/category 任一命中且 now 在窗内 → reject；窗外或未命中 → pass）、sentiment_freshness（299s pass / 600s stale → clamp 0.5）、coverage（0.3<0.6 → clamp）、disagreement（0.9>0.5 → clamp）、uncertainty（0.9>0.5 → clamp）、sentiment_severity（-0.3<-0.2 → reject；-0.1 ≥ floor → pass）；全部 Decimal-safe、frozen、extra=forbid |
+| AC-M08-W05-02 | context policy 确定性且 tighten-only；model score/narrative/committee confidence/external text 不能增大 size、放宽 rule 或修改 thresholds | `MarketConditionVerdict.tighten_only` 保证 size_multiplier ∈ [0,1]（reject=0 仍 tighten-only），`event_clamp_multiplier` 构造期限制 (0,1]（1.5 与 0 都 ValueError）；`test_no_free_text_inputs_exist` 断言五个 evidence model 均无 narrative/text/confidence/commentary 字段——evidence 只接受结构化 typed facts，无任何文本输入通道；全部 rule 仅由 limits 常量与 evidence 数值驱动，同一 evidence+limits 两次评估结果逐字段相等（确定性） |
+| AC-M08-W05-03 | missing/stale critical market/content context → configured reject 或 conservative clamp，绝不 fabricated neutral score、disabled rule、fallback content 或询问 | critical market evidence（spread/liquidity/slippage）缺失或超限 → reject（multiplier 0，"critical evidence missing"）；配置 event policy 而无 event calendar → reject（"no event calendar; fails closed"）；sentiment 缺失/过期 → freshness/coverage/disagreement/uncertainty 各 clamp 到 `CONSERVATIVE_CLAMP_MULTIPLIER=0.5`（绝不伪造 neutral 分数），severity score 缺失 → reject；无配置 limit → 零结果（无禁用痕迹）；无任何 input()/询问路径 |
+
+范围说明：`alphabrief_risk/market_conditions.py` 为 M08-W05 契约声明的新
+模块；`tests/test_risk_market_conditions.py` 为契约声明的新测试文件（既有
+`test_risk_context.py` 覆盖 M05 的 news/macro 层并保持全绿）；RiskGate
+零改动。full pytest 1987 passed（+17 新测试）；ruff/mypy 全仓 clean（343
+source files）；acceptance 11/11。下一 READY item：M08-W06。
