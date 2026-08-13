@@ -1587,3 +1587,30 @@ acceptance 11/11。下一 READY item：M12-W05。
 全量 pytest：2541 total（2522 passed + 19 pre-existing M08-W03 time-bombed
 risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（425 source files）；
 acceptance 11/11。下一 READY item：M12-W06。
+
+#### M12-W06 已闭环证据（R-20260813-M12-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M12-W06-01 | Seeded lookahead, revised-future-data, target leakage, train-test overlap, and timestamp-boundary violations fail automated leakage gates | `tests/test_backtest_leakage.py`：`check_chronological_bars`（`test_reversed_bar_fails`/`test_duplicate_timestamp_fails` → timestamp_boundary）；`check_declared_data_version`（`test_revised_version_fails` → revised_future_data，未声明修订版本 fail-closed）；`check_trailing_features_lookahead`（对每个 bar 用 bars[:i+1] 重算 close_sma/volume_sma/return 并与提供值逐项比对——`test_future_close_seeded_into_sma_fails`/`test_future_return_seeded_fails`/`test_missing_trailing_value_fails` → seeded_lookahead）；`check_train_test_disjoint`（`test_shared_timestamp_fails`/`test_test_before_train_end_fails` → train_test_overlap）；`check_signals_within_bars`（`test_future_dated_signal_fails`/`test_synthetic_timestamp_fails` → target_leakage）；`run_leakage_gates` 聚合（`test_clean_fixture_passes_all_gates` 5 gate 全过、`test_any_failure_fails_the_report`、`test_repeated_runs_are_identical`） |
+| AC-M12-W06-02 | Parameter perturbation, subperiod, walk-forward, and multiple-testing fixtures emit stability metrics and explicit overfitting warnings | `tests/test_strategy_overfitting.py`：`perturbation_stability`（grid spread，`test_spread_across_perturbation_grid`）+ `best_margin`（best vs median，`test_best_margin_from_median`）；`subperiod_stability`（CV，零均值/单 period → None，量化 1e-12 去 float noise）；`multiple_testing_warning`（>20 trials → warning，`test_many_trials_warn`）；`walk_forward_warning`（OOS 劣于 IS 超阈值 → walk_forward_degradation，且与 W04 runner 的 overfit_flag 语义一致——`test_walk_forward_runner_output_feeds_the_warning`）；`run_overfitting_audit` 聚合 3 metrics + warnings（`test_healthy_audit_passes_with_metrics`/`test_multiple_testing_warns`/`test_walk_forward_degradation_warns`/`test_identical_inputs_produce_identical_audits`） |
+| AC-M12-W06-03 | Kronos, Gym, and advisory predictions can create evidence records but cannot directly create an OrderIntent, RiskDecision, or broker request | `tests/test_gym_invariants.py`：`test_gym_sources_never_reference_orders_or_brokers`（对 `alphabrief_gym` 全部源文件断言 OrderIntent/RiskDecision/broker/submit/oanda token 零出现）+ `test_gym_public_exports_are_evidence_only` + `test_no_gym_function_returns_an_order_intent`；`test_gym_policy_output_is_a_typed_evaluation_not_an_order`；Kronos：`build_kronos_evidence` 产出 durable advisory record（`test_evidence_records_are_advisory_only_and_locked`——`advisory_only=False` 被 validator 拒绝）、evidence 无法构造 OrderIntent（缺 side/order_type/intent 字段 → ValidationError，`test_evidence_cannot_become_an_order_intent`/`test_order_intent_requires_fields_evidence_does_not_have`）、无法构造 RiskDecisionRecord（缺 decision_id/account_id/policy_hash/inputs_hash 权威字段 → ValidationError，`test_evidence_cannot_become_a_risk_decision`）；叠加既有 `test_kronos_integration.py`（ModelGateway-only）与 `test_ai_trader_rules.py`（DisciplineGate） |
+
+#### M12 Requirement Traceability（M12-W01..W06）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-STRAT-001..005 | W01-W05 已闭环（dsl/families/portfolio+execution+metadata/evaluation/reporting，见上各轮） |
+| REQ-STRAT-006（overfitting audit、参数稳定性、multiple-testing 警示、data leakage/lookahead tests） | W06 `alphabrief_backtest/leakage.py`（5 个 fail-closed gate + 聚合报告）+ `alphabrief_backtest/overfitting.py`（perturbation/subperiod/walk-forward/multiple-testing audit + 显式 warnings）；`tests/test_backtest_leakage.py`/`tests/test_strategy_overfitting.py` |
+| REQ-STRAT-007（Kronos/Gym/其他预测只提供 advisory evidence，不能绕过 committee 或 RiskGate） | W02 admission `PREDICTIVE_FAMILY_IDS`；W06 `tests/test_gym_invariants.py`（gym 零 order/broker 引用、Kronos evidence advisory_only 锁定、evidence 无法构造 OrderIntent/RiskDecision）；既有 `test_kronos_integration.py`/`test_ai_trader_rules.py` 全绿 |
+
+范围说明：`tests/test_backtest_leakage.py`、`tests/test_strategy_overfitting.py`、
+`tests/test_gym_invariants.py` 为 M12-W06 契约声明的测试文件（targeted command
+声明，documented forced path）；`leakage.py`/`overfitting.py` 为 M12-W06 契约
+声明的生产模块（REQ-STRAT-006/007，scope profile `strategy_backtest`，
+risk_class safety-critical：gate 全部 fail-closed、无任何可绕过路径）。
+`test_gym_invariants.py` 的 safety-gate 扫描命中项为该测试自身的 deny-list
+tuple 与 required-fields 集合（证明边界用，非真实 forbidden 内容），按 M09-W07
+precedent 记录 PASS。全量 pytest：2587 total（2568 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（430 source files）；acceptance 11/11。下一 READY item：M12-W07。
