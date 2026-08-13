@@ -90,6 +90,36 @@ CREATE TABLE IF NOT EXISTS cycle_checkpoints (
 )
 """
 
+CREATE_CYCLE_STATE_TABLE = """
+CREATE TABLE IF NOT EXISTS cycle_state (
+    cycle_id        TEXT PRIMARY KEY,
+    phase           TEXT NOT NULL,
+    phase_order     INTEGER NOT NULL,
+    outcome         TEXT,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_CYCLE_STATE_TRANSITIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS cycle_state_transitions (
+    transition_id     TEXT PRIMARY KEY,
+    cycle_id          TEXT NOT NULL,
+    phase             TEXT NOT NULL,
+    phase_order       INTEGER NOT NULL,
+    prior_phase       TEXT,
+    attempt_count     INTEGER NOT NULL DEFAULT 0,
+    input_hashes_json JSON NOT NULL DEFAULT '{}',
+    output_ids_json   JSON NOT NULL DEFAULT '{}',
+    outcome           TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_CYCLE_STATE_TRANSITIONS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_cycle_state_transitions_cycle
+    ON cycle_state_transitions (cycle_id, phase_order, created_at)
+"""
+
 _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AI_DAILY_CYCLES_TABLE,
     CREATE_AI_DAILY_CYCLES_INDEX,
@@ -99,6 +129,9 @@ _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AI_ORDER_ATTEMPTS_INDEX,
     CREATE_AI_DISCIPLINE_CONFIG_TABLE,
     CREATE_CYCLE_CHECKPOINTS_TABLE,
+    CREATE_CYCLE_STATE_TABLE,
+    CREATE_CYCLE_STATE_TRANSITIONS_TABLE,
+    CREATE_CYCLE_STATE_TRANSITIONS_INDEX,
 )
 
 
@@ -112,6 +145,8 @@ def apply_ai_trading_schema(connection: Any) -> None:
 def drop_ai_trading_schema(connection: Any) -> None:
     """Drop only AI trading tables, leaving the rest of the DB intact."""
 
+    connection.execute("DROP TABLE IF EXISTS cycle_state_transitions")
+    connection.execute("DROP TABLE IF EXISTS cycle_state")
     connection.execute("DROP TABLE IF EXISTS cycle_checkpoints")
     connection.execute("DROP TABLE IF EXISTS ai_order_attempts")
     connection.execute("DROP TABLE IF EXISTS ai_committee_votes")
@@ -122,6 +157,9 @@ def drop_ai_trading_schema(connection: Any) -> None:
 __all__ = [
     "CREATE_AI_COMMITTEE_VOTES_INDEX",
     "CREATE_CYCLE_CHECKPOINTS_TABLE",
+    "CREATE_CYCLE_STATE_TABLE",
+    "CREATE_CYCLE_STATE_TRANSITIONS_INDEX",
+    "CREATE_CYCLE_STATE_TRANSITIONS_TABLE",
     "CREATE_AI_COMMITTEE_VOTES_TABLE",
     "CREATE_AI_DAILY_CYCLES_INDEX",
     "CREATE_AI_DAILY_CYCLES_TABLE",
