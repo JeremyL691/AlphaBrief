@@ -2305,3 +2305,37 @@ P0 incident + reset），绝不伪造观察日。全量 pytest：3177 total（31
 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
 ruff/mypy 全仓 clean；acceptance 11/11；runtime 3 命令均 exit 0。
 下一 READY item：M16-W04。
+
+#### M16-W04 已闭环证据（R-20260813-M16-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M16-W04-01 | Days 15 through 21 have complete daily evidence and continuous heartbeat, lease, cursor, reconciliation, backup, provider, model-schema, alert, and risk-state accounting | `tests/test_observation_weekly_gate.py` `TestContinuityAccounting`：`CONTINUITY_KINDS` 恰好 9 项（heartbeat/lease/cursor/reconciliation/backup/provider/model_schema/alert/risk_state）；`build_continuity_accounting`——`test_full_continuity_truth_is_complete`、`test_missing_truth_is_never_fabricated`（无 truth → 全 False）、`test_day_range_covers_third_real_week`（Day 15-21 每天完整）、`test_deterministic` |
+| AC-M16-W04-02 | Approved fault injection proves bounded retry, jitter, no scheduler starvation, safe no-trade or freeze, durable alerting, clean recovery, and no blind resubmission or duplicate external order | `tests/test_observation_fault_drill.py`（M16-W04 契约声明文件）：`FAULT_SCENARIOS` 恰好 5 项（http_429/http_5xx/network_loss/stale_data/model_failure）；`FAULT_INVARIANTS` 恰好 8 项；`run_fault_drill`——`test_full_truth_passes_under_approved_injection`（每场景全 truth → passed，submits=0）；`test_missing_truth_fails_closed`；`test_unknown_scenario_fails_closed`；`test_duplicate_order_invariant_is_guarded`；`test_drill_never_submits`（本地注入绝不下单）；`test_invariants_are_typed`；`test_deterministic` |
+| AC-M16-W04-03 | Week 3 gate has no unresolved P0 or P1 and every P2 or P3 event has a deterministic reset decision, evidence hash, repair reference, and no operator question | `tests/test_observation_incidents.py` `TestWeekEventResolution`：`EVENT_RESOLUTION_FIELDS` 恰好 3 项（reset_decision/evidence_hash/repair_reference）；`resolve_week_event`——`test_p0_event_never_resolves_in_loop`/`test_p1_event_never_resolves_in_loop`（P0/P1 绝不由 loop 解决，gate 失败关闭）；`test_p2_event_resolves_with_all_fields`；`test_p3_event_missing_field_does_not_resolve`；`test_unknown_severity_fails_closed_as_p0`；`test_no_operator_question_is_asked`；`test_resolution_is_deterministic`；`tests/test_observation_weekly_gate.py` `TestWeekThreeGateWithEvents`（Week 3 gate 与 event resolution 组合：gate passed + 无未解决 P0/P1 + 全部 P2/P3 完整解决才可通过） |
+
+#### M16 Requirement Traceability（M16-W04）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OBS-001 | 合格时钟延续至第三真实周（Day 15-21 窗口）；runtime 命令在 Day 0 未冻结时如实 BLOCKED_EXTERNAL |
+| REQ-OBS-002 | W04 `CONTINUITY_KINDS` 9 项 + `build_continuity_accounting`（连续 accounting、绝不伪造）；配合 W02 14 项 hashed chain |
+| REQ-OBS-003 | 故障注入 drill 保 `safe_no_trade_or_freeze` 与 `no_duplicate_external_order`；drill submits=0，本地注入绝不下单 |
+| REQ-OBS-004 | 故障 drill 与事件解决契约固定在 observation_controller；drill 不触碰 practice account 正常行为之外 |
+| REQ-OBS-005 | W04 `resolve_week_event`：P0/P1 未解决 → gate 失败；P2/P3 需 reset_decision + evidence_hash + repair_reference 且绝不问 operator |
+
+范围说明：`tests/test_observation_fault_drill.py` 为 M16-W04 契约声明的测试文件
+（targeted command 声明，documented forced path）；`alphabrief_core/
+observation_controller.py`（新增 CONTINUITY_KINDS/ContinuityAccounting/
+build_continuity_accounting/FAULT_SCENARIOS/FAULT_INVARIANTS/FaultInvariant/
+FaultDrillReport/run_fault_drill/EVENT_RESOLUTION_FIELDS/WeekEventResolution/
+resolve_week_event）与 `apps/cli/observation_commands.py`（verify-window 增加
+continuity、drill 增加 provider-and-network-faults 场景、weekly-gate 增加
+events 输出）为契约声明的既有模块扩展（observation profile：
+max_production_files=0，实际 0 个新生产文件）。真实 Days 15-21 观察依赖 Day 0
+冻结（T7 外部证据 PENDING）——runtime 命令如实输出 BLOCKED_EXTERNAL 与
+fail-closed 的 fault drill（submits=0、8 invariants not preserved）与 week 3
+gate（4 events unresolved、P0 incident + reset），绝不伪造观察日。全量 pytest：
+3201 total（3182 passed + 19 pre-existing M08-W03 time-bombed risk fixture
+失败，分类见 M10-W03）；ruff/mypy 全仓 clean；acceptance 11/11；runtime 3
+命令均 exit 0。下一 READY item：M16-W05。

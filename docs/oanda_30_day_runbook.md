@@ -648,3 +648,22 @@ pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissi
   `weekly-gate --week 2`（含 incident/reset）。
 - 真实 Days 8-14 观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令
   如实输出 BLOCKED_EXTERNAL / fail-closed restore / classified incident。
+
+## M16-W04: Days 15 through 21 (third real week) — R-20260813-M16-W04
+
+- `CONTINUITY_KINDS`（9 项）+ `build_continuity_accounting`：heartbeat /
+  lease / cursor / reconciliation / backup / provider / model_schema /
+  alert / risk_state 每日连续 accounting；无 truth 一律 False。
+- `run_fault_drill`（`FAULT_SCENARIOS` 5 项 + `FAULT_INVARIANTS` 8 项）：
+  本地注入 http_429 / http_5xx / network_loss / stale_data / model_failure，
+  证明 bounded retry、jitter、无 scheduler starvation、safe no-trade 或
+  freeze、durable alerting、clean recovery、无 blind resubmission、无
+  duplicate external order；drill 永远 submits=0。
+- `resolve_week_event`（`EVENT_RESOLUTION_FIELDS` 3 项）：P0/P1 未解决 →
+  week gate 失败关闭；P2/P3 需 deterministic reset decision + evidence
+  hash + repair reference；绝不问 operator。
+- CLI：`verify-window --from-day 15 --through-day 21`（含 continuity）、
+  `drill --week 3 --scenario provider-and-network-faults`（submits=0）、
+  `weekly-gate --week 3`（含 events）。
+- 真实 Days 15-21 观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令
+  如实输出 BLOCKED_EXTERNAL / fail-closed fault drill / unresolved events。
