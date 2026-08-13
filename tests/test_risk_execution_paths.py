@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -49,6 +50,15 @@ from alphabrief_trader.execution_backend import ExecutionBackendError
 
 ACCOUNT = "101-004-1234567-001"
 NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+
+@pytest.fixture(autouse=True)
+def _isolated_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the runtime data directory at tmp so the decision-binding
+    store (M08-W07) never touches the developer's real data directory."""
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+
 
 class _FakeAdapter(BrokerAdapter):
     """Records submits; used only to prove the order never reaches it."""

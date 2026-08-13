@@ -1022,3 +1022,20 @@ source files）；acceptance 11/11。下一 READY item：M08-W06。
 freeze store 一致（deduplicated latest-per-condition、restart-safe）。RiskGate
 零改动。full pytest 2005 passed（+18 新测试）；ruff/mypy 全仓 clean（347
 source files）；acceptance 11/11。下一 READY item：M08-W07。
+
+#### M08-W07 已闭环证据（R-20260813-M08-W07）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M08-W07-01 | 每个 decision 在执行前持久化 immutable rule order、inputs/policy hashes、source IDs、timestamps、approved flag、max quantity、reasons、tags、context freshness、decision expiry | `RiskDecisionStore`（新 `alphabrief_risk/decision_store.py`，`test_risk_decision_store.py`）：`RiskDecisionRecord` 全字段持久化并 round-trip 逐项断言（decision/intent/account id、approved、reason、max_quantity Decimal、risk_tags、policy_hash、inputs_hash、snapshot_hash、rule_results、source_ids、context_freshness、created_at、expiry_at、consumed/consumed_at）；duplicate persist INSERT-OR-IGNORE——同 decision_id 二次 persist（含 approved=False/inputs mutated）返回 False 且原记录零变化（append-only，无更新 API）；consume 为 CAS（第二次 consume False、unknown id False、consumed_at 落 UTC）；`is_expired` 确定性（301s 后 expired、无 expiry 永不过期）；restart（关库重开）后记录与 consumed 状态完整保留；float max_quantity 构造期拒绝 |
+| AC-M08-W07-02 | missing/rejected/expired/consumed/account-/policy-/intent-/snapshot-mismatched/quantity-exceeding decisions 在 network submit 前被 backend 拒绝 | `DecisionBindingService.validate_before_submit`（新 `alphabrief_risk/decision_binding.py`，`test_risk_decision_binding.py`）：13 个分类拒绝逐一断言——missing（未 persist）、rejected（approved=False）、expired（expiry 已过）、consumed（执行后二次执行）、account_mismatch、policy_mismatch（policy hash 不同）、intent_mismatch、inputs_mismatch（post-approval quantity 变化→hash 不同）、snapshot_mismatch（显式提供不同 snapshot hash 时）、quantity_exceeds（quantity>max_quantity）、stale_context（approval 时 context 不 fresh）；valid 时 consume 恰好一次（二次执行 → consumed）；duplicate persist 保留 first record（retry 不能改写 inputs） |
+| AC-M08-W07-03 | AI 与 manual paper 路径调用同一 decision-binding service 与 backend invariant；caller 不能构造 executable approval boolean 或 mutate inputs after approval | `ExternalPaperExecutionBackend.submit`（`alphabrief_trader/execution_backend.py`）与 manual paper route（`routes/paper.py`）都经 `DecisionBindingService`（默认 store 位于 M01-W04 runtime data dir authority）persist + validate；backend 从不信任 caller 的 approved 字段——validation 以 persisted record 为准，且 decision.execution_input_hash（approval 时绑定）与 request 的 `hash_inputs(symbol, units, price)` 不一致时在 persist 前即拒绝（`test_backend_refuses_post_decision_input_change` 更新为 3-component hash：同 quantity 通过、变更 quantity 拒绝且 adapter.requests 不增长）；`hash_inputs`/`hash_policy` 为共享确定性函数；test_ai_trader_scheduler 与 test_ai_trader_execution_backend 的 daily-cycle 测试经 backend 默认 binding 全绿（隔离 ALPHABRIEF_DATA_DIR fixture 防泄漏到真实数据目录） |
+
+范围说明：`alphabrief_risk/decision_store.py` 与 `alphabrief_risk/decision_binding.py`
+为 M08-W07 契约声明的新模块；backend 的 M08-W02 inline execution_input_hash
+检查升级为 persisted-record validation（hash 组件统一为 symbol/units/price 三
+元组）；paper route 增加同一 binding service 的 persist+validate；所有测试
+强制 ALPHABRIEF_DATA_DIR 隔离（用户机器上有运行中的 scheduler 持有真实
+DuckDB 锁，测试绝不触碰真实数据目录）。full pytest 2017 passed（+14 新
+测试）；ruff/mypy 全仓 clean（350 source files）；acceptance 11/11。下一
+READY item：M08-W08。
