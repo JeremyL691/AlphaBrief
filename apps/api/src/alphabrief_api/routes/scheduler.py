@@ -168,7 +168,10 @@ def scheduler_status() -> dict[str, Any]:
 
     ``running`` is always ``False`` in this phase: the scheduler is a
     separate CLI process, not an API worker. The field is reserved
-    for a future round that probes a PID file.
+    for a future round that probes a PID file. The leader, running
+    phase, heartbeat, last outcome, and next due time come from the
+    persisted scheduler runtime truth (M11-W02), so the API reports the
+    same executing runtime the scheduler itself sees.
     """
     heartbeats = _heartbeat_store()
     recon = _recon_store()
@@ -176,15 +179,38 @@ def scheduler_status() -> dict[str, Any]:
         heartbeats_rows = heartbeats.list_heartbeats()
         open_freezes = recon.list_freezes(only_open=True)
         recent_alerts = heartbeats.list_alerts(limit=500)
+        runtime = _runtime_truth()
         return {
             "heartbeat_count": len(heartbeats_rows),
             "open_freeze_count": len(open_freezes),
             "alerts_total": len(recent_alerts),
             "running": False,
+            "leader_id": runtime.get("leader_id") if runtime else None,
+            "active_config": (
+                runtime.get("active_config") if runtime else {}
+            ),
+            "running_phase": runtime.get("running_phase") if runtime else None,
+            "heartbeat_at": runtime.get("heartbeat_at") if runtime else None,
+            "last_outcome": runtime.get("last_outcome") if runtime else None,
+            "next_due_at": runtime.get("next_due_at") if runtime else None,
         }
     finally:
         heartbeats.close()
         recon.close()
+
+
+def _runtime_truth() -> dict[str, Any] | None:
+    """Read the persisted scheduler runtime truth, or ``None``."""
+    try:
+        from alphabrief_trader.runtime_truth import RuntimeTruthStore
+
+        store = RuntimeTruthStore()
+        try:
+            return store.read()
+        finally:
+            store.close()
+    except Exception:
+        return None
 
 
 @router.get("/heartbeats")
