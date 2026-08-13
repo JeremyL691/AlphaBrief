@@ -1979,3 +1979,36 @@ scope profile `frontend`，risk_class safety-critical：controls 严格有界 + 
 substitutions）。全量 pytest：2887 total（2868 passed + 19 pre-existing M08-W03
 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（468 source
 files）；acceptance 11/11。下一 READY item：M14-W07。
+
+#### M14-W07 已闭环证据（R-20260813-M14-W07）— M14 里程碑 gate
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M14-W07-01 | Automated interaction and visual fixtures pass in light, dark, reduced-motion, loading, error, offline, and frozen states at 320, 768, 1024, and 1440 pixels | `tests/ui/test_dashboard_visual_regression.py`：`visual_fixture_matrix()` 覆盖全部 8 态 × 4 viewport × 3 mode（light/dark/reduced_motion）= 96 fixtures（`test_matrix_covers_all_states_viewports_modes`/`test_every_state_at_every_viewport`/`test_every_mode_is_covered`/`test_reduced_motion_covered_at_every_viewport`）；fixture reference 确定性（`test_fixture_references_are_deterministic`）；`validate_visual_fixture_matrix` 全绿（`test_validation_passes`/`test_validation_is_deterministic`） |
+| AC-M14-W07-02 | Semantic regions, heading order, forms, tables, dialogs, focus order, focus traps, labels, status announcements, contrast, and keyboard-only operation satisfy the declared accessibility contract | `tests/test_dashboard_accessibility.py`：`AccessibilityContract` 声明全部规则——`test_semantic_regions_are_declared`（nav/main/aside/footer）、`test_heading_order_rule`（exactly one h1）、`test_form_table_dialog_rules`（label/caption/role=dialog/trap focus）、`test_focus_and_keyboard_rules`（document order/visible/aria-live/keyboard）；`TestContrast`（light/dark 两主题 text+text_dim vs bg WCAG AA ≥4.5）；`validate_accessibility_contract` 全绿（`test_validation_passes`/`test_validation_is_deterministic`） |
+| AC-M14-W07-03 | Electron detects backend readiness and port conflicts, surfaces startup errors, prevents duplicate backend ownership, and performs graceful freeze, reconcile, persist, and shutdown without swallowing failure | `tests/test_electron_lifecycle.py`（11 passed）：`TestBackendReadiness`（/health 轮询、默认 port 8765 避开 launchd 8000、error-overlay）；`TestDuplicateOwnership`（requestSingleInstanceLock + app.quit）；`TestGracefulLifecycle`（before-quit/will-quit 杀 backend、freeze/reconcile/persist 为 backend-owned 不被 shell 拦截、console.error 不吞错、日志 1MiB 轮转）；`TestShellBoundary`（shell 只 spawn 现有 CLI、无 broker/trading 逻辑、仅 127.0.0.1） |
+
+#### M14 Requirement Traceability（M14-W01..W07 里程碑闭环）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-003（Soft 5/5/5 + 品牌保留） | W01 token 系统/brand audit；W02-W07 全部视图消费 Soft 语义 |
+| REQ-UI-004（主导航 10 section） | W02 `NAVIGATION_SECTIONS`；W03-W06 workspace 视图全覆盖 |
+| REQ-UI-005（每页 8 态，无 fake data） | W02 `derive_page_state`；W03-W07 truth-only 视图 |
+| REQ-UI-006/007 | W03/W04/W05 已闭环（trace/account/risk/orders） |
+| REQ-UI-008（键盘、focus、semantic HTML、对比度、reduced motion） | W01 contrast/reduced-motion tokens；W02 focus-visible；W07 `dashboard/accessibility.py`（完整声明式契约 + 自动化校验）+ `visual_states.py`（reduced-motion fixture 全覆盖） |
+| REQ-UI-009（Electron 受控本地壳：readiness、优雅停止、端口冲突、不吞错） | W07 `tests/test_electron_lifecycle.py`（readiness/port/error/duplicate/shutdown 全验证，main.js 零修改） |
+| REQ-UI-010 | W02 write gate；W06 controls |
+
+范围说明：`tests/test_dashboard_accessibility.py`、`tests/ui/test_dashboard_visual_regression.py`、
+`tests/test_electron_lifecycle.py` 为 M14-W07 契约声明的测试文件（targeted command
+声明，documented forced path）；`dashboard/accessibility.py`/`visual_states.py` 为
+M14-W07 契约声明的生产模块（REQ-UI-003/008/009，scope profile `frontend`）；
+`electron/main.js` 零改动（lifecycle 已满足，测试只验证）。集成 command 声明的
+`npm --prefix electron test` 无 test script（package.json 未定义），以
+`tests/test_electron_lifecycle.py`（11 passed，main.js 静态契约验证）作为
+documented substitution。回归：全部 test_dashboard*/test_electron*/tests/ui
+（203 passed）。全量 pytest：2919 total（2900 passed + 19 pre-existing M08-W03
+time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（473
+source files）；acceptance 11/11。**M14 里程碑 → DONE**。下一 READY item：
+M15-W01。
