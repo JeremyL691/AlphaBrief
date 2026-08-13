@@ -326,6 +326,21 @@ persisted authority 读取这些字段（无 runtime 时返回 None/{}），保�
 展示面反映同一执行运行时。scheduler 进程的 lease 循环接线随 M11-W03/
 W05 轮次补齐。
 
+研究与执行解耦（M11-W03）：`ExecutionGate`（`alphabrief_trader/execution_gate.py`）
+对注入的 `PreflightFacts` 做确定性判定，输出恰好一个机器可读 mode——
+`executable` / `execution_disabled`（trading 未启用）/ `research_only` /
+`blocked`（kill switch、missing credentials、stale account truth、
+reconciliation failed、stale data、backup failed、unhealthy model 任一）+
+稳定 reasons。mode 经 `RuntimeTruthStore.set_execution_mode` 持久化（
+`execution_mode` 表），也记录在 `DurableDailyCycle` preflight transition 的
+output_ids。`DurableDailyCycle` 的 preflight 阶段评估 gate，discuss/propose/
+report 等研究阶段**始终运行**（frozen/disabled/broker-unready 也完成
+ingest/snapshot/committee/report）；execute 阶段仅在 mode==executable 时
+提交，否则以 outcome=blocked 与 gate reasons 记录并零 broker 调用——
+preflight 在真实外部下单前验证配置/凭证/账户/数据/模型/backup/kill switch
+（REQ-OPS-007）。默认 facts provider fail-closed（仅 env 凭证与 kill switch
+可证明，其余默认 False）。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation

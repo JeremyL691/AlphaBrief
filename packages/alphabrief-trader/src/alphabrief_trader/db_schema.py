@@ -142,6 +142,15 @@ CREATE TABLE IF NOT EXISTS scheduler_runtime (
 )
 """
 
+CREATE_EXECUTION_MODE_TABLE = """
+CREATE TABLE IF NOT EXISTS execution_mode (
+    row_id      INTEGER PRIMARY KEY CHECK (row_id = 1),
+    mode        TEXT NOT NULL,
+    reasons_json JSON NOT NULL DEFAULT '[]',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AI_DAILY_CYCLES_TABLE,
     CREATE_AI_DAILY_CYCLES_INDEX,
@@ -156,6 +165,7 @@ _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_CYCLE_STATE_TRANSITIONS_INDEX,
     CREATE_SCHEDULER_LEASE_TABLE,
     CREATE_SCHEDULER_RUNTIME_TABLE,
+    CREATE_EXECUTION_MODE_TABLE,
 )
 
 
@@ -169,6 +179,7 @@ def apply_ai_trading_schema(connection: Any) -> None:
 def drop_ai_trading_schema(connection: Any) -> None:
     """Drop only AI trading tables, leaving the rest of the DB intact."""
 
+    connection.execute("DROP TABLE IF EXISTS execution_mode")
     connection.execute("DROP TABLE IF EXISTS scheduler_runtime")
     connection.execute("DROP TABLE IF EXISTS scheduler_lease")
     connection.execute("DROP TABLE IF EXISTS cycle_state_transitions")
@@ -192,6 +203,7 @@ __all__ = [
     "CREATE_AI_DISCIPLINE_CONFIG_TABLE",
     "CREATE_AI_ORDER_ATTEMPTS_INDEX",
     "CREATE_AI_ORDER_ATTEMPTS_TABLE",
+    "CREATE_EXECUTION_MODE_TABLE",
     "CREATE_SCHEDULER_LEASE_TABLE",
     "CREATE_SCHEDULER_RUNTIME_TABLE",
     "apply_ai_trading_schema",

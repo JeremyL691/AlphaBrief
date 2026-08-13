@@ -1335,3 +1335,21 @@ forced paths）；`routes/scheduler.py` `/status` 与 CLI `status` 仅新增字�
 2249 total（2230 passed + 19 pre-existing M08-W03 time-bombed risk fixture
 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（393 source files）；
 acceptance 11/11。下一 READY item：M11-W03。
+
+#### M11-W03 已闭环证据（R-20260813-M11-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M11-W03-01 | frozen/disabled/broker-unready 执行路径仍完成 eligible ingest/snapshot/committee/report 阶段 | `DurableDailyCycle`：preflight 评估 `ExecutionGate`，discuss/propose/report 研究阶段无条件运行；`test_blocked_cycle_completes_research_phases`（credentials 缺失 → 10 阶段全序完整、votes 落 transition、零 submit、attempts=[]）、`test_disabled_cycle_completes_research_phases`（trading_enabled=False → 完整、零 submit、votes 存在）、`test_research_only_cycle_completes_research_phases`（research_only → 完整、plans 存在） |
+| AC-M11-W03-02 | missing credentials、stale account truth、failed reconciliation、stale data、failed backup、unhealthy model、active kill switch 在 broker 调用前阻止 submit | `ExecutionGate` 确定性判定（`test_daily_cycle_preflight.py`）：七种 blocking 条件各自 → BLOCKED + 稳定 reason（`test_missing_credentials_blocks`/`test_stale_account_truth_blocks`/`test_failed_reconciliation_blocks`/`test_stale_data_blocks`/`test_failed_backup_blocks`/`test_unhealthy_model_blocks`/`test_kill_switch_dominates_everything`），多条件并列全部列出（`test_multiple_conditions_list_all_reasons`）；execute 阶段非 executable → outcome=blocked + reasons、零提交（`test_execute_gate_records_mode_in_transitions`：kill switch → transition 记录 execution_mode=blocked + kill_switch_active）；`test_executable_cycle_can_submit`（全通过 → executed、有提交） |
+| AC-M11-W03-03 | research-only、execution-disabled、blocked、executable 作为 distinct machine-readable states 持久化并带 reasons | `ExecutionMode` StrEnum 四值；`RuntimeTruthStore.set_execution_mode/get_execution_mode`（`execution_mode` 表）：`test_blocked_mode_persisted_with_reasons`（mode=blocked + reasons 集合）、`test_executable_mode_persisted`、`test_modes_are_distinct_machine_readable_states`（四种 mode 逐一持久化且互异）、`test_modes_are_machine_readable_and_distinct`（StrEnum value 断言）；mode+reasons 同时落在 cycle transition output_ids |
+
+范围说明：`alphabrief_trader/execution_gate.py`、
+`tests/test_daily_cycle_preflight.py`、`tests/test_daily_cycle_research_mode.py`
+为 M11-W03 契约声明的新模块/缺失测试文件（targeted command 声明，documented
+forced paths）；`DurableDailyCycle` 新增 `preflight_facts_provider` 与
+`runtime_store` 注入（默认 facts provider fail-closed：仅 env 凭证与 kill
+switch 可证明）。scheduler 进程的 lease 循环与真实 facts 采集随 M11-W05/
+M15 轮次补齐。全量 pytest：2270 total（2251 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓
+clean（396 source files）；acceptance 11/11。下一 READY item：M11-W04。
