@@ -32,6 +32,11 @@ from alphabrief_execution.broker.port import (
     BrokerTimeInForce,
     SubmitRequest,
 )
+from alphabrief_execution.broker.risk_context import (
+    BrokerRiskContextBuilder,
+    RiskContextError,
+    adapter_risk_sources,
+)
 
 
 class ExecutionBackendError(ValueError):
@@ -55,6 +60,7 @@ class ExecutionBackendResult:
     broker_order_id: str | None = None
     broker_status: str | None = None
     broker_result_json: dict[str, object] | None = None
+    risk_context_version: str | None = None
 
 
 class ExecutionBackend(Protocol):
@@ -148,16 +154,30 @@ class LocalPaperExecutionBackend:
 
 
 class ExternalPaperExecutionBackend:
-    """Execution backend that submits to a configured external paper adapter."""
+    """Execution backend that submits to a configured external paper adapter.
+
+    M08-W01: every external submit first builds a broker-fresh risk
+    context through the shared context service (the default composition
+    derives its venue sources from this backend's adapter; an explicit
+    builder can be injected for tests or richer OANDA compositions). A
+    missing, stale, account-mismatched, partially covered, frozen, or
+    internally inconsistent context rejects the order before any submit
+    — no synthesized defaults, no fallback account, no review bypass.
+    """
 
     def __init__(
         self,
         adapter: BrokerAdapter,
         *,
         max_order_value: Decimal | None = None,
+        risk_context_builder: BrokerRiskContextBuilder | None = None,
     ) -> None:
         self._adapter = adapter
         self._max_order_value = max_order_value
+        self._risk_context_builder: BrokerRiskContextBuilder = (
+            risk_context_builder
+            or BrokerRiskContextBuilder(adapter_risk_sources(adapter))
+        )
 
     def estimate_quantity(
         self,
@@ -204,6 +224,20 @@ class ExternalPaperExecutionBackend:
         now: datetime,
         estimated_quantity: Decimal | None,
     ) -> ExecutionBackendResult:
+        # M08-W01: a broker-fresh risk context is required before any
+        # external submit. A missing, stale, account-mismatched, partial,
+        # frozen, or inconsistent context rejects the order here — the
+        # backend never submits without it (REQ-RISK-010).
+        try:
+            context = self._risk_context_builder.build()
+        except RiskContextError as exc:
+            raise ExecutionBackendError(
+                f"broker-fresh risk context unavailable: {exc}"
+            ) from exc
+        if not context.internally_consistent:
+            raise ExecutionBackendError(
+                "broker-fresh risk context is internally inconsistent"
+            )
         quantity = _resolve_external_quantity(
             decision=decision,
             estimated_quantity=estimated_quantity,
@@ -244,6 +278,7 @@ class ExternalPaperExecutionBackend:
             fill_price=None,
             fill_quantity=quantity if filled else None,
             fill_json=None,
+            risk_context_version=context.context_version,
         )
 
 

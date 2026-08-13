@@ -670,6 +670,23 @@ telemetry 测试 flake 后重跑全绿，与本 round 文件无关）；ruff/myp
 clean（328 source files）；acceptance 11/11。M07 里程碑 → CODE_COMPLETE，
 下一 READY item：M08-W01。
 
+#### M08-W01 已闭环证据（R-20260813-M08-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M08-W01-01 | context 包含 source IDs、capture times、freshness verdicts、account state、balance、NAV、margin、positions、pending orders、trades、bid/ask prices、conversions、catalog version、reconciliation state、health state | `BrokerRiskContext`（新 `alphabrief_risk/broker_context.py`，`test_risk_broker_context.py`）：frozen+extra=forbid+Decimal-only（float 构造即 ValueError）；`test_full_context_carries_every_required_field` 逐项断言 account state/tradeable/home currency、balance/NAV/margin、positions、pending orders、trades、bid/ask + spread、conversions、catalog_version、reconciliation_state、health_state、source_ids（account:… + captured:…，REQ-PLAT-009）、captured_at UTC、9 个 freshness verdict source（account/positions/pending_orders/trades/conversions/prices/catalog/reconciliation/health）与 `all_fresh`、`internally_consistent`；`BrokerRiskContextBuilder`（新 `alphabrief_execution/broker/risk_context.py`）以 injected `RiskContextSources` 端口组装并盖章共享 `context_version`/`policy_version`（"2026-08-13.1"） |
+| AC-M08-W01-02 | AI execution、manual paper API execution 及其 backend calls 解析同一 context builder 与 policy version，而非 caller 自选 partial dictionaries | 唯一服务入口 `build_broker_risk_context` + `BrokerRiskContextBuilder` + 共享版本常量：AI 路径 `ExternalPaperExecutionBackend`（`alphabrief_trader/execution_backend.py`）默认经 `adapter_risk_sources(adapter)` 从同一服务构建 context（`test_ai_backend_submits_with_fresh_context` 断言 submit 成功且 result 记录 context_version）；manual 路径 `build_paper_risk_context`（`routes/paper.py`，venue 为 legacy in-memory broker 的 truthful sources）同样调用 `build_broker_risk_context`（`test_manual_paper_path_uses_same_service_and_versions` 断言两个路径产生同一 DEFAULT_CONTEXT_VERSION/DEFAULT_POLICY_VERSION 且 context 经 `project_risk_context_to_exposure` 投影进 RiskGate 的 `AccountExposureContext`）；旧 ad-hoc `build_account_exposure_context_from_portfolio` 的 pre-submit 调用被替换 |
+| AC-M08-W01-03 | missing/stale/account-mismatched/partially persisted/frozen/internally inconsistent context 在 submit 前拒绝，无 synthesized defaults、fallback account、询问或 review bypass | builder 分类错误矩阵（`test_risk_broker_context.py`）：account source 缺失/异常 → missing_source；`expected_account_id` 不符 → account_mismatch；price 或 account 超过 venue freshness policy → stale；reconciliation=frozen → frozen；health=unhealthy → stale；持仓 symbol 无 price（coverage）或无 conversion → partial；margin identity 违反（nav-margin_used≠margin_available，容差 0.01）或 crossed price（bid>ask）→ inconsistent；catalog 缺失只如实记录 verdict 不拒绝、不合成版本；AI backend 在 adapter 不可达（get_account 抛错）、stale、frozen、unhealthy 时全部 `ExecutionBackendError` 且 adapter.requests==[]（`test_risk_execution_paths.py` 参数化 + adapter-unavailable 测试）；manual paper 路径缺 mark price 仍走既有 `_MissingMarkPriceError` fail-closed；无任何 input()/询问路径 |
+
+范围说明：`alphabrief_risk/broker_context.py`、`alphabrief_execution/broker/risk_context.py`
+为 M08-W01 契约声明的新模块（BrokerRiskContext 值对象 + BrokerRiskContextBuilder/
+adapter_risk_sources/build_broker_risk_context/project_risk_context_to_exposure）；
+`ExternalPaperExecutionBackend` 现在每个外部 submit 前强制 broker-fresh context
+（REQ-RISK-010），manual paper route 的 pre-submit context 走同一服务。风险
+gate 本身（`alphabrief_risk/gate.py`）零改动——context 只是 gate 的输入，无
+bypass。full pytest 1908 passed（+23 新测试）；ruff/mypy 全仓 clean（332
+source files）；acceptance 11/11。下一 READY item：M08-W02。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
