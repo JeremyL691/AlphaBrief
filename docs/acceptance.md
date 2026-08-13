@@ -2094,3 +2094,31 @@ timeouts 位于 `tests/test_model_gateway.py`，documented substitutions）。
 全量 pytest：3018 total（2999 passed + 19 pre-existing M08-W03 time-bombed
 risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（484 source files）；
 acceptance 11/11。下一 READY item：M15-W04。
+
+#### M15-W04 已闭环证据（R-20260813-M15-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M15-W04-01 | OANDA-observation preflight verifies practice hosts, secret presence without disclosure, account, catalog, data, content, ModelGateway, risk, backup, scheduler lease, reconciliation, alerts, frozen build, and safety gates in one schema | `tests/test_operations_preflight.py`：`OBSERVATION_CHECKS` 恰好 14 个 gate（`test_all_gates_are_checked_in_one_schema`：practice_host/secret_presence/account/catalog/data/content/model_gateway/risk/backup/scheduler_lease/reconciliation/alerts/frozen_build/safety_gates）；`PreflightReport` 单一 schema（`test_every_scope_runs`/`test_full_truth_passes`/`test_single_failure_fails_the_report`/`test_missing_truth_fails_closed`——缺 truth → fail-closed 显式 detail）；`test_secret_presence_is_boolean_without_disclosure`（report 只含 boolean，序列化中无 secret 值）；`test_unknown_scope_raises`；`test_other_scopes_are_configured`（engineering_readiness 6 check + final_release 4 check 含 no_live_unlock）；`test_deterministic` |
+| AC-M15-W04-02 | The controlled practice E2E command can use only the formal proposal, OrderIntent, persisted RiskDecision, submit, transaction, cleanup, and reconciliation path and refuses direct or residual execution | `tests/test_acceptance_practice_e2e.py`：`PRACTICE_E2E_PATH` 恰好 7 步（`test_formal_path_is_exactly_seven_steps`）；`validate_e2e_sequence`——正式序列 accepted（`test_formal_sequence_is_accepted`）、缺步/乱序 rejected（`test_missing_step_is_rejected`/`test_reordered_steps_are_rejected`）；`FORBIDDEN_E2E_STEPS`（direct_broker_submit/in_memory_fill/live_execution/simulated_fallback）任何出现即拒绝且 reason 含 step（`test_forbidden_steps_are_always_refused` parametrize）；`test_validation_is_deterministic` |
+| AC-M15-W04-03 | A single-leader persistent supervisor restores next-run state after restart, invokes daily and weekly evidence gates automatically, derives Day 0 through Day 30 from real UTC and local-calendar evidence, and records BLOCKED_EXTERNAL or WAITING_EXTERNAL without fabricating evidence or asking a question | `tests/test_operations_observation_controller.py`：`observation_day_index` 真实日历推导（`test_day_zero_is_start_date`/`test_day_thirty_is_final_day`/`test_before_start_is_none`/`test_beyond_day_thirty_is_none`/`test_mid_observation_day`/`test_derivation_is_deterministic`）；`ObservationSupervisor`——begin Day 0（`test_begin_starts_at_day_zero`）、逐日推进真实日历且 next_run 前移（`test_daily_gate_advances_real_calendar`）、缺证据记录失败日（`test_missing_evidence_records_failed_day`）、BLOCKED_EXTERNAL/WAITING_EXTERNAL 记录且不伪造证据（`test_external_state_recorded_without_evidence`/`test_unknown_external_state_raises`）、重启恢复 next-run 状态（`test_survives_restart`）、Day 30 封顶（`test_day_30_caps_next_run`）、越界拒绝（`test_outside_range_is_rejected`） |
+
+#### M15 Requirement Traceability（M15-W01..W04）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OPS-001..005 | W01-W03 已闭环 |
+| REQ-OPS-002（自动 scrub） | W01 redaction；W04 preflight secret_presence 无披露 |
+| REQ-OPS-007（preflight 在真实外部下单前验证配置、凭证、账户、品种、数据、模型、风险、备份、scheduler 单实例和 kill switch） | W04 `alphabrief_core/preflight.py`（14 gate 单 schema 全验证）+ `observation_controller.py`（practice E2E 正式路径 + 单 leader 观察 supervisor）；相关测试 |
+
+范围说明：`tests/test_operations_preflight.py`、`tests/test_acceptance_practice_e2e.py`、
+`tests/test_operations_observation_controller.py` 为 M15-W04 契约声明的测试文件
+（targeted command 声明，documented forced path）；`alphabrief_core/preflight.py`/
+`observation_controller.py` 为 M15-W04 契约声明的生产模块（REQ-OPS-002/007，
+scope profile `operations`，risk_class execution-critical：preflight 缺 truth
+fail-closed、E2E 仅正式路径、观察日真实日历推导绝不伪造）。集成 command 声明的
+`tests/test_daily_cycle.py` 不存在（daily cycle 覆盖位于
+`tests/test_daily_cycle_state_machine.py`/`test_daily_cycle_execution.py` 等，
+documented substitution）。全量 pytest：3054 total（3035 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（489 source files）；acceptance 11/11。下一 READY item：M15-W05。

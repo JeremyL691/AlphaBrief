@@ -564,3 +564,13 @@ M15-W03 起，所有外部请求按 `alphabrief_core/request_policy.py` 执行�
 - 7 类请求族（OANDA REST/stream、market-data、content、model、alert、backup）各有 connect/read/total/cycle budget、有界 attempts、确定性 jitter backoff 与并发上限；
 - OANDA submit outcome 为 unknown/timeout 时进入 query_and_reconcile，绝不blind retry；
 - 超时任务以完整 scrubbed telemetry 分类，自包含隔离，不阻塞 heartbeat、reconciliation、backup、risk freeze 或无关调度工作。
+
+## Preflight and Observation Controller
+
+M15-W04 起，观察期由 `ObservationSupervisor` 驱动：
+
+- 开始前必须通过 `oanda_observation` preflight（14 gate 单 schema；secret 只验证存在性，绝不披露值）；
+- 每天按真实 UTC 日历推导 Day 0..30，自动调用 daily evidence gate；缺证据记录失败日，绝不伪造；
+- practice E2E 只走正式 7 步路径（proposal→intent→persisted risk decision→submit→transaction→cleanup→reconciliation），任何直接/残留执行一律拒绝；
+- 缺外部依赖记录 BLOCKED_EXTERNAL/WAITING_EXTERNAL（无证据、无提问）；
+- supervisor 状态 NDJSON 持久化，重启自动恢复 next-run。

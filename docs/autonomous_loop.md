@@ -806,3 +806,16 @@ window 没有被需要重置的变更打断。
 `controller_enforced: false`，agent 不能声称已具备确定性自动门禁。M02 完成后所有
 状态 transition、命令捕获、scope gate 和 ledger append 应由 controller 执行；prompt
 只是发起者，不再是唯一约束。
+
+## Observation-Phase Preflight and Supervisor Contract
+
+M15-W04 起，观察期（REQ-OBS）受 `alphabrief_core` 契约约束：
+
+- 启动观察必须通过 `oanda_observation` preflight（practice host、secret 存在性
+  （不披露）、account、catalog、data、content、ModelGateway、risk、backup、
+  scheduler lease、reconciliation、alerts、frozen build、safety gates 共 14 项，
+  单 schema；缺 truth fail-closed）。
+- 观察由单 leader `ObservationSupervisor` 驱动：真实 UTC 日历推导 Day 0..30、
+  自动 daily/weekly gate、重启恢复 next-run；BLOCKED_EXTERNAL/WAITING_EXTERNAL
+  无证据记录、不提问。
+- practice E2E 仅允许正式 7 步路径；direct/residual execution 一律拒绝。
