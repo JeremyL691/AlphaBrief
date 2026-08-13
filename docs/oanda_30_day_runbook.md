@@ -556,3 +556,11 @@ M15-W02 起，观察期运行按 `alphabrief_core/alerting.py` 处理失败：
 
 观察期周门禁须核对 unresolved alerts（REQ-OBS-005）并引用本契约的 alert
 记录作为证据。
+
+## External Request Budgets During Observation
+
+M15-W03 起，所有外部请求按 `alphabrief_core/request_policy.py` 执行：
+
+- 7 类请求族（OANDA REST/stream、market-data、content、model、alert、backup）各有 connect/read/total/cycle budget、有界 attempts、确定性 jitter backoff 与并发上限；
+- OANDA submit outcome 为 unknown/timeout 时进入 query_and_reconcile，绝不blind retry；
+- 超时任务以完整 scrubbed telemetry 分类，自包含隔离，不阻塞 heartbeat、reconciliation、backup、risk freeze 或无关调度工作。

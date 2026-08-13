@@ -2063,3 +2063,34 @@ safety blocker、alert 风暴有界、sink 失败零影响）。集成 command �
 substitution）。全量 pytest：2984 total（2965 passed + 19 pre-existing M08-W03
 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（480
 source files）；acceptance 11/11。下一 READY item：M15-W03。
+
+#### M15-W03 已闭环证据（R-20260813-M15-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M15-W03-01 | Every external request family has a configured connect, read, total, and cycle budget with bounded attempts and jittered backoff | `tests/test_operations_timeouts.py`：`REQUEST_FAMILIES` 恰好 7 类且每类都有配置预算（`test_all_seven_families_are_configured`/`test_every_family_has_connect_read_total_cycle_budget`：connect/read/total/cycle 全 >0、max_attempts/max_concurrency ≥1）；`test_unknown_family_raises`（KeyError fail-closed）；`test_budgets_are_deterministic`。`tests/test_operations_retry_budget.py`：`test_attempts_are_bounded`（max_attempts 封顶，末次尝试绝不重试）；`test_out_of_bounds_attempt_is_rejected`；`test_only_retryable_classes_retry`（transient/rate_limit 可重试，auth/safety/broker_reject 不可）；`test_backoff_is_jittered_and_deterministic`（同 seed 同值、base×[1,2)）；`test_no_jitter_when_disabled`；`test_stream_family_has_official_limits`（max_attempts=5、base=2s——官方连接限制） |
+| AC-M15-W03-02 | OANDA REST and stream reconnect behavior respects official connection and rate limits while unknown submit outcomes enter query and reconciliation instead of blind retry | `submit_outcome_action`——`test_unknown_submit_enters_query_and_reconcile`（unknown/timeout → `query_and_reconcile`，绝不 blind retry）；`test_recorded_outcomes_never_blind_retry`（accepted/rejected → recorded）；`test_outcome_mapping_is_deterministic`；stream 预算反映官方连接限制（`test_stream_family_has_official_limits`） |
+| AC-M15-W03-03 | A timed-out provider task cannot block heartbeat, reconciliation, backup, risk freeze, or unrelated scheduled work and is classified with complete scrubbed telemetry | `tests/test_operations_concurrency_budget.py`：`test_every_family_has_a_concurrency_limit`（每类 max_concurrency/cycle_budget）；`test_cycle_budget_bounds_per_cycle_work`（total ≤ cycle）；`test_timeout_classification_does_not_block_other_work`（`classify_timeout` telemetry 自包含——不含 heartbeat/reconciliation/risk 字段，绝不触碰其他任务状态）；`test_independent_tasks_have_isolated_budgets`（model/backup 各自预算互不消耗）；`test_alert_budget_is_small_and_unbounded_retry_free`（max_attempts=1）。`tests/test_operations_timeouts.py` `TestTimeoutTelemetry`：完整 scrubbed telemetry（`test_timeout_is_classified_with_scrubbed_telemetry`——account id 运行时拼接值不可见；`test_elapsed_exceeding_total_is_visible`；`test_telemetry_is_deterministic`） |
+
+#### M15 Requirement Traceability（M15-W01..W03）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OPS-001/002 | W01 observability |
+| REQ-OPS-003 | W02 error taxonomy；W03 retry 仅限 retryable 类 |
+| REQ-OPS-004 | W02 alert lifecycle |
+| REQ-OPS-005（所有 external request 有 timeout/budget；重试遵循 OANDA 连接限制并带 jitter，不阻塞整个 scheduler） | W03 `alphabrief_core/request_policy.py`：`REQUEST_BUDGETS`（7 类 connect/read/total/cycle/max_attempts/jitter/max_concurrency）、`backoff_seconds`（确定性 jitter）、`retry_allowed`（有界 + retryable-only）、`submit_outcome_action`（unknown/timeout → query_and_reconcile）、`classify_timeout`（scrubbed telemetry、任务隔离）；相关测试 |
+
+范围说明：`tests/test_operations_timeouts.py`、`tests/test_operations_retry_budget.py`、
+`tests/test_operations_concurrency_budget.py` 为 M15-W03 契约声明的测试文件
+（targeted command 声明，documented forced path）；`alphabrief_core/request_policy.py`
+为 M15-W03 契约声明的生产模块（REQ-OPS-003/005，scope profile `operations`，
+risk_class safety-critical：预算全部有界、未知 outcome 绝不盲重试、超时任务
+自包含隔离）。集成 command 声明的 `tests/test_oanda_rate_limits.py`/
+`tests/test_scheduler_faults.py`/`tests/test_model_gateway_timeouts.py` 不存在
+（OANDA rate/idempotency 覆盖位于 `tests/test_oanda_idempotency.py`、scheduler
+faults 位于 `tests/test_scheduler.py`/`test_scheduler_leader.py`、model gateway
+timeouts 位于 `tests/test_model_gateway.py`，documented substitutions）。
+全量 pytest：3018 total（2999 passed + 19 pre-existing M08-W03 time-bombed
+risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（484 source files）；
+acceptance 11/11。下一 READY item：M15-W04。
