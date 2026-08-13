@@ -1097,3 +1097,17 @@ documented forced paths）；routes/macro.py 与 macro_commands.py 的 release
 端点/命令为契约声明的 API/CLI surface。full pytest 2068 passed（+17 新
 测试）；ruff/mypy 全仓 clean（362 source files）；acceptance 11/11。下一
 READY item：M09-W04。
+
+#### M09-W04 已闭环证据（R-20260813-M09-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M09-W04-01 | 每个 sentiment aggregate 暴露 direction、intensity、disagreement、sample count、source coverage、freshness、uncertainty、evidence IDs、algorithm version | `aggregate_sentiment` + `SentimentAggregate`（新 `alphabrief_news/sentiment_aggregate.py`，`test_sentiment_snapshot.py`）：三样本三源 fixture 逐字段断言（direction=positive、intensity=0.533…、disagreement=0.466…、sample_count=3、source_coverage=1、freshness_seconds=0.0、uncertainty≤1、coverage_sufficient=True、evidence_ids=(h-1,h-2,h-3)、algorithm_version=2026-08-13.1、snapshot_hash=sha256 hexdigest）；multi-scope（market/currency/asset_class/instrument）各自独立聚合 |
+| AC-M09-W04-02 | 相同 evidence 重排产生 byte-equivalent normalized output 与相同 snapshot hash | 输入按 (scope, scope_value, evidence_id) 排序后才计算——shuffled 输入两次聚合 `model_dump(mode="json")` sort_keys 后逐字节相等、snapshot_hash 相同；evidence 变化（direction 翻转）→ snapshot_hash 不同 |
+| AC-M09-W04-03 | sparse/contradictory/stale/single-source fixtures 产生显式 uncertainty 或 insufficient-coverage verdict，而非 confident defaults | sparse（1 样本）→ coverage_sufficient=False、direction=mixed、uncertainty≥0.75；single-source（3 样本同源）→ 同上（min_sources=2）；contradictory（+1/-1/+1 三源）→ disagreement≥0.6 且 |mean|≤0.4 → mixed（非 confident majority）；stale（2 天旧）→ freshness=172800s、insufficient、uncertainty≥0.75；float intensity 构造期拒绝 |
+
+范围说明：`alphabrief_news/sentiment_aggregate.py` 为 M09-W04 契约声明的新模块；
+`tests/test_sentiment_snapshot.py` 为契约声明的缺失测试文件（documented
+forced path）；既有 `tests/test_sentiment.py`（RuleBasedSentimentAnalyzer）
+全绿未改动。full pytest 2077 passed（+10 新测试）；ruff/mypy 全仓 clean
+（364 source files）；acceptance 11/11。下一 READY item：M09-W05。
