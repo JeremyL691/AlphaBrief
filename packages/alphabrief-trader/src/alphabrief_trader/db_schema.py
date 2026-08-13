@@ -90,6 +90,79 @@ CREATE TABLE IF NOT EXISTS cycle_checkpoints (
 )
 """
 
+CREATE_CYCLE_STATE_TABLE = """
+CREATE TABLE IF NOT EXISTS cycle_state (
+    cycle_id        TEXT PRIMARY KEY,
+    phase           TEXT NOT NULL,
+    phase_order     INTEGER NOT NULL,
+    outcome         TEXT,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_CYCLE_STATE_TRANSITIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS cycle_state_transitions (
+    transition_id     TEXT PRIMARY KEY,
+    cycle_id          TEXT NOT NULL,
+    phase             TEXT NOT NULL,
+    phase_order       INTEGER NOT NULL,
+    prior_phase       TEXT,
+    attempt_count     INTEGER NOT NULL DEFAULT 0,
+    input_hashes_json JSON NOT NULL DEFAULT '{}',
+    output_ids_json   JSON NOT NULL DEFAULT '{}',
+    outcome           TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_CYCLE_STATE_TRANSITIONS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_cycle_state_transitions_cycle
+    ON cycle_state_transitions (cycle_id, phase_order, created_at)
+"""
+
+CREATE_SCHEDULER_LEASE_TABLE = """
+CREATE TABLE IF NOT EXISTS scheduler_lease (
+    holder_id       TEXT NOT NULL,
+    acquired_at     TIMESTAMPTZ NOT NULL,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    version         INTEGER NOT NULL DEFAULT 1
+)
+"""
+
+CREATE_SCHEDULER_RUNTIME_TABLE = """
+CREATE TABLE IF NOT EXISTS scheduler_runtime (
+    row_id          INTEGER PRIMARY KEY CHECK (row_id = 1),
+    leader_id       TEXT,
+    active_config_json JSON NOT NULL DEFAULT '{}',
+    running_phase   TEXT,
+    phase_started_at TIMESTAMPTZ,
+    heartbeat_at    TIMESTAMPTZ,
+    last_outcome    TEXT,
+    failure_classification TEXT,
+    next_due_at     TIMESTAMPTZ,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_EXECUTION_MODE_TABLE = """
+CREATE TABLE IF NOT EXISTS execution_mode (
+    row_id      INTEGER PRIMARY KEY CHECK (row_id = 1),
+    mode        TEXT NOT NULL,
+    reasons_json JSON NOT NULL DEFAULT '[]',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_CYCLE_IDEMPOTENCY_TABLE = """
+CREATE TABLE IF NOT EXISTS cycle_idempotency (
+    client_order_id   TEXT PRIMARY KEY,
+    cycle_id          TEXT NOT NULL,
+    intent_id         TEXT NOT NULL,
+    broker_order_id   TEXT,
+    submitted_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AI_DAILY_CYCLES_TABLE,
     CREATE_AI_DAILY_CYCLES_INDEX,
@@ -99,6 +172,13 @@ _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE_AI_ORDER_ATTEMPTS_INDEX,
     CREATE_AI_DISCIPLINE_CONFIG_TABLE,
     CREATE_CYCLE_CHECKPOINTS_TABLE,
+    CREATE_CYCLE_STATE_TABLE,
+    CREATE_CYCLE_STATE_TRANSITIONS_TABLE,
+    CREATE_CYCLE_STATE_TRANSITIONS_INDEX,
+    CREATE_SCHEDULER_LEASE_TABLE,
+    CREATE_SCHEDULER_RUNTIME_TABLE,
+    CREATE_EXECUTION_MODE_TABLE,
+    CREATE_CYCLE_IDEMPOTENCY_TABLE,
 )
 
 
@@ -112,6 +192,12 @@ def apply_ai_trading_schema(connection: Any) -> None:
 def drop_ai_trading_schema(connection: Any) -> None:
     """Drop only AI trading tables, leaving the rest of the DB intact."""
 
+    connection.execute("DROP TABLE IF EXISTS cycle_idempotency")
+    connection.execute("DROP TABLE IF EXISTS execution_mode")
+    connection.execute("DROP TABLE IF EXISTS scheduler_runtime")
+    connection.execute("DROP TABLE IF EXISTS scheduler_lease")
+    connection.execute("DROP TABLE IF EXISTS cycle_state_transitions")
+    connection.execute("DROP TABLE IF EXISTS cycle_state")
     connection.execute("DROP TABLE IF EXISTS cycle_checkpoints")
     connection.execute("DROP TABLE IF EXISTS ai_order_attempts")
     connection.execute("DROP TABLE IF EXISTS ai_committee_votes")
@@ -122,12 +208,19 @@ def drop_ai_trading_schema(connection: Any) -> None:
 __all__ = [
     "CREATE_AI_COMMITTEE_VOTES_INDEX",
     "CREATE_CYCLE_CHECKPOINTS_TABLE",
+    "CREATE_CYCLE_STATE_TABLE",
+    "CREATE_CYCLE_STATE_TRANSITIONS_INDEX",
+    "CREATE_CYCLE_STATE_TRANSITIONS_TABLE",
     "CREATE_AI_COMMITTEE_VOTES_TABLE",
     "CREATE_AI_DAILY_CYCLES_INDEX",
     "CREATE_AI_DAILY_CYCLES_TABLE",
     "CREATE_AI_DISCIPLINE_CONFIG_TABLE",
     "CREATE_AI_ORDER_ATTEMPTS_INDEX",
     "CREATE_AI_ORDER_ATTEMPTS_TABLE",
+    "CREATE_CYCLE_IDEMPOTENCY_TABLE",
+    "CREATE_EXECUTION_MODE_TABLE",
+    "CREATE_SCHEDULER_LEASE_TABLE",
+    "CREATE_SCHEDULER_RUNTIME_TABLE",
     "apply_ai_trading_schema",
     "drop_ai_trading_schema",
 ]
