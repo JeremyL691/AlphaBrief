@@ -1498,3 +1498,31 @@ pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ru
 按 19 轮既定约定保持派生缓存值（M02-era loop-controller selection tests 的
 hardcode 前提；ACTIVE milestone 以 `milestones:` 映射为准），本轮恢复该约定。
 下一 READY item：M12-W03。
+
+#### M12-W03 已闭环证据（R-20260813-M12-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M12-W03-01 | Multi-instrument fixtures update cash, NAV, gross and net exposure, margin, positions, realized and unrealized PnL, and category attribution in account home currency | `tests/test_backtest_portfolio.py`：三品种 fixture（EUR_USD CURRENCY / XAU_USD METAL / US100 INDEX_CFD）买入后 cash 减少、3 条 positions、gross==net（all-long）、margin_used 按 margin_rate 计算、entry 价格 mark → unrealized==0（`test_buy_fills_update_cash_positions_and_exposure`）；category attribution 按类别聚合且与 portfolio totals 对账（`test_category_attribution_groups_exposure_by_category`）；mark-to-market 产生 unrealized PnL（`test_mark_to_market_realizes_unrealized_pnl`）；partial close 实现 80.00、remaining 6000 units 保持 entry avg（`test_partial_close_realizes_pnl_and_reduces_position`）；full close/reversal/short 方向与 realized 语义（`test_full_close_realizes_all_pnl`/`test_reversal_updates_short_position_and_realizes_pnl`/`test_short_position_net_exposure_is_negative`）；financing 扣减 cash（`test_financing_accrual_reduces_cash`）；rejected fill 零状态变更；同输入同 snapshot |
+| AC-M12-W03-02 | Spread, slippage, financing, market closure, stale price, minimum units, precision, maximum units, and insufficient margin each change fills or produce explicit rejection | `tests/test_backtest_execution_semantics.py`：buy 按 ask（>mid）、sell 按 bid（<mid）、spread 加宽改变 execution price 与 spread_cost（`test_buy_fills_at_ask_above_mid`/`test_wider_spread_changes_fill_price`）；slippage 使 fill 逆向移动并记录 slippage_cost（`test_slippage_moves_fill_adversely_and_is_recorded`）；fee 按 notional 收取（`test_fee_is_charged_on_notional`）；weekend → `market_closed`、price_age>max → `stale_price`（`test_weekend_order_is_rejected_market_closed`/`test_stale_price_is_rejected`）；`below_minimum_units`/`units_precision`/`above_maximum_units`/`above_maximum_position`/`insufficient_margin` 全部显式 reject reason（TestUnitConstraints/TestMargin）；margin_used 反映 fill 后 position（含既有 units）；financing 按 units×nights 计费并扣 cash（TestFinancing）；reject reason 带版本字段（`test_rejection_reason_is_explicit_and_versioned`） |
+| AC-M12-W03-03 | Backtest metadata and execution semantics resolve the same instrument version and normalization rules used by the OANDA practice runtime or record an explicit versioned difference | `tests/test_oanda_backtest_parity.py`：`BacktestInstrumentMetadata` 携带 practice 同名字段（display/trade-units precision、min/max units、margin rate，`test_backtest_metadata_carries_the_practice_fields`）；`normalize_backtest_units/price` 与 `alphabrief_risk.instrument_rules.normalize_instrument_units/price` 对可表示值结果一致、不可表示值同类拒绝（`TestNormalizationParity`，units_precision/price_precision/price_invalid kind 一致）；`CATEGORY_SESSION_WINDOWS` 与 `CATEGORY_SESSIONS` 逐字段一致且一周采样 verdict 全等（`TestSessionParity`，8 类 × 56 个采样点）；`SEMANTICS_VERSION="oanda-practice-mirror-1"`、`SEMANTICS_DIFFERENCES=()` 显式记录差异（`TestVersionedSemanticsRecord`）；fill 携带 metadata_version/semantics_version |
+
+#### M12 Requirement Traceability（M12-W01..W03）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-STRAT-001（safe DSL cannot execute arbitrary code） | W01 `alphabrief_strategy/dsl.py`；`tests/test_strategy_dsl.py` |
+| REQ-STRAT-002（至少支持 trend、mean reversion、breakout、volatility/regime 和 no-trade baseline；每个策略可限定适用类别） | W02 `alphabrief_strategy/families.py` + `FAMILY_APPLICABILITY`；`tests/test_strategy_builtins.py`/`tests/test_strategy_admission.py` |
+| REQ-STRAT-004（回测是多品种/组合感知并建模 spread、slippage、financing、margin、minimum units、market hours 和 rejected orders） | W03 `alphabrief_backtest/portfolio.py`/`execution.py`/`metadata.py`；`tests/test_backtest_portfolio.py`/`tests/test_backtest_execution_semantics.py` |
+| REQ-STRAT-007（Kronos/Gym/其他预测只提供 advisory evidence，不能绕过 committee 或 RiskGate） | W02 `alphabrief_strategy/admission.py`（`PREDICTIVE_FAMILY_IDS` 全部 rejected）；`tests/test_strategy_admission.py` |
+| REQ-STRAT-008（回测与实际 OANDA practice 采用相同 instrument metadata 和关键 risk/execution semantics，差异必须显式记录） | W03 `SEMANTICS_VERSION`/`SEMANTICS_DIFFERENCES` + 归一化/会话 parity；`tests/test_oanda_backtest_parity.py` |
+| REQ-OANDA-003（保存 name、displayName、type、displayPrecision、tradeUnitsPrecision、minimumTradeSize、maximumOrderUnits、maximumPositionSize、marginRate、pipLocation 等元数据） | W03 `BacktestInstrumentMetadata` 镜像同名字段（precision/min/max units/margin rate）；`tests/test_oanda_backtest_parity.py` |
+
+范围说明：`tests/test_backtest_portfolio.py`、`tests/test_backtest_execution_semantics.py`、
+`tests/test_oanda_backtest_parity.py` 为 M12-W03 契约声明的测试文件（targeted +
+integration command 声明，documented forced path）；`metadata.py`/`execution.py`/
+`portfolio.py` 为 M12-W03 契约声明的生产模块（REQ-OANDA-003/REQ-STRAT-004/008，
+scope profile `strategy_backtest`；risk/execution/strategy 运行时零改动，parity
+由测试单向引用）。全量 pytest：2503 total（2484 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（420 source files）；acceptance 11/11。下一 READY item：M12-W04。
