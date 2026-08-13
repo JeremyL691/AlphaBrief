@@ -1,6 +1,22 @@
 """Strategy specification schemas for AlphaBrief."""
 
 from alphabrief_strategy.builtins import MovingAverageTrendStrategy
+from alphabrief_strategy.dsl import (
+    DATA_ALLOWLIST,
+    INDICATOR_ALLOWLIST,
+    ComparisonNode,
+    DataNode,
+    DslCompileError,
+    DslEvaluationError,
+    EvaluationContext,
+    IndicatorNode,
+    LiteralNode,
+    LogicNode,
+    NotNode,
+    StrategyCondition,
+    compile_condition,
+    evaluate_condition,
+)
 from alphabrief_strategy.interface import (
     StrategyExecutionError,
     StrategyInput,
@@ -20,9 +36,21 @@ from alphabrief_strategy.spec import (
 )
 
 __all__ = [
+    "DATA_ALLOWLIST",
+    "INDICATOR_ALLOWLIST",
+    "ComparisonNode",
+    "DataNode",
+    "DslCompileError",
+    "DslEvaluationError",
+    "EvaluationContext",
     "EvaluationPeriod",
     "ExternalEvidenceConfig",
+    "IndicatorNode",
+    "LiteralNode",
+    "LogicNode",
     "MovingAverageTrendStrategy",
+    "NotNode",
+    "StrategyCondition",
     "StrategyExecutionError",
     "StrategyInput",
     "StrategyOutput",
@@ -33,5 +61,7 @@ __all__ = [
     "StrategyRule",
     "StrategySpec",
     "StrategyUniverse",
+    "compile_condition",
+    "evaluate_condition",
     "run_strategy",
 ]
