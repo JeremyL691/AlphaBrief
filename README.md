@@ -10,6 +10,7 @@ The approved final target is narrower than the historical codebase:
 broker fallback**. The migration is planned in the final blueprint and is not
 yet complete.
 
+- M09 content pipeline (DONE): deterministic news ingestion with provenance and copyright-safe retention, URL canonicalization + deduplication + entity linking, revision-aware macro calendar, explainable multi-scope sentiment aggregation, untrusted external content sanitization, and immutable daily regime/sentiment snapshots shared by research and risk.
 ## Current Verified Baseline
 
 Snapshot: 2026-08-13, commit `61ad0eea05c4164ea0ab0dd229caf9ae2b1ac464` (M01 OANDA-only cutover complete).
