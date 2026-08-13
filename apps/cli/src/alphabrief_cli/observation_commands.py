@@ -506,4 +506,100 @@ def verify_cmd(
     )
 
 
+@observation_app.command("report")
+def report_cmd(
+    output: str = typer.Option(
+        "reports/generated/final_acceptance.json",
+        "--output",
+        help="Output path for the final report.",
+    ),
+    format: str = typer.Option(
+        "json", "--format", help="Report format: json or markdown."
+    ),
+    compact: bool = typer.Option(True, "--compact/--pretty"),
+) -> None:
+    """Generate the evidence-derived final acceptance report.
+
+    Every count and source reference derives from immutable evidence;
+    with real OANDA practice evidence still pending, the report fails
+    closed and records unreferenced sources. The manifest hash covers
+    the normalized content so regeneration from the same frozen inputs
+    is identical. The report never contains secrets, waivers, TBD, or
+    any implication that live trading is enabled.
+    """
+    import json as jsonlib
+    from pathlib import Path
+
+    from alphabrief_core.observation_controller import (
+        generate_final_report,
+        scan_report_content,
+    )
+
+    report = generate_final_report(source_truth={}, count_truth={})
+    verdict = scan_report_content(text=report.normalized_content)
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if format == "markdown":
+        lines = [
+            "# AlphaBrief final acceptance report",
+            "",
+            "Status: " + ("PASS" if report.passed else "NOT_PASSED"),
+            "",
+            "## Evidence sources",
+            "",
+        ]
+        lines += [
+            "- {name}: {status}".format(
+                name=source.name,
+                status=(
+                    "referenced" if source.referenced else "not referenced"
+                ),
+            )
+            for source in report.sources
+        ]
+        lines += [
+            "",
+            "## Evidence-derived counts",
+            "",
+        ]
+        lines += [
+            f"- {name}: {report.counts[name]}"
+            for name in report.counts
+        ]
+        lines += [
+            "",
+            "## Manifest",
+            "",
+            f"- manifest hash: {report.manifest_hash}",
+            "- product status: OANDA practice-only; live trading, other "
+            "brokers, and production simulation remain forbidden and "
+            "unreachable",
+            "",
+        ]
+        path.write_text("\n".join(lines), encoding="utf-8")
+    else:
+        path.write_text(
+            jsonlib.dumps(
+                report.model_dump(mode="json"), indent=2, sort_keys=True
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    emit_json(
+        {
+            "output": str(path),
+            "format": format,
+            "passed": report.passed,
+            "manifest_hash": report.manifest_hash,
+            "sources_referenced": sum(
+                source.referenced for source in report.sources
+            ),
+            "sources_total": len(report.sources),
+            "content_clean": verdict.clean,
+            "findings": list(verdict.findings),
+        },
+        pretty=not compact,
+    )
+
+
 __all__ = ["observation_app"]

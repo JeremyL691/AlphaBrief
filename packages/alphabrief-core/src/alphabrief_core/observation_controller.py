@@ -231,12 +231,17 @@ __all__ = [
     "EVIDENCE_FLAWS",
     "FINAL_GATE_PROOFS",
     "FINAL_SAFETY_INVARIANTS",
+    "FORBIDDEN_REPORT_MARKERS",
+    "LIVE_CLAIM_MARKERS",
+    "REPORT_COUNT_FIELDS",
+    "REPORT_EVIDENCE_SOURCES",
     "DayZeroAttempt",
     "DailyApplicabilityEvidence",
     "EVENT_RESOLUTION_FIELDS",
     "FAULT_INVARIANTS",
     "FAULT_SCENARIOS",
     "FinalGateResult",
+    "FinalReport",
     "INCIDENT_SEVERITIES",
     "IsolatedRestoreResult",
     "ContinuityAccounting",
@@ -248,6 +253,8 @@ __all__ = [
     "QUALIFIED_OUTCOMES",
     "RESTART_RECONCILE_INVARIANTS",
     "RESTORE_SURFACES",
+    "ReportContentVerdict",
+    "ReportSource",
     "RestartReconcileDrillReport",
     "RestoreSurface",
     "WINDOW_ACCOUNT_KINDS",
@@ -261,6 +268,7 @@ __all__ = [
     "build_window_accounting",
     "classify_qualified_outcome",
     "classify_window_incident",
+    "generate_final_report",
     "resolve_week_event",
     "run_day30_close",
     "run_fault_drill",
@@ -268,6 +276,7 @@ __all__ = [
     "run_isolated_restore",
     "run_restart_reconcile_drill",
     "run_weekly_gate",
+    "scan_report_content",
     "validate_manifest_hashes",
     "FORBIDDEN_E2E_STEPS",
     "ObservationManifest",
@@ -1234,4 +1243,176 @@ def run_final_gate(
         proofs=proofs,
         invariants=invariants,
         blockers=tuple(blockers),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Evidence-derived final acceptance report (M17-W01)
+# ---------------------------------------------------------------------------
+
+
+#: Immutable evidence sources the final report must reference
+#: (AC-M17-W01-01). Handwritten totals are never accepted.
+REPORT_EVIDENCE_SOURCES: tuple[str, ...] = (
+    "requirements_map",
+    "database_facts",
+    "loop_ledger",
+    "test_results",
+    "oanda_practice_evidence",
+    "observation_artifact_hashes",
+)
+
+#: Count fields derived from evidence (AC-M17-W01-01). Missing counts
+#: stay zero - never guessed.
+REPORT_COUNT_FIELDS: tuple[str, ...] = (
+    "requirements_total",
+    "work_items_total",
+    "acceptance_passed",
+    "acceptance_total",
+    "quality_passed",
+    "quality_total",
+    "safety_invariants_zero",
+    "safety_invariants_total",
+    "observation_days_qualified",
+    "observation_days_total",
+    "incidents_open",
+    "known_limitations",
+)
+
+
+class ReportSource(BaseModel):
+    """One referenced evidence source in the final report."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(min_length=1)
+    referenced: bool
+    detail: str = Field(min_length=1)
+
+
+class FinalReport(BaseModel):
+    """One deterministic evidence-derived final acceptance report.
+
+    Every count comes from supplied evidence; missing sources fail the
+    report closed. The manifest hash covers the normalized content so a
+    second generation from the same frozen inputs is identical
+    (AC-M17-W01-02).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    passed: bool
+    sources: tuple[ReportSource, ...]
+    counts: dict[str, int]
+    manifest_hash: str = Field(min_length=1)
+    normalized_content: str = Field(min_length=1)
+
+
+def _normalize_report_content(
+    sources: tuple[ReportSource, ...], counts: dict[str, int]
+) -> str:
+    """The canonical normalized report content (deterministic)."""
+    lines = [
+        "source=" + source.name + ":" + str(source.referenced)
+        for source in sources
+    ]
+    lines += [
+        "count=" + name + ":" + str(counts[name])
+        for name in REPORT_COUNT_FIELDS
+    ]
+    return "\n".join(lines)
+
+
+def generate_final_report(
+    *,
+    source_truth: dict[str, bool] | None = None,
+    count_truth: dict[str, int] | None = None,
+) -> FinalReport:
+    """Generate one deterministic final acceptance report.
+
+    ``source_truth`` maps each evidence source to referenced or not;
+    ``count_truth`` maps each count field to its evidence-derived value.
+    Missing truth fails the report closed - nothing is handwritten.
+    """
+    import hashlib
+
+    truth = source_truth or {}
+    sources = tuple(
+        ReportSource(
+            name=name,
+            referenced=bool(truth.get(name, False)),
+            detail=(
+                "referenced" if truth.get(name, False)
+                else "not referenced"
+            ),
+        )
+        for name in REPORT_EVIDENCE_SOURCES
+    )
+    counts = {
+        name: max(0, int((count_truth or {}).get(name, 0)))
+        for name in REPORT_COUNT_FIELDS
+    }
+    content = _normalize_report_content(sources, counts)
+    return FinalReport(
+        passed=all(source.referenced for source in sources),
+        sources=sources,
+        counts=counts,
+        manifest_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        normalized_content=content,
+    )
+
+
+#: Markers that must never appear in the final report (AC-M17-W01-03).
+FORBIDDEN_REPORT_MARKERS: tuple[str, ...] = (
+    "waiver",
+    "tbd",
+)
+
+#: Live-trading implication phrases that must never appear.
+LIVE_CLAIM_MARKERS: tuple[str, ...] = (
+    "live trading is enabled",
+    "live mode is active",
+    "go live",
+)
+
+
+class ReportContentVerdict(BaseModel):
+    """One deterministic report-content scan verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    clean: bool
+    findings: tuple[str, ...] = ()
+
+
+def scan_report_content(*, text: str) -> ReportContentVerdict:
+    """Scan report content for secrets, waivers, TBD, and live claims.
+
+    Secret patterns cover bearer tokens, token/authorization values,
+    and full account IDs; marker scans are case-insensitive. Any
+    finding marks the content unclean.
+    """
+    import re
+
+    findings: list[str] = []
+    lowered = text.lower()
+    if re.search(r"Bearer\s+\S+", text, re.IGNORECASE):
+        findings.append("bearer token present")
+    if re.search(r"[\"']?token[\"']?\s*[:=]\s*[\"']?\S+", text, re.IGNORECASE):
+        findings.append("token value present")
+    if re.search(r"authorization\s*[:=]\s*\S+", text, re.IGNORECASE):
+        findings.append("authorization value present")
+    if re.search(r"account[_-]?id\s*[:=]\s*[\"']?\S+", text, re.IGNORECASE):
+        findings.append("account id present")
+    if re.search(r"account-\d{8,}", text, re.IGNORECASE):
+        findings.append("full account id present")
+    for marker in FORBIDDEN_REPORT_MARKERS:
+        if re.search(rf"\b{marker}\b", lowered):
+            findings.append(f"forbidden marker {marker!r}")
+    for marker in LIVE_CLAIM_MARKERS:
+        if marker in lowered:
+            findings.append(f"live-claim marker {marker!r}")
+    return ReportContentVerdict(
+        clean=not findings,
+        findings=tuple(findings),
     )
