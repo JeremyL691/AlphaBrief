@@ -136,8 +136,8 @@ class TestMultiInstrumentAccounting:
         assert gross > 0
         assert snapshot.margin_used > 0
         assert snapshot.margin_used < gross
-        assert snapshot.unrealized_pnl == 0  # marked at entry prices
-        assert snapshot.nav == snapshot.cash + snapshot.unrealized_pnl
+        assert snapshot.unrealized_pnl == 0  # zero-spread fills at mid
+        assert snapshot.nav == snapshot.cash + snapshot.gross_exposure
 
     def test_category_attribution_groups_exposure_by_category(self) -> None:
         metadata = _metadata_set()
@@ -181,7 +181,8 @@ class TestMultiInstrumentAccounting:
             mid_prices={"EUR_USD": Decimal("1.11000")},
         )
         assert snapshot.unrealized_pnl == Decimal("100.00")
-        assert snapshot.nav == simulator.cash + snapshot.unrealized_pnl
+        # NAV = cash + mark-to-market position value (10000 units x 1.11).
+        assert snapshot.nav == simulator.cash + Decimal("11100.00")
 
     def test_partial_close_realizes_pnl_and_reduces_position(self) -> None:
         metadata = _metadata_set()

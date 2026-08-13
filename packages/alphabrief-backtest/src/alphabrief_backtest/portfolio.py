@@ -31,6 +31,20 @@ class PositionState(BaseModel):
     units: Decimal
     avg_entry_price: Decimal
     realized_pnl: Decimal
+    unrealized_pnl: Decimal = Decimal("0")
+
+
+class PortfolioTrade(BaseModel):
+    """One closed (or partially closed) trade's realized result."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    symbol: str = Field(min_length=1)
+    units: Decimal
+    entry_price: Decimal
+    exit_price: Decimal
+    realized_pnl: Decimal
+    closed_at: datetime
 
 
 class CategoryAttribution(BaseModel):
@@ -94,6 +108,7 @@ class PortfolioSimulator:
         self._cash = initial_cash
         self._positions: dict[str, PositionState] = {}
         self._financing: list[FinancingEvent] = []
+        self._trade_log: list[PortfolioTrade] = []
         self._realized_pnl = Decimal("0")
         self._realized_by_category: dict[StrategyInstrumentCategory, Decimal] = {}
 
@@ -119,6 +134,7 @@ class PortfolioSimulator:
             self._cash = self._cash + notional - fee
 
         realized = Decimal("0")
+        closed_units = Decimal("0")
         new_avg = fill.execution_price
         if current is not None and current_units != 0:
             sign = Decimal("1") if current_units > 0 else Decimal("-1")
@@ -154,6 +170,19 @@ class PortfolioSimulator:
                         abs(current_units) * current.avg_entry_price
                         + abs(delta) * fill.execution_price
                     ) / blended_units
+
+        if closed_units > 0:
+            assert current is not None
+            self._trade_log.append(
+                PortfolioTrade(
+                    symbol=fill.symbol,
+                    units=closed_units if current_units >= 0 else -closed_units,
+                    entry_price=current.avg_entry_price,
+                    exit_price=fill.execution_price,
+                    realized_pnl=realized,
+                    closed_at=fill.timestamp,
+                )
+            )
 
         if realized != 0:
             self._realized_pnl += realized
@@ -212,6 +241,7 @@ class PortfolioSimulator:
         net = Decimal("0")
         margin = Decimal("0")
         unrealized = Decimal("0")
+        position_value = Decimal("0")
         realized_total = Decimal("0")
         attribution: dict[StrategyInstrumentCategory, list[Decimal]] = {}
 
@@ -224,6 +254,7 @@ class PortfolioSimulator:
             net += signed_notional
             margin += notional * metadata.margin_rate
             unrealized += (mid - position.avg_entry_price) * position.units
+            position_value += signed_notional
             entry = attribution.setdefault(metadata.category, [Decimal("0")] * 4)
             entry[0] += notional
             entry[1] += signed_notional
@@ -232,8 +263,32 @@ class PortfolioSimulator:
 
         realized_total = self._realized_pnl
 
-        positions = tuple(sorted(self._positions.values(), key=lambda p: p.symbol))
-        nav = self._cash + unrealized
+        # Categories with realized PnL but no open positions still
+        # appear in attribution (closed-out categories are never lost).
+        for category, realized in self._realized_by_category.items():
+            entry = attribution.setdefault(category, [Decimal("0")] * 4)
+            entry[2] = realized
+
+        positions = tuple(
+            sorted(
+                (
+                    PositionState(
+                        symbol=position.symbol,
+                        units=position.units,
+                        avg_entry_price=position.avg_entry_price,
+                        realized_pnl=position.realized_pnl,
+                        unrealized_pnl=(
+                            mid_prices[position.symbol]
+                            - position.avg_entry_price
+                        )
+                        * position.units,
+                    )
+                    for position in self._positions.values()
+                ),
+                key=lambda p: p.symbol,
+            )
+        )
+        nav = self._cash + position_value
         attribution_rows = tuple(
             CategoryAttribution(
                 category=category,
@@ -272,11 +327,17 @@ class PortfolioSimulator:
     def financing_events(self) -> tuple[FinancingEvent, ...]:
         return tuple(self._financing)
 
+    @property
+    def trade_log(self) -> tuple[PortfolioTrade, ...]:
+        """Every closed (or partially closed) trade in fill order."""
+        return tuple(self._trade_log)
+
 
 __all__ = [
     "CategoryAttribution",
     "FinancingEvent",
     "PortfolioSimulator",
     "PortfolioSnapshot",
+    "PortfolioTrade",
     "PositionState",
 ]
