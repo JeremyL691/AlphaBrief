@@ -228,11 +228,15 @@ __all__ = [
     "CONTINUITY_KINDS",
     "DAILY_EVIDENCE_KINDS",
     "DAY30_CLOSE_STEPS",
+    "EVIDENCE_FLAWS",
+    "FINAL_GATE_PROOFS",
+    "FINAL_SAFETY_INVARIANTS",
     "DayZeroAttempt",
     "DailyApplicabilityEvidence",
     "EVENT_RESOLUTION_FIELDS",
     "FAULT_INVARIANTS",
     "FAULT_SCENARIOS",
+    "FinalGateResult",
     "INCIDENT_SEVERITIES",
     "IsolatedRestoreResult",
     "ContinuityAccounting",
@@ -260,6 +264,7 @@ __all__ = [
     "resolve_week_event",
     "run_day30_close",
     "run_fault_drill",
+    "run_final_gate",
     "run_isolated_restore",
     "run_restart_reconcile_drill",
     "run_weekly_gate",
@@ -1118,4 +1123,115 @@ def validate_manifest_hashes(
         valid=True,
         count=len(supplied),
         detail=f"all {required_count} manifest hashes valid",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Final 30-day observation gate (M16-W06)
+# ---------------------------------------------------------------------------
+
+
+#: Evidence proofs the final gate must establish (AC-M16-W06-01).
+FINAL_GATE_PROOFS: tuple[str, ...] = (
+    "thirty_of_thirty_daily_records",
+    "active_market_decision_chains",
+    "daily_backups",
+    "four_weekly_gates",
+    "final_restore",
+    "continuous_qualified_timing",
+    "immutable_manifest_hashes",
+)
+
+#: Safety invariants the final gate must prove (AC-M16-W06-02).
+FINAL_SAFETY_INVARIANTS: tuple[str, ...] = (
+    "zero_duplicate_external_orders",
+    "zero_order_without_approved_risk_decision",
+    "zero_live_or_other_broker_attempt",
+    "zero_unexplained_cross_day_difference",
+    "zero_unresolved_p0_or_p1",
+)
+
+#: Evidence flaws that must fail the gate and record a blocker
+#: (AC-M16-W06-03).
+EVIDENCE_FLAWS: tuple[str, ...] = (
+    "missing",
+    "modified",
+    "mock_only",
+    "waived",
+    "manually_asserted",
+    "future_dated",
+    "reset_invalid",
+)
+
+
+class FinalGateResult(BaseModel):
+    """One deterministic final 30-day observation gate result.
+
+    The gate derives its verdict only from supplied evidence truth;
+    missing truth fails each proof and invariant closed, any declared
+    evidence flaw fails the gate and records a blocker, and the product
+    remains OANDA practice-only (REQ-OBS-007) with no live path.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    passed: bool
+    practice_only: bool = True
+    proofs: tuple[FaultInvariant, ...]
+    invariants: tuple[FaultInvariant, ...]
+    blockers: tuple[str, ...] = ()
+
+
+def run_final_gate(
+    *,
+    proofs_truth: dict[str, bool] | None = None,
+    invariants_truth: dict[str, bool] | None = None,
+    flaws: dict[str, bool] | None = None,
+) -> FinalGateResult:
+    """Run one deterministic final observation gate.
+
+    ``proofs_truth`` maps each evidence proof to proven or not;
+    ``invariants_truth`` maps each safety invariant to zero or not;
+    ``flaws`` maps each evidence flaw to present or not. Missing truth
+    fails closed, and any present flaw records a blocker.
+    """
+    proof_truth = proofs_truth or {}
+    invariant_truth = invariants_truth or {}
+    flaw_truth = flaws or {}
+    proofs = tuple(
+        FaultInvariant(
+            name=name,
+            preserved=bool(proof_truth.get(name, False)),
+            detail=(
+                "proven" if proof_truth.get(name, False) else "not proven"
+            ),
+        )
+        for name in FINAL_GATE_PROOFS
+    )
+    invariants = tuple(
+        FaultInvariant(
+            name=name,
+            preserved=bool(invariant_truth.get(name, False)),
+            detail=(
+                "zero" if invariant_truth.get(name, False) else "not zero"
+            ),
+        )
+        for name in FINAL_SAFETY_INVARIANTS
+    )
+    blockers = [
+        f"BLOCKED_EXTERNAL: evidence flaw {flaw}"
+        for flaw in EVIDENCE_FLAWS
+        if flaw_truth.get(flaw, False)
+    ]
+    passed = (
+        all(proof.preserved for proof in proofs)
+        and all(invariant.preserved for invariant in invariants)
+        and not blockers
+    )
+    return FinalGateResult(
+        passed=passed,
+        practice_only=True,
+        proofs=proofs,
+        invariants=invariants,
+        blockers=tuple(blockers),
     )

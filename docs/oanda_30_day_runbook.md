@@ -687,3 +687,18 @@ pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissi
 - 真实 Days 22-30 观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令
   如实输出 BLOCKED_EXTERNAL / fail-closed drill / unresolved events /
   day-30-gate（34 hashes missing）。
+
+## M16-W06: final 30-day observation gate — R-20260813-M16-W06
+
+- `run_final_gate`（`FINAL_GATE_PROOFS` 7 项 + `FINAL_SAFETY_INVARIANTS` 5 项
+  + `EVIDENCE_FLAWS` 7 项）：30/30 daily records、active-market decision
+  chains、daily backups、four weekly gates、final restore、continuous
+  qualified timing、immutable manifest hashes；zero duplicate orders、
+  zero order without approved RiskDecision、zero live/other-broker、zero
+  unexplained cross-day diff、zero unresolved P0/P1；missing/modified/
+  mock-only/waived/manually-asserted/future-dated/reset-invalid 证据 →
+  失败 + BLOCKED_EXTERNAL blocker。practice_only 恒真（REQ-OBS-007）。
+- CLI：`observation finalize --compact`、`observation verify --final --compact`、
+  `operations restore-drill --latest --isolated --compact`。
+- 真实 30 天观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令如实输出
+  fail-closed（proofs 0/7、invariants 0/5、backup_integrity False），绝不伪造。

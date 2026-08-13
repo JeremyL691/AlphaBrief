@@ -2376,3 +2376,36 @@ unresolved）与 day-30-gate（34 hashes missing、7 steps not completed），�
 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean；
 acceptance 11/11；runtime 4 命令均 exit 0。
 下一 READY item：M16-W06。
+
+#### M16-W06 已闭环证据（R-20260813-M16-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M16-W06-01 | The gate proves 30 of 30 real daily records, complete active-market decision chains, daily backups, four weekly gates, final restore, continuous qualified timing, and immutable manifest hashes | `tests/test_observation_final_gate.py`（M16-W06 契约声明文件）`TestFinalGateProofs`：`FINAL_GATE_PROOFS` 恰好 7 项（thirty_of_thirty_daily_records/active_market_decision_chains/daily_backups/four_weekly_gates/final_restore/continuous_qualified_timing/immutable_manifest_hashes）；`run_final_gate`——`test_full_truth_passes`、`test_missing_truth_fails_closed`（缺 truth → 全 not proven）、`test_single_missing_proof_fails_the_gate` |
+| AC-M16-W06-02 | The gate proves zero duplicate external orders, zero order without a persisted matching approved RiskDecision, zero live or other-broker attempt, zero unexplained cross-day reconciliation difference, and zero unresolved P0 or P1 | `tests/test_observation_final_gate.py` `TestFinalSafetyInvariants`：`FINAL_SAFETY_INVARIANTS` 恰好 5 项；`test_duplicate_order_invariant_is_required`、`test_approved_risk_decision_invariant_is_required`、`test_live_or_other_broker_invariant_is_required`（任一非零 → gate 失败） |
+| AC-M16-W06-03 | Missing, modified, mock-only, waived, manually asserted, future-dated, or reset-invalid evidence fails the gate and records the blocker while the product remains OANDA practice-only | `tests/test_observation_final_gate.py` `TestEvidenceFlaws`：`EVIDENCE_FLAWS` 恰好 7 项；`test_any_flaw_fails_the_gate_and_records_blocker`（每种 flaw → passed=False + BLOCKED_EXTERNAL blocker）、`test_mock_only_evidence_never_passes`、`test_future_dated_evidence_never_passes`；`TestPracticeOnly`——`test_gate_never_unlocks_live`（practice_only=True）、`test_gate_is_deterministic` |
+
+#### M16 Requirement Traceability（M16-W06）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OBS-001 | `FINAL_GATE_PROOFS` 含 thirty_of_thirty_daily_records + continuous_qualified_timing |
+| REQ-OBS-002 | `FINAL_GATE_PROOFS` 含 active_market_decision_chains；复用 W02 14 项 daily kinds |
+| REQ-OBS-003 | final gate 不含订单产出路径；practice_only 恒真 |
+| REQ-OBS-004 | `EVIDENCE_FLAWS` 含 reset_invalid（reset 无效证据 → 失败 + blocker） |
+| REQ-OBS-005 | `FINAL_GATE_PROOFS` 含 four_weekly_gates + daily_backups + final_restore |
+| REQ-OBS-006 | gate 只由 evidence truth 推导 verdict；`observation finalize` / `verify --final` 输出 proofs/invariants/blockers 计数 |
+| REQ-OBS-007 | `run_final_gate` 输出 practice_only=True；产品保持 OANDA practice-only，无 live 路径 |
+
+范围说明：`tests/test_observation_final_gate.py` 为 M16-W06 契约声明的测试文件
+（targeted command 声明，documented forced path）；`alphabrief_core/
+observation_controller.py`（新增 FINAL_GATE_PROOFS/FINAL_SAFETY_INVARIANTS/
+EVIDENCE_FLAWS/FinalGateResult/run_final_gate）与 `apps/cli/observation_commands.py`
+（新增 `finalize`、`verify --final` 命令）为契约声明的既有模块扩展（observation
+profile：max_production_files=0，实际 0 个新生产文件）。真实 30 天观察依赖 Day 0
+冻结（T7 外部证据 PENDING）——`finalize`/`verify --final`/`restore-drill` 如实
+输出 fail-closed 结果（proofs 0/7、invariants 0/5、practice_only=True、
+backup_integrity=False），绝不伪造观察证据。全量 pytest：3238 total（3219
+passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
+M10-W03）；ruff/mypy 全仓 clean；acceptance 11/11；runtime 3 命令均 exit 0。
+下一 READY item：M17-W01。

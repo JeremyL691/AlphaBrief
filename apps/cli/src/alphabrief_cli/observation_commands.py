@@ -445,4 +445,65 @@ def day30_gate_cmd(
     )
 
 
+@observation_app.command("finalize")
+def finalize_cmd(
+    compact: bool = typer.Option(True, "--compact/--pretty"),
+) -> None:
+    """Run the final 30-day observation gate (fail-closed).
+
+    The verdict derives only from supplied evidence truth: 30/30 daily
+    records, active-market decision chains, daily backups, four weekly
+    gates, final restore, continuous qualified timing, immutable
+    manifest hashes, and every safety invariant. Missing, modified,
+    mock-only, waived, manually asserted, future-dated, or reset-invalid
+    evidence fails the gate and records a blocker. The product remains
+    OANDA practice-only with no live path.
+    """
+    from alphabrief_core.observation_controller import run_final_gate
+
+    gate = run_final_gate(proofs_truth={}, invariants_truth={}, flaws={})
+    emit_json(
+        {
+            "passed": gate.passed,
+            "practice_only": gate.practice_only,
+            "proofs": [
+                {"proof": p.name, "proven": p.preserved}
+                for p in gate.proofs
+            ],
+            "invariants": [
+                {"invariant": i.name, "zero": i.preserved}
+                for i in gate.invariants
+            ],
+            "blockers": list(gate.blockers),
+        },
+        pretty=not compact,
+    )
+
+
+@observation_app.command("verify")
+def verify_cmd(
+    final: bool = typer.Option(
+        False, "--final", help="Verify the final observation gate."
+    ),
+    compact: bool = typer.Option(True, "--compact/--pretty"),
+) -> None:
+    """Verify the observation state (final gate fail-closed)."""
+    from alphabrief_core.observation_controller import run_final_gate
+
+    gate = run_final_gate(proofs_truth={}, invariants_truth={}, flaws={})
+    emit_json(
+        {
+            "final": final,
+            "passed": gate.passed,
+            "practice_only": gate.practice_only,
+            "proofs_proven": sum(p.preserved for p in gate.proofs),
+            "proofs_total": len(gate.proofs),
+            "invariants_zero": sum(i.preserved for i in gate.invariants),
+            "invariants_total": len(gate.invariants),
+            "blockers": list(gate.blockers),
+        },
+        pretty=not compact,
+    )
+
+
 __all__ = ["observation_app"]
