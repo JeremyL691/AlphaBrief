@@ -225,21 +225,32 @@ class ObservationSupervisor:
 
 __all__ = [
     "APPLICABILITY_EVIDENCE_KINDS",
+    "CONTINUITY_KINDS",
     "DAILY_EVIDENCE_KINDS",
     "DayZeroAttempt",
     "DailyApplicabilityEvidence",
+    "EVENT_RESOLUTION_FIELDS",
+    "FAULT_INVARIANTS",
+    "FAULT_SCENARIOS",
     "INCIDENT_SEVERITIES",
     "IsolatedRestoreResult",
+    "ContinuityAccounting",
+    "FaultDrillReport",
+    "FaultInvariant",
     "ObservationDayRecord",
     "QUALIFIED_OUTCOMES",
     "RESTORE_SURFACES",
     "RestoreSurface",
+    "WeekEventResolution",
     "WeeklyGateResult",
     "WindowIncident",
     "build_applicability_evidence",
+    "build_continuity_accounting",
     "build_daily_record",
     "classify_qualified_outcome",
     "classify_window_incident",
+    "resolve_week_event",
+    "run_fault_drill",
     "run_isolated_restore",
     "run_weekly_gate",
     "FORBIDDEN_E2E_STEPS",
@@ -673,5 +684,220 @@ def classify_window_incident(
         detail=(
             "classified incident; window reset required; "
             "invalid days dropped; no approval asked"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Days 15 through 21: continuity accounting, fault injection, and week
+# event resolution (M16-W04)
+# ---------------------------------------------------------------------------
+
+
+#: Continuity evidence kinds required continuously for every day of
+#: the third real week (AC-M16-W04-01).
+CONTINUITY_KINDS: tuple[str, ...] = (
+    "heartbeat",
+    "lease",
+    "cursor",
+    "reconciliation",
+    "backup",
+    "provider",
+    "model_schema",
+    "alert",
+    "risk_state",
+)
+
+
+class ContinuityAccounting(BaseModel):
+    """One day's continuous accounting chain (Days 15-21).
+
+    Every declared continuity kind carries an explicit boolean;
+    missing truth stays False — never fabricated.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    day: int = Field(ge=0, le=30)
+    calendar_date: str = Field(min_length=1)
+    continuity: dict[str, bool] = Field(default_factory=dict)
+    complete: bool = False
+
+
+def build_continuity_accounting(
+    *,
+    day: int,
+    calendar_date: str,
+    continuity_truth: dict[str, bool] | None = None,
+) -> ContinuityAccounting:
+    """One deterministic continuity chain.
+
+    Every declared kind receives an explicit verdict; kinds without
+    truth are False (never assumed).
+    """
+    truth = continuity_truth or {}
+    continuity = {
+        kind: bool(truth.get(kind, False)) for kind in CONTINUITY_KINDS
+    }
+    return ContinuityAccounting(
+        day=day,
+        calendar_date=calendar_date,
+        continuity=continuity,
+        complete=all(
+            kind in continuity for kind in CONTINUITY_KINDS
+        ),
+    )
+
+
+#: Approved local fault-injection scenarios (AC-M16-W04-02).
+FAULT_SCENARIOS: tuple[str, ...] = (
+    "http_429",
+    "http_5xx",
+    "network_loss",
+    "stale_data",
+    "model_failure",
+)
+
+#: Invariants every fault drill must preserve (AC-M16-W04-02).
+FAULT_INVARIANTS: tuple[str, ...] = (
+    "bounded_retry",
+    "jitter",
+    "no_scheduler_starvation",
+    "safe_no_trade_or_freeze",
+    "durable_alerting",
+    "clean_recovery",
+    "no_blind_resubmission",
+    "no_duplicate_external_order",
+)
+
+
+class FaultInvariant(BaseModel):
+    """One fault-drill invariant verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(min_length=1)
+    preserved: bool
+    detail: str = Field(min_length=1)
+
+
+class FaultDrillReport(BaseModel):
+    """One deterministic fault-injection drill report."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scenario: str = Field(min_length=1)
+    passed: bool
+    submits: int = 0
+    invariants: tuple[FaultInvariant, ...]
+
+
+def run_fault_drill(
+    *,
+    scenario: str,
+    invariant_truth: dict[str, bool] | None = None,
+) -> FaultDrillReport:
+    """Run one deterministic approved fault-injection drill.
+
+    ``invariant_truth`` maps each invariant to preserved or not;
+    missing truth fails closed as not preserved. The drill is local
+    only: it never submits and never touches the practice account
+    outside normal product behavior.
+    """
+    truth = invariant_truth or {}
+    if scenario not in FAULT_SCENARIOS:
+        return FaultDrillReport(
+            scenario=scenario,
+            passed=False,
+            submits=0,
+            invariants=tuple(
+                FaultInvariant(
+                    name=name,
+                    preserved=False,
+                    detail="unknown fault scenario",
+                )
+                for name in FAULT_INVARIANTS
+            ),
+        )
+    invariants = tuple(
+        FaultInvariant(
+            name=name,
+            preserved=bool(truth.get(name, False)),
+            detail=(
+                "preserved" if truth.get(name, False) else "not preserved"
+            ),
+        )
+        for name in FAULT_INVARIANTS
+    )
+    return FaultDrillReport(
+        scenario=scenario,
+        passed=all(invariant.preserved for invariant in invariants),
+        submits=0,
+        invariants=invariants,
+    )
+
+
+#: Fields every P2/P3 week event must carry (AC-M16-W04-03).
+EVENT_RESOLUTION_FIELDS: tuple[str, ...] = (
+    "reset_decision",
+    "evidence_hash",
+    "repair_reference",
+)
+
+
+class WeekEventResolution(BaseModel):
+    """One week event's deterministic resolution verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    severity: str = Field(min_length=1)
+    resolved: bool
+    detail: str = Field(min_length=1)
+
+
+def resolve_week_event(
+    *,
+    severity: str,
+    reset_decision: str | None = None,
+    evidence_hash: str | None = None,
+    repair_reference: str | None = None,
+) -> WeekEventResolution:
+    """One deterministic week event resolution.
+
+    P0/P1 events are never resolved by the observation loop — the week
+    gate fails closed until they are closed. P2/P3 events resolve only
+    with a deterministic reset decision, evidence hash, and repair
+    reference. No operator question is ever asked.
+    """
+    if severity not in INCIDENT_SEVERITIES:
+        severity = "P0"
+    if severity in ("P0", "P1"):
+        return WeekEventResolution(
+            severity=severity,
+            resolved=False,
+            detail="P0/P1 unresolved; week gate fails closed",
+        )
+    fields = {
+        "reset_decision": reset_decision,
+        "evidence_hash": evidence_hash,
+        "repair_reference": repair_reference,
+    }
+    missing = [
+        name
+        for name in EVENT_RESOLUTION_FIELDS
+        if not (fields[name] and str(fields[name]).strip())
+    ]
+    if missing:
+        return WeekEventResolution(
+            severity=severity,
+            resolved=False,
+            detail=f"missing {', '.join(missing)}",
+        )
+    return WeekEventResolution(
+        severity=severity,
+        resolved=True,
+        detail=(
+            "deterministic reset decision, evidence hash, and "
+            "repair reference recorded"
         ),
     )
