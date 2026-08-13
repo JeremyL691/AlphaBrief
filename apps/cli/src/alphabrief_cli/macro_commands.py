@@ -7,6 +7,10 @@ from typing import Literal
 
 import typer
 from alphabrief_api.db import MacroStore
+from alphabrief_news.macro_release import (
+    MacroReleaseStore,
+    release_state,
+)
 from alphabrief_news.providers import (
     FredMacroProvider,
     MockMacroProvider,
@@ -123,6 +127,37 @@ def list_cmd(
             f"{ind.indicator_id} | {ind.name} | "
             f"{ind.value}"
         )
+
+
+@macro_app.command("releases")
+def releases_cmd(
+    pretty: bool = typer.Option(  # noqa: B008
+        True,
+        "--pretty/--compact",
+    ),
+) -> None:
+    """List ordered macro releases with explicit states (same as the API)."""
+    import json
+    import sys
+
+    store = MacroReleaseStore()
+    try:
+        releases = store.releases()
+        now = datetime.now(UTC)
+        events = [
+            release.with_state(release_state(release, now=now).state)
+            for release in releases
+        ]
+    finally:
+        store.close()
+    json.dump(
+        {"releases": events, "total": len(events)},
+        sys.stdout,
+        indent=2 if pretty else None,
+        sort_keys=True,
+        default=str,
+    )
+    sys.stdout.write("\n")
 
 
 __all__ = ["macro_app"]

@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from decimal import Decimal
+from typing import Any, Literal
 
+from alphabrief_news.macro_release import (
+    MacroReleaseStore,
+    release_state,
+)
 from alphabrief_news.providers import (
     FredMacroProvider,
     MockMacroProvider,
@@ -244,8 +249,69 @@ def get_indicator(indicator_id: str) -> MacroIndicatorResponse:
     return MacroIndicatorResponse(indicator=indicator)
 
 
+# ---------------------------------------------------------------------------
+# Macro release calendar (M09-W03)
+# ---------------------------------------------------------------------------
+
+
+
+_release_store: MacroReleaseStore | None = None
+
+
+def _get_release_store() -> MacroReleaseStore:
+    global _release_store
+    if _release_store is None:
+        _release_store = MacroReleaseStore()
+    return _release_store
+
+
+def _reset_release_store() -> None:
+    global _release_store
+    if _release_store is not None:
+        _release_store.close()
+    _release_store = None
+
+
+class MacroReleaseReviseRequest(BaseModel):
+    """Body for POST /api/v1/macro/releases/revise."""
+
+    release_id: str = Field(min_length=1)
+    actual: Decimal | None = None
+    forecast: Decimal | None = None
+    previous: Decimal | None = None
+
+
+@router.get("/releases")
+def macro_releases() -> dict[str, Any]:
+    """Ordered macro release events with explicit states."""
+    store = _get_release_store()
+    now = datetime.now(UTC)
+    releases = store.releases()
+    events = [
+        release.with_state(release_state(release, now=now).state)
+        for release in releases
+    ]
+    return {"releases": events, "total": len(events)}
+
+
+@router.post("/releases/revise")
+def macro_release_revise(body: MacroReleaseReviseRequest) -> dict[str, Any]:
+    """Append a revision version with lineage to one release."""
+    store = _get_release_store()
+    revised = store.revise(
+        body.release_id,
+        actual=body.actual,
+        forecast=body.forecast,
+        previous=body.previous,
+    )
+    if revised is None:
+        raise HTTPException(status_code=404, detail="unknown release_id")
+    return {"release": revised.model_dump(mode="json")}
+
+
 __all__ = [
     "router",
     "_clear_store",
     "_close_store",
+    "_reset_release_store",
 ]
