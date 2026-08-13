@@ -1839,3 +1839,31 @@ gate 通过）。下一 READY item：M14-W01。
 注：M13-W06 的 ledger 记录曾误用 schema 外 record_type，已替换为 schema-valid
 `CORRECTION` 记录（`test_autonomous_loop_schemas.py` 全绿）。下一 READY item：
 M14-W02。
+
+#### M14-W02 已闭环证据（R-20260813-M14-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M14-W02-01 | Navigation exposes Overview, Markets, News & Sentiment, AI Research, Risk, OANDA Account, Orders & Trades, Scheduler, 30-Day Observation, and Settings at every required viewport | `tests/test_dashboard_navigation.py`：`NAVIGATION_SECTIONS` 恰好 10 项且顺序与 REQ-UI-004 一致（`test_all_ten_required_sections_are_declared`）；每项含 route（/dashboard 前缀）/icon（库名非 emoji，`test_icons_are_library_names_not_emoji`）/order（0-9 稳定，`test_navigation_order_is_stable`）；`test_all_sections_reachable_at_every_viewport`（320/768/1024/1440 四个 viewport 全部可达）；`FULL_NAV_MIN_WIDTH=1024`（`test_full_nav_breakpoint_is_declared`）；无重复 route（`test_no_duplicate_routes`）；anchors 语义化键盘可达（`test_anchors_are_keyboard_reachable`） |
+| AC-M14-W02-02 | Each route renders deterministic loading, empty, stale, partial, error, offline, frozen, and ready states from API truth instead of blank panels or fake fallback values | `tests/test_dashboard_states.py`：`PAGE_STATES` 恰好 8 态（`test_all_eight_states_are_declared`）；`derive_page_state(TruthInputs)` 从 API truth 确定性推导——ready/empty/stale/partial/error/offline/frozen 各态 fixture（`test_ready_from_fresh_complete_truth` 等 9 个派生测试）；frozen 优先于一切（`test_frozen_wins_over_everything`）、offline 绝不退化为 ready（`test_offline_never_degrades_to_ready`）、确定性（`test_derivation_is_deterministic`）；`render_state_payload` 每态有 typed payload 且只含文档化文案——`test_payloads_never_invent_runtime_values`（无捏造数字/价格/仓位）、`test_ready_payload_has_no_action`、`test_frozen_payload_mentions_frozen` |
+| AC-M14-W02-03 | The shell has no horizontal page overflow at 320, 768, 1024, or 1440 pixels and preserves keyboard-reachable navigation in light and dark themes | `tests/ui/test_dashboard_responsive.py`：`shell_css()` 含 `overflow-x: hidden`/`max-width: 100%`/`* { min-width: 0 }`（`test_overflow_guards_cover_every_required_viewport`/`test_no_horizontal_overflow_rules_for_all_containers`/`test_min_width_zero_prevents_flex_overflow`）；breakpoint media queries 覆盖 767/768/1024（`test_breakpoints_cover_the_required_widths`）；`:focus-visible` outline ring + `var(--interaction-focus-ring)`（`test_focus_visible_ring_is_declared`/`test_keyboard_focus_visible_in_both_themes`）；语义 anchors + Soft token 消费（`test_navigation_uses_semantic_anchors`/`test_hover_and_focus_use_soft_tokens`/`test_shell_consumes_design_tokens_for_both_themes`） |
+
+#### M14 Requirement Traceability（M14-W01..W02）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-003（Soft (5/5/5)，保留品牌） | W01 token 系统 + brand audit；W02 shell 消费 design tokens |
+| REQ-UI-004（主导航覆盖 10 个 section） | W02 `dashboard/shell.py` `NAVIGATION_SECTIONS`（10 项，含 route/icon/order）+ viewport 可达性；`tests/test_dashboard_navigation.py` |
+| REQ-UI-005（每页 loading/empty/stale/partial/error/offline/frozen 状态，不以空白或 fake data 掩盖失败） | W02 `derive_page_state`/`render_state_payload`（8 态，含 ready；truth 推导、无捏造值）；`tests/test_dashboard_states.py` |
+| REQ-UI-008 | W01 reduced-motion/contrast/focus tokens；W02 focus-visible + keyboard anchors |
+
+范围说明：`tests/test_dashboard_navigation.py`、`tests/test_dashboard_states.py`、
+`tests/ui/test_dashboard_responsive.py` 为 M14-W02 契约声明的测试文件（targeted
+command 声明，documented forced path，`tests/ui/` 为契约声明的目录）；集成
+`tests/test_dashboard_api_contracts.py` 亦为契约声明的新文件；`dashboard/shell.py`
+为 M14-W02 契约声明的生产模块（REQ-UI-003/004/005，scope profile `frontend`）。
+回归 command 声明的 `tests/test_dashboard.py` 不存在（dashboard 覆盖位于
+`tests/test_api_server.py` 等，documented substitution，121 passed）。全量 pytest：
+2800 total（2781 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
+分类见 M10-W03）；ruff/mypy 全仓 clean（453 source files）；acceptance 11/11。
+下一 READY item：M14-W03。
