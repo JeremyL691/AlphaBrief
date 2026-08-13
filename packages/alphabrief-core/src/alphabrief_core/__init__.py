@@ -1,5 +1,14 @@
 """Core types and configuration for AlphaBrief."""
 
+from alphabrief_core.alerting import (
+    ERROR_CLASSES,
+    AlertRecord,
+    AlertStore,
+    ErrorClass,
+    ErrorClassification,
+    Severity,
+    classify_error,
+)
 from alphabrief_core.config import (
     AlphaBriefEnv,
     AppSettings,
@@ -69,7 +78,12 @@ from alphabrief_core.write_contracts import (
 __all__ = [
     "APPROVED_ENDPOINTS",
     "APPROVED_PAYLOAD_KEYS",
+    "AlertRecord",
+    "AlertStore",
     "AlphaBriefEnv",
+    "ERROR_CLASSES",
+    "ErrorClass",
+    "ErrorClassification",
     "AppSettings",
     "Bar",
     "COMPONENTS",
@@ -103,6 +117,7 @@ __all__ = [
     "RiskDecision",
     "Signal",
     "SignalDirection",
+    "Severity",
     "SignalEvidence",
     "StructuredLogRecord",
     "VersionedReadEnvelope",
@@ -110,6 +125,7 @@ __all__ = [
     "account_id_hash",
     "build_health_registry",
     "build_read_envelope",
+    "classify_error",
     "correlation_chain",
     "invalid_identifier_error",
     "load_env_file",
