@@ -1214,3 +1214,18 @@ changed paths，baseline 上同样失败，与本轮无关）。本轮 declared 
 （targeted 27 passed / integration 59 passed / ruff / mypy）全部 exit 0；
 ruff/mypy 全仓 clean（378 source files）；acceptance 11/11。下一 READY item：
 M10-W04。
+
+#### M10-W04 已闭环证据（R-20260813-M10-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M10-W04-01 | 合法 proposal 包含 thesis、anti-thesis、confidence、horizon、entry rationale、invalidation、suggested exposure、evidence、dissent、freshness、uncertainty、no-trade 字段 | `ResearchProposal`（`alphabrief_trader/schemas.py`）+ `EvidenceCitation`；`tests/test_proposal_grounding.py::TestProposalSchema::test_valid_proposal_carries_all_required_fields` 逐字段断言；`build_research_proposal`（`alphabrief_trader/proposal.py`）从 votes/transcript/plan 确定性生成全部字段（thesis=manager vote、anti_thesis=dissent/risk 反方、horizon=payload、entry_rationale=plan rationale、invalidation=risk top risk、exposure=plan target、citations=grounded evidence、dissent=challenge dissent 摘要、freshness=snapshot captured_at、uncertainty=1-confidence、no_trade=plan 缺失/零仓位/ethics block） |
+| AC-M10-W04-02 | 每条 factual claim 解析到 committee 所用 snapshot 的 evidence ID | builder 只发射 `CommitteeInput.evidence_ids` 中受支持的 citation（`_split_citation`：entry==ID 或以 `ID:`/`ID ` 开头才计入；伪造 ID 丢弃）；`test_every_citation_resolves_to_snapshot_evidence`（citations ⊆ available）、`test_builder_drops_fabricated_evidence_ids`（伪造 ID 不进入 proposal）；`validate_proposal_grounding` 对 unsupported_citation 返回 violation；`test_grounding_passes_with_real_builder_output` 端到端零 violation |
+| AC-M10-W04-03 | unsupported citations、stale critical evidence、contradictory exposure、missing dissent → validation failure，无可执行 proposal | `validate_proposal_grounding`：`unsupported_citation:<id>`（`test_unsupported_citation_fails_grounding`）、`stale_critical_evidence:<age>`（默认 86400s；`test_stale_critical_evidence_fails_grounding`，fresh 通过）、schema 层 `model_validator` 拒绝 no_trade+正仓位 与 tradeable+零仓位（`test_contradictory_exposure_rejected_at_schema_level`/`test_no_trade_proposal_accepts_zero_exposure`）、`dissent` strip 非空校验（`test_blank_dissent_rejected`）；无 plan 时 builder 保守 no_trade（`test_builder_without_plan_is_conservative_no_trade`）；builder 无 votes 抛 `ProposalBuildError`（`test_builder_requires_votes`）——失败 proposal 不产生 OrderIntent |
+
+范围说明：`alphabrief_trader/proposal.py` 为 M10-W04 契约声明的新模块；
+`tests/test_proposal_grounding.py` 为契约声明的缺失测试文件（targeted command
+声明，documented forced path）。proposal→intent 的 cycle 接线随 M10-W05/M11
+轮次补齐。全量 pytest：2165 total（2146 passed + 19 pre-existing M08-W03
+time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（380 source files）；acceptance 11/11。下一 READY item：M10-W05。

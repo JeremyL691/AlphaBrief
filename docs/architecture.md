@@ -256,6 +256,17 @@ instruction-neutralized、untrusted marked），整条 prompt 再经
 privileged tools、可变系统设置或未消毒外部指令。注意：`/ai/rules` 等展示面
 仍返回旧四角色列表（被 allowlist 外测试钉住，M13 对齐）。
 
+委员会输出经 `alphabrief_trader.proposal`（M10-W04）转换为严格
+evidence-grounded `ResearchProposal`：thesis、anti-thesis、confidence、
+horizon、entry rationale、invalidation、suggested exposure、citations、
+dissent、data freshness、uncertainty 与显式 `no_trade`。每条 citation 必须
+解析到 committee 所用 snapshot 的 evidence_ids（builder 只发射受支持 ID）；
+`validate_proposal_grounding` 拒绝 unsupported citation、stale critical
+evidence（默认 86400s）、contradictory exposure（schema 层 no_trade⟺零仓位
+已拒绝）与 missing dissent——任何 violation 的 proposal 不可执行，不产生
+OrderIntent；无 plan 时 builder 保守输出 no_trade。proposal 是 advisory
+evidence，最终仍需 RiskGate 批准才可提交。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation
