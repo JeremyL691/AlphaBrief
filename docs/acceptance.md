@@ -1055,3 +1055,16 @@ risk-chain 分支无凭证时断言 fail-closed 并记录 external_evidence_pend
 M08 里程碑 → CODE_COMPLETE。full pytest 2024 passed（+7 E2E 测试）；
 ruff/mypy 全仓 clean（351 source files）；acceptance 11/11。下一 READY
 item：M09-W01。
+
+#### M09-W01 已闭环证据（R-20260813-M09-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M09-W01-01 | fixture ingestion 为每个 attempted item 持久化 source、canonical URL、published/fetched UTC times、language、content hash、summary、fetch outcome、correlation ID | `NewsIngestionService` + `IngestedNewsItem` + `NewsIngestionStore`（新 `alphabrief_news/ingestion.py`，`test_news_ingestion.py`）：success fixture 逐字段断言（item_id=source:headline_id、canonical_url 保留完整 URL、published_at/fetched_at UTC round-trip（TIMESTAMPTZ 同 instant）、language=en、content_hash=sha256 hexdigest、summary 原文、fetch_outcome=success、correlation_id、metadata_only=False）；store DuckDB append-only 持久化（records() 全字段返回）、duplicate persist 幂等（第二次返回 0、记录数不变）、records survive（同库重开）；content hash 确定性（同 headline 相同、改 title 不同） |
+| AC-M09-W01-02 | success、empty response、timeout、rate-limit、malformed response、source failure 产生 distinct durable outcomes，不伪造 headlines | 参数化 7 例：empty（空列表→empty）、network_error/http_error→timeout、rate_limited→rate_limit、parse_error/invalid_config→malformed、no_api_key→source_failure——每例 outcome 精确且 items==()（零伪造 headline）、store 无记录（失败不落假数据）；未分类异常（TimeoutError）→ timeout 分类 |
+| AC-M09-W01-03 | metadata-only source 永不持久化 licensed full text，只保留 permitted metadata 与 bounded summaries | `SourceLicensePolicy(metadata_only=True, max_summary_chars=20)`：summary 截断至 20 字符（"The European Central"）、metadata_only=True 落库；`IngestedNewsItem` 与 store record 均无 full_text/body 字段（`model_fields` 与 records() 键断言）；无任何 full-text 持久化通道（REQ-NEWS-008） |
+
+范围说明：`alphabrief_news/ingestion.py` 为 M09-W01 契约声明的新模块；既有
+`tests/test_news_store.py`/`tests/test_news.py` 全绿（news store 层未改动）。
+full pytest 2036 passed（+7 新测试）；ruff/mypy 全仓 clean（353 source
+files）；acceptance 11/11。下一 READY item：M09-W02。
