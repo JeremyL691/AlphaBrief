@@ -184,6 +184,11 @@ class RiskDecision(AlphaBriefModel):
     requires_human_review: bool
     source_module: str = ""
     created_at: datetime
+    # M08-W02: optional deterministic hash of the executable inputs the
+    # decision was approved for (symbol, units, price, instrument
+    # version, snapshot hash). When set, execution validates the inputs
+    # against it and refuses on any post-decision change (REQ-RISK-010).
+    execution_input_hash: str | None = None
 
     @field_validator("created_at")
     @classmethod
