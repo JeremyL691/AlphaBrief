@@ -8,7 +8,6 @@ real observation.
 
 from __future__ import annotations
 
-import pytest
 from alphabrief_core import (
     REHEARSAL_STEPS,
     RehearsalReport,

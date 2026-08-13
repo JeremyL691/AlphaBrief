@@ -60,6 +60,8 @@ from alphabrief_core.preflight import (
     SCOPES,
     PreflightCheck,
     PreflightReport,
+    ReadinessVerdict,
+    engineering_readiness_verdict,
     run_preflight,
 )
 from alphabrief_core.read_contracts import (
@@ -217,6 +219,8 @@ __all__ = [
     "run_security_gates",
     "scan_files_for_secrets",
     "scan_network_allowlist",
+    "ReadinessVerdict",
+    "engineering_readiness_verdict",
     "REQUEST_BUDGETS",
     "REQUEST_FAMILIES",
     "RequestBudget",

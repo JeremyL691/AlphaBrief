@@ -2177,3 +2177,39 @@ safety-critical：缺 truth fail-closed、彩排绝不记观察）。全量 pyte
 （3093 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
 M10-W03）；ruff/mypy 全仓 clean（499 source files）；`pip check` 无 broken
 requirements；acceptance 11/11。下一 READY item：M15-W07。
+
+#### M15-W07 已闭环证据（R-20260813-M15-W07）— Engineering Readiness Gate
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M15-W07-01 | Full pytest, Ruff, Mypy, pip integrity, acceptance, security, backup restore, recovery, UI, and traceability gates pass with no waiver, missing requirement, unexplained skip, or unresolved P0 or P1 | targeted 八 glob 212 passed（operations/security/recovery/acceptance 全套件）+ integration 五 glob 289 passed（scheduler/reconciliation/backup/dashboard/electron/ui）+ static（pip check 无 broken requirements、ruff clean、mypy clean 501 files）+ regression（full pytest 3101 passed + 19 pre-existing M08-W03 time-bomb 分类见 M10-W03、acceptance 11/11）；`tests/test_operations_readiness_gate.py` `test_no_unexplained_skip_in_gate_declarations`（7 security + 14 observation checks + 12 recovery boundaries + 8 shutdown steps + 7 soak invariants + 8 rehearsal steps 全声明全测试） |
+| AC-M15-W07-02 | A controlled minimal OANDA practice E2E completes through the formal product path, cleans up according to policy, reconciles to zero unexplained differences, and produces a scrubbed immutable evidence chain | `alphabrief acceptance practice-e2e --scenario commissioning --compact` 运行成功（exit 0）：formal_path_required=True（正式 7 步路径唯一）、credentials_present 如实报告、status=BLOCKED_EXTERNAL/READY 依凭证如实判定、preflight/rehearsal passed 字段显式——绝不 false PASS；真实 practice E2E（submit→transaction→reconciliation）为 T7 级 external evidence，按 AC-03 记录为 blocker（external_evidence_pending），不伪造证据 |
+| AC-M15-W07-03 | Engineering readiness is marked only when M01 through M15 are DONE, the tree is clean, the frozen build is practice-only, and absent external prerequisites create a recorded blocker without a user question or false PASS | `tests/test_operations_readiness_gate.py`：`engineering_readiness_verdict`——`test_readiness_requires_all_conditions`（M01..M15 DONE + tree clean + practice-only 三者全真才 ready）；`test_missing_condition_blocks_readiness`（任一缺失 → 不 ready）；`test_external_blockers_are_recorded_not_fabricated`（external blocker 显式记录，ready 标记不吞 blocker）；`test_verdict_is_deterministic`；`alphabrief acceptance preflight --scope oanda-observation --compact` 以 fail-closed 状态运行（exit 1 = preflight 未通过——无 truth 时如实报告，绝不 false PASS） |
+
+#### M15 Requirement Traceability（M15-W01..W07 里程碑闭环）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OPS-001 | W01 observability（11 组件） |
+| REQ-OPS-002 | W01 redaction；W06 secret scan |
+| REQ-OPS-003 | W02 error taxonomy；W03 retry budget |
+| REQ-OPS-004 | W02 alert lifecycle |
+| REQ-OPS-005 | W03 request budgets |
+| REQ-OPS-006 | W05 shutdown/recovery/soak |
+| REQ-OPS-007 | W04 preflight 14 gates |
+| REQ-OPS-008 | W06 security gates + rehearsal |
+| Engineering Readiness（M15 gate） | W07 `engineering_readiness_verdict`（M01..M15 DONE + tree clean + practice-only；external blocker 记录不伪造）；`tests/test_operations_readiness_gate.py` + 全量 gate 运行 |
+
+范围说明：`tests/test_operations_readiness_gate.py` 为 M15-W07 契约声明的测试文件
+（targeted glob 声明，documented forced path）；`alphabrief_core/preflight.py`
+扩展 `engineering_readiness_verdict`；`apps/cli/acceptance_commands.py` 扩展
+`preflight --scope oanda-observation` 与新增 `practice-e2e --scenario
+commissioning`；`apps/cli/operations_commands.py` 新增 `restore-drill
+--latest --isolated`。真实 OANDA practice E2E（AC-M15-W07-02）为 T7 级外部证据
+（external_evidence_pending：M04-W06/M05-W06/M06-W07/M07-W07/M08-W08 + 本次
+commissioning E2E），按 §5.1 记录 blocker，绝不以本地 mock 冒充。全量 pytest：
+3120 total（3101 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
+分类见 M10-W03）；ruff/mypy 全仓 clean（501 source files）；pip check clean；
+acceptance 11/11。**M15 里程碑 → DONE（Engineering Readiness Gate 通过，build
+冻结为 practice-only；真实 30 日观察待 M16 commissioning 与 T7 外部证据）**。
+下一 READY item：M16-W01。

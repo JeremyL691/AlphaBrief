@@ -593,3 +593,12 @@ prompt-injection fixtures 不得改变 system instructions/risk limits/broker
 tools/provider routing/execution state/evidence citations；非生产彩排
 （`alphabrief observation rehearse --all-drills --compact`）完成 8 步流程但
 绝不计为真实观察日。
+
+## Engineering Readiness Gate
+
+M15-W07 通过 Engineering Readiness Gate：M01-M15 全部 DONE、tree clean、
+frozen build practice-only；`alphabrief acceptance preflight --scope
+oanda-observation --compact`、`acceptance practice-e2e --scenario
+commissioning --compact`、`operations restore-drill --latest --isolated
+--compact` 为可脚本化 runtime 命令。真实 practice E2E 与 T7 外部证据
+pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissioning。
