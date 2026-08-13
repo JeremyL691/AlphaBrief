@@ -463,6 +463,30 @@ unfreeze 的唯一路径（M07-W05 起）要求全部证据同时满足：
 alarm 复发会生成新的 freeze 记录（detail digest + occurrence sequence），
 绝不因主键冲突被静默吞掉。
 
+### 13.2 Restart Recovery（M07-W06 起）
+
+重启恢复由 `SubmitWorkflow` + `StartupSyncService`（`oanda/submit_recovery`）执行，
+全部对 append-only order ledger 做 compare-and-set，同一 `(cycle_id, intent_id)`
+在任何 crash 点重跑都不会产生第二个外部订单：
+
+- **崩溃恢复**：reserve 前/后、send 前/后、response 后、fact commit 期间、
+  cursor advance 期间、reconciliation 期间八个命名 fault point 任一崩溃后，
+  以新进程同参数重跑即从确定性边界继续；100 次同 cycle 跨进程重放最多一个
+  外部 submit identity 和一条可解释的 terminal ledger chain。
+- **in-flight 解析**：SUBMITTED（结果未知）只按持久化 clientExtensions.id 查询
+  broker（`UnknownOutcomeResolver`）——RESOLVED_ACCEPTED → 完成；
+  NOT_SUBMITTED / UNRESOLVED / 查询失败 → ledger FROZEN + 新开仓 freeze，
+  绝不盲重试；重启后 sync 会解析遗留 in-flight 并把
+  `submit_id → broker_order_id` 映射恢复进进程 adapter（`completed_mappings`），
+  绝不重复下单、绝不重消费 facts。
+- **共享 durable reconcile**：API `POST /api/v1/broker/reconcile`、CLI
+  `broker reconcile`（API 离线时）与 scheduler startup/cycle 调用同一
+  `ReconciliationRunner`；缺 OANDA practice 凭证（null adapter）时记录显式
+  non-matching 快照（`broker_not_configured`）并按 scope freeze——绝不产生
+  无条件 all-match placeholder，也绝不询问如何恢复。
+- **completed submit 后的 blocking diff**：只冻结新开仓（`blocking_diff`
+  freeze，evidence_refs 指回 ledger submit），外部订单本身是不可变终态。
+
 ## 14. Zero-Intervention Boundaries
 
 M15 必须交付一个由同一 scheduler leader 持有的持久 observation supervisor。Day 0

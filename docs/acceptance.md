@@ -635,6 +635,25 @@ ruff/mypy 全仓 clean；acceptance 11/11。
 TypeError 而非 fail-closed。既有 `test_reconciliation.py` 全绿。full pytest
 1860 passed（+8 freeze 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
 
+#### M07-W06 已闭环证据（R-20260813-M07-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M07-W06-01 | 在 reserve 前、reserve 后、send 前、send 后、response 后、fact commit 期间、cursor advance 期间、reconciliation 期间注入 crash 都确定性恢复，且不产生第二个外部订单 | `SubmitWorkflow`（新 `oanda/submit_recovery.py`，`test_oanda_restart_recovery.py`）：八个 fault point（before_reserve/after_reserve/before_send/after_send/after_response/during_fact_commit/during_cursor_advance/during_reconciliation）逐一注入 `InjectedCrash`，然后以新进程实例（同一 durable 文件重开 ledger/cursor/freeze/orders）重跑 → 全部 COMPLETED、`broker.post_count==1`、`len(broker.orders)==1`、reservation_count==1、event 链恰为 [RESERVED, BIND, SUBMIT_ATTEMPT, BROKER_RESULT]、cursor=6001（幂等 advance）、零残留 freeze；after_send 崩溃后订单在 broker 侧 → 重启按 client identity 查询解析（captured[-1] 是 GET）而非重下单；send 失败且 broker 从未收到 → 查询判定 NOT_SUBMITTED → ledger FROZEN + 新开仓 freeze，restart 仍 FROZEN、post_count 不增长；查询本身失败 → UNRESOLVED → FROZEN（unresolved_gap freeze 落库）；无 resolver → 同样 FROZEN |
+| AC-M07-W06-02 | 100 次同 cycle 跨全新进程重放最多产生一个外部 submit identity 和一条可解释的 terminal ledger chain | `test_100_same_cycle_replays_across_fresh_processes`（`test_oanda_restart_recovery.py`）：100 个迭代各建全新 OrderLedger/TransactionCursorStore/ExposureFreezeStore/OrderOpsClient/SubmitWorkflow 实例（同一 db 文件）→ 首轮 reused=False、其后 99 轮全部 reused=True 且 COMPLETED；最终 `broker.post_count==1`、`len(broker.orders)==1`、reservation_count==1、event 链 [RESERVED, BIND, SUBMIT_ATTEMPT, BROKER_RESULT]（零额外 event）、`completed_mappings()=={submit_id: broker_order_id}` 精确等于 broker 唯一订单；不同 decision 重放 → `identity_collision`（`LedgerTransitionError`）且原 COMPLETED 不被覆盖、post_count 不增长 |
+| AC-M07-W06-03 | API reconcile、CLI reconcile、scheduler startup、periodic reconciliation 调用同一 durable service，绝不返回无条件 all-match placeholder 或询问如何恢复 | API `POST /api/v1/broker/reconcile` 改为调用同一 `ReconciliationRunner`（`apps/api/.../routes/broker.py`）：live（mock）adapter 下执行真实 broker 读取——远端未知 client identity 订单 → orders_match=False、all_match=False、快照持久可见（`test_broker_reconcile_runs_real_pass_with_live_adapter`，`test_broker_api_live.py`）；无凭证 null adapter → 显式 non-matching 快照（diff.error=broker_not_configured），eod 不 freeze、startup/cycle 按 policy freeze（`test_broker_reconcile_fails_closed_without_credentials`，`test_broker_api.py`；`test_null_adapter_*`，`test_reconciliation.py`）。CLI `broker reconcile`（API 离线）用同一 runner（`test_cli_broker_reconcile_fails_closed_without_credentials`，`test_broker_cli.py`；`test_reconcile_cmd_fails_closed_offline_without_credentials`，`test_broker_commands.py`）。scheduler startup 与 periodic（cycle）scope 本就调用同一 runner；全路径无 input()/确认提示 |
+
+范围说明：本 round 实现 `oanda/submit_recovery.py`（SubmitWorkflow +
+StartupSyncService + resolve_in_flight）与 `OrderLedger.in_flight_reservations()/
+completed_mappings()` 只读查询；API/CLI reconcile 从占位快照切换为同一
+durable runner；`ReconciliationRunner` 对 null adapter fail closed。进度数据
+修正：M07-W05 更新 progress 时把 `current.milestone_id` 从 M02 改为 M07，
+破坏确定性 selection gate（`test_autonomous_loop_state_machine.py` 硬编码 M02
+期望且不在本 round allowlist），按 M07-W01..W05 既有约定恢复为 M02。CLI
+测试 fixture 强制清空 OANDA 凭证环境变量（防开发者本机真实凭证泄漏进
+subprocess）。full pytest 1881 passed（+21 新测试）；ruff/mypy 全仓 clean；
+acceptance 11/11。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
