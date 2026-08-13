@@ -522,3 +522,21 @@ blocker，不能把人工补写或未来日期当作替代。一次初始启动�
 
 Agent 不为以上事项或任何逐轮步骤提问。所有剩余依赖被阻塞时，输出机器可读 blocker
 并停止；外部状态变化后的下一次启动按恢复协议继续。
+
+## Structured Observability During Observation
+
+M15-W01 起，观察期运行依赖 `alphabrief_core/observability.py` 的结构化可观测
+契约：
+
+- 11 个关键子系统（ingestion、news、models、scheduler、cycle、risk、oanda、
+  reconciliation、backup、api、electron）各自发布 typed health/readiness/
+  heartbeat/latency/success/failure/freshness 信号；缺失 truth 的组件为
+  `unknown` 且 not ready，绝不假设 healthy。
+- 日志与 metrics 通过 correlation ID 串联 cycle、evidence、model、intent、
+  risk、order、transaction、reconciliation、alert、backup 十类记录。
+- 所有可观测输出经 `redact_observable` 强制 scrub：token、authorization、
+  完整 account ID、model-sensitive 内容、未许可新闻全文与可配置 secret
+  pattern；完整 account ID 只以不可逆 sha256 前 12 hex 展示。
+
+观察期日报与周门禁必须引用上述 health/readiness/heartbeat 信号作为证据，
+缺失信号按 REQ-OBS-002 视为当日证据不完整。

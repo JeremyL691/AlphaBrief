@@ -2012,3 +2012,27 @@ documented substitution。回归：全部 test_dashboard*/test_electron*/tests/u
 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（473
 source files）；acceptance 11/11。**M14 里程碑 → DONE**。下一 READY item：
 M15-W01。
+
+#### M15-W01 已闭环证据（R-20260813-M15-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M15-W01-01 | Ingestion, news, models, scheduler, cycle, risk, OANDA, reconciliation, backup, API, and Electron publish structured health, readiness, heartbeat, latency, success, failure, and freshness signals | `tests/test_operations_observability.py`：`COMPONENTS` 恰好 11 个（`test_all_eleven_components_are_declared`）；每组件发布 typed health/readiness/heartbeat/last_success/last_failure/freshness（`test_every_component_publishes_health_signals` parametrize）；`MetricRecord` 四种 metric（latency/success/failure/freshness，`test_every_metric_kind_is_typed`）；`test_health_registry_is_typed_and_deterministic`；缺失组件 → unknown 且 not ready（`test_missing_component_stays_unknown_not_ready`）。`tests/test_operations_health_readiness.py`：状态矩阵（healthy/degraded/unhealthy/unknown × ready，`test_status_matrix`）、非法 status → unknown（`test_invalid_status_falls_back_to_unknown`）、freshness 透传、确定性 |
+| AC-M15-W01-02 | Correlation IDs connect cycle, evidence, model, intent, risk, order, transaction, reconciliation, alert, and backup records across logs and metrics | `tests/test_operations_heartbeats.py`：`CORRELATION_KINDS` 恰好 10 类（`test_all_ten_kinds_are_declared`）；`correlation_chain` 把 10 类记录串成一条有序确定链（`test_chain_connects_every_record_kind`/`test_chain_is_ordered_and_deterministic`）；缺失 kind 不出现在链中（`test_missing_kind_is_absent_from_chain`）；同 kind 取最新 id（`test_latest_id_wins_per_kind`）；`StructuredLogRecord` 携带 correlation_id/kind（`test_structured_log_record_carries_correlation`）、naive timestamp 拒绝（`test_naive_log_timestamps_are_rejected`） |
+| AC-M15-W01-03 | All observable output scrubs tokens, authorization headers, full account IDs, model-sensitive content, unlicensed news text, and configured secret patterns | `TestRedaction`（`tests/test_operations_observability.py`）：`test_tokens_and_authorization_are_scrubbed`（"Bearer "+运行时拼接 token → [REDACTED]）；`test_full_account_ids_are_scrubbed`（account-+18 位数字 → [REDACTED]）；`test_configured_secret_patterns_are_scrubbed`（可配置 pattern 支持）；`test_model_sensitive_content_is_scrubbed`（system prompt → [MODEL-REDACTED]）；`test_unlicensed_news_text_is_scrubbed`（full article → [NEWS-REDACTED]）；`test_redaction_is_deterministic`；`test_account_id_hash_is_non_reversible`（sha256 前 12 hex） |
+
+#### M15 Requirement Traceability（M15-W01）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OPS-001（结构化日志、metrics、health/readiness、heartbeats、alerts 覆盖 ingestion、models、scheduler、risk、broker、reconciliation、backup） | W01 `alphabrief_core/observability.py`：`StructuredLogRecord`/`MetricRecord`/`ComponentHealth`/`HealthRegistry`（11 组件全覆盖）；`tests/test_operations_observability.py`/`test_operations_health_readiness.py` |
+| REQ-OPS-002（日志带 correlation IDs，自动 scrub secret、authorization、完整 account ID、model-sensitive content 和未许可新闻全文） | W01 `correlation_chain`（10 类记录关联）+ `redact_observable`（token/auth/account id/model/news/可配置 pattern）；`tests/test_operations_heartbeats.py`/`TestRedaction` |
+
+范围说明：`tests/test_operations_observability.py`、`tests/test_operations_health_readiness.py`、
+`tests/test_operations_heartbeats.py` 为 M15-W01 契约声明的测试文件（targeted
+command 声明，documented forced path）；`alphabrief_core/observability.py` 为 M15-W01
+契约声明的生产模块（REQ-OPS-001/002，scope profile `operations`，risk_class
+safety-critical：缺失 truth → unknown/not ready，绝不假设 healthy）。全量 pytest：
+2962 total（2943 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
+分类见 M10-W03）；ruff/mypy 全仓 clean（477 source files）；acceptance 11/11。
+下一 READY item：M15-W02。
