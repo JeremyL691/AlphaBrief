@@ -1867,3 +1867,29 @@ command 声明，documented forced path，`tests/ui/` 为契约声明的目录�
 2800 total（2781 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
 分类见 M10-W03）；ruff/mypy 全仓 clean（453 source files）；acceptance 11/11。
 下一 READY item：M14-W03。
+
+#### M14-W03 已闭环证据（R-20260813-M14-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M14-W03-01 | Markets browses, searches, filters, and groups the complete account-discovered catalog while displaying tradeability, category, price, spread, freshness, quality, and unsupported reasons | `tests/test_dashboard_markets.py`：`build_markets_view` 从 catalog truth + market truth maps 确定性塑形——`test_builds_complete_catalog_with_truth_fields`（tradeable/category/price/spread/freshness/quality/margin_rate 全部来自输入 truth，未知 symbol 的 price 为 null 绝不捏造）；`test_unsupported_reasons_are_explicit`（inactive → unsupported_reason 显式）；`test_groups_by_category`（`group_markets`/`view.groups` 按类别分组计数）；`test_search_is_case_insensitive`（`search_markets` symbol/display_name 大小写不敏感）；`test_filter_by_category_and_tradeability`（`filter_markets`）；`test_deterministic_ordering`（symbol 排序、两次构建逐字节相同） |
+| AC-M14-W03-02 | News & Sentiment exposes source provenance, age, deduplication, entity mapping, disagreement, macro events, degradation, and injection-scan status without reproducing unlicensed full text | `tests/test_dashboard_news_sentiment.py`：`test_exposes_provenance_age_and_dedup`（source/published_at/age_seconds/content_hash/dedup_verdict）；`test_entity_mapping_is_exposed`（entity_links）；`test_never_reproduces_full_text`（full_text 输入被排除，序列化中无 full_text/无长文——只保留 bounded summary）；`test_age_is_clamped_and_deterministic`；`test_disagreement_and_sample_counts_are_exposed`（sentiment direction/intensity/disagreement/sample_count）；`test_macro_events_carry_importance_fields`（release_time/indicator/importance/actual/forecast，full_payload 排除）；`test_degradation_and_injection_scan_status` |
+| AC-M14-W03-03 | AI Research shows every role turn, citation, dissent, schema or provider degradation, final proposal or no-trade result, and immutable evidence identifiers from the API | `tests/test_dashboard_ai_research.py`：`test_every_role_turn_is_shown`（role/model/view/confidence 全展示）；`test_citations_and_dissent_are_carried_verbatim`（citations tuple + dissent 原样）；`test_final_proposal_carries_evidence_ids`（proposal_id/symbol/side/evidence_ids=key_evidence）；`test_no_trade_outcome_is_explicit`（plans 空 + outcome=no_trade）；`test_degredation_is_exposed`（provider/schema degradation）；`test_deterministic` |
+
+#### M14 Requirement Traceability（M14-W01..W03）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-003 | W01 token 系统/brand audit；W02/W03 workspace 视图消费 Soft 语义 |
+| REQ-UI-004（主导航 10 section） | W02 `NAVIGATION_SECTIONS`；W03 Markets/News & Sentiment/AI Research workspace 视图（Markets→/dashboard/markets、News & Sentiment→/dashboard/news、AI Research→/dashboard/ai-trading 对应导航项） |
+| REQ-UI-005（每页 8 态，不以空白或 fake data 掩盖失败） | W02 `derive_page_state`/`render_state_payload`；W03 三个 workspace view 全部 truth-only（无捏造 price/age/full text/evidence） |
+| REQ-UI-008 | W01/W02 contrast/reduced-motion/focus；W03 视图数据可访问性由 shell 保证 |
+
+范围说明：`tests/test_dashboard_markets.py`、`tests/test_dashboard_news_sentiment.py`、
+`tests/test_dashboard_ai_research.py` 为 M14-W03 契约声明的测试文件（targeted
+command 声明，documented forced path）；`dashboard/workspaces.py` 为 M14-W03 契约
+声明的生产模块（REQ-UI-004/005，scope profile `frontend`）。集成 command 声明的
+`tests/test_research_api.py` 不存在（research API 覆盖位于 `tests/test_api_server.py`，
+documented substitution）。全量 pytest：2819 total（2800 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（457 source files）；acceptance 11/11。下一 READY item：M14-W04。
