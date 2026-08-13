@@ -1756,3 +1756,30 @@ execution-critical）；`news_commands.py` 新增 `--json` 选项（经共享 `e
 documented substitution）。全量 pytest：2700 total（2681 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （441 source files）；acceptance 11/11。下一 READY item：M13-W05。
+
+#### M13-W05 已闭环证据（R-20260813-M13-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M13-W05-01 | Generated OpenAPI is deterministic and declares every read and approved mutation schema, error model, cursor, freshness field, idempotency header, and correlation identifier | `tests/test_openapi_contract.py`：`build_deterministic_openapi` 字节级确定（`test_generation_is_byte_deterministic`，sort_keys + compact）；`x-alphabrief-contract` extension 声明全部 14 read domains、7 approved operator mutations、approved endpoints、error model（error_code/message/resource）、cursor fields（cursor/next_cursor/has_more/limit/count）、freshness fields（status/age/max_age）、`Idempotency-Key` header、`X-Correlation-ID` header（`test_contract_extension_is_declared`/`test_error_model_cursor_freshness_are_declared`）；`verify_openapi_contract` 全绿且缺失 extension 时 fail-closed（`test_verification_passes`/`test_verification_fails_closed_on_missing_extension`）；`test_no_sensitive_example_values`（schema 文本扫描无 bearer/api-key/authorization） |
+| AC-M13-W05-02 | Contract tests prove cursor stability, bounded page sizes, UTC serialization, decimal fidelity, unknown-field rejection, and no sensitive example values | `test_cursor_round_trip_is_stable`（PageCursor round-trip 稳定）+ `test_cursor_contract_matches_declaration`/`test_freshness_verdict_matches_declaration`（model fields == 声明）；`test_bounded_page_sizes`（operational equity limit 0/5000 → 422）；`test_utc_serialization`（generated_at/retrieved_at UTC）；`test_decimal_fidelity`（Decimal 经 str 完整往返）；`test_unknown_fields_are_rejected`（envelope extra=forbid → ValidationError）；`test_no_sensitive_example_values` |
+| AC-M13-W05-03 | Every documented CLI JSON command maps to an OpenAPI resource or an explicitly local read-only contract with automated schema parity | `tests/test_api_cli_parity.py`：`CLI_TO_RESOURCE` 映射表（10 个 CLI JSON command → OpenAPI path；`paper status`/`risk status` → 显式 `"local"` read-only contract）；`test_every_cli_json_command_maps_to_a_declared_resource`（每个映射 path 都在生成的 OpenAPI 中）；`test_local_only_commands_are_explicitly_local`（local contract 命令仍产出 stable JSON）；`test_every_required_domain_is_covered_by_a_mapping`（11 domain 全覆盖）；`test_same_fixture_normalizes_identically_across_api_and_cli`/`test_cli_normalized_output_matches_api_response_shape`/`test_local_fallback_parity_over_the_same_fixture`（API/local 同 fixture normalized 等价）；`test_openapi_schema_serializes_without_lossy_values`（无 NaN/Infinity） |
+
+#### M13 Requirement Traceability（M13-W01..W05）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-PLAT-008/009 | W01 read contracts；W02 write audit；W05 OpenAPI contract 声明 correlation/idempotency header 与稳定 ID 语义 |
+| REQ-UI-001 | W01 envelope；W04 CLI JSON；W05 OpenAPI 声明 14 read domains + API-CLI 映射 |
+| REQ-UI-002/010 | W02 write_contracts；W05 OpenAPI 声明 7 mutations + idempotency header + error model |
+| REQ-EXEC-010 | W03 共享 authority 路由 |
+| REQ-UI-006/007 | W03 trace/operational 路由；W05 OpenAPI 声明这些 resource paths |
+| REQ-UI-001（OpenAPI 侧） | W05 `alphabrief_api/openapi_contract.py`：`build_deterministic_openapi`/`verify_openapi_contract`/`scan_for_sensitive_values`；`tests/test_openapi_contract.py`/`test_api_cli_parity.py` |
+
+范围说明：`tests/test_openapi_contract.py` 与 `tests/test_api_cli_parity.py` 为 M13-W05
+契约声明的测试文件（targeted command 声明，documented forced path）；
+`alphabrief_api/openapi_contract.py` 为 M13-W05 契约声明的生产模块（REQ-UI-001/
+REQ-UI-002/006、REQ-PLAT-009，scope profile `api_cli`）。全量 pytest：2720 total
+（2701 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
+M10-W03）；ruff/mypy 全仓 clean（444 source files）；acceptance 11/11。
+下一 READY item：M13-W06。
