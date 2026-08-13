@@ -12,7 +12,7 @@ import typer
 
 acceptance_app = typer.Typer(help="Run AlphaBrief project acceptance checks.")
 
-_Scope = Literal["full", "paper"]
+_Scope = Literal["full", "paper", "oanda_observation", "oanda-observation"]
 
 
 @acceptance_app.command("verify")
@@ -55,9 +55,66 @@ def preflight_cmd(
 ) -> None:
     """Run a scoped pre-flight check (default: paper-broker readiness)."""
 
+    if scope in ("oanda_observation", "oanda-observation"):
+        from alphabrief_core.preflight import run_preflight
+
+        _emit_report(
+            run_preflight("oanda_observation", {}),
+            pretty=pretty,
+        )
+        return
     build_report = _load_build_report(project_root)
     report = build_report(project_root, scope=scope)
     _emit_report(report, pretty=pretty)
+
+
+@acceptance_app.command("practice-e2e")
+def practice_e2e_cmd(
+    scenario: str = typer.Option(
+        "commissioning",
+        "--scenario",
+        help="E2E scenario (commissioning).",
+    ),
+    pretty: bool = typer.Option(
+        False,
+        "--pretty/--compact",
+        help="Pretty-print JSON output.",
+    ),
+) -> None:
+    """Run the controlled practice E2E commissioning drill.
+
+    The formal proposal -> OrderIntent -> persisted RiskDecision ->
+    submit -> transaction -> cleanup -> reconciliation path is the only
+    permitted sequence. Missing practice credentials are recorded as
+    BLOCKED_EXTERNAL without fabricating evidence or asking a question.
+    """
+    import os
+
+    from alphabrief_core.preflight import run_preflight
+    from alphabrief_core.recovery import run_recovery_drill
+    from alphabrief_core.runbook_rehearsal import run_rehearsal
+
+    has_credentials = bool(
+        os.environ.get("ALPHABRIEF_OANDA_TOKEN")
+        and os.environ.get("ALPHABRIEF_OANDA_ACCOUNT_ID")
+    )
+    preflight = run_preflight("oanda_observation", {})
+    rehearsal = run_rehearsal({})
+    recovery = run_recovery_drill(scenario=scenario, boundary_truth={})
+    from alphabrief_cli.contracts import emit_json
+
+    emit_json(
+        {
+            "scenario": scenario,
+            "formal_path_required": True,
+            "credentials_present": has_credentials,
+            "status": "BLOCKED_EXTERNAL" if not has_credentials else "READY",
+            "preflight_passed": preflight.passed,
+            "rehearsal_passed": rehearsal.passed,
+            "recovery_drill_passed": recovery.passed,
+        },
+        pretty=pretty,
+    )
 
 
 def _emit_report(report: Any, *, pretty: bool) -> None:

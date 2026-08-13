@@ -130,12 +130,53 @@ def run_preflight(
     )
 
 
+class ReadinessVerdict(BaseModel):
+    """One deterministic engineering-readiness verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ready: bool
+    milestones_done: bool
+    tree_clean: bool
+    frozen_build_practice_only: bool
+    external_blockers: tuple[str, ...] = ()
+
+
+def engineering_readiness_verdict(
+    *,
+    milestones_done: bool,
+    tree_clean: bool,
+    frozen_build_practice_only: bool,
+    external_blockers: tuple[str, ...] = (),
+) -> ReadinessVerdict:
+    """The deterministic readiness verdict (AC-M15-W07-03).
+
+    Readiness is marked only when M01 through M15 are DONE, the tree
+    is clean, and the frozen build is practice-only. Absent external
+    prerequisites are recorded as blockers — never a false PASS.
+    """
+    ready = (
+        milestones_done
+        and tree_clean
+        and frozen_build_practice_only
+    )
+    return ReadinessVerdict(
+        ready=ready,
+        milestones_done=milestones_done,
+        tree_clean=tree_clean,
+        frozen_build_practice_only=frozen_build_practice_only,
+        external_blockers=external_blockers,
+    )
+
+
 __all__ = [
     "ENGINEERING_CHECKS",
     "FINAL_RELEASE_CHECKS",
     "OBSERVATION_CHECKS",
     "PreflightCheck",
     "PreflightReport",
+    "ReadinessVerdict",
+    "engineering_readiness_verdict",
     "SCOPES",
     "run_preflight",
 ]
