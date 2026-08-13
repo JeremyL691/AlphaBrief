@@ -230,17 +230,22 @@ __all__ = [
     "DAY30_CLOSE_STEPS",
     "EVIDENCE_FLAWS",
     "FINAL_GATE_PROOFS",
+    "FINAL_PROJECT_STATUS",
+    "FINAL_RELEASE_GATES",
     "FINAL_SAFETY_INVARIANTS",
     "FORBIDDEN_REPORT_MARKERS",
     "LIVE_CLAIM_MARKERS",
     "REPORT_COUNT_FIELDS",
     "REPORT_EVIDENCE_SOURCES",
+    "TRACEABILITY_FLAWS",
+    "TRACEABILITY_LEVELS",
     "DayZeroAttempt",
     "DailyApplicabilityEvidence",
     "EVENT_RESOLUTION_FIELDS",
     "FAULT_INVARIANTS",
     "FAULT_SCENARIOS",
     "FinalGateResult",
+    "FinalReleaseVerdict",
     "FinalReport",
     "INCIDENT_SEVERITIES",
     "IsolatedRestoreResult",
@@ -257,6 +262,7 @@ __all__ = [
     "ReportSource",
     "RestartReconcileDrillReport",
     "RestoreSurface",
+    "TraceabilityVerdict",
     "WINDOW_ACCOUNT_KINDS",
     "WeekEventResolution",
     "WeeklyGateResult",
@@ -273,11 +279,13 @@ __all__ = [
     "run_day30_close",
     "run_fault_drill",
     "run_final_gate",
+    "run_final_release_gate",
     "run_isolated_restore",
     "run_restart_reconcile_drill",
     "run_weekly_gate",
     "scan_report_content",
     "validate_manifest_hashes",
+    "verify_traceability",
     "FORBIDDEN_E2E_STEPS",
     "ObservationManifest",
     "ObservationDayState",
@@ -1415,4 +1423,149 @@ def scan_report_content(*, text: str) -> ReportContentVerdict:
     return ReportContentVerdict(
         clean=not findings,
         findings=tuple(findings),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Final acceptance and paper-only handoff (M17-W04)
+# ---------------------------------------------------------------------------
+
+
+#: Traceability hierarchy levels (AC-M17-W04-01). Every level must
+#: carry a committed evidence reference.
+TRACEABILITY_LEVELS: tuple[str, ...] = (
+    "milestone",
+    "work_item",
+    "requirement",
+    "acceptance_predicate",
+)
+
+#: Traceability flaws that must fail final acceptance.
+TRACEABILITY_FLAWS: tuple[str, ...] = (
+    "tbd",
+    "waiver",
+    "mock_substitution",
+    "unresolved_blocker",
+    "self_authored_pass",
+)
+
+
+class TraceabilityVerdict(BaseModel):
+    """One deterministic traceability verification verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    passed: bool
+    levels: tuple[FaultInvariant, ...]
+    blockers: tuple[str, ...] = ()
+
+
+def verify_traceability(
+    *,
+    level_truth: dict[str, bool] | None = None,
+    flaws: dict[str, bool] | None = None,
+) -> TraceabilityVerdict:
+    """Verify the committed traceability contract.
+
+    Every hierarchy level must have a committed evidence reference;
+    missing truth fails closed, and any TBD, waiver, mock substitution,
+    unresolved blocker, or self-authored pass records a blocker.
+    """
+    truth = level_truth or {}
+    flaw_truth = flaws or {}
+    levels = tuple(
+        FaultInvariant(
+            name=name,
+            preserved=bool(truth.get(name, False)),
+            detail=(
+                "referenced" if truth.get(name, False) else "not referenced"
+            ),
+        )
+        for name in TRACEABILITY_LEVELS
+    )
+    blockers = [
+        f"traceability flaw {flaw}" for flaw in TRACEABILITY_FLAWS
+        if flaw_truth.get(flaw, False)
+    ]
+    return TraceabilityVerdict(
+        passed=all(level.preserved for level in levels) and not blockers,
+        levels=levels,
+        blockers=tuple(blockers),
+    )
+
+
+#: The final release gates (AC-M17-W04-02).
+FINAL_RELEASE_GATES: tuple[str, ...] = (
+    "full_tests",
+    "ruff",
+    "mypy",
+    "dependency_integrity",
+    "acceptance",
+    "security",
+    "fresh_install",
+    "package",
+    "backup_restore",
+    "final_reconciliation",
+    "oanda_practice_only_negative",
+)
+
+#: The only final project status that may be set when every gate and
+#: hash proof passes (AC-M17-W04-03).
+FINAL_PROJECT_STATUS: str = "COMPLETE_PAPER_ONLY"
+
+
+class FinalReleaseVerdict(BaseModel):
+    """One deterministic final release verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    passed: bool
+    status: str = Field(min_length=1)
+    gates: tuple[FaultInvariant, ...]
+    report_hash_matches: bool = False
+    blockers: tuple[str, ...] = ()
+
+
+def run_final_release_gate(
+    *,
+    gate_truth: dict[str, bool] | None = None,
+    report_hash_matches: bool = False,
+) -> FinalReleaseVerdict:
+    """Run one deterministic final release gate.
+
+    ``gate_truth`` maps each release gate to passed or not; missing
+    truth fails closed. The project status becomes
+    ``COMPLETE_PAPER_ONLY`` only when every gate passes and the final
+    report hash matches the source artifacts. Live trading, other
+    brokers, and production simulation stay forbidden and unreachable.
+    """
+    truth = gate_truth or {}
+    gates = tuple(
+        FaultInvariant(
+            name=name,
+            preserved=bool(truth.get(name, False)),
+            detail=(
+                "passed" if truth.get(name, False) else "not passed"
+            ),
+        )
+        for name in FINAL_RELEASE_GATES
+    )
+    passed = (
+        all(gate.preserved for gate in gates) and report_hash_matches
+    )
+    return FinalReleaseVerdict(
+        passed=passed,
+        status=FINAL_PROJECT_STATUS if passed else "IN_PROGRESS",
+        gates=gates,
+        report_hash_matches=report_hash_matches,
+        blockers=(
+            ()
+            if passed
+            else (
+                "BLOCKED_EXTERNAL: final report hash does not match "
+                "source artifacts"
+                if not report_hash_matches
+                else "BLOCKED_EXTERNAL: release gates not all passed",
+            )
+        ),
     )

@@ -846,3 +846,20 @@ M17-W02 起，operations 面由 `alphabrief_core.recovery` 三个确定性契约
 runtime 入口：`operations verify-fresh-install --compact`、
 `operations restore-drill --latest --isolated --compact`。真实 fresh-install
 验证依赖已提交源码 + 外部 secrets（T7 证据 PENDING）——命令如实输出未完成步骤。
+
+## Final Acceptance Gate (M17-W04)
+
+M17-W04 起，最终验收受 `alphabrief_core.observation_controller` 两个契约约束：
+
+- `verify_traceability`：4 级（milestone/work_item/requirement/
+  acceptance_predicate）须有 committed evidence reference；tbd/waiver/
+  mock_substitution/unresolved_blocker/self_authored_pass 5 类 flaw 一律
+  拒绝并记录 blocker。
+- `run_final_release_gate`：11 项 release gates 全过 + 报告 hash 与源码
+  artifacts 匹配才置 `COMPLETE_PAPER_ONLY`；否则保持 IN_PROGRESS。任何
+  缺失/伪造证据（含 mock-only、future-dated、reset-invalid）都使 gate
+  失败——绝不 self-authored PASS。
+
+runtime 入口：`observation verify --final --compact`、`acceptance preflight
+--scope final-release --compact`。真实 final release 依赖真实 OANDA practice
+T7 证据（PENDING）——命令如实输出 fail-closed。

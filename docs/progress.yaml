@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-14T04:34:15+08:00"
+updated_at: "2026-08-14T04:39:41+08:00"
 
 project:
   status: IN_PROGRESS
@@ -69,11 +69,11 @@ current:
   round_id: null
   milestone_id: M02
   work_item_id: M17-W04
-  phase: READY
+  phase: RUNTIME_BLOCKED
   base_commit: null
   attempt: 0
-  last_verified_gate: M17-W03-FINAL-GATE
-  next_action: pass final acceptance and hand off the paper-only release
+  last_verified_gate: M17-W04-FINAL-GATE
+  next_action: acquire real OANDA practice T7 evidence to freeze Day 0 and run the real 30-day observation
   external_evidence_pending: M04-W06 T7 practice catalog evidence; M05-W06 T7 practice market-data evidence; M06-W07 T7 practice lifecycle evidence; M07-W07 T7 practice restart evidence; M08-W08 T7 practice risk-chain evidence
 
 milestones:
@@ -97,9 +97,8 @@ milestones:
   M13: DONE
   M14: DONE
   M15: DONE
-  M16: BACKLOG
-  M17: BACKLOG
-
+  M16: CODE_COMPLETE
+  M17: CODE_COMPLETE
 work_item_states:
   M00-W01: DONE
   M01-W01: DONE
@@ -211,9 +210,10 @@ work_item_states:
   M17-W01: DONE
   M17-W02: DONE
   M17-W03: DONE
+  M17-W04: DONE
 
 latest_validation:
-  completed_at: "2026-08-14T04:34:15+08:00"
+  completed_at: "2026-08-14T04:39:41+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -221,7 +221,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 3291
+      passed: 3306
       failed: 19
       warnings: 14
     restricted_sandbox:
@@ -330,5 +330,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M17-W03
-last_ledger_record: R-20260813-M17-W03
+last_completed_round: R-20260813-M17-W04
+last_ledger_record: R-20260813-M17-W04

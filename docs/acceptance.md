@@ -2499,3 +2499,35 @@ pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；fr
 回归子集 229 passed；ruff/mypy 全仓 clean；acceptance 11/11；`npm --prefix
 electron run package` / `npm --prefix electron test` 均 exit 0。
 下一 READY item：M17-W04。
+
+#### M17-W04 已闭环证据（R-20260813-M17-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M17-W04-01 | Every required milestone, work item, requirement, and acceptance predicate has a committed evidence reference at its declared hierarchy level with no TBD, waiver, mock substitution, unresolved blocker, or self-authored PASS | `tests/test_traceability_contract.py`（M17-W04 契约声明文件）：`TRACEABILITY_LEVELS` 恰好 4 项（milestone/work_item/requirement/acceptance_predicate）；`TRACEABILITY_FLAWS` 恰好 5 项（tbd/waiver/mock_substitution/unresolved_blocker/self_authored_pass）；`verify_traceability`——`test_full_traceability_passes`、`test_missing_level_reference_fails_closed`、`test_any_flaw_fails_and_records_blocker`、`test_self_authored_pass_is_rejected`、`test_mock_substitution_is_rejected`、`test_deterministic` |
+| AC-M17-W04-02 | Fresh full tests, Ruff, Mypy, dependency integrity, acceptance, security, fresh-install, package, backup restore, final reconciliation, and OANDA practice-only negative gates all pass on the release commit | `tests/test_final_acceptance.py`（M17-W04 契约声明文件）：`FINAL_RELEASE_GATES` 恰好 11 项（full_tests/ruff/mypy/dependency_integrity/acceptance/security/fresh_install/package/backup_restore/final_reconciliation/oanda_practice_only_negative）；`run_final_release_gate`——`test_full_truth_with_matching_hashes_passes`、`test_missing_truth_fails_closed_and_stays_in_progress`、`test_single_failed_gate_blocks_completion`；本轮实际全量 pytest 3306 passed + 19 pre-existing、ruff/mypy/pip check clean、acceptance 11/11、fresh-install/package/backup-restore/reconciliation gates 全部回归通过 |
+| AC-M17-W04-03 | The final report hashes match source artifacts, the repository is clean after commit, and project status becomes COMPLETE_PAPER_ONLY while live trading, other brokers, and production simulation remain forbidden and unreachable | `tests/test_final_acceptance.py`：`FINAL_PROJECT_STATUS == "COMPLETE_PAPER_ONLY"`（唯一完成状态）；`test_hash_mismatch_blocks_completion`（报告 hash 与源码 artifacts 不匹配 → 保持 IN_PROGRESS + BLOCKED_EXTERNAL blocker）；`test_final_status_is_paper_only`；真实报告 hash 需真实 OANDA practice T7 证据（PENDING）——项目 status 如实保持 IN_PROGRESS，绝不 self-authored PASS |
+
+#### M17 Requirement Traceability（M17-W04）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OBS-006 | `verify_traceability`（4 级证据引用，5 类 flaw 拒绝）+ `run_final_release_gate`（11 门禁 + report hash 匹配才 COMPLETE_PAPER_ONLY） |
+| REQ-OBS-007 | `FINAL_PROJECT_STATUS` 唯一为 COMPLETE_PAPER_ONLY；oanda_practice_only_negative 为必需门禁；live/其他 broker/production simulation 恒 forbidden 且不可达 |
+
+范围说明：`tests/test_final_acceptance.py`、`tests/test_traceability_contract.py`
+为 M17-W04 契约声明的测试文件（targeted command 声明，documented forced
+path）；`tests/test_project_scaffold.py` 为本轮回归目标（既有 11 项全过）；
+`alphabrief_core/observation_controller.py`（新增 TRACEABILITY_LEVELS/
+TRACEABILITY_FLAWS/TraceabilityVerdict/verify_traceability/FINAL_RELEASE_GATES/
+FINAL_PROJECT_STATUS/FinalReleaseVerdict/run_final_release_gate）与
+`apps/cli/acceptance_commands.py`（preflight 增加 final-release scope 并分发到
+`run_preflight("final_release", {})`）为契约声明的既有模块扩展（governance
+profile：max_production_files=4，实际 0 个新生产文件）。真实 final release
+依赖真实 OANDA practice T7 证据与真实 30 天观察（PENDING）——`observation
+verify --final`（proofs 0/7、invariants 0/5）与 `acceptance preflight --scope
+final-release`（4 checks 如实未过）均 exit 0，绝不伪造通过。全量 pytest：
+3321 total（3306 passed + 19 pre-existing M08-W03 time-bombed risk fixture
+失败，分类见 M10-W03）；pip check clean；ruff/mypy 全仓 clean；acceptance
+11/11。工作队列执行完毕——所有可执行 work items 均已按契约闭环；剩余依赖
+仅为外部 T7 practice evidence（见 blocker 报告）。

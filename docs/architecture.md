@@ -852,3 +852,23 @@ boundary、无 state ownership 变化，仅新增确定性检查面）：
 
 缺 truth 全部 fail-closed；CLI 入口 `operations verify-fresh-install` 与既有
 `operations restore-drill` 如实输出未完成步骤。
+
+## 14. Final Acceptance Gate (M17-W04)
+
+`alphabrief_core.observation_controller` 新增两个 governance 契约（无新 module
+boundary、无 state ownership 变化）：
+
+- `verify_traceability`（`TRACEABILITY_LEVELS` 4 项 + `TRACEABILITY_FLAWS`
+  5 项）：milestone/work_item/requirement/acceptance_predicate 每级须有
+  committed evidence reference；tbd/waiver/mock_substitution/
+  unresolved_blocker/self_authored_pass 一律记录 blocker 并失败。
+- `run_final_release_gate`（`FINAL_RELEASE_GATES` 11 项 +
+  `FINAL_PROJECT_STATUS`）：full_tests/ruff/mypy/dependency_integrity/
+  acceptance/security/fresh_install/package/backup_restore/
+  final_reconciliation/oanda_practice_only_negative 全过且报告 hash 与源码
+  artifacts 匹配才置唯一完成状态 `COMPLETE_PAPER_ONLY`；否则如实保持
+  IN_PROGRESS。live/其他 broker/production simulation 恒 forbidden 且不可达
+  （REQ-OBS-007）。
+
+CLI 入口：`acceptance preflight --scope final-release`（分发到
+`run_preflight("final_release", {})`）与既有 `observation verify --final`。

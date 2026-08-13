@@ -12,7 +12,13 @@ import typer
 
 acceptance_app = typer.Typer(help="Run AlphaBrief project acceptance checks.")
 
-_Scope = Literal["full", "paper", "oanda_observation", "oanda-observation"]
+_Scope = Literal[
+    "full",
+    "paper",
+    "oanda_observation",
+    "oanda-observation",
+    "final-release",
+]
 
 
 @acceptance_app.command("verify")
@@ -60,6 +66,14 @@ def preflight_cmd(
 
         _emit_report(
             run_preflight("oanda_observation", {}),
+            pretty=pretty,
+        )
+        return
+    if scope == "final-release":
+        from alphabrief_core.preflight import run_preflight
+
+        _emit_report(
+            run_preflight("final_release", {}),
             pretty=pretty,
         )
         return
