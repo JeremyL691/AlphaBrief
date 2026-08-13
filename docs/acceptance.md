@@ -1229,3 +1229,22 @@ M10-W04。
 轮次补齐。全量 pytest：2165 total（2146 passed + 19 pre-existing M08-W03
 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （380 source files）；acceptance 11/11。下一 READY item：M10-W05。
+
+#### M10-W05 已闭环证据（R-20260813-M10-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M10-W05-01 | invalid JSON、schema violations、nonexistent citations 触发不超过配置次数的 repair，且每次 attempt 与 verdict 均被记录 | `repair_structured_output`（`alphabrief_models/repair.py`）：`max_attempts` 有界（`test_repair_is_bounded_to_max_attempts`：3 次 attempt 后 exhausted=True、provider.calls==3）；invalid JSON→repair 成功（`test_invalid_json_repairs_to_valid_output`）、schema violation→repair（`test_schema_violation_repairs`）、nonexistent citation→grounding_check 触发 repair（`test_grounding_violation_repairs`）；每次 attempt 产生 typed `RepairVerdict`（attempt/ok/error_code/model_call_id/UTC created_at，`test_repair_verdicts_are_typed_and_strict`）且 gateway `record_sink` 持久化每次调用；committee opening 轮同样走 grounding 校验（`_vote_grounding_violations`：`ev-` 前缀不在 evidence_ids → `grounding_failed:nonexistent_citation`，`test_fabricated_evidence_ids_are_rejected`） |
+| AC-M10-W05-02 | exhausted repair、timeout、budget exhaustion、unresolved grounding → 单一 durable blocked/no-trade，无 OrderIntent | cycle 层：repair 耗尽（bad payload + repair_attempts=2）→ durable `provider_error`、plans/attempts/votes 全空（`test_exhausted_repair_produces_no_trade_without_intent`，store 回读断言）；budget 日额度耗尽（`max_calls_per_day=1`）→ `provider_error`、零 plans/attempts（`test_budget_exhaustion_produces_no_trade_without_intent`）；repair 成功路径 votes 保留（`test_repair_success_produces_tradeable_proposal_path`）；缺失 manager 的 CommitteeResult 现在携带 role_errors（cycle 正确分类 provider_error 而非误导性 skipped_no_consensus） |
+| AC-M10-W05-03 | 重复同一 cycle key + snapshot 返回既有 terminal result，不产生新 proposal/intent | `DailyTradingCycle.run(cycle_key=...)`：`_snapshot_fingerprint`（确定性 sha256，`test_fingerprint_is_deterministic_and_content_sensitive`）；同 key+同 snapshot → 第二次 run 返回同 cycle_id 记录、store 仅 1 条（`test_same_cycle_key_and_snapshot_returns_existing_record`）；同 key 不同 snapshot（价格 100→150）→ 新 run（`test_same_key_different_snapshot_creates_new_run`）；无 key 不幂等（`test_no_cycle_key_never_deduplicates`）；blocked 记录同 key 去重（`test_blocked_records_deduplicate_by_key`）；`get_cycle_by_key` 经 DuckDB `cycle_json ->> 'cycle_key'` 查询（无 schema 迁移）；API `/ai/run` 使用 `api:<date>:<sorted symbols>` key（`_api_cycle_key`），blocked 记录同样携带 |
+
+范围说明：`alphabrief_models/repair.py`、`tests/test_model_structured_repair.py`、
+`tests/test_ai_trader_idempotency.py` 为 M10-W05 契约声明的新模块/缺失测试文件
+（targeted command 声明，documented forced paths）；`tests/test_committee_transcript.py`
+为 M10-W03 契约声明的 forced path，本轮因 grounding 强制语义（伪造 citation 从
+静默忽略改为拒绝）必须同步更新其断言（行为变更 → 测试更新，同族文件）。cycle_key/snapshot_fingerprint
+存入 `cycle_json`（JSON 列，无需 schema.py 迁移——storage scope 外）。
+proposal→intent 的正式接线随 M11 durable cycle 轮次补齐。全量 pytest：
+2200 total（2181 passed + 19 pre-existing M08-W03 time-bombed risk fixture
+失败，分类见 M10-W03）；ruff/mypy 全仓 clean（383 source files）；
+acceptance 11/11。下一 READY item：M10-W06。

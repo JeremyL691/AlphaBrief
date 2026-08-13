@@ -267,6 +267,22 @@ evidence（默认 86400s）、contradictory exposure（schema 层 no_trade⟺零
 OrderIntent；无 plan 时 builder 保守输出 no_trade。proposal 是 advisory
 evidence，最终仍需 RiskGate 批准才可提交。
 
+结构化输出修复（M10-W05）：`alphabrief_models.repair.repair_structured_output`
+在 invalid JSON / schema violation / nonexistent citation（`ev-` 前缀不在
+snapshot evidence_ids）时经 ModelGateway 有界重问（`max_attempts`，默认 2），
+每次 attempt 记录 typed `RepairVerdict`（attempt、ok、error_code、
+model_call_id、UTC 时间戳）且每次调用经 gateway `record_sink` 持久化；
+repair 耗尽/超时/budget 耗尽 → 单一 durable blocked/no-trade（cycle 层
+`provider_error` 或 `skipped_no_intent` 记录，零 OrderIntent）。
+Committee 幂等（REQ-AI-009）：`DailyTradingCycle.run(cycle_key=...)` 先计算
+确定性 snapshot fingerprint（symbol/data_version/captured_at/reference
+price/returns/volume/受限 news+macro 的 sha256），同 (cycle_key, fingerprint)
+已存在 terminal record 时直接返回既有结果——不重复 committee run、不产生新
+proposal/intent；API `/ai/run` 使用 `api:<date>:<sorted symbols>` 作为
+cycle key（同日同 universe 幂等，snapshot 变化仍产生新 run）。cycle_key 与
+fingerprint 存入 `cycle_json`（`get_cycle_by_key` 经 DuckDB JSON 提取，无需
+schema 迁移）。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation

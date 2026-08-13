@@ -396,10 +396,21 @@ def run_cycle(body: AiRunRequest) -> dict[str, object]:
         record = cycle.run(
             symbols,
             time_horizon=body.time_horizon,
+            cycle_key=_api_cycle_key(symbols),
         )
     finally:
         close_snapshot_loader()
     return _cycle_payload(record)
+
+
+def _api_cycle_key(symbols: list[str]) -> str:
+    """Deterministic API cycle key: one terminal result per day+universe.
+
+    Repeating the same day and symbols returns the existing terminal
+    cycle record instead of running the committee again (REQ-AI-009);
+    a different snapshot fingerprint still produces a new run.
+    """
+    return f"api:{datetime.now(UTC).date().isoformat()}:{','.join(sorted(symbols))}"
 
 
 def _blocked_record_without_provider(
@@ -410,7 +421,8 @@ def _blocked_record_without_provider(
     The cycle cannot produce research without a configured provider, so
     no proposal, OrderIntent, or broker submission may exist. The record
     keeps the trading-day ledger honest: outcome is a no-trade value and
-    the summary states the real cause.
+    the summary states the real cause. It carries the deterministic
+    cycle key so repeated failures collapse into one durable record.
     """
     record = DailyCycleRecord(
         cycle_id=f"aic_{os.urandom(6).hex()}",
@@ -426,6 +438,7 @@ def _blocked_record_without_provider(
             "model provider unavailable; cycle produced no research or "
             f"order intent (fail closed): {reason}"
         ),
+        cycle_key=_api_cycle_key(symbols),
         created_at=datetime.now(UTC),
     )
     _get_store().save_cycle(record)
