@@ -581,6 +581,18 @@ scenario E2E 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
 UNIQUE 约束 + CAS 语义覆盖（restart/竞态 replay 均走 replay verdict）。
 full pytest 1819 passed（+14 ledger 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
 
+#### M07-W02 已闭环证据（R-20260813-M07-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M07-W02-01 | cursor advancement 与全部 transaction facts/projection 变更单事务提交；注入 crash 只留旧完整态或新完整态 | `TransactionCursorStore.advance`（`test_oanda_transaction_cursor.py`）：facts + projections + gap rows + cursor upsert 全部在一个 BEGIN/COMMIT 内；在 cursor 写入点注入 crash（连接代理抛异常）→ ROLLBACK → cursor 保持旧值、facts 表零部分行、projections 不变 |
+| AC-M07-W02-02 | duplicate/overlapping 幂等；missing/nonmonotonic/corrupt/account-mismatched 触发 bounded range recovery 并冻结 unresolved gaps | overlapping 页 → 已消费 ID 幂等忽略（facts_duplicated 计数、表内仅 1 行）；missing → cursor 停在最高连续 frontier（首洞 sealed，后续连续段不越过）、OPEN gap 落表；nonmonotonic（≤cursor）→ 忽略；corrupt（非 digit）→ corrupt_fact 且零部分提交（连合法前导 fact 也不落）；`recover_range`（account-scoped fetcher）bounded attempts：填补后 frontier 越过全部已见 fact；超过 ceiling 仍 OPEN → FROZEN，span 内 fact 再到达 → gap_frozen；account mismatch（fetch 为空）→ FROZEN；整库 freeze → 一切 advance frozen |
+| AC-M07-W02-03 | restart 从最后提交的 OANDA transaction ID 恢复，绝不用 wall-clock 或最新部分响应 | advance [101,102,104,105] → cursor=102（103 缺失）；关库重开 → cursor=102（broker ID digit string，非时间戳）；补 103 后 → cursor=105；部分响应 108 存在但 103-107 缺失 → cursor 绝不到 108 |
+
+范围说明：本 round 无 allowlist 外路径；targeted 测试文件为契约声明的缺失
+文件，按既有先例创建（documented forced path）。full pytest 1831 passed
+（+12 cursor 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
