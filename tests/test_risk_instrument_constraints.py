@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import TypedDict, cast
 
 import pytest
@@ -48,6 +49,7 @@ from alphabrief_risk.broker_context import (
     ReconciliationState,
     TradeDatum,
 )
+from alphabrief_risk.decision_binding import hash_inputs
 from alphabrief_risk.instrument_rules import (
     InstrumentConstraintError,
     MarketEvidence,
@@ -61,6 +63,15 @@ from alphabrief_trader import ExternalPaperExecutionBackend
 from alphabrief_trader.execution_backend import ExecutionBackendError
 
 NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+
+@pytest.fixture(autouse=True)
+def _isolated_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the runtime data directory at tmp so the decision-binding
+    store (M08-W07) never touches the developer's real data directory."""
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+
 ACCOUNT = "101-004-1234567-001"
 
 
@@ -508,13 +519,12 @@ def test_backend_refuses_post_decision_input_change() -> None:
     requests: list[SubmitRequest] = []
     adapter = _adapter_with_submit(requests)
     builder = BrokerRiskContextBuilder(_FakeSources(), clock=lambda: NOW)
-    bound_hash = bind_execution_inputs(
-        "risk_test",
+    # The executable-inputs hash bound at approval uses the same
+    # components the backend validates (M08-W07).
+    bound_hash = hash_inputs(
         symbol="EUR_USD",
         units=Decimal("1"),
         price=None,
-        instrument_version="catalog-2026-08-13",
-        snapshot_hash=NOW.isoformat(),
     )
     backend = ExternalPaperExecutionBackend(
         adapter, risk_context_builder=builder
