@@ -1555,3 +1555,35 @@ scope profile `strategy_backtest`）；既有 `walk_forward.py` 及其测试零�
 全量 pytest：2526 total（2507 passed + 19 pre-existing M08-W03 time-bombed
 risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（423 source files）；
 acceptance 11/11。下一 READY item：M12-W05。
+
+#### M12-W05 已闭环证据（R-20260813-M12-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M12-W05-01 | Every report includes return, volatility, Sharpe, Sortino, Calmar, maximum drawdown, turnover, exposure, hit rate, profit factor, and tail loss | `tests/test_backtest_reporting.py`：`test_every_report_includes_all_required_metrics`（`ReportMetrics` 11 字段齐全）；`test_metric_values_match_the_scenario`（2 赢 1 输 + 持仓中 moving mid 的 scenario：hit_rate=2/3、profit_factor>1、volatility/sharpe/sortino/tail_loss 非 None、max_drawdown/exposure/turnover 语义正确）；`_tail_loss`=最差 5% period returns 均值（≥20 periods 且非零方差）；`_cagr`/`_calmar` 按 span 年化（span<1 交易日 → None，mdd=0 → None，绝不 inf） |
+| AC-M12-W05-02 | Reports include instrument and category attribution, spread, slippage, financing and rejection cost attribution, benchmark delta, and IS or OOS labels | `test_instrument_and_category_attribution`（EUR/XAU/US100 三 instrument 与 CURRENCY/METAL/INDEX_CFD 三 category 的 realized/unrealized/contribution，category 与 instrument 总 PnL 对账）；`test_cost_attribution_breaks_down_costs`（spread/fee>0、slippage=0、financing=2.003、total=四者和）；`test_rejection_attribution_counts_each_reason`（stale_price 与 units_precision 各 1 笔 + rejected_notional）；`test_benchmark_delta`/`test_missing_benchmark_yields_null_delta`（benchmark 给定 → delta=return-benchmark，缺省 → null）；label "OOS"/"IS"/"FULL" 显式记录 |
+| AC-M12-W05-03 | Metric fixtures cover zero-return, no-trade, all-loss, sparse, missing-benchmark, and multi-currency portfolios without NaN or misleading infinity serialization | `test_zero_return_fixture`（total_return/mdd/turnover/exposure=0，统计指标全 None）；`test_no_trade_fixture_has_no_misleading_metrics`；`test_all_loss_fixture_has_zero_profit_factor`（PF=0 非 inf）；`test_sparse_fixture_returns_none_stats`（2 snapshots → 统计全 None）；`test_missing_benchmark_yields_null_delta`；`test_multi_currency_portfolio_reconciles`（USD home currency、CURRENCY+METAL attribution）；`test_no_nan_or_infinity_in_any_serialization`（JSON 无 "NaN"/"Infinity" token 且每个 Decimal 字段 `is_finite()`） |
+
+#### M12 Requirement Traceability（M12-W01..W05）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-STRAT-001 | W01 `alphabrief_strategy/dsl.py`；`tests/test_strategy_dsl.py` |
+| REQ-STRAT-002 | W02 `alphabrief_strategy/families.py`；相关测试 |
+| REQ-STRAT-003 | W04 `alphabrief_backtest/evaluation.py`；`tests/test_backtest_walk_forward.py`/`test_backtest_reproducibility.py` |
+| REQ-STRAT-004 | W03 `alphabrief_backtest/portfolio.py`/`execution.py`/`metadata.py`；相关测试 |
+| REQ-STRAT-005（报告包含 return、volatility、Sharpe、Sortino、Calmar、max drawdown、turnover、exposure、hit rate、profit factor、tail loss、category attribution、cost attribution 和 benchmark delta） | W05 `alphabrief_backtest/reporting.py`：`build_portfolio_report` 纯函数（run_id/strategy/data version/label 绑定，`normalized_json` 可复现）；`ReportMetrics` 11 指标 + `CostAttribution` + `RejectionAttribution` + instrument/category `AttributionRow` + benchmark delta；`tests/test_backtest_reporting.py` |
+| REQ-STRAT-007 | W02 `alphabrief_strategy/admission.py`；相关测试 |
+| REQ-STRAT-008 | W03 `SEMANTICS_VERSION`/parity；`tests/test_oanda_backtest_parity.py` |
+| REQ-PLAT-009 | W04 `run_id`/`FittedParameters`；W05 report 携带 run_id/data_version/strategy 版本 |
+
+范围说明：`tests/test_backtest_reporting.py` 为本轮新增测试文件（AC-M12-W05-01/02/03
+的 automated_test evidence；targeted/integration command 指向既有
+`test_backtest_reports.py`/`test_backtest_metrics_credibility.py`/`test_backtest_portfolio.py`/
+`test_backtest_walk_forward.py`，均全绿）。本轮同时修复 M12-W03 遗留的 NAV
+会计 bug：`PortfolioSimulator.mark_to_market` 的 NAV 由错误的 `cash + unrealized`
+（重复扣减持仓现金）改为正确的 `cash + Σ(units×mid)`；`tests/test_backtest_portfolio.py`
+中两条断言原样编码了错误恒等式，已改为正确恒等式（断言更强，非弱化）。
+全量 pytest：2541 total（2522 passed + 19 pre-existing M08-W03 time-bombed
+risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（425 source files）；
+acceptance 11/11。下一 READY item：M12-W06。
