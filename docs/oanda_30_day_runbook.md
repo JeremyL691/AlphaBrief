@@ -540,3 +540,19 @@ M15-W01 起，观察期运行依赖 `alphabrief_core/observability.py` 的结构
 
 观察期日报与周门禁必须引用上述 health/readiness/heartbeat 信号作为证据，
 缺失信号按 REQ-OBS-002 视为当日证据不完整。
+
+## Error Taxonomy and Alerts During Observation
+
+M15-W02 起，观察期运行按 `alphabrief_core/alerting.py` 处理失败：
+
+- 8 类错误（auth/validation/broker_reject/rate_limit/transient/protocol/
+  data_quality/safety）确定性映射为 retryable/severity/freeze_execution/
+  no_trade/escalate；未知错误按 safety blocker fail-closed（不重试、冻结、
+  no-trade、升级）。
+- Alert 以 NDJSON 持久化（severity/dedupe_key/occurrence/count/ack/
+  escalation/resolution/incident link/scrubbed evidence），重启恢复；同
+  dedupe_key 重复事件只递增 count，绝不风暴。
+- 外部 webhook/sink 失败零影响本地 alert（不删除、不 resolve）。
+
+观察期周门禁须核对 unresolved alerts（REQ-OBS-005）并引用本契约的 alert
+记录作为证据。

@@ -2036,3 +2036,30 @@ safety-critical：缺失 truth → unknown/not ready，绝不假设 healthy）�
 2962 total（2943 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
 分类见 M10-W03）；ruff/mypy 全仓 clean（477 source files）；acceptance 11/11。
 下一 READY item：M15-W02。
+
+#### M15-W02 已闭环证据（R-20260813-M15-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M15-W02-01 | Auth, validation, broker reject, rate-limit, transient, protocol, data-quality, and safety failures map deterministically to retryability, severity, execution freeze, no-trade, and escalation behavior | `tests/test_operations_error_taxonomy.py`：`ERROR_CLASSES` 恰好 8 类（`test_all_eight_classes_are_declared`）；`test_classification_matrix`（8 类 × retryable/severity/freeze/no_trade/escalate 全矩阵 parametrize——auth→blocker/freeze/no-trade/escalate、validation→warning/no-trade、broker_reject→critical/freeze、rate_limit→retryable、transient→retryable 且不 no-trade、protocol→retryable/no-trade、data_quality→critical/escalate、safety→blocker/freeze）；`test_unknown_class_fails_closed_as_safety`（未知类 → safety blocker：不重试/冻结/no-trade/escalate）；`test_classification_is_deterministic`；`test_safety_class_never_retries` |
+| AC-M15-W02-02 | Alerts persist severity, dedupe key, first and last occurrence, count, acknowledgement, escalation, resolution, incident link, and scrubbed evidence across restart | `tests/test_operations_alert_lifecycle.py`：`test_alert_persists_full_state`（severity/dedupe_key/first+last_occurrence/count/incident_link/evidence 全持久化）；`test_evidence_is_scrubbed`（account id/token 运行时拼接值 → 不可见）；`test_state_transitions`（acknowledge/escalate/resolve）；`test_unknown_alert_raises`（KeyError fail-closed）；`test_survives_restart`（重新打开同一 NDJSON 文件 → acknowledged/severity 恢复） |
+| AC-M15-W02-03 | Webhook or external sink failure never deletes or resolves the local alert and repeated equivalent events do not create an unbounded alert storm | `test_sink_failure_never_deletes_or_resolves`（`sink_failure` 返回原样记录——resolved/acknowledged 不变、store 中仍在）；`test_repeated_events_dedupe_not_storm`（同 dedupe_key 50 次重复 → 仍 1 条 alert、count=51）；`test_distinct_keys_create_distinct_alerts`；`test_resolution_is_explicit_only`（重复事件刷新 occurrence 绝不自动 resolve）；`test_list_is_ordered_and_deterministic` |
+
+#### M15 Requirement Traceability（M15-W01..W02）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OPS-001/002 | W01 observability（11 组件 + correlation chain + redaction） |
+| REQ-OPS-003（错误分为 auth、validation、reject、rate-limit、transient、protocol、data-quality、safety，并决定重试/冻结/告警） | W02 `alphabrief_core/alerting.py` `classify_error`（8 类确定性映射，未知 → safety blocker fail-closed）；`tests/test_operations_error_taxonomy.py` |
+| REQ-OPS-004（alert 有 severity、dedupe、acknowledgement、resolution 和 escalation；webhook 失败不掩盖本地 alert） | W02 `AlertStore`（NDJSON durable、dedupe storm 防护、ack/escalate/resolve 显式状态机、sink_failure 零影响）；`tests/test_operations_alert_lifecycle.py` |
+
+范围说明：`tests/test_operations_error_taxonomy.py` 与 `tests/test_operations_alert_lifecycle.py`
+为 M15-W02 契约声明的测试文件（targeted command 声明，documented forced path）；
+`alphabrief_core/alerting.py` 为 M15-W02 契约声明的生产模块（REQ-OPS-003/004，
+scope profile `operations`，risk_class safety-critical：未知错误 fail-closed 为
+safety blocker、alert 风暴有界、sink 失败零影响）。集成 command 声明的
+`tests/test_scheduler_alerts.py` 不存在（scheduler alerts 覆盖位于
+`tests/test_scheduler.py`/`tests/test_ai_trader_scheduler.py`，documented
+substitution）。全量 pytest：2984 total（2965 passed + 19 pre-existing M08-W03
+time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（480
+source files）；acceptance 11/11。下一 READY item：M15-W03。
