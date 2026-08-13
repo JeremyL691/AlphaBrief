@@ -1698,3 +1698,32 @@ launchd 管理的 `alphabrief serve serve`，`is_api_running()` 返回 True 导�
 ledger。全量 pytest：2662 total（2643 passed + 19 pre-existing M08-W03 time-bombed
 risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（436 source files）；
 acceptance 11/11。下一 READY item：M13-W03。
+
+#### M13-W03 已闭环证据（R-20260813-M13-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M13-W03-01 | API resources expose account, NAV, margin, PnL, exposures, positions, pending orders, fills, financing, category attribution, and their observation timestamps from runtime stores | `tests/test_api_operational_resources.py`：`GET /api/v1/operational/portfolio` 全部字段来自共享 runtime stores（`PaperStore` portfolio snapshot + audit events、`BrokerReconStore` order ledger、`InstrumentCatalogStore` catalog）——`test_portfolio_exposes_runtime_store_values`（cash/nav/realized/unrealized=total-cash-realized、exposure gross/net、positions、pending_orders 仅非终态、fills、snapshot_id/observed_at=store 时间戳、financing=null 显式）；`test_margin_derived_from_shared_catalog`（margin_used 由 catalog margin_rate 推导 1030.00）；`test_category_attribution_derived_from_taxonomy`（CURRENCY/METAL 分类敞口）；`test_missing_catalog_yields_explicit_null_margin`（catalog 缺失 → margin/attribution 显式 null，绝不 fake）；`test_empty_store_returns_explicit_nulls_not_fakes`；`GET /api/v1/operational/equity` 时序（`TestEquitySeries`：persisted points、limit 校验、空序列） |
+| AC-M13-W03-02 | A cycle trace endpoint resolves evidence, committee transcript, proposal or no-trade, intent, each risk rule, OANDA transaction, and reconciliation through stable IDs | `tests/test_api_traceability.py`：`GET /api/v1/trace/cycles/{cycle_id}`——`test_trace_resolves_the_full_chain`（evidence=snapshot_fingerprint+key_evidence 稳定 ID、transcript=votes、proposal=plans、intents=intent_id+audit resolution、risk_rules=risk_decision_id+intent_id、oanda_transactions=order ledger 行、reconciliation=recon snapshot，全链稳定 ID）；`test_no_trade_cycle_reports_no_trade`（无 plans/attempts → `"no_trade"` 显式）；`test_missing_cycle_returns_404`；`test_chain_ids_are_stable_across_calls`（两次调用逐字节相同） |
+| AC-M13-W03-03 | Broker, scheduler, risk, model, news, and market routes use shared application authorities and contain no offline-success placeholder or route-local production state | 新增两个 route 模块均为只读、逐请求打开共享 store（`_db_path()` 指向同一 DuckDB authority：`PaperStore`/`BrokerReconStore`/`InstrumentCatalogStore`/`AiTradingStore`），无 route-local 生产状态、无 offline-success 占位（缺数据 → 显式 null/404）；集成 gate 证明既有 broker/scheduler/ai_trading/api_server 路由（148 passed）无回归；`operational.py`/`trace.py` 无任何 provider/broker 调用（REQ-EXEC-010 共享 authority） |
+
+#### M13 Requirement Traceability（M13-W01..W03）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-PLAT-008/009 | W01 read contracts（UTC/稳定 ID）；W02 write audit（correlation/audit ID）；相关测试 |
+| REQ-UI-001 | W01 `VersionedReadEnvelope` 14 domain；相关测试 |
+| REQ-UI-002/010 | W02 `write_contracts.py`；相关测试 |
+| REQ-EXEC-010（API、CLI、scheduler 共享同一 broker runtime/state authority，不各自构造互相冲突的内存账户） | W03 operational/trace 路由全部从共享 DuckDB stores 读取（PaperStore/BrokerReconStore/InstrumentCatalogStore/AiTradingStore），无 route-local 状态；`tests/test_api_operational_resources.py`/`test_api_traceability.py` |
+| REQ-UI-006（订单和风险链可从 cycle 一键追溯到 evidence、讨论、intent、每条 risk rule、OANDA transaction 和 reconciliation） | W03 `GET /api/v1/trace/cycles/{cycle_id}`；`tests/test_api_traceability.py` |
+| REQ-UI-007（展示 cash、NAV、margin、P&L、exposure、positions、pending orders、fills、financing、category attribution 和时间序列） | W03 `GET /api/v1/operational/portfolio` + `/equity`；`tests/test_api_operational_resources.py` |
+
+范围说明：`tests/test_api_operational_resources.py` 与 `tests/test_api_traceability.py`
+为 M13-W03 契约声明的测试文件（targeted command 声明，documented forced path）；
+`routes/operational.py`/`routes/trace.py` 为 M13-W03 契约声明的生产模块（REQ-EXEC-010/
+REQ-UI-001/006/007，scope profile `api_cli`，risk_class execution-critical：
+只读、共享 authority、无 provider 行为）。集成 command 声明的 `tests/test_risk_api.py`
+在仓库中不存在（risk API 覆盖位于 `tests/test_api_server.py`，已作为 documented
+substitution 运行并记录）。全量 pytest：2674 total（2655 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（440 source files）；acceptance 11/11。下一 READY item：M13-W04。
