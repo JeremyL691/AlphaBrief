@@ -736,10 +736,19 @@ class DurableDailyCycle:
             role_errors.extend(result.role_errors)
             if result.plan is not None:
                 plans.append(result.plan.model_dump(mode="json"))
+        transcript_id = (
+            sha256(json.dumps(votes, sort_keys=True).encode()).hexdigest()[:16]
+            if votes
+            else None
+        )
         output_ids = {
             "votes": json.dumps(votes, sort_keys=True),
             "plans": json.dumps(plans, sort_keys=True),
             "role_errors": json.dumps(role_errors, sort_keys=True),
+            "transcript_id": transcript_id or "",
+            "transcript_skip_reason": (
+                "" if transcript_id is not None else "no_committee_votes"
+            ),
         }
         self._state_machine.advance(
             cycle_id,

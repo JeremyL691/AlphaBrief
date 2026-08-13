@@ -164,8 +164,14 @@ def status_cmd(
             "leader_id": runtime.get("leader_id") if runtime else None,
             "active_config": runtime.get("active_config") if runtime else {},
             "running_phase": runtime.get("running_phase") if runtime else None,
+            "phase_started_at": (
+                _iso(runtime.get("phase_started_at")) if runtime else None
+            ),
             "heartbeat_at": _iso(runtime.get("heartbeat_at")) if runtime else None,
             "last_outcome": runtime.get("last_outcome") if runtime else None,
+            "failure_classification": (
+                runtime.get("failure_classification") if runtime else None
+            ),
             "next_due_at": _iso(runtime.get("next_due_at")) if runtime else None,
         }
     finally:

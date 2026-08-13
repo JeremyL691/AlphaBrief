@@ -47,7 +47,9 @@ def _seed(store: RuntimeTruthStore) -> None:
         leader_id="scheduler-main",
         active_config={"tasks": ["ai-cycle", "reconcile"], "ttl_seconds": 60},
         running_phase="discuss",
+        phase_started_at=_T0,
         last_outcome="no_trade",
+        failure_classification="none",
         next_due_at=_T0 + timedelta(minutes=15),
     )
     store.heartbeat(leader_id="scheduler-main", running_phase="discuss")
@@ -61,9 +63,27 @@ class TestRuntimeTruthPersistence:
         assert state["leader_id"] == "scheduler-main"
         assert state["active_config"]["tasks"] == ["ai-cycle", "reconcile"]
         assert state["running_phase"] == "discuss"
+        assert state["phase_started_at"] is not None
         assert state["last_outcome"] == "no_trade"
+        assert state["failure_classification"] == "none"
         assert state["next_due_at"] is not None
         assert state["heartbeat_at"] is not None
+
+    def test_phase_timestamps_and_classification_survive_restart(
+        self, tmp_path: Path
+    ) -> None:
+        first = RuntimeTruthStore(db_path=tmp_path / "alphabrief.db")
+        _seed(first)
+        first.close()
+
+        second = RuntimeTruthStore(db_path=tmp_path / "alphabrief.db")
+        try:
+            state = second.read()
+            assert state is not None
+            assert state["phase_started_at"] == _T0
+            assert state["failure_classification"] == "none"
+        finally:
+            second.close()
 
     def test_runtime_truth_survives_store_restart(
         self, tmp_path: Path
@@ -108,6 +128,8 @@ class TestApiStatusSurface:
         assert body["leader_id"] == "scheduler-main"
         assert body["running_phase"] == "discuss"
         assert body["last_outcome"] == "no_trade"
+        assert body["phase_started_at"] is not None
+        assert body["failure_classification"] == "none"
         assert body["next_due_at"] is not None
         assert body["heartbeat_at"] is not None
         assert body["active_config"]["tasks"] == ["ai-cycle", "reconcile"]
@@ -137,7 +159,9 @@ class TestCliStatusSurface:
         body = json.loads(result.stdout)
         assert body["leader_id"] == "scheduler-main"
         assert body["running_phase"] == "discuss"
+        assert body["phase_started_at"] is not None
         assert body["last_outcome"] == "no_trade"
+        assert body["failure_classification"] == "none"
         assert body["next_due_at"] is not None
         assert body["active_config"]["tasks"] == ["ai-cycle", "reconcile"]
 
