@@ -1893,3 +1893,31 @@ command 声明，documented forced path）；`dashboard/workspaces.py` 为 M14-W
 documented substitution）。全量 pytest：2819 total（2800 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （457 source files）；acceptance 11/11。下一 READY item：M14-W04。
+
+#### M14-W04 已闭环证据（R-20260813-M14-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M14-W04-01 | OANDA Account displays cash, NAV, margin, P&L, financing, positions, pending orders, fills, category attribution, exposure, and time series from broker-authoritative projections | `tests/test_dashboard_oanda_account.py`：`build_account_view(projection, time_series)` 全部字段来自 broker-authoritative projection——`test_displays_broker_authoritative_fields`（cash/nav/margin_used/realized+unrealized PnL/gross+net exposure/observed_at/freshness）；`test_financing_is_explicit_null_when_unknown`（未知 financing → null 绝不捏造）；`test_positions_pending_orders_fills_attribution`（positions+pending_orders+fills+category_attribution 全部透传）；`test_time_series_is_carried`（equity 时序）；`test_empty_projection_yields_explicit_nulls`；`test_deterministic` |
+| AC-M14-W04-02 | Risk displays policy version, kill and freeze state, daily loss, drawdown, gross and net exposure, category and currency concentration, data freshness, and rule-level decisions | `tests/test_dashboard_risk.py`：`test_displays_policy_and_safety_state`（policy_version/kill_switch_active/frozen）；`test_displays_loss_drawdown_and_exposure`；`test_concentrations_are_sorted_and_stringified`（category/currency concentration 排序确定性）；`test_freshness_is_exposed`；`test_rule_level_decisions_are_carried`（rule/decision/detail 逐条）；`test_missing_state_is_explicit_null`；`test_deterministic` |
+| AC-M14-W04-03 | Orders & Trades represents pending, filled, partially filled, rejected, cancelled, replaced, expired, closed, and reconciliation-difference states without losing OANDA transaction identity | `tests/test_dashboard_orders_trades.py`：`test_all_documented_states_are_representable`（`ORDER_STATES` 9 态齐全）；`test_state_counts_cover_every_documented_state`（state_counts 覆盖全部 9 态）；`test_oanda_transaction_identity_is_preserved`（client/broker order id + transaction_id + fill_price 原样）；`test_partially_filled_and_replaced_are_representable`；`test_reconciliation_differences_are_marked_not_merged`（reconciliation_diff 显式标记）；`test_deterministic` |
+
+#### M14 Requirement Traceability（M14-W01..W04）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-003 | W01 token 系统/brand audit |
+| REQ-UI-004（主导航 10 section） | W02 `NAVIGATION_SECTIONS`；W03/W04 workspace 视图对应 Markets/News/AI Research/Risk/OANDA Account/Orders & Trades 导航项 |
+| REQ-UI-005（每页 8 态，无 fake data） | W02 `derive_page_state`；W03/W04 全部 workspace view truth-only（缺字段显式 null） |
+| REQ-UI-007（展示 cash、NAV、margin、P&L、exposure、positions、pending orders、fills、financing、category attribution 和时间序列） | W03 M13 operational 资源；W04 `build_account_view`（AC-M14-W04-01 全字段）+ `build_risk_view` + `build_orders_trades_view`；相关测试 |
+
+范围说明：`tests/test_dashboard_oanda_account.py`、`tests/test_dashboard_risk.py`、
+`tests/test_dashboard_orders_trades.py` 为 M14-W04 契约声明的测试文件（targeted
+command 声明，documented forced path）；`workspaces.py` 扩展三个 view builder
+（REQ-UI-004/005/007，scope profile `frontend`，risk_class safety-critical：
+broker-authoritative truth-only、reconciliation diff 显式标记）。集成 command 声明的
+`tests/test_account_api.py`/`tests/test_risk_api.py` 不存在（account 8 + risk 16
+覆盖位于 `tests/test_api_server.py`，documented substitution）。全量 pytest：2838
+total（2819 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
+分类见 M10-W03）；ruff/mypy 全仓 clean（460 source files）；acceptance 11/11。
+下一 READY item：M14-W05。
