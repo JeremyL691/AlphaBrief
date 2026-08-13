@@ -1081,3 +1081,19 @@ files）；acceptance 11/11。下一 READY item：M09-W02。
 M09-W02 契约声明的新模块；既有 `tests/test_news_store.py`/`tests/test_news.py`
 全绿。full pytest 2051 passed（+15 新测试）；ruff/mypy 全仓 clean（357
 source files）；acceptance 11/11。下一 READY item：M09-W03。
+
+#### M09-W03 已闭环证据（R-20260813-M09-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M09-W03-01 | macro fixtures 以 UTC 持久化 release time、actual、forecast、previous、revision、importance、unit、source、affected currencies/markets | `MacroRelease` + `MacroReleaseStore`（新 `alphabrief_news/macro_release.py`，`test_macro_ingestion.py`）：fixture 逐字段断言（release_time UTC round-trip、actual/forecast/previous Decimal、revision、importance、unit、source、affected_currencies/markets、version=1、lineage=()）；duplicate ingest INSERT-OR-IGNORE 幂等；float 构造期拒绝；`releases()` 按 release_time 再 release_id 排序 |
+| AC-M09-W03-02 | revised observation 追加带 lineage 的新 version，prior value 保持可重建 | `revise` 追加 version n+1（revision=True、lineage=(release_id,)）；`versions()` 升序返回全部版本——v1 actual=4.00 与 v2 actual=3.75 同时可重建（`test_versions_reconstruct_prior_values`）；unknown release_id → None（不伪造）；restart 后版本与 lineage 完整保留（`test_store_survives_restart_with_revisions`）；`releases()` 只返回每 release 的最新版本 |
+| AC-M09-W03-03 | API 与 CLI fixture 查询返回 identical ordered macro events，并显式暴露 missing/stale/partial/revised states | `release_state` 五态（fresh/partial/stale/revised/missing——revised=version>1、partial=无 actual、stale=partial 且超过窗口、missing=无记录）；API `GET /api/v1/macro/releases` 与 CLI `macro releases` 读同一 store、同一排序、同一 state（`test_macro_api.py`/`test_macro_commands.py` 各自断言相同 ids 顺序与 states 映射：stale-cpi→stale、ecb-rate→fresh、us-cpi→partial、gbp-rate→revised）；API `POST /api/v1/macro/releases/revise` 追加版本并使视图转 revised、unknown → 404 |
+
+范围说明：`alphabrief_news/macro_release.py` 为 M09-W03 契约声明的新模块；
+`tests/test_macro_ingestion.py`/`test_macro_store.py`/`test_macro_api.py`/
+`test_macro_commands.py` 为契约声明的缺失测试文件（按 M07-W05 先例创建，
+documented forced paths）；routes/macro.py 与 macro_commands.py 的 release
+端点/命令为契约声明的 API/CLI surface。full pytest 2068 passed（+17 新
+测试）；ruff/mypy 全仓 clean（362 source files）；acceptance 11/11。下一
+READY item：M09-W04。
