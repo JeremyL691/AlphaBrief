@@ -568,6 +568,19 @@ faults/telemetry/commands 测试）；ruff/mypy 全仓 clean。
 （M06-W07 T7 practice lifecycle evidence）。full pytest 1805 passed（+6
 scenario E2E 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
 
+#### M07-W01 已闭环证据（R-20260813-M07-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M07-W01-01 | 一个确定性 cycle+intent identity 在 100 次 sequential/concurrent/timeout/restart replay 下最多保留一个 submit identity | `OrderLedger`（`test_oanda_idempotency.py`）：`submit_id = cycle:intent` 确定性推导 + `UNIQUE(cycle_id, intent_id)`；100 次 replay → 同一 submit_id、reused=True、仅 1 条 RESERVED event；restart（关库重开同文件）→ 同 identity、SUBMITTED 状态保持；timeout replay → in-flight 状态不变、events 完全一致（零重复、零覆盖） |
+| AC-M07-W01-02 | reservation/decision binding/submit attempt/broker result/related IDs 原子提交，compare-and-set 转换 + 不可变历史 | 全流程（`test_broker_order_ledger.py`）：RESERVED→BIND→SUBMIT_ATTEMPT→BROKER_RESULT→RELATED_ID×2 严格有序 event 链（event_id 单调、唯一）；每个转换 = 单事务（UPDATE...WHERE status=expected + INSERT event），CAS 失败 → state_conflict 零覆盖；broker result 同参数重放幂等（BROKER_RESULT 仅 1 条）；related IDs 仅在 COMPLETED 后记录 |
+| AC-M07-W01-03 | identity collision/payload hash mismatch/stale owner/in-flight ambiguous/missing decision 冻结提交，绝不覆盖/fallback/询问 | 不同 decision 重放 → identity_collision 且原 decision 不被覆盖；payload hash 不同 → payload_mismatch（bind 与 attempt 双路径）；owner 不同 → stale_owner；无 bind 直接 attempt → missing_decision；SUBMITTED 再 attempt → in_flight_ambiguous；FROZEN 后 bind/attempt/result/freeze 全部 state_conflict；与 W06 `UnknownOutcomeResolver` 组合：absorbed timeout → resolve → COMPLETED，broker 侧仅 1 单 |
+
+范围说明：本 round 无 allowlist 外路径；两个 targeted 测试文件为契约声明的
+缺失文件，按既有先例创建（documented forced path）。并发由 DuckDB 单写者 +
+UNIQUE 约束 + CAS 语义覆盖（restart/竞态 replay 均走 replay verdict）。
+full pytest 1819 passed（+14 ledger 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
