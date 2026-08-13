@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-14T01:25:00+08:00"
+updated_at: "2026-08-14T01:35:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M14-W01
+  work_item_id: M14-W02
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M13-W06-FINAL-GATE
-  next_action: audit the legacy dashboard and establish the Soft design system
+  last_verified_gate: M14-W01-FINAL-GATE
+  next_action: build the responsive application shell and truthful page-state system
   external_evidence_pending: M04-W06 T7 practice catalog evidence; M05-W06 T7 practice market-data evidence; M06-W07 T7 practice lifecycle evidence; M07-W07 T7 practice restart evidence; M08-W08 T7 practice risk-chain evidence
 
 milestones:
@@ -188,9 +188,10 @@ work_item_states:
   M13-W04: DONE
   M13-W05: DONE
   M13-W06: DONE
+  M14-W01: DONE
 
 latest_validation:
-  completed_at: "2026-08-14T01:25:00+08:00"
+  completed_at: "2026-08-14T01:35:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -198,7 +199,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 2711
+      passed: 2736
       failed: 19
       warnings: 14
     restricted_sandbox:
@@ -307,5 +308,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M13-W06
-last_ledger_record: R-20260813-M13-W06
+last_completed_round: R-20260813-M14-W01
+last_ledger_record: R-20260813-M14-W01

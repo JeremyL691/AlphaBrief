@@ -1811,3 +1811,31 @@ round，无新生产代码。集成 command 声明的 `tests/test_backtest_api.p
 risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（445 source files）；
 acceptance 11/11。**M13 里程碑 → DONE**（无 T7 runtime 依赖，全部本地确定性
 gate 通过）。下一 READY item：M14-W01。
+
+#### M14-W01 已闭环证据（R-20260813-M14-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M14-W01-01 | A before-and-after audit maps every legacy dashboard route, retained brand asset, usability defect, and planned replacement without changing runtime business behavior | `tests/test_dashboard_brand_audit.py`：`BRAND_AUDIT` 覆盖全部 9 个 legacy dashboard route（`/dashboard`、news、macro、brief、debate、models、strategies、ai-trading、scheduler——`test_audit_maps_every_legacy_dashboard_route` 从 `dashboard.py` 正则提取 route 集合并与 audit 键集合逐一相等）；每个 entry 含 retained_assets（alphabrief-wordmark/oanda-practice-badge/paper-only-badge 原样保留，`test_audit_preserves_brand_assets_verbatim`）、defects（legacy dark-only palette/inline styles 未 token 化/cyan accent 越界 Soft/无 reduced-motion）、replacement（Soft token system/light+dark themes/purposeful motion）；`test_audit_module_is_data_only`（design_system.py 无 router/HTMLResponse/duckdb/get_ 处理器——纯数据）+ `test_dashboard_route_handlers_are_untouched`（route 模块不 import design_system，runtime business behavior 零改动）+ `test_audit_records_are_stable` |
+| AC-M14-W01-02 | One documented Soft 5/5/5 token system controls color, typography, spacing, radius, elevation, interaction, motion, light theme, dark theme, and reduced-motion behavior | `tests/test_dashboard_design_system.py`：`DESIGN_TOKENS` 单一来源（`test_all_required_categories_are_controlled`：color_light/color_dark/typography/spacing/radius/elevation/interaction/motion 全齐）；`test_light_and_dark_themes_are_declared`（THEMES light/dark 且两主题键一致）；`test_reduced_motion_behavior_is_declared`（prefers-reduced-motion）；`test_css_file_declares_the_same_tokens`（`static/design-tokens.css` 由 token 源确定性生成，含 prefers-color-scheme dark 块与 reduced-motion 块——`test_css_has_light_and_dark_theme_blocks`/`test_css_has_reduced_motion_block`）；`validate_design_tokens()` 自动化校验全绿 |
+| AC-M14-W01-03 | Shared styles contain no emoji icons, fake content, low-contrast body text, gradient buttons, or unapproved animation dependency | `test_light_theme_body_text_passes_wcag_aa`/`test_light_theme_dim_text_passes_wcag_aa`/`test_dark_theme_body_text_passes_wcag_aa`（`contrast_ratio` WCAG ≥4.5:1，#3d3a34 on #faf7f2 等）；`test_no_gradient_buttons`（token 值无 linear-gradient）；`test_no_animation_dependency_in_shared_styles`（CSS 仅 reduced-motion 的 `animation: none`，无 @keyframes/无 framer/gsap/anime 等库）；`test_no_emoji_in_ui_copy`/`test_no_em_dash_in_ui_copy`（FORBIDDEN_UI_COPY_CHARACTERS 扫描）；`test_css_contains_no_emoji_or_placeholder_content`（无 lorem/ipsum/TODO/FIXME） |
+
+#### M14 Requirement Traceability（M14-W01）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-003（Dashboard 采用 owner 已选 Soft (5/5/5)，保留有效品牌） | W01 `dashboard/design_system.py`：DESIGN_VARIANCE=5/MOTION_INTENSITY=5/VISUAL_DENSITY=5 token 系统 + `BRAND_ASSETS` 保留；`tests/test_dashboard_design_system.py`/`test_dashboard_brand_audit.py` |
+| REQ-UI-008（键盘操作、focus、semantic HTML、对比度、reduced motion） | W01 token 系统含 contrast（WCAG AA 自动化验证）、reduced-motion 规则（prefers-reduced-motion block）、focus_ring interaction token；相关测试 |
+
+范围说明：`tests/test_dashboard_design_system.py` 与 `tests/test_dashboard_brand_audit.py`
+为 M14-W01 契约声明的测试文件（targeted command 声明，documented forced path）；
+`alphabrief_api/dashboard/design_system.py` 与 `static/design-tokens.css` 为 M14-W01
+契约声明的生产模块（REQ-UI-003/008，scope profile `frontend`）；`dashboard.py` route
+处理器零改动（audit 纯数据）。集成 command 声明的 `tests/test_dashboard.py` 不存在
+（dashboard 页面覆盖位于 `tests/test_api_server.py` + `test_dashboard_models.py` +
+`test_dashboard_strategies.py`，documented substitution，121 passed）。全量 pytest：
+2755 total（2736 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
+分类见 M10-W03）；ruff/mypy 全仓 clean（448 source files）；acceptance 11/11。
+注：M13-W06 的 ledger 记录曾误用 schema 外 record_type，已替换为 schema-valid
+`CORRECTION` 记录（`test_autonomous_loop_schemas.py` 全绿）。下一 READY item：
+M14-W02。
