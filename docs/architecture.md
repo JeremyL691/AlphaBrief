@@ -77,6 +77,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |
 | `alphabrief-research` | brief、debate、evidence | 保留；与 daily committee 共享 evidence contract |
 | `alphabrief-strategy` | StrategySpec 和 signals | 保留；增加 safe compiler/strategy families |
+| `alphabrief_strategy/dsl` | safe compiled condition DSL | M12-W01 起：`compile_condition` 把 StrategySpec 条件表达式编译为 frozen typed AST（`LiteralNode`/`DataNode`/`IndicatorNode`/`ComparisonNode`/`LogicNode`/`NotNode`，pydantic extra=forbid），在求值前拒绝 Attribute/Subscript/import/comprehension/lambda/exec/eval/BinOp/赋值/副作用语法（`DslCompileError`，禁例表 + indicator/data allowlist）；`evaluate_condition` 是 declared leaves 上的纯函数——只读 `EvaluationContext` 中已声明叶子，缺失/未声明 → `DslEvaluationError` fail-closed，绝不读未来或外部状态；requirements/`leaf_keys()` 显式枚举 indicator signature 与 data name（REQ-STRAT-001） |
 | `alphabrief-backtest` | vectorized backtest/metrics | 保留；扩展 portfolio/walk-forward/OANDA semantics |
 | `alphabrief-risk` | deterministic RiskGate | 保留；所有执行路径必须接入完整 context |
 | `alphabrief-execution` | PaperBroker、OANDA、recon、scheduler | M01-W03 后为 OANDA-only runtime port；routing/simulated 已删除，test fake 只在测试边界 |

@@ -1451,3 +1451,24 @@ item：M11-W08。
 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（408 source files）；
 acceptance 11/11。M11 里程碑 → DONE（无 T7 runtime 依赖，全部本地确定性
 gate 通过）。下一 READY item：M12-W01。
+
+#### M12-W01 已闭环证据（R-20260813-M12-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M12-W01-01 | Valid fixtures compile into a typed normalized AST with deterministic serialization and explicit indicator, operator, parameter, and data requirements | `tests/test_strategy_dsl.py`：`test_valid_fixture_compiles_to_typed_ast`（`ema(close, 20) > sma(close, 50) and not rsi(14) >= 70` → LogicNode(and)/ComparisonNode/NotNode，parameters 归一为 `["close", 20]`）；`test_literals_and_data_nodes`；`test_normalized_serialization_is_deterministic`；`test_requirements_are_explicit_and_deduplicated`（requirements == `["ema(close,20)", "sma(close,50)"]`，`leaf_keys()` 一致）；`test_all_comparison_operators`（gt/gte/lt/lte/eq/neq 全覆盖） |
+| AC-M12-W01-02 | Imports, calls outside the allowlist, attribute traversal, comprehensions, mutation, file access, SQL, templates, and shell syntax are rejected before evaluation | `test_forbidden_syntax_rejected`（parametrized 21 个 payload：import/from-import/Attribute/Subscript/三种 comprehension/lambda/exec/eval/getattr/未知 indicator/未知 data/BinOp/f-string/walrus/链式 and 含未知名）；`test_attribute_traversal_rejected`/`test_subscript_rejected`/`test_comprehension_rejected`/`test_indicator_outside_allowlist_rejected`/`test_undeclared_data_rejected`/`test_boolean_literal_rejected`/`test_keyword_arguments_rejected`——全部在求值前 `DslCompileError` 拒绝；AST 编译走 allowlist + 禁例表，无任何可执行路径 |
+| AC-M12-W01-03 | Evaluation over identical versioned inputs produces identical signals and never reads undeclared future or external state | `test_identical_inputs_produce_identical_signals`（同值三次求值恒同）；`test_boolean_semantics`/`test_not_semantics`（and/or/not 真值表）；`test_undeclared_state_never_read`（缺 declared leaf → `DslEvaluationError`；多余未声明值被忽略；条件只读其声明叶子） |
+
+#### M12 Requirement Traceability（M12-W01）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-STRAT-001（safe DSL cannot execute arbitrary code） | W01 `alphabrief_strategy/dsl.py`：`compile_condition` 编译为 frozen typed AST（`LiteralNode`/`DataNode`/`IndicatorNode`/`ComparisonNode`/`LogicNode`/`NotNode`），禁 Attribute/Subscript/import/comprehension/lambda/exec/eval/BinOp/赋值/副作用语法；`evaluate_condition` 只读 `EvaluationContext` 已声明叶子；`tests/test_strategy_dsl.py`（38 用例） |
+
+范围说明：`tests/test_strategy_dsl.py` 为 M12-W01 契约声明的测试文件，
+`packages/alphabrief-strategy/src/alphabrief_strategy/dsl.py` 为 M12-W01
+契约声明的生产模块（REQ-STRAT-001，scope profile `strategy_backtest`）。
+全量 pytest：2369 total（2350 passed + 19 pre-existing M08-W03 time-bombed
+risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（410 source
+files）；acceptance 11/11。下一 READY item：M12-W02。
