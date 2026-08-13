@@ -716,3 +716,20 @@ pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissi
   reports/generated/final_acceptance.md --format markdown --compact`；
   双格式 manifest hash 一致（可复现）。
 - 真实 OANDA practice T7 证据 PENDING：报告如实输出 NOT_PASSED。
+
+## M17-W02: fresh-install readiness and operator handoff — R-20260813-M17-W02
+
+- `run_fresh_install_check`（`FRESH_INSTALL_STEPS` 5 项）：locked deps →
+  empty data dir → migrate → local readiness → 无 untracked-source 依赖；
+  缺 truth 即 not completed。
+- `run_operator_runbook_check`（`OPERATOR_RUNBOOK_STEPS` 11 项）：
+  credential injection → startup → preflight → scheduler control → freeze
+  → safe shutdown → backup → isolated restore → restart → reconciliation
+  → blocker inspection；`secrets_exposed` 恒 False。
+- `build_maintenance_policy`（`MAINTENANCE_POLICIES` 6 项）：backup
+  retention / restore cadence / dependency review / incident retention /
+  evidence retention / practice-account reset；`no_live_procedure` 恒 True。
+- CLI：`operations verify-fresh-install --compact`（新增）、
+  `operations restore-drill --latest --isolated --compact`。
+- 真实 fresh-install 验证依赖已提交源码 + 外部注入 secrets（T7 证据
+  PENDING）：命令如实输出未完成步骤。

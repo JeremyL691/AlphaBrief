@@ -2440,3 +2440,35 @@ PENDING——报告如实输出 NOT_PASSED，绝不伪造通过数。全量 pyte
 （3246 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
 M10-W03）；ruff/mypy 全仓 clean；acceptance 11/11；runtime 2 命令均 exit 0。
 下一 READY item：M17-W02。
+
+#### M17-W02 已闭环证据（R-20260813-M17-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M17-W02-01 | An isolated fresh checkout installs locked Python and Electron dependencies, initializes an empty data directory, migrates, and reaches local readiness without relying on untracked source or historical state | `tests/test_operations_fresh_install.py`（M17-W02 契约声明文件）：`FRESH_INSTALL_STEPS` 恰好 5 项（locked_deps_install/empty_data_dir_init/migrate/local_readiness/no_untracked_source_dependency）；`run_fresh_install_check`——`test_full_truth_passes`、`test_missing_truth_fails_closed`、`test_untracked_source_dependency_fails`、`test_empty_data_dir_is_required`、`test_deterministic` |
+| AC-M17-W02-02 | The operator runbook proves practice credential injection, startup, preflight, scheduler control, freeze, safe shutdown, backup, isolated restore, restart, reconciliation, and blocker inspection without exposing secrets | `tests/test_recovery_runbook.py`（M17-W02 契约声明文件）：`OPERATOR_RUNBOOK_STEPS` 恰好 11 项；`run_operator_runbook_check`——`test_full_truth_passes`、`test_missing_truth_fails_closed`、`test_credential_injection_is_required`、`test_secrets_are_never_exposed`（secrets_exposed 恒 False）、`test_deterministic` |
+| AC-M17-W02-03 | Long-running maintenance defines automatic backup retention, restore cadence, dependency review, incident retention, evidence retention, and practice-account reset behavior with no live-trading procedure | `tests/test_operations_maintenance.py`（M17-W02 契约声明文件）：`MAINTENANCE_POLICIES` 恰好 6 项；`build_maintenance_policy`——`test_full_truth_defines_all_policies`、`test_missing_truth_fails_closed`、`test_practice_account_reset_is_required`、`test_no_live_trading_procedure_ever`（no_live_procedure 恒 True）、`test_policies_are_typed`、`test_deterministic` |
+
+#### M17 Requirement Traceability（M17-W02）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OPS-006 | `run_fresh_install_check`（5 步，缺 truth fail-closed）+ `run_operator_runbook_check`（11 步，覆盖 startup/restart/blocker inspection）；配合既有 recovery/soak drills |
+| REQ-OPS-007 | `OPERATOR_RUNBOOK_STEPS` 含 credential_injection + preflight；`secrets_exposed` 恒 False |
+| REQ-OBS-007 | `MAINTENANCE_POLICIES` 含 practice_account_reset；`no_live_procedure` 恒 True，无 live-trading 流程 |
+
+范围说明：`tests/test_operations_fresh_install.py`、`tests/test_recovery_runbook.py`、
+`tests/test_operations_maintenance.py` 为 M17-W02 契约声明的测试文件（targeted
+command 声明，documented forced path）；`alphabrief_core/recovery.py`（新增
+FRESH_INSTALL_STEPS/FreshInstallReport/run_fresh_install_check/
+OPERATOR_RUNBOOK_STEPS/OperatorRunbookReport/run_operator_runbook_check/
+MAINTENANCE_POLICIES/MaintenancePolicy/MaintenancePolicyReport/
+build_maintenance_policy；复用 observation_controller.FaultInvariant）与
+`apps/cli/operations_commands.py`（新增 `verify-fresh-install` 命令）为契约声明的
+既有模块扩展（operations profile：max_production_files=9，实际 0 个新生产
+文件）。真实 fresh-install 验证依赖已提交源码 + 外部注入 secrets（T7 证据
+PENDING）——`verify-fresh-install`/`restore-drill` 如实输出未完成步骤
+（fail-closed），绝不声称已就绪。全量 pytest：3284 total（3265 passed + 19
+pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
+pip check clean；ruff/mypy 全仓 clean；acceptance 11/11；runtime 2 命令均
+exit 0。下一 READY item：M17-W03。

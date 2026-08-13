@@ -56,6 +56,35 @@ def recovery_drill_cmd(
     )
 
 
+@operations_app.command("verify-fresh-install")
+def verify_fresh_install_cmd(
+    compact: bool = typer.Option(True, "--compact/--pretty"),
+) -> None:
+    """Verify fresh-install readiness (fail-closed without truth).
+
+    A clean isolated checkout installs locked dependencies, initializes
+    an empty data directory, migrates, and reaches local readiness
+    without relying on untracked source or historical state.
+    """
+    from alphabrief_core.recovery import (
+        FRESH_INSTALL_STEPS,
+        run_fresh_install_check,
+    )
+
+    check = run_fresh_install_check(step_truth={})
+    emit_json(
+        {
+            "passed": check.passed,
+            "steps": [
+                {"step": s.name, "completed": s.preserved}
+                for s in check.steps
+            ],
+            "steps_total": len(FRESH_INSTALL_STEPS),
+        },
+        pretty=not compact,
+    )
+
+
 @operations_app.command("restore-drill")
 def restore_drill_cmd(
     latest: bool = typer.Option(

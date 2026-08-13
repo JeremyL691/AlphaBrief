@@ -829,3 +829,20 @@ boundary、static security rules），无 waiver；prompt-injection fixtures 不
 改变 system/risk/broker/routing/execution/evidence 六个受保护面；`observation
 rehearse --all-drills --compact` 完成 8 步非生产彩排，彩排时间绝不记为真实
 观察。
+
+## Operator Handoff and Maintenance Contracts (M17-W02)
+
+M17-W02 起，operations 面由 `alphabrief_core.recovery` 三个确定性契约约束：
+
+- fresh-install 检查（`FRESH_INSTALL_STEPS` 5 项）：locked deps → empty data
+  dir → migrate → local readiness → 无 untracked-source 依赖；缺 truth 即
+  not completed。
+- operator runbook 检查（`OPERATOR_RUNBOOK_STEPS` 11 项）：credential
+  injection 到 blocker inspection；`secrets_exposed` 恒 False。
+- maintenance policy（`MAINTENANCE_POLICIES` 6 项）：backup retention /
+  restore cadence / dependency review / incident retention / evidence
+  retention / practice-account reset；`no_live_procedure` 恒 True。
+
+runtime 入口：`operations verify-fresh-install --compact`、
+`operations restore-drill --latest --isolated --compact`。真实 fresh-install
+验证依赖已提交源码 + 外部 secrets（T7 证据 PENDING）——命令如实输出未完成步骤。
