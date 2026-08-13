@@ -1008,3 +1008,17 @@ source files）；acceptance 11/11。下一 READY item：M08-W05。
 `test_risk_context.py` 覆盖 M05 的 news/macro 层并保持全绿）；RiskGate
 零改动。full pytest 1987 passed（+17 新测试）；ruff/mypy 全仓 clean（343
 source files）；acceptance 11/11。下一 READY item：M08-W06。
+
+#### M08-W06 已闭环证据（R-20260813-M08-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M08-W06-01 | kill switch、open freeze、stale broker、unresolved reconciliation diff、transaction gap、failed required backup、lost writer lease、unhealthy scheduler 各自以 distinct persisted rule result 阻止新开仓 | `evaluate_operational_blocks`（新 `alphabrief_risk/operational_blocks.py`，`test_risk_operational_blocks.py`）：8 个 condition（kill_switch/freeze/stale_broker/reconciliation_diff/transaction_gap/backup_failure/writer_lease/scheduler_health）各产出独立 typed `OperationalBlockResult`；参数化测试逐一断言单 condition 触发时恰该条 blocked=True 且 `blocking_conditions` 精确返回该 condition；全健康 → 零 blocked；`OperationalBlockStore`（DuckDB）按 condition 持久化最新 verdict（append-only、restart 后保留、每 condition 一条 latest），distinct persisted evidence；`require_evidence` 缺失 → fail-closed（"evidence missing; fails closed"），未要求项缺失 → "unverified" 且不 block（绝不伪造健康） |
+| AC-M08-W06-02 | reduce-only 与 close 仅在可证明降低相关 position 与 gross risk 且满足 instrument/price/identity/audit rules 时允许 | `validate_reduce_only`（新 `alphabrief_risk/reduce_only.py`，`test_risk_reduce_only.py`）：long 10000@1.10 sell 2000 → permitted，pre_gross 11000 → post_gross 8800、reduced_by 2200（provable reduction）；short 5000 buy 1000 → permitted；full close 10000 → post_gross 0；`ReduceOnlyPreconditions`（identity/instrument_rules/price_fresh/audit_recorded）四项全真才可 permitted，任一失败 → reasons 列出 failing preconditions |
+| AC-M08-W06-03 | mislabeled reduce、side reversal、over-close、exposure-increasing dependent order、stale quantity、missing position truth 全部 fail closed，reduce-only 不能当 bypass | 逐一断言：preconditions 失败 → 拒绝；long 仓 buy / short 仓 sell → "side reversal"；units>position → "over-close"；dependent_increases_exposure → "increases exposure"；position 快照超过 position_max_age_seconds → "stale"；long=short=0 → "no position truth to reduce"；reduced_by≤0（不降 gross）→ 拒绝；float 输入构造期 ValueError；全部 verdict 携带 reasons tuple 供审计 |
+
+范围说明：`alphabrief_risk/operational_blocks.py` 与 `alphabrief_risk/reduce_only.py`
+为 M08-W06 契约声明的新模块；`OperationalBlockStore` 的持久化语义与 M07-W05
+freeze store 一致（deduplicated latest-per-condition、restart-safe）。RiskGate
+零改动。full pytest 2005 passed（+18 新测试）；ruff/mypy 全仓 clean（347
+source files）；acceptance 11/11。下一 READY item：M08-W07。
