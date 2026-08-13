@@ -1,6 +1,38 @@
 """Strategy specification schemas for AlphaBrief."""
 
+from alphabrief_strategy.admission import (
+    PREDICTIVE_FAMILY_IDS,
+    AdmissionDecision,
+    AdmissionResult,
+    evaluate_strategy_admission,
+)
 from alphabrief_strategy.builtins import MovingAverageTrendStrategy
+from alphabrief_strategy.dsl import (
+    DATA_ALLOWLIST,
+    INDICATOR_ALLOWLIST,
+    ComparisonNode,
+    DataNode,
+    DslCompileError,
+    DslEvaluationError,
+    EvaluationContext,
+    IndicatorNode,
+    LiteralNode,
+    LogicNode,
+    NotNode,
+    StrategyCondition,
+    compile_condition,
+    evaluate_condition,
+)
+from alphabrief_strategy.families import (
+    FAMILY_APPLICABILITY,
+    BreakoutFamily,
+    MeanReversionFamily,
+    NoTradeFamily,
+    StrategyFamily,
+    StrategyInstrumentCategory,
+    TrendFamily,
+    VolatilityRegimeFamily,
+)
 from alphabrief_strategy.interface import (
     StrategyExecutionError,
     StrategyInput,
@@ -20,11 +52,32 @@ from alphabrief_strategy.spec import (
 )
 
 __all__ = [
+    "DATA_ALLOWLIST",
+    "INDICATOR_ALLOWLIST",
+    "PREDICTIVE_FAMILY_IDS",
+    "AdmissionDecision",
+    "AdmissionResult",
+    "BreakoutFamily",
+    "ComparisonNode",
+    "DataNode",
+    "DslCompileError",
+    "DslEvaluationError",
+    "EvaluationContext",
     "EvaluationPeriod",
     "ExternalEvidenceConfig",
+    "FAMILY_APPLICABILITY",
+    "IndicatorNode",
+    "LiteralNode",
+    "LogicNode",
+    "MeanReversionFamily",
     "MovingAverageTrendStrategy",
+    "NoTradeFamily",
+    "NotNode",
+    "StrategyCondition",
     "StrategyExecutionError",
+    "StrategyFamily",
     "StrategyInput",
+    "StrategyInstrumentCategory",
     "StrategyOutput",
     "StrategyProtocol",
     "StrategyCosts",
@@ -33,5 +86,10 @@ __all__ = [
     "StrategyRule",
     "StrategySpec",
     "StrategyUniverse",
+    "TrendFamily",
+    "VolatilityRegimeFamily",
+    "compile_condition",
+    "evaluate_condition",
+    "evaluate_strategy_admission",
     "run_strategy",
 ]
