@@ -341,6 +341,17 @@ preflight 在真实外部下单前验证配置/凭证/账户/数据/模型/backu
 （REQ-OPS-007）。默认 facts provider fail-closed（仅 env 凭证与 kill switch
 可证明，其余默认 False）。
 
+每日候选选择（M11-W04）：`DailyCandidateSelector`（
+`alphabrief_trader/candidate_selection.py`）从完整 OANDA catalogue 确定性
+选择 category-aware 日分析集——按 (category, symbol) 排序逐品种应用八条规则
+（catalogue_status、category、quote_freshness、tradeability、spread、
+liquidity、data_quality、news_relevance）+ 六项 budget 规则（instrument、
+per-category、model-call、token、cost、concurrency），**selected 与 skipped
+都记录完整 rule-result 集合与 selection_reason**；累计 usage（counts/calls/
+tokens/cost，Decimal）永不超限；等价输入产生相同有序候选集，完整 catalogue
+在分析集之外仍可查询（verdicts 覆盖全部品种）。候选集与 cycle 的接线随
+M11-W05 轮次补齐。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation

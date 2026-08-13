@@ -1353,3 +1353,19 @@ switch 可证明）。scheduler 进程的 lease 循环与真实 facts 采集随 
 M15 轮次补齐。全量 pytest：2270 total（2251 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓
 clean（396 source files）；acceptance 11/11。下一 READY item：M11-W04。
+
+#### M11-W04 已闭环证据（R-20260813-M11-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M11-W04-01 | 候选选择永不超配置的 instrument、per-category、model-call、token、cost、concurrency budgets | `DailyCandidateSelector.select` 累计 `BudgetUsage`（instrument_count/per_category/model_calls/tokens/cost Decimal）并在选择前检查六项 budget；`tests/test_daily_cycle_budget.py`+`test_daily_cycle_candidates.py::TestBudgetEnforcement`：`test_instrument_budget_never_exceeded`（3 上限 → 恰 3）、`test_per_category_budget_never_exceeded`（每类 2 上限 → 各 2）、`test_model_call_budget_never_exceeded`（25 上限 → usage≤25）、`test_token_budget_never_exceeded`、`test_cost_budget_never_exceeded`（usage.cost≤1.00）、`test_concurrency_budget_never_exceeded`；`test_zero_budget_selects_nothing`；`test_float_budget_rejected`（float → ValidationError）；`test_usage_accumulates_only_for_selected`（仅 selected 计入） |
+| AC-M11-W04-02 | 每个 selected 与 skipped 品种记录确定性 rule results：catalogue status、category、quote freshness、tradeability、spread、liquidity、data quality、news relevance | `CandidateVerdict`（symbol/category/selected/selection_reason/rule_results）：`test_selected_instrument_records_all_rules`（八条规则全部通过并记录）；跳过品种逐条带 reason：`test_inactive_catalogue_skipped_with_reason`（catalogue_status+inactive）、`test_stale_quote_skipped_with_reason`（quote_freshness）、`test_wide_spread_skipped`、`test_low_liquidity_skipped`、`test_unacceptable_data_quality_skipped`、`test_low_news_relevance_skipped`、`test_unknown_category_skipped`；budget 跳过同样记录（`test_budget_exhaustion_skips_remainder_deterministically`：后续品种逐一含 concurrency_budget 结果） |
+| AC-M11-W04-03 | 等价输入产生相同有序候选集；完整 catalogue 在日分析集之外仍可查询 | `test_equivalent_inputs_produce_same_ordered_candidates`（乱序输入 → 相同 candidates 与 verdicts 序列）、`test_candidates_are_category_ordered`（(category, symbol) 确定性排序）、`test_complete_catalogue_stays_queryable`（verdicts 覆盖全部品种含 skipped——catalogue 不因 selection 丢失） |
+
+范围说明：`alphabrief_trader/candidate_selection.py`、
+`tests/test_daily_cycle_candidates.py`、`tests/test_daily_cycle_budget.py`
+为 M11-W04 契约声明的新模块/缺失测试文件（targeted command 声明，
+documented forced paths）。候选集→cycle 的接线随 M11-W05 轮次补齐。全量
+pytest：2272 total（2253 passed + 19 pre-existing M08-W03 time-bombed risk
+fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（399 source files）；
+acceptance 11/11。下一 READY item：M11-W05。
