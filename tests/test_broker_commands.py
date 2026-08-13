@@ -62,28 +62,40 @@ def test_status_cmd_prints_offline_summary(
     assert payload["open_freeze_count"] == 0
 
 
-def test_reconcile_cmd_records_offline_snapshot(
+def test_reconcile_cmd_fails_closed_offline_without_credentials(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """CLI broker reconcile records a deterministic offline snapshot."""
+    """CLI broker reconcile records a fail-closed offline snapshot.
+
+    Without OANDA practice credentials the shared durable service
+    records an explicitly non-matching snapshot — never a vacuous
+    all-match placeholder (AC-M07-W06-03) — and the cycle scope freezes.
+    """
     from alphabrief_cli.broker_commands import reconcile_cmd
     from alphabrief_execution.broker.recon_store import BrokerReconStore
 
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+    # Force the fail-closed null adapter regardless of any developer
+    # workstation credentials.
+    monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     reconcile_cmd(scope="cycle", pretty=False)
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert payload["scope"] == "cycle"
-    assert payload["all_match"] is True
+    assert payload["all_match"] is False
+    assert payload["freeze_raised"] is True
     assert payload["snapshot_id"]
 
     store = BrokerReconStore(db_path=tmp_path / "alphabrief.db")
     try:
         latest = store.latest_snapshot(scope="cycle")
         assert latest is not None
-        assert latest.all_match is True
+        assert latest.all_match is False
+        assert store.has_open_freeze() is True
     finally:
         store.close()
 
