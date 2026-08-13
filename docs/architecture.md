@@ -241,6 +241,21 @@ call_id 幂等）通过 gateway `record_sink` 持久化；API `/ai/run` 已接�
 （`db/schema.py` 版本化迁移 ledger 在 storage scope 外，未来 storage 轮以同名
 `IF NOT EXISTS` 迁移接管，见 `db/model_call.py` 注释）。
 
+AI 委员会（M10-W03）是有界多轮讨论：五个角色（technical、news_sentiment、
+fundamental、risk 四名分析师 + manager moderator）各一个 opening turn，每个
+分析师一个 challenge turn（可质疑前置论断并记录 stance：
+agreement/contradiction/dissent/unknown + challenged_claim），moderator 一个
+summary turn；总轮次由 `max_turns` 有界。每次 turn 记录 role identity、UTC
+时间戳、model-call ID 与 cited evidence IDs（仅引用 CommitteeInput 提供的
+evidence_ids）。完整 `CommitteeTranscript` 保留 agreement/contradiction/
+dissent/unknown 与引用证据，不扁平化为单一答案；plan 仍只由 opening votes 经
+确定性 `DisciplineGate` 综合。Committee 上下文卫生：外部 news/macro context
+经 `alphabrief_news.untrusted.sanitize_external_text` 消毒（bounded、
+instruction-neutralized、untrusted marked），整条 prompt 再经
+`_scrub_secrets` 二次脱敏（token/API key/OANDA account ID）；prompt 不含
+privileged tools、可变系统设置或未消毒外部指令。注意：`/ai/rules` 等展示面
+仍返回旧四角色列表（被 allowlist 外测试钉住，M13 对齐）。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation

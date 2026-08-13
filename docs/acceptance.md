@@ -1190,3 +1190,27 @@ DDL 自持表结构（未来 storage-scope 轮以同名 `IF NOT EXISTS` 迁移�
 不受影响，全绿）。sink 接线：API `/ai/run`（本轮）；CLI/scheduler sink 随其
 所属 scope 轮次补齐。full pytest 2148 passed；ruff/mypy 全仓 clean
 （377 source files）；acceptance 11/11。下一 READY item：M10-W03。
+
+#### M10-W03 已闭环证据（R-20260813-M10-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M10-W03-01 | 每个 completed committee run 包含四名 required analyst roles + moderator，记录 bounded turn order、role identity、timestamps、model-call IDs | `default_roles()` = technical/news_sentiment/fundamental/risk/manager；`TradingCommittee.run` 有界多轮（5 opening + 4 challenge + 1 summary = 10，`max_turns` 可配、`challenge_rounds` 可配）；`test_committee_transcript.py`：`test_run_contains_all_five_roles_and_moderator`（opening roles == 五角色全集、completed=True）、`test_turn_order_is_bounded_opening_then_challenge_then_summary`（phases 序列与 turn_number 1..10 精确断言）、`test_max_turns_bounds_the_discussion`（max_turns=6 截断、completed=False）、`test_turns_record_role_identity_timestamps_and_model_call_ids`（每 turn 有 role/tz-aware created_at/唯一 model_call_id） |
+| AC-M10-W03-02 | 角色可质疑前置论断；transcript 保留 agreement/contradiction/dissent/unknown 与 cited evidence IDs，不扁平化 | challenge turn 输出扩展 schema（stance + challenged_claim）；`CommitteeTurn.stance` 四值；`test_challenge_turns_preserve_stance_and_challenged_claim`（4 个 challenge turn 均有 stance 与 challenged_claim）、`test_agreement_contradiction_and_unknown_are_distinguished`（三 stance fixture 逐一区分）、`test_dissent_is_not_flattened_into_the_plan`（dissent 保留在 transcript，plan 仍按 opening votes 综合）、`test_cited_evidence_ids_are_preserved`（turn 1 引 ev-price-1/ev-news-1、challenge 引 ev-macro-1、summary 引 ev-price-1）、`test_fabricated_evidence_ids_are_not_cited`（伪造 ID 不进 cited 列表）、`test_votes_carry_model_call_ids_and_citations` |
+| AC-M10-W03-03 | committee context 排除 tokens、完整 account ID、privileged tools、可变系统设置、未消毒外部指令 | `test_prompt_scrubs_tokens_api_keys_and_account_ids`（Bearer/sk-/account ID → `[REDACTED]`，raw 值不在 prompt）、`test_prompt_neutralizes_external_instructions`（ignore/override-risk 指令 → `[NEUTRALIZED-EXTERNAL-INSTRUCTION]`，untrusted marker 保留）、`test_prompt_excludes_tools_and_system_settings`（无 tool/risk_limit/api_key/token 字样）、`test_challenge_and_summary_prompts_are_sanitized`（challenge/summary prompt 同样消毒）；实现：`_sanitize_context` 复用 `alphabrief_news.untrusted.sanitize_external_text` + `_scrub_secrets` 二次脱敏 |
+
+范围说明：`tests/test_committee_transcript.py` 为 M10-W03 契约声明的缺失测试
+文件（targeted command 声明，documented forced path，按 M09-W07/M07-W05 先例）。
+CommitteeRole 增加 `news_sentiment`（四分析师 + manager moderator）；votes
+持久化经 `vote_json` 列自动携带新字段（`db_store.py`，trader scope）。
+`/ai/rules` API/CLI 展示面仍返回旧四角色列表（被 allowlist 外
+`tests/test_ai_trading_api.py`/`ai_commands.py` 钉住，M13 API 合同轮对齐，
+已记录 architecture.md）。本轮全量 pytest：2148 passed + 19 failed —— 19 个
+失败全部为 M08-W03 既有时间炸弹 fixture（`tests/test_risk_exposure_matrix.py`
+与 `tests/test_risk_currency_aggregation.py` 硬编码
+`NOW=2026-08-13T12:00Z`、`conversion_max_age_seconds=300`，墙钟越过 12:05 UTC
+后必然过期；两文件自 7c46d2f 起未改动、与 alphabrief_risk 均不在本轮
+changed paths，baseline 上同样失败，与本轮无关）。本轮 declared 命令
+（targeted 27 passed / integration 59 passed / ruff / mypy）全部 exit 0；
+ruff/mypy 全仓 clean（378 source files）；acceptance 11/11。下一 READY item：
+M10-W04。

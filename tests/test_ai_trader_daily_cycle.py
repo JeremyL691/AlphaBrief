@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import pytest
 from alphabrief_execution import (
@@ -25,6 +26,7 @@ from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
 from alphabrief_trader.daily_cycle import (
     DailyTradingCycle,
+    SnapshotLoader,
     is_ai_trading_enabled,
     is_live_trading_unlocked,
 )
@@ -302,13 +304,18 @@ class TestDailyTradingCycle:
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "executed"
-        assert len(record.votes) == 3
+        # Five roles total; one analyst fails → four votes remain.
+        assert len(record.votes) == 4
         assert "provider_error" not in record.summary
 
     def test_constructor_requires_all_dependencies(self) -> None:
         with pytest.raises(TypeError):
-            DailyTradingCycle(  # type: ignore[call-arg]
-                committee=None,  # type: ignore[arg-type]
+            DailyTradingCycle(
+                committee=cast(TradingCommittee, None),
+                risk_gate=cast(RiskGate, None),
+                broker=cast(PaperBroker, None),
+                store=cast(AiTradingStore, None),
+                snapshot_loader=cast(SnapshotLoader, None),
             )
 
 
