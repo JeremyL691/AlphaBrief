@@ -583,3 +583,13 @@ M15-W05 起，观察期运行按 `alphabrief_core/recovery.py` 演练：
 - 12 个 cycle/execution 边界任一崩溃确定性恢复或安全 frozen（无重复订单、无 cursor 回退、无丢失 risk 计数、无 partial state）；
 - 有界 soak 演练校验 heartbeat、writer ownership、memory/descriptor budget、projection equality、reconciliation truth、backup integrity；
 - `alphabrief operations recovery-drill --scenario all --compact` 与 `alphabrief operations soak --cycles 1000 --compact` 为可脚本化 runtime drill。
+
+## Security Gates and Runbook Rehearsal
+
+M15-W06 起，真实观察窗口开始前必须通过 7 项 security gates（dependency
+integrity、supply-chain、secret scan、artifact scrub、network allowlist（仅
+OANDA practice 两 host）、reference boundary、static rules），无 waiver；
+prompt-injection fixtures 不得改变 system instructions/risk limits/broker
+tools/provider routing/execution state/evidence citations；非生产彩排
+（`alphabrief observation rehearse --all-drills --compact`）完成 8 步流程但
+绝不计为真实观察日。

@@ -2149,3 +2149,31 @@ frozen、soak 缺 invariant not preserved）。集成 command 声明的
 substitution）。全量 pytest：3083 total（3064 passed + 19 pre-existing M08-W03
 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（493
 source files）；acceptance 11/11。下一 READY item：M15-W06。
+
+#### M15-W06 已闭环证据（R-20260813-M15-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M15-W06-01 | Dependency integrity, supply-chain policy, tracked secret scan, artifact scrub scan, live and other-broker network scan, reference-source boundary, and static security rules pass without waiver | `tests/test_security_supply_chain.py`：`SECURITY_GATES` 恰好 7 项（`test_all_seven_gates_are_declared`）；`run_security_gates` 全绿/单败/缺 truth fail-closed/确定性（`test_full_truth_passes`/`test_single_failure_fails_the_report`/`test_missing_gate_fails_closed`/`test_deterministic`）；`scan_files_for_secrets`——`test_clean_sources_scan_empty`/`test_artifacts_never_contain_full_account_ids`（docs 无完整 account id）/`test_secret_fixture_is_built_at_runtime`（运行时拼接 fixture 可被 scan 检出——scan 有效）；`tests/test_security_secret_scan.py`（packages/apps/config/docs 全 clean + 确定性）；`tests/test_security_network_allowlist.py`：`ALLOWED_NETWORK_HOSTS` 仅 practice 两 host（`test_only_practice_hosts_are_allowed`），`scan_network_allowlist` 证明 packages/apps 无 live/other-broker 引用（`test_runtime_sources_reach_no_live_or_other_broker`/`test_api_and_cli_reach_no_live_or_other_broker`/`test_scan_is_deterministic`）；static：`pip check`（No broken requirements）、ruff、mypy |
+| AC-M15-W06-02 | Prompt-injection fixtures cannot alter system instructions, risk limits, broker tools, provider routing, execution state, or evidence citation requirements | `tests/test_security_prompt_injection.py`：`PROTECTED_SURFACES` 恰好 6 项（`test_all_six_surfaces_are_declared`）；`verify_injection_invariants`——`test_unchanged_surfaces_pass`（注入文本零变更）；`test_altered_surface_is_reported`/`test_multiple_alterations_are_all_reported`（任一 surface 变更 → verdict.altered 列出全部）；`test_verdict_is_deterministic` |
+| AC-M15-W06-03 | A non-production rehearsal completes Day 0, daily record, no-trade day, weekly gate, incident reset, restart, restore, and final-report flows without counting rehearsal time as real observation | `tests/test_operations_runbook_rehearsal.py`：`REHEARSAL_STEPS` 恰好 8 步（`test_all_eight_flow_steps_are_declared`）；`run_rehearsal`——`test_full_rehearsal_passes`；`test_rehearsal_never_counts_as_observation`（counts_as_observation 恒 False——彩排时间绝不记为真实观察）；`test_missing_step_fails_closed`；`test_no_trade_day_is_a_valid_step`；`test_deterministic`；runtime `alphabrief observation rehearse --all-drills --compact` 运行成功（stable compact JSON） |
+
+#### M15 Requirement Traceability（M15-W01..W06）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OPS-001..007 | W01-W05 已闭环 |
+| REQ-OPS-002（自动 scrub） | W01 redaction；W06 secret scan（完整 account id 绝不入 artifacts） |
+| REQ-OPS-008（依赖和供应链扫描、secret scan、静态安全规则和 prompt injection fixtures 进入门禁） | W06 `alphabrief_core/security_gates.py`（7 gate 契约 + secret/network scans）+ `runbook_rehearsal.py`（injection invariants + 8 步 rehearsal，彩排不记观察）；`pip check` + ruff + mypy 入 static；相关测试 |
+
+范围说明：`tests/test_security_supply_chain.py`、`tests/test_security_secret_scan.py`、
+`tests/test_security_network_allowlist.py`、`tests/test_security_prompt_injection.py`
+为 M15-W06 契约声明的测试文件（targeted command 声明，documented forced path）；
+`tests/test_operations_runbook_rehearsal.py` 为集成声明的新文件；
+`alphabrief_core/security_gates.py`/`runbook_rehearsal.py` 与
+`apps/cli/observation_commands.py`（`observation rehearse` runtime 命令）为 M15-W06
+契约声明的生产模块（REQ-OPS-002/008，scope profile `operations`，risk_class
+safety-critical：缺 truth fail-closed、彩排绝不记观察）。全量 pytest：3112 total
+（3093 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
+M10-W03）；ruff/mypy 全仓 clean（499 source files）；`pip check` 无 broken
+requirements；acceptance 11/11。下一 READY item：M15-W07。

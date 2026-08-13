@@ -819,3 +819,13 @@ M15-W04 起，观察期（REQ-OBS）受 `alphabrief_core` 契约约束：
   自动 daily/weekly gate、重启恢复 next-run；BLOCKED_EXTERNAL/WAITING_EXTERNAL
   无证据记录、不提问。
 - practice E2E 仅允许正式 7 步路径；direct/residual execution 一律拒绝。
+
+## Security Gates Before Observation
+
+M15-W06 起，观察开始前必须通过 `alphabrief_core.security_gates` 的 7 项门禁
+（dependency integrity、supply-chain policy、secret scan、artifact scrub、
+network allowlist（仅 OANDA practice host/stream host）、reference-source
+boundary、static security rules），无 waiver；prompt-injection fixtures 不得
+改变 system/risk/broker/routing/execution/evidence 六个受保护面；`observation
+rehearse --all-drills --compact` 完成 8 步非生产彩排，彩排时间绝不记为真实
+观察。
