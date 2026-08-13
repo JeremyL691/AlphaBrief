@@ -1,0 +1,98 @@
+/* AlphaBrief Soft (5/5/5) design tokens (M14-W01).
+ * Generated deterministically from dashboard.design_system.DESIGN_TOKENS;
+ * do not edit by hand — change the token source and regenerate.
+ */
+
+:root {
+  --bg: #faf7f2;
+  --bg-elev-1: #ffffff;
+  --bg-elev-2: #f5f1ea;
+  --border: #e5ded2;
+  --border-strong: #c9bfae;
+  --text: #3d3a34;
+  --text-dim: #6b655c;
+  --text-muted: #8a8378;
+  --accent: #b07d3f;
+  --accent-dim: #8a6130;
+  --accent-soft: rgba(176, 125, 63, 0.12);
+  --success: #5a7d5a;
+  --danger: #a0534d;
+  --warning: #a67c2e;
+  --bg: #16140f;
+  --bg-elev-1: #1e1b15;
+  --bg-elev-2: #262219;
+  --border: #3a342a;
+  --border-strong: #4d4538;
+  --text: #ece7dd;
+  --text-dim: #b8b1a4;
+  --text-muted: #8d867a;
+  --accent: #d4a45f;
+  --accent-dim: #b07d3f;
+  --accent-soft: rgba(212, 164, 95, 0.14);
+  --success: #8fae8f;
+  --danger: #d08a83;
+  --warning: #c9a45c;
+  --typography-font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  --typography-font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Monaco, Consolas, monospace;
+  --typography-font-size-base: 14px;
+  --typography-font-size-sm: 12px;
+  --typography-font-size-lg: 18px;
+  --typography-font-size-xl: 24px;
+  --typography-line-height: 1.5;
+  --spacing-space-1: 4px;
+  --spacing-space-2: 8px;
+  --spacing-space-3: 12px;
+  --spacing-space-4: 16px;
+  --spacing-space-5: 24px;
+  --spacing-space-6: 32px;
+  --spacing-space-7: 48px;
+  --radius-radius-sm: 6px;
+  --radius-radius-md: 10px;
+  --radius-radius-lg: 14px;
+  --radius-radius-pill: 999px;
+  --elevation-shadow-card: 0 1px 2px rgba(61, 58, 52, 0.06);
+  --elevation-shadow-hover: 0 2px 8px rgba(61, 58, 52, 0.10);
+  --elevation-shadow-dark-card: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --elevation-shadow-dark-hover: 0 2px 10px rgba(0, 0, 0, 0.45);
+  --interaction-hover-raise: translateY(-1px);
+  --interaction-focus-ring: 2px solid var(--accent);
+  --interaction-active-press: translateY(0px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16140f;
+    --bg-elev-1: #1e1b15;
+    --bg-elev-2: #262219;
+    --border: #3a342a;
+    --border-strong: #4d4538;
+    --text: #ece7dd;
+    --text-dim: #b8b1a4;
+    --text-muted: #8d867a;
+    --accent: #d4a45f;
+    --accent-dim: #b07d3f;
+    --accent-soft: rgba(212, 164, 95, 0.14);
+    --success: #8fae8f;
+    --danger: #d08a83;
+    --warning: #c9a45c;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Interaction tokens are consumed by components via these variables. */
+:root {
+  --interaction-hover-raise: translateY(-1px);
+  --interaction-focus-ring: 2px solid var(--accent);
+  --interaction-active-press: translateY(0px);
+  --motion-duration-fast: 120ms;
+  --motion-duration-base: 200ms;
+  --motion-duration-slow: 320ms;
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-emphasized: cubic-bezier(0.3, 0, 0.2, 1);
+}
