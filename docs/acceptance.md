@@ -1727,3 +1727,32 @@ REQ-UI-001/006/007，scope profile `api_cli`，risk_class execution-critical：
 substitution 运行并记录）。全量 pytest：2674 total（2655 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （440 source files）；acceptance 11/11。下一 READY item：M13-W04。
+
+#### M13-W04 已闭环证据（R-20260813-M13-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M13-W04-01 | Instruments, market data, news, sentiment, committee, risk, broker, cycle, scheduler, alert, and observation commands support stable compact JSON output without prompts | `tests/test_cli_contracts.py`：`test_every_required_domain_has_a_command_group`（11 个 domain → CLI group 映射全存在）；`test_read_command_emits_stable_json_without_prompts`（11 个 domain 各一个代表性 read command 运行 → JSON 可解析且两次运行 normalized payload 完全一致——stable；news/sentiment 经新增 `news list --json`（`emit_json` compact stable 路径））；`test_no_command_reads_stdin`（stdin 关闭运行全部命令，无 prompt）；CLI 全仓 grep 确认无 `input()/typer.prompt/click.prompt` |
+| AC-M13-W04-02 | Success, empty, partial, validation, conflict, unavailable, frozen, and internal error states map to documented deterministic exit codes and structured stderr | `contracts.py`：`EXIT_SUCCESS=0`/`INTERNAL=1`/`VALIDATION=2`/`EMPTY=3`/`PARTIAL=4`/`CONFLICT=5`/`UNAVAILABLE=6`/`FROZEN=7` + `EXIT_CODE_NAMES` 文档化映射；`EmptyResultError`/`PartialResultError`/`ConflictError`/`SourceUnavailableError`/`FrozenStateError`/`CliExit` 六个 typed error；`emit_error` 输出 `{"error_code","exit_code","message"}` 到 stderr 并确定性退出；`test_exit_codes_are_documented_and_stable`/`test_error_states_map_to_codes_and_structured_stderr`（7 组 parametrize）/`test_emit_error_writes_structured_stderr_and_exits` |
+| AC-M13-W04-03 | API-backed and permitted local read-only execution over the same fixture return equivalent normalized payloads and cannot create conflicting writer ownership | `read_local_or_api`（API up → api 路径；API 失败 → local 只读 fallback，返回 `(payload, source)`）+ `normalize_payload`/`equivalent_normalized_payloads`（sort_keys + compact + str fallback canonical）；`test_api_and_local_reads_normalize_identically`/`test_local_fallback_when_api_unavailable`（fallback 后 normalized payload 等价）/`test_normalized_payloads_are_order_and_key_stable`；`test_local_read_path_never_acquires_the_writer_lease`（contracts.py 无 writer_lease/无 SQL 执行/无 INSERT/UPDATE——local 路径只读，绝不与 scheduler/API writer 冲突） |
+
+#### M13 Requirement Traceability（M13-W01..W04）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-PLAT-008/009 | W01 read contracts；W02 write audit；相关测试 |
+| REQ-UI-001 | W01 `VersionedReadEnvelope`；W04 CLI 11 domain JSON 覆盖 |
+| REQ-UI-002/010 | W02 `write_contracts.py`；相关测试 |
+| REQ-EXEC-010 | W03 operational/trace 共享 authority；相关测试 |
+| REQ-UI-006/007 | W03 trace/operational 路由；相关测试 |
+| REQ-UI-001（API/CLI 一致 schema，CLI 侧） | W04 `alphabrief_cli/contracts.py`：`emit_json`（stable compact JSON）、`normalize_payload`/`equivalent_normalized_payloads`（API/local 归一化等价）、`read_local_or_api`（API-backed ↔ local 只读 parity，无 writer lease）；`tests/test_cli_contracts.py` |
+
+范围说明：`tests/test_cli_contracts.py` 为 M13-W04 契约声明的测试文件（targeted
+command 声明，documented forced path）；`alphabrief_cli/contracts.py` 为 M13-W04
+契约声明的生产模块（REQ-UI-001/002/010，scope profile `api_cli`，risk_class
+execution-critical）；`news_commands.py` 新增 `--json` 选项（经共享 `emit_json`，
+默认 human 输出不变——`test_news_commands.py` 无回归）。集成 command 声明的
+`tests/test_model_commands.py` 不存在（model CLI 覆盖位于 `tests/test_model_cli.py`，
+documented substitution）。全量 pytest：2700 total（2681 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（441 source files）；acceptance 11/11。下一 READY item：M13-W05。
