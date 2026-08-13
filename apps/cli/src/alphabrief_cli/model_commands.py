@@ -332,7 +332,29 @@ def kronos_forecast_cmd(
     sys.stdout.write("\n")
 
 
-def _build_evaluator() -> ModelEvaluator:
+def _build_evaluator(use_real: bool = True) -> ModelEvaluator:
+    """Build an evaluator.
+
+    ``use_real`` (the default) uses the same configured production
+    provider through ``ModelGateway`` as the AI Trading Committee and
+    fails closed when none is configured. ``use_real=False`` is the
+    explicit test composition that uses the deterministic fake.
+    """
+    if use_real:
+        from alphabrief_trader import (
+            ModelProviderUnavailableError,
+            build_ai_trading_provider,
+        )
+
+        try:
+            provider = build_ai_trading_provider()
+        except (ModelProviderUnavailableError, ValueError) as exc:
+            print(
+                f"error: model provider unavailable: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return ModelEvaluator(ModelGateway([provider]))
     adapter = FakeProviderAdapter(
         provider_name="fake",
         model_name="fake-model",
@@ -365,9 +387,14 @@ def evaluate_cmd(
         help="Number of samples (1-50).",
     ),
     real_provider: bool = typer.Option(  # noqa: B008
-        False,
-        "--real-provider",
-        help="Use a real provider instead of FakeProvider (not wired in MVP).",
+        True,
+        "--real-provider/--no-real-provider",
+        help=(
+            "Use the configured real provider through ModelGateway "
+            "(default; fails closed when none is configured). "
+            "--no-real-provider explicitly composes the deterministic "
+            "test provider."
+        ),
     ),
     pretty: bool = typer.Option(  # noqa: B008
         True,
@@ -399,10 +426,11 @@ def evaluate_cmd(
         )
         sys.exit(1)
 
-    evaluator = _build_evaluator()
-    if real_provider:
+    evaluator = _build_evaluator(use_real=real_provider)
+    if not real_provider:
         print(
-            "warning: --real-provider is not wired in the MVP, using FakeProvider",
+            "note: --no-real-provider explicitly composes the deterministic "
+            "test provider",
             file=sys.stderr,
         )
 

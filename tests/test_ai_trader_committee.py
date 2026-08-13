@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from alphabrief_models import FakeProviderAdapter, ModelGateway
@@ -11,7 +12,11 @@ from alphabrief_trader.committee import (
     TradingCommittee,
     _PartialCommitteeVote,
 )
-from alphabrief_trader.schemas import CommitteeInput, MarketSnapshot
+from alphabrief_trader.schemas import (
+    AnalystAction,
+    CommitteeInput,
+    MarketSnapshot,
+)
 from pydantic import ValidationError
 
 
@@ -38,7 +43,7 @@ def _build_committee(provider: FakeProviderAdapter) -> TradingCommittee:
 
 
 class TestTradingCommittee:
-    def test_all_four_roles_succeed(self) -> None:
+    def test_all_five_roles_succeed(self) -> None:
         payload = {
             "analysis": "Bullish setup with trend continuation.",
             "view": "bullish",
@@ -55,9 +60,19 @@ class TestTradingCommittee:
         assert result.ok is True
         assert result.plan is not None
         assert result.plan.target_position_pct > 0
-        assert len(result.votes) == 4
+        # The four analyst roles plus the manager (moderator).
+        assert len(result.votes) == 5
         roles = {v.role for v in result.votes}
-        assert roles == {"technical", "fundamental", "risk", "manager"}
+        assert roles == {
+            "technical",
+            "news_sentiment",
+            "fundamental",
+            "risk",
+            "manager",
+        }
+        assert result.transcript is not None
+        assert len(result.transcript.turns) == 5
+        assert all(turn.phase == "opening" for turn in result.transcript.turns)
 
     def test_fake_provider_failure_yields_no_votes(self) -> None:
         # A failing provider returns no successful responses → no votes
@@ -74,13 +89,19 @@ class TestTradingCommittee:
         assert result.error_message == "no_committee_votes"
         assert result.plan is None
         # Every role call failed at the gateway → per-role stable codes.
-        assert len(result.role_errors) == 4
+        assert len(result.role_errors) == 5
         assert all(
             error.endswith("provider_call_failed")
             for error in result.role_errors
         )
         roles = {error.split(":")[0] for error in result.role_errors}
-        assert roles == {"technical", "fundamental", "risk", "manager"}
+        assert roles == {
+            "technical",
+            "news_sentiment",
+            "fundamental",
+            "risk",
+            "manager",
+        }
 
     def test_invalid_structured_output_skipped(self) -> None:
         provider = FakeProviderAdapter(
@@ -93,7 +114,7 @@ class TestTradingCommittee:
         result = committee.run(CommitteeInput(snapshot=_snapshot()))
         # No vote passes validation → ok=False with per-role parse errors.
         assert result.ok is False
-        assert len(result.role_errors) == 4
+        assert len(result.role_errors) == 5
         assert all(":" in error for error in result.role_errors)
 
     def test_ethics_keyword_in_manager_blocks(self) -> None:
@@ -140,7 +161,7 @@ class TestTradingCommittee:
 
     def test_none_gateway_raises(self) -> None:
         with pytest.raises(TypeError):
-            TradingCommittee(gateway=None)  # type: ignore[arg-type]
+            TradingCommittee(gateway=cast(ModelGateway, None))
 
 
 class TestPartialSchema:
@@ -171,7 +192,7 @@ class TestPartialSchema:
                 analysis="a",
                 view="bullish",
                 confidence=0.5,
-                suggested_action="liquidate",  # type: ignore[arg-type]
+                suggested_action=cast(AnalystAction, "liquidate"),
                 target_position_pct=0.1,
             )
 

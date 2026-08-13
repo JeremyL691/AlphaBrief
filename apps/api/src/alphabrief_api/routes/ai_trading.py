@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -28,11 +29,14 @@ from alphabrief_execution import (
     PaperBroker,
     PortfolioState,
 )
+from alphabrief_models import ModelCallBudget, ModelCallRecord
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
+    DailyCycleRecord,
     DailyTradingCycle,
     DisciplineConfig,
     MarketSnapshot,
+    ModelProviderUnavailableError,
     SnapshotLoader,
     StoredMarketSnapshotBuilder,
     TradingCommittee,
@@ -44,12 +48,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphabrief_api.db import AiTradingStore, MarketDataStore, NewsStore
+from alphabrief_api.db.model_call import ModelCallStore
 
 # ---------------------------------------------------------------------------
 # Store + builder singletons (test-isolation via _reset_ai_state)
 # ---------------------------------------------------------------------------
 
 _store: AiTradingStore | None = None
+_call_store: ModelCallStore | None = None
 
 
 def _get_store() -> AiTradingStore:
@@ -59,12 +65,23 @@ def _get_store() -> AiTradingStore:
     return _store
 
 
+def _get_call_store() -> ModelCallStore:
+    """Return the singleton durable model-call record store."""
+    global _call_store
+    if _call_store is None:
+        _call_store = ModelCallStore()
+    return _call_store
+
+
 def _reset_ai_state() -> None:
     """Clear the singleton store (test isolation)."""
-    global _store
+    global _store, _call_store
     if _store is not None:
         _store.close()
     _store = None
+    if _call_store is not None:
+        _call_store.close()
+    _call_store = None
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +244,21 @@ router = APIRouter(prefix="/api/v1/ai", tags=["ai-trading"])
 
 
 def _build_default_committee() -> TradingCommittee:
-    """Build the configured AI Trading Committee."""
-    return build_ai_trading_committee()
+    """Build the configured AI Trading Committee.
+
+    Every terminal ModelGateway call is persisted to the durable
+    ``ModelCallStore`` and bounded by a per-request/cycle/day budget, so
+    the trading path keeps complete, replayable model evidence.
+    """
+    return build_ai_trading_committee(
+        record_sink=_persist_call_record,
+        budget=ModelCallBudget(),
+    )
+
+
+def _persist_call_record(record: ModelCallRecord) -> None:
+    """Persist one terminal gateway call record (sink callback)."""
+    _get_call_store().save_call(record)
 
 
 def _build_paper_broker() -> PaperBroker:
@@ -353,16 +383,69 @@ def run_cycle(body: AiRunRequest) -> dict[str, object]:
         reference_prices=reference_prices,
     )
     try:
-        cycle = _build_cycle(
-            snapshot_loader=snapshot_loader,
-            symbols=symbols,
-        )
+        try:
+            cycle = _build_cycle(
+                snapshot_loader=snapshot_loader,
+                symbols=symbols,
+            )
+        except ModelProviderUnavailableError as exc:
+            record = _blocked_record_without_provider(
+                symbols=symbols, reason=str(exc)
+            )
+            return _cycle_payload(record)
         record = cycle.run(
             symbols,
             time_horizon=body.time_horizon,
+            cycle_key=_api_cycle_key(symbols),
         )
     finally:
         close_snapshot_loader()
+    return _cycle_payload(record)
+
+
+def _api_cycle_key(symbols: list[str]) -> str:
+    """Deterministic API cycle key: one terminal result per day+universe.
+
+    Repeating the same day and symbols returns the existing terminal
+    cycle record instead of running the committee again (REQ-AI-009);
+    a different snapshot fingerprint still produces a new run.
+    """
+    return f"api:{datetime.now(UTC).date().isoformat()}:{','.join(sorted(symbols))}"
+
+
+def _blocked_record_without_provider(
+    symbols: list[str], *, reason: str
+) -> DailyCycleRecord:
+    """Persist a durable fail-closed cycle when no model provider exists.
+
+    The cycle cannot produce research without a configured provider, so
+    no proposal, OrderIntent, or broker submission may exist. The record
+    keeps the trading-day ledger honest: outcome is a no-trade value and
+    the summary states the real cause. It carries the deterministic
+    cycle key so repeated failures collapse into one durable record.
+    """
+    record = DailyCycleRecord(
+        cycle_id=f"aic_{os.urandom(6).hex()}",
+        trading_day=datetime.now(UTC).date().isoformat(),
+        symbols=list(symbols),
+        plans=[],
+        votes=[],
+        attempts=[],
+        outcome="skipped_no_intent",
+        enabled=True,
+        live_trading_enabled=False,
+        summary=(
+            "model provider unavailable; cycle produced no research or "
+            f"order intent (fail closed): {reason}"
+        ),
+        cycle_key=_api_cycle_key(symbols),
+        created_at=datetime.now(UTC),
+    )
+    _get_store().save_cycle(record)
+    return record
+
+
+def _cycle_payload(record: DailyCycleRecord) -> dict[str, object]:
     return {
         "cycle_id": record.cycle_id,
         "outcome": record.outcome,
@@ -458,6 +541,9 @@ __all__ = [
     "AiRulesResponse",
     "AiRunRequest",
     "AiStatusResponse",
+    "_blocked_record_without_provider",
+    "_cycle_payload",
+    "_persist_call_record",
     "_reset_ai_state",
     "router",
 ]

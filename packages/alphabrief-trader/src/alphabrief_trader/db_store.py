@@ -196,6 +196,28 @@ class AiTradingStore:
             data = cycle_json
         return cast(dict[str, Any], data)
 
+    def get_cycle_by_key(self, cycle_key: str) -> dict[str, Any] | None:
+        """Return the newest terminal cycle for a deterministic cycle key.
+
+        Used by the daily cycle's idempotency guard (REQ-AI-009): the
+        same (cycle key, snapshot fingerprint) must never produce a
+        second committee run, proposal, or OrderIntent.
+        """
+        row = self._conn.execute(
+            "SELECT cycle_json FROM ai_daily_cycles "
+            "WHERE cycle_json ->> 'cycle_key' = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            [cycle_key],
+        ).fetchone()
+        if row is None:
+            return None
+        cycle_json: object = row[0]
+        if isinstance(cycle_json, str):
+            data: Any = json.loads(cycle_json)
+        else:
+            data = cycle_json
+        return cast(dict[str, Any], data)
+
     def get_latest_cycle(self) -> dict[str, Any] | None:
         """Return the most-recently-created cycle, or ``None``."""
         row = self._conn.execute(

@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import sys
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
 
 import typer
 from alphabrief_models import (
-    FakeProviderAdapter,
     ModelGateway,
     generate_daily_alpha_brief,
     render_brief_prompt_v2,
 )
 from alphabrief_research import ResearchContextBuilder
+from alphabrief_trader import (
+    ModelProviderUnavailableError,
+    build_ai_trading_provider,
+)
 
 brief_app = typer.Typer(help="Generate and inspect AI research briefs.")
 
@@ -98,44 +100,20 @@ def daily_cmd(
         help="Macro indicator series to include (repeatable).",
     ),
 ) -> None:
-    """Generate a daily AlphaBrief via ModelGateway + FakeProvider."""
+    """Generate a daily AlphaBrief via ModelGateway + configured provider."""
     try:
-        # ponytail: FakeProvider needs an explicit structured_output payload so
-        # the parser can build a real DailyAlphaBrief. The payload is a fixed,
-        # schema-valid DailyAlphaBrief that exercises the same validation path
-        # any real provider would. trading_day must match between the outer
-        # brief and the nested market_brief per the schema validator.
-        today = date.today()
-        ts = datetime.now(UTC).isoformat()
-        fake_payload: dict[str, object] = {
-            "brief_id": f"brief_{uuid4().hex[:12]}",
-            "generated_at": ts,
-            "trading_day": today.isoformat(),
-            "headline": "Market outlook is positive",
-            "executive_summary": (
-                "Risk assets remain orderly; regime is mixed with positive bias."
-            ),
-            "market_brief": {
-                "brief_id": f"market_{uuid4().hex[:8]}",
-                "generated_at": ts,
-                "trading_day": today.isoformat(),
-                "regime": "neutral",
-                "summary": "Mixed breadth with low realized volatility.",
-                "confidence": 0.61,
-                "key_factors": [
-                    "mixed breadth",
-                    "low realized volatility",
-                    "macro data in line",
-                ],
-            },
-            "symbol_briefs": [],
-            "watchlist": ["BTC-USD", "SPY"],
-            "risk_notes": ["Watch position sizing around earnings."],
-        }
-        provider = FakeProviderAdapter(
-            capabilities=["structured_output"],
-            structured_output=fake_payload,
-        )
+        # The brief goes through the same configured production provider
+        # wiring as the AI Trading Committee; when no real provider is
+        # configured the command fails closed instead of fabricating a
+        # demo brief.
+        try:
+            provider = build_ai_trading_provider()
+        except (ModelProviderUnavailableError, ValueError) as exc:
+            print(
+                f"error: model provider unavailable: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         gateway = ModelGateway([provider])
 
         input_text = "Generate a daily market brief"
