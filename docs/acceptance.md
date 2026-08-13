@@ -980,3 +980,17 @@ READY item：M08-W03。
 clock 保证确定性。RiskGate 零改动。full pytest 1957 passed（+23 新测试）；
 ruff/mypy 全仓 clean（337 source files）；acceptance 11/11。下一 READY
 item：M08-W04。
+
+#### M08-W04 已闭环证据（R-20260813-M08-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M08-W04-01 | boundary 测试覆盖 margin available/used、margin closeout proximity、projected leverage、realized+unrealized daily loss、rolling drawdown、high-water mark、day-start equity、consecutive losses | `evaluate_margin_loss_rules`（新 `alphabrief_risk/margin_loss_rules.py`，`test_risk_margin.py`/`test_risk_loss_drawdown.py`/`test_risk_consecutive_loss.py`）：margin_utilization（20000/100000=0.2≤0.5 pass、0.6 fail）、closeout_proximity（available/nav 0.8≥0.1 pass、0.05 fail）、projected_leverage（0.5≤1 pass、1.5 fail）、margin_fresh（299s pass/301s fail，可注入 clock）、daily_loss（day-start 与 equity_now 之差 0.03 边界、realized+unrealized 都经 equity_now 折入）、rolling_drawdown（窗口内 peak-vs-current 0.109≤0.2 pass、单点零回撤、0.3 fail）、drawdown_from_hwm（0.109≤0.2 pass、0.273 fail）、consecutive_losses（3≤3 pass、4 fail）；全部 Decimal-safe、frozen、extra=forbid |
+| AC-M08-W04-02 | durable day/HWM 值 survive restart，且不能 reset、后退或被 current equity 替换以放宽 limit | `LossStateStore`（新 `alphabrief_risk/loss_state.py`，DuckDB）：HWM 只升不降（CAS `max(current, end)`——更低 equity 日无法把 HWM 拉低）；day-start per date first-write-wins（同日重放不同 day_start 被 `ON CONFLICT DO NOTHING` 拒绝，authoritative start 保持）；同一天更高 end equity 重放——day_start 不变、HWM 只可能上升、pnl 按权威 start 计算；关库重开（restart）后 HWM/day_start/streak 全部保留；无任何 API 能直接写 HWM/day-start（只有 evidence-backed `record_day_result`） |
+| AC-M08-W04-03 | missing/stale margin、PnL、HWM、day-start、loss-streak、equity state 拒绝新开仓，绝不静默禁用已配置 rule | 分类 fail-closed：缺 day_start → daily_loss fail（"no day-start equity"）；缺 HWM → drawdown_from_hwm fail；空 rolling window → rolling_drawdown fail；streak=None → consecutive_losses fail（"no loss-streak state"）；projected_leverage=None 且配置 limit → fail（"no leverage evidence"）；margin 超过 evidence_max_age → margin_fresh fail；无配置 limit → 零结果（不产生禁用痕迹）；store 在首个 day 记录前所有读取返回 None → rule fail-closed |
+
+范围说明：`alphabrief_risk/margin_loss_rules.py` 与 `alphabrief_risk/loss_state.py`
+为 M08-W04 契约声明的新模块；`LossStateStore` 的 day-result/HWM/streak 语义
+全部 CAS/evidence-backed（M08-W06 将接入 daily cycle 持久化链）；RiskGate
+零改动。full pytest 1970 passed（+25 新测试）；ruff/mypy 全仓 clean（341
+source files）；acceptance 11/11。下一 READY item：M08-W05。
