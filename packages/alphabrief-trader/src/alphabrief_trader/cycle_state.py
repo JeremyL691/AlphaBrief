@@ -24,7 +24,12 @@ CyclePhase = str
 
 CYCLE_PHASE_ORDER: tuple[str, ...] = CYCLE_STATE_PHASE_ORDER
 
-CYCLE_EXECUTE_OUTCOMES: tuple[str, ...] = ("executed", "no_trade", "blocked")
+CYCLE_EXECUTE_OUTCOMES: tuple[str, ...] = (
+    "executed",
+    "no_trade",
+    "blocked",
+    "error",
+)
 
 
 class CycleTransition(BaseModel):

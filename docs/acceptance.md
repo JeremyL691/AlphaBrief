@@ -1387,3 +1387,21 @@ documented forced paths）；`ExecutionGate` 新增 `market_open` 事实；
 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
 ruff/mypy 全仓 clean（402 source files）；acceptance 11/11。下一 READY
 item：M11-W06。
+
+#### M11-W06 已闭环证据（R-20260813-M11-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M11-W06-01 | submit 仅在 proposal、OrderIntent、broker-fresh inputs、immutable RiskDecision、execution enablement、idempotency mapping 共享同一 correlation chain 时发生 | execute 阶段构建 `CorrelationChain`（cycle_id/proposal_ids/intent_ids/decision_ids/client_order_ids/broker_order_ids）持久化于 execute transition（`test_full_chain_persisted_on_execute` 逐段断言）；`test_decision_ids_are_immutable_and_linked`（attempt 携带 intent_id/risk_decision_id/order_id）；`test_broker_fresh_inputs_gate_submission`（stale data → blocked、attempts 空、链上无提交）；`IdempotencyMap` check-and-insert（`cycle_idempotency` 表） |
+| AC-M11-W06-02 | approved/rejected/no-trade/broker-rejected fixtures 各产生正确 terminal state 与 0 或 1 次 broker submit | `test_approved_fixture_submits_exactly_once`（executed、submit_calls==1、链完整）；`test_risk_rejected_fixture_never_submits`（kill switch → blocked_risk_gate、0 submit）；`test_no_trade_fixture_never_submits`（skipped_no_intent、0 submit）；`test_broker_rejected_fixture_submits_once_and_terminates`（PaperBrokerError → error terminal、1 submit）；`test_blocked_execution_never_submits`（gate blocked → 0 submit）；`test_at_most_once_across_restart`（restart 复用既有 cycle → 0 新提交，`CYCLE_EXECUTE_OUTCOMES` 增加 error） |
+| AC-M11-W06-03 | 每次 broker outcome 触发即时对账，并在 report 完成前持久化 linked order/transaction/trade/position/account/reconciliation evidence | `_phase_reconcile` 对每次 broker outcome 运行注入的 reconciler → `ReconciliationEvidence`（attempt_count/order_ids/matched/account_snapshot）持久化于 reconcile transition：`test_reconciliation_runs_before_report`（evidence 产生且落 transition、order_ids/account 快照断言）、`test_reconciliation_precedes_report_phase`（phase 序列中 reconcile 在 report 之前） |
+
+范围说明：`alphabrief_trader/cycle_execution.py`、
+`tests/test_daily_cycle_execution.py`、`tests/test_daily_cycle_risk_chain.py`
+为 M11-W06 契约声明的新模块/缺失测试文件（targeted command 声明，
+documented forced paths）；`CYCLE_EXECUTE_OUTCOMES` 增加 `error`；
+`CycleOutcome`/rebuild 映射 error → `broker_rejected` reason。OANDA 真实
+adapter 的 broker-fresh inputs 采集随 M13/M15 轮次接入。全量 pytest：
+2316 total（2297 passed + 19 pre-existing M08-W03 time-bombed risk fixture
+失败，分类见 M10-W03）；ruff/mypy 全仓 clean（405 source files）；
+acceptance 11/11。下一 READY item：M11-W07。

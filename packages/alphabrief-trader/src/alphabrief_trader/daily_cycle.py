@@ -51,6 +51,11 @@ from alphabrief_execution import (
 from alphabrief_risk import RiskGate
 
 from alphabrief_trader.committee import TradingCommittee
+from alphabrief_trader.cycle_execution import (
+    CorrelationChain,
+    IdempotencyMap,
+    ReconciliationEvidence,
+)
 from alphabrief_trader.cycle_schedule import CatchUpPolicy, CatchUpVerdict
 from alphabrief_trader.cycle_state import CYCLE_PHASE_ORDER, CycleStateMachine
 from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
@@ -569,6 +574,9 @@ class DurableDailyCycle:
         preflight_facts_provider: Callable[[], PreflightFacts] | None = None,
         runtime_store: RuntimeTruthStore | None = None,
         catchup_window_hours: int = 24,
+        idempotency_map: IdempotencyMap | None = None,
+        reconciler: Callable[[list[dict[str, object]]], ReconciliationEvidence]
+        | None = None,
     ) -> None:
         if state_store is None:
             raise TypeError("state_store is required")
@@ -582,6 +590,8 @@ class DurableDailyCycle:
         self._catchup_window_hours = catchup_window_hours
         self._expired = False
         self._scheduled_at: datetime | None = None
+        self._idempotency_map = idempotency_map
+        self._reconciler = reconciler
         self._trading = DailyTradingCycle(
             committee=committee,
             risk_gate=risk_gate,
@@ -850,22 +860,133 @@ class DurableDailyCycle:
         snapshots = self._trading._load_snapshots(symbols)
         attempts: list[dict[str, object]] = []
         outcome: str = "no_trade"
+        chain = CorrelationChain(
+            cycle_id=cycle_id,
+            trading_date=self._clock().date().isoformat(),
+            proposal_ids=json.loads(
+                str(self._transitions(cycle_id, "propose").get("proposals", "[]"))
+            ),
+        )
         for plan in plans:
             snapshot = snapshots.get(plan.symbol)
             if snapshot is None:
                 continue
             if plan.blocked_by_ethics or plan.target_position_pct <= 0:
                 continue
-            attempt = self._trading._attempt_execution(
+            intent = self._trading._materialize_intent(
                 plan=plan,
                 snapshot=snapshot,
+                intent_id=f"ai_{sha256(f'{cycle_id}:{plan.symbol}'.encode()).hexdigest()[:12]}",
                 now=self._clock(),
-                reference_price_resolver=None,
             )
-            attempts.append(attempt.model_dump(mode="json"))
-            if attempt.outcome == "executed":
+            chain.intent_ids.append(intent.intent_id)
+            decision = self._trading._risk_gate.evaluate(
+                intent,
+                estimated_price=snapshot.reference_price,
+                estimated_quantity=None,
+                data_quality_passed=True,
+            )
+            chain.decision_ids.append(decision.decision_id)
+            if not decision.approved:
+                attempts.append(
+                    self._trading._attempt_record(
+                        intent=intent,
+                        decision=decision,
+                        outcome="blocked_risk_gate",
+                        execution_result=None,
+                        now=self._clock(),
+                    ).model_dump(mode="json")
+                )
+                continue
+            if decision.requires_human_review:
+                attempts.append(
+                    self._trading._attempt_record(
+                        intent=intent,
+                        decision=decision,
+                        outcome="blocked_human_review",
+                        execution_result=None,
+                        now=self._clock(),
+                    ).model_dump(mode="json")
+                )
+                continue
+
+            client_order_id = f"cyc_{cycle_id[:12]}_{intent.intent_id[:12]}"
+            chain.client_order_ids.append(client_order_id)
+            existing = (
+                self._idempotency_map.existing(client_order_id)
+                if self._idempotency_map is not None
+                else None
+            )
+            if existing is not None:
+                # At-most-once: a previously submitted order is reused.
+                chain.broker_order_ids.append(
+                    str(existing.get("broker_order_id") or "")
+                )
+                attempts.append(
+                    {
+                        "intent_id": intent.intent_id,
+                        "risk_decision_id": decision.decision_id,
+                        "approved": True,
+                        "requires_human_review": False,
+                        "outcome": "executed",
+                        "filled": True,
+                        "client_order_id": client_order_id,
+                        "order_id": existing.get("broker_order_id"),
+                        "created_at": self._clock().isoformat(),
+                        "reused_idempotent": True,
+                    }
+                )
                 outcome = "executed"
+                continue
+
+            try:
+                execution_result = self._trading._execution_backend.submit(
+                    intent,
+                    decision,
+                    reference_price=snapshot.reference_price,
+                    now=self._clock(),
+                    estimated_quantity=None,
+                )
+            except Exception as exc:
+                attempts.append(
+                    self._trading._attempt_record(
+                        intent=intent,
+                        decision=decision,
+                        outcome="error",
+                        execution_result=None,
+                        now=self._clock(),
+                        error_message=str(exc),
+                    ).model_dump(mode="json")
+                )
+                continue
+            if self._idempotency_map is not None:
+                self._idempotency_map.register(
+                    client_order_id=client_order_id,
+                    cycle_id=cycle_id,
+                    intent_id=intent.intent_id,
+                    broker_order_id=execution_result.order_id,
+                )
+            chain.broker_order_ids.append(
+                str(execution_result.order_id or "")
+            )
+            attempts.append(
+                self._trading._attempt_record(
+                    intent=intent,
+                    decision=decision,
+                    outcome="executed" if execution_result.filled else "error",
+                    execution_result=execution_result,
+                    now=self._clock(),
+                ).model_dump(mode="json")
+            )
+            if execution_result.filled:
+                outcome = "executed"
+            else:
+                outcome = "error"
         if outcome != "executed" and any(
+            str(a.get("outcome", "")) == "error" for a in attempts
+        ):
+            outcome = "error"
+        elif outcome != "executed" and any(
             str(a.get("outcome", "")).startswith("blocked") for a in attempts
         ):
             outcome = "blocked"
@@ -873,16 +994,30 @@ class DurableDailyCycle:
             cycle_id,
             expected_phase="execute",
             next_phase="reconcile",
-            output_ids={"attempts": json.dumps(attempts, sort_keys=True)},
+            output_ids={
+                "attempts": json.dumps(attempts, sort_keys=True),
+                "correlation_chain": chain.to_json(),
+            },
             outcome=outcome,
         )
 
     def _phase_reconcile(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
-        output_ids = (
-            {"catchup": "expired_without_chase"} if self._expired else None
-        )
+        if self._expired:
+            self._state_machine.advance(
+                cycle_id,
+                expected_phase="reconcile",
+                next_phase="report",
+                output_ids={"catchup": "expired_without_chase"},
+            )
+            return
+        execute = self._transitions(cycle_id, "execute")
+        attempts_raw = json.loads(str(execute.get("attempts", "[]")))
+        output_ids: dict[str, str] = {}
+        if self._reconciler is not None:
+            evidence = self._reconciler(attempts_raw)
+            output_ids["reconciliation_evidence"] = evidence.model_dump_json()
         self._state_machine.advance(
             cycle_id,
             expected_phase="reconcile",
@@ -985,6 +1120,9 @@ class DurableDailyCycle:
         if execute_outcome == "executed":
             outcome = "executed"
             terminal_reason = "executed"
+        elif execute_outcome == "error":
+            outcome = "error"
+            terminal_reason = "broker_rejected"
         elif execute_outcome == "blocked":
             outcome = "blocked_risk_gate"
             terminal_reason = "risk_rejection"

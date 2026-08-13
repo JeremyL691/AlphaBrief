@@ -364,6 +364,19 @@ insufficient_evidence / budget_exhaustion），evidence 保留在 durable record
 的 votes 中；`CycleOutcome` 新增 `expired_without_chase`。所有 no-trade 类
 outcome 都是 durable successful terminal（成功完成 cycle，非失败）。
 
+执行链与即时对账（M11-W06）：`DurableDailyCycle` execute 阶段构建完整
+`CorrelationChain`（cycle_id → proposal_ids → intent_ids（确定性派生）→
+risk decision_ids → client_order_ids → broker_order_ids）并持久化在 execute
+transition 的 `correlation_chain`；仅当 proposal、OrderIntent、broker-fresh
+inputs、immutable RiskDecision、execution enablement 与 `IdempotencyMap`
+（`cycle_idempotency` 表，check-and-insert）共享同一链时才 submit——
+**at-most-once**（restart 复用既有映射，零重复提交）。approved / risk
+rejected（0 submit）/ no-trade（0 submit）/ broker-rejected（1 submit +
+`error` terminal）fixtures 各产生正确 terminal state。`_phase_reconcile` 在
+report 之前对每次 broker outcome 运行注入的 reconciler，把
+`ReconciliationEvidence`（attempt/order ids/matched/account snapshot）
+持久化在 reconcile transition——对账证据先于 report 完成落库。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation
