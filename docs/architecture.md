@@ -296,6 +296,23 @@ grounding/citation/hallucination/injection/latency/cost/stability 指标按
 失败无法被转换为通过。fixture 与 model-profile IDs 绑定在每次 evaluation
 输出上。
 
+持久化日循环状态机（M11-W01）：`alphabrief_trader.cycle_state` +
+`CycleStateStore`（`cycle_state` 当前投影 + `cycle_state_transitions`
+append-only 事实表，同一事务提交）以 compare-and-set 覆盖每日循环全部阶段：
+preflight → ingest → snapshot → discuss → propose → risk → execute（或
+no-trade，outcome 记录 executed/no_trade/blocked）→ reconcile → report →
+complete。每条 transition 原子记录 input hashes、output IDs、attempt count、
+prior phase 与 UTC 时间戳；stale writer（expected phase 不匹配）与非单调
+advance 被拒绝且不产生任何 mutation（DuckDB 无 UPDATE rowcount，CAS 效果以
+提交后重读验证）。`DurableDailyCycle` 把每日循环的 side effects 按阶段驱动：
+每阶段 side effect 完成后才提交离开 transition，因此 restart 从最后已提交
+gate 的下一阶段恢复，**已完成 side effect（尤其 broker 提交）永不重复**；
+每阶段 artifacts（votes/plans/attempts/outcome）落在 committed transition
+rows 中，report 阶段从 durable facts 重建完整 `DailyCycleRecord`（任意次
+restart 后仍完整）。begin 亦记录初始 transition（prior=None），使每个阶段
+都有审计行。API `/ai/run` 仍用 one-shot `DailyTradingCycle`（M11-W02/W03
+在 scheduler/leader 轮次接入 durable cycle）。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation

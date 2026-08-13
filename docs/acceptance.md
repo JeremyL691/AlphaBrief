@@ -1297,3 +1297,22 @@ pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
 ruff/mypy 全仓 clean（386 source files）；acceptance 11/11。M10 里程碑 →
 DONE（无 T7 runtime 依赖，全部本地确定性 gate 通过）。下一 READY item：
 M11-W01。
+
+#### M11-W01 已闭环证据（R-20260813-M11-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M11-W01-01 | 正常 cycle 按 legal order 持久访问 preflight、ingest、snapshot、discuss、propose、risk、execute or no-trade、reconcile、report、complete | `CYCLE_STATE_PHASE_ORDER`（10 阶段）+ `CycleStateStore.advance`（transition 记录目标 phase，begin 记录初始 transition）；`test_normal_cycle_visits_all_phases_in_order`（transitions == 10 阶段全序、is_complete、resume=None）；`test_execute_phase_records_no_trade_outcome`（execute 离开 transition 的 outcome ∈ executed/no_trade/blocked + output_ids）；`test_terminal_record_is_durable`（重建的 DailyCycleRecord 落库、votes 完整） |
+| AC-M11-W01-02 | 每条 transition 原子记录 input hashes、output IDs、attempt count、timestamps、prior state；stale writers 被拒绝 | `advance()` 单事务 INSERT transition + CAS UPDATE cycle_state（`WHERE phase = expected`，提交后重读验证——DuckDB 无 rowcount）；`test_transition_records_hashes_outputs_attempts_prior_and_time`（input_hashes/output_ids/prior_phase/attempt_count/tz created_at/transition_id/phase_order 全字段）；`test_stale_writer_is_rejected_without_mutation`（stale advance → None、transitions 不变）；`test_non_monotonic_advance_is_rejected`、`test_transitions_are_append_only`；`test_stale_writer_cannot_advance_after_restart` |
+| AC-M11-W01-03 | 每个 phase boundary 的 restart 从最后已提交 gate 恢复，不重复已完成 side effect | `resume_phase` 返回未提交 side effect 的下一阶段（begin 后 = preflight；advance 后 = 目标阶段；complete = None）；`DurableDailyCycle.run` 从 resume 点继续：`test_completed_cycle_returns_stored_record_without_rerunning`（第二次 run 返回同记录、submit 计数不变、仅 1 条 cycle）、`test_restart_after_execute_never_repeats_broker_submission`（execute 离开 transition 提交后 crash → resume 于 reconcile → 零重提交、outcome 保留 executed——state outcome COALESCE sticky）、`test_restart_from_every_phase_boundary_resumes_correctly`（10 个边界逐一 resume 断言）、`test_restart_runs_only_pending_phases`（warm-up 到 discuss 后 resume 只跑 discuss..complete，preflight/ingest/snapshot 不重跑） |
+
+范围说明：`alphabrief_trader/cycle_state.py`、
+`tests/test_daily_cycle_state_machine.py`、`tests/test_daily_cycle_checkpoints.py`
+为 M11-W01 契约声明的新模块/缺失测试文件（targeted command 声明，documented
+forced paths）。`CycleStateStore` 使用独立 `cycle_state`/
+`cycle_state_transitions` 表（M03-W03 的 `cycle_checkpoints` 保持不变，
+`test_cycle_checkpoint_store.py` 全绿）。DurableDailyCycle 尚未接入 API/
+scheduler（M11-W02/W03 leader/runtime-truth 轮次接线，本轮已记录于
+architecture.md）。全量 pytest：2214 total（2195 passed + 19 pre-existing
+M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓
+clean（389 source files）；acceptance 11/11。下一 READY item：M11-W02。

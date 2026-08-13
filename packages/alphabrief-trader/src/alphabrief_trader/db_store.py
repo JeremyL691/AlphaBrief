@@ -26,6 +26,7 @@ import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 import duckdb
 
@@ -430,6 +431,22 @@ CYCLE_PHASE_ORDER: tuple[str, ...] = (
     "record",
 )
 
+#: Legal daily-cycle phase order for the M11-W01 durable state machine.
+#: ``execute`` records its outcome (``executed`` | ``no_trade`` |
+#: ``blocked``) so the "execute or no-trade" gate is one phase.
+CYCLE_STATE_PHASE_ORDER: tuple[str, ...] = (
+    "preflight",
+    "ingest",
+    "snapshot",
+    "discuss",
+    "propose",
+    "risk",
+    "execute",
+    "reconcile",
+    "report",
+    "complete",
+)
+
 
 class CycleCheckpointStore:
     """Compare-and-set cycle checkpoints over append-only facts (M03-W03).
@@ -566,6 +583,237 @@ class CycleCheckpointStore:
 
     def clear(self) -> None:
         """Drop and recreate AI-trading tables (for test isolation)."""
+        drop_ai_trading_schema(self._conn)
+        apply_ai_trading_schema(self._conn)
+
+    def close(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+
+class CycleStateStore:
+    """Persisted compare-and-set daily-cycle state machine (M11-W01).
+
+    The current state lives in ``cycle_state`` (one row per cycle) and
+    every legal advance appends one immutable row to
+    ``cycle_state_transitions`` in the same transaction. Advances are
+    compare-and-set: a writer whose ``expected_phase`` does not match
+    the stored phase is a stale writer and is rejected without mutating
+    anything. ``resume_phase`` returns the next phase after the last
+    committed gate so a restart never repeats a completed side effect.
+    """
+
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        if db_path is None:
+            db_path = _db_path()
+        self._db_path = Path(db_path)
+        self._conn = duckdb.connect(str(self._db_path))
+        apply_ai_trading_schema(self._conn)
+
+    def begin(
+        self,
+        cycle_id: str,
+        phase: str,
+        *,
+        outcome: str | None = None,
+        transition_id: str | None = None,
+    ) -> bool:
+        """Initialize a cycle at *phase*; False when it already exists.
+
+        The initial phase is itself recorded as the first immutable
+        transition (prior phase ``None``), so every phase of the cycle —
+        including the first — has a durable audit row.
+        """
+        order = CYCLE_STATE_PHASE_ORDER.index(phase)
+        row = self._conn.execute(
+            "SELECT cycle_id FROM cycle_state WHERE cycle_id = ?",
+            [cycle_id],
+        ).fetchone()
+        if row is not None:
+            return False
+        transition_id = transition_id or f"t_{uuid4().hex[:12]}"
+        self._conn.execute("BEGIN")
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO cycle_state_transitions (
+                    transition_id, cycle_id, phase, phase_order,
+                    prior_phase, attempt_count, input_hashes_json,
+                    output_ids_json, outcome
+                )
+                VALUES (?, ?, ?, ?, NULL, 1, '{}'::JSON, '{}'::JSON, ?)
+                """,
+                [transition_id, cycle_id, phase, order, outcome],
+            )
+            self._conn.execute(
+                """
+                INSERT INTO cycle_state (cycle_id, phase, phase_order, outcome)
+                VALUES (?, ?, ?, ?)
+                """,
+                [cycle_id, phase, order, outcome],
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        return True
+
+    def advance(
+        self,
+        cycle_id: str,
+        *,
+        expected_phase: str,
+        next_phase: str,
+        input_hashes: dict[str, str] | None = None,
+        output_ids: dict[str, str] | None = None,
+        attempt_count: int = 1,
+        outcome: str | None = None,
+        transition_id: str | None = None,
+    ) -> bool:
+        """Atomically append one transition and advance the state.
+
+        Returns False (without mutating anything) when ``expected_phase``
+        does not match the stored phase — a stale writer — or when the
+        target phase is not strictly after the stored phase.
+        """
+        if next_phase not in CYCLE_STATE_PHASE_ORDER:
+            raise ValueError(
+                f"unknown cycle phase {next_phase!r}; expected one of "
+                f"{CYCLE_STATE_PHASE_ORDER}"
+            )
+        target_order = CYCLE_STATE_PHASE_ORDER.index(next_phase)
+        current = self.get_state(cycle_id)
+        if current is None or current["phase"] != expected_phase:
+            return False
+        current_order = CYCLE_STATE_PHASE_ORDER.index(current["phase"])
+        if target_order <= current_order:
+            return False
+
+        hashes_json = json.dumps(input_hashes or {}, sort_keys=True)
+        outputs_json = json.dumps(output_ids or {}, sort_keys=True)
+        transition_id = transition_id or f"t_{uuid4().hex[:12]}"
+        self._conn.execute("BEGIN")
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO cycle_state_transitions (
+                    transition_id, cycle_id, phase, phase_order,
+                    prior_phase, attempt_count, input_hashes_json,
+                    output_ids_json, outcome
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?::JSON, ?::JSON, ?)
+                """,
+                [
+                    transition_id,
+                    cycle_id,
+                    next_phase,
+                    target_order,
+                    expected_phase,
+                    attempt_count,
+                    hashes_json,
+                    outputs_json,
+                    outcome,
+                ],
+            )
+            self._conn.execute(
+                """
+                UPDATE cycle_state
+                SET phase = ?, phase_order = ?,
+                    outcome = COALESCE(?, outcome)
+                WHERE cycle_id = ? AND phase = ?
+                """,
+                [next_phase, target_order, outcome, cycle_id, expected_phase],
+            )
+            # DuckDB does not report UPDATE rowcounts, so the compare-and-
+            # set effect is verified by re-reading the state: unless the
+            # phase actually advanced, the writer was stale and the whole
+            # transaction rolls back.
+            verify = self._conn.execute(
+                "SELECT phase FROM cycle_state WHERE cycle_id = ?",
+                [cycle_id],
+            ).fetchone()
+            if verify is None or verify[0] != next_phase:
+                self._conn.execute("ROLLBACK")
+                return False
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+        return True
+
+    def get_state(self, cycle_id: str) -> dict[str, Any] | None:
+        """Return the current persisted state for *cycle_id*."""
+        row = self._conn.execute(
+            "SELECT cycle_id, phase, phase_order, outcome, updated_at "
+            "FROM cycle_state WHERE cycle_id = ?",
+            [cycle_id],
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "cycle_id": str(row[0]),
+            "phase": str(row[1]),
+            "phase_order": int(row[2]),
+            "outcome": row[3],
+            "updated_at": str(row[4]),
+        }
+
+    def get_transitions(self, cycle_id: str) -> list[dict[str, Any]]:
+        """Return every committed transition for *cycle_id*, in order."""
+        rows = self._conn.execute(
+            """
+            SELECT transition_id, cycle_id, phase, phase_order, prior_phase,
+                   attempt_count, input_hashes_json, output_ids_json,
+                   outcome, created_at
+            FROM cycle_state_transitions
+            WHERE cycle_id = ?
+            ORDER BY phase_order, created_at
+            """,
+            [cycle_id],
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            hashes: object = row[6]
+            outputs: object = row[7]
+            result.append(
+                {
+                    "transition_id": str(row[0]),
+                    "cycle_id": str(row[1]),
+                    "phase": str(row[2]),
+                    "phase_order": int(row[3]),
+                    "prior_phase": row[4],
+                    "attempt_count": int(row[5]),
+                    "input_hashes": (
+                        json.loads(hashes) if isinstance(hashes, str) else hashes
+                    ),
+                    "output_ids": (
+                        json.loads(outputs) if isinstance(outputs, str) else outputs
+                    ),
+                    "outcome": row[8],
+                    "created_at": str(row[9]),
+                }
+            )
+        return result
+
+    def resume_phase(self, cycle_id: str) -> str | None:
+        """Return the phase whose side effect has not committed yet.
+
+        Each transition commits only after its phase's side effect, so
+        the stored phase is the next phase to run. ``None`` means the
+        cycle is complete; a missing state means start at the first
+        phase.
+        """
+        state = self.get_state(cycle_id)
+        if state is None:
+            return CYCLE_STATE_PHASE_ORDER[0]
+        if state["phase"] == "complete":
+            return None
+        return str(state["phase"])
+
+    def clear(self) -> None:
+        """Drop and recreate the AI-trading tables (test isolation)."""
         drop_ai_trading_schema(self._conn)
         apply_ai_trading_schema(self._conn)
 
