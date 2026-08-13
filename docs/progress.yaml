@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-14T03:15:00+08:00"
+updated_at: "2026-08-14T03:25:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M15-W05
+  work_item_id: M15-W06
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M15-W04-FINAL-GATE
-  next_action: prove graceful shutdown, crash recovery, restore, and bounded soak behavior
+  last_verified_gate: M15-W05-FINAL-GATE
+  next_action: close security gates and rehearse the complete observation runbook
   external_evidence_pending: M04-W06 T7 practice catalog evidence; M05-W06 T7 practice market-data evidence; M06-W07 T7 practice lifecycle evidence; M07-W07 T7 practice restart evidence; M08-W08 T7 practice risk-chain evidence
 
 milestones:
@@ -199,9 +199,10 @@ work_item_states:
   M15-W02: DONE
   M15-W03: DONE
   M15-W04: DONE
+  M15-W05: DONE
 
 latest_validation:
-  completed_at: "2026-08-14T03:15:00+08:00"
+  completed_at: "2026-08-14T03:25:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -209,7 +210,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 3035
+      passed: 3064
       failed: 19
       warnings: 14
     restricted_sandbox:
@@ -318,5 +319,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M15-W04
-last_ledger_record: R-20260813-M15-W04
+last_completed_round: R-20260813-M15-W05
+last_ledger_record: R-20260813-M15-W05

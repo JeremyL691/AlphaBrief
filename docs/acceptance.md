@@ -2122,3 +2122,30 @@ fail-closed、E2E 仅正式路径、观察日真实日历推导绝不伪造）�
 documented substitution）。全量 pytest：3054 total（3035 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （489 source files）；acceptance 11/11。下一 READY item：M15-W05。
+
+#### M15-W05 已闭环证据（R-20260813-M15-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M15-W05-01 | SIGTERM follows freeze, stop-new-cycle, resolve-uncertain-submit, sync, reconcile, checkpoint, backup, and lease-release order with bounded shutdown time | `tests/test_recovery_shutdown.py`：`SHUTDOWN_SEQUENCE` 恰好 8 步且顺序固定（`test_sequence_is_exactly_eight_steps_in_order`）；`test_freezing_precedes_stopping_new_cycles`/`test_uncertain_submit_resolution_precedes_sync`/`test_lease_release_is_last`（顺序不变量）；`SHUTDOWN_BUDGET_S=30`（`test_shutdown_budget_is_bounded`）；`shutdown_plan()` 确定性（`test_plan_is_deterministic`） |
+| AC-M15-W05-02 | Abrupt termination at every declared cycle and execution boundary resumes deterministically or stays safely frozen without duplicate order, cursor regression, lost risk counters, or partial state | `tests/test_recovery_cycle_restart.py`：`RECOVERY_BOUNDARIES` 恰好 12 个边界（`test_all_declared_boundaries_are_covered`：startup/preflight/ingest/snapshot/discuss/propose/risk_gate/submit/transaction/reconcile/report/complete）；`test_every_boundary_has_a_deterministic_verdict`（每边界可 resumed，其余 fail-closed frozen）；`test_missing_truth_fails_closed_as_frozen`（缺 truth → frozen + 显式 detail，绝不假设 resumed）；`test_invalid_verdict_falls_back_to_frozen`；`test_frozen_boundaries_never_claim_success`；`test_deterministic` |
+| AC-M15-W05-03 | The bounded soak and isolated restore drills preserve heartbeats, writer ownership, memory and descriptor budgets, projection equality, reconciliation truth, and backup integrity | `tests/test_operations_soak.py`：`SOAK_INVARIANTS` 恰好 7 项（`test_all_declared_invariants_are_covered`）；`run_soak`——`test_full_truth_passes`（1000 cycles 全绿）；`test_missing_invariant_fails_closed`（缺 truth → not preserved）；`test_single_failure_fails_the_soak`；`test_cycle_count_is_bounded_and_typed`；`test_deterministic`；runtime commands `alphabrief operations recovery-drill --scenario all --compact` 与 `alphabrief operations soak --cycles 1000 --compact` 运行成功（`apps/cli/operations_commands.py`，经共享 `emit_json` 输出 stable compact JSON） |
+
+#### M15 Requirement Traceability（M15-W01..W05）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OPS-001..005、007 | W01-W04 已闭环 |
+| REQ-OPS-006（启动、崩溃、SIGTERM、机器重启和数据库恢复有演练；未完成 cycle 能确定性恢复） | W05 `alphabrief_core/recovery.py`（8 步 shutdown 顺序 + 有界预算 + 12 边界 drill + 7 项 soak invariants）+ `apps/cli/operations_commands.py`（recovery-drill/soak 两个 runtime 命令）；`tests/test_recovery_shutdown.py`/`test_recovery_cycle_restart.py`/`test_operations_soak.py` |
+
+范围说明：`tests/test_recovery_shutdown.py`、`tests/test_recovery_cycle_restart.py`、
+`tests/test_operations_soak.py` 为 M15-W05 契约声明的测试文件（targeted command
+声明，documented forced path）；`alphabrief_core/recovery.py` 与
+`apps/cli/operations_commands.py` 为 M15-W05 契约声明的生产模块（REQ-OPS-001/006，
+scope profile `operations`，risk_class safety-critical：缺 truth fail-closed
+frozen、soak 缺 invariant not preserved）。集成 command 声明的
+`tests/test_scheduler_recovery.py` 不存在（scheduler recovery 覆盖位于
+`tests/test_scheduler_leader.py`/`tests/test_daily_cycle_recovery.py`，documented
+substitution）。全量 pytest：3083 total（3064 passed + 19 pre-existing M08-W03
+time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（493
+source files）；acceptance 11/11。下一 READY item：M15-W06。

@@ -574,3 +574,12 @@ M15-W04 起，观察期由 `ObservationSupervisor` 驱动：
 - practice E2E 只走正式 7 步路径（proposal→intent→persisted risk decision→submit→transaction→cleanup→reconciliation），任何直接/残留执行一律拒绝；
 - 缺外部依赖记录 BLOCKED_EXTERNAL/WAITING_EXTERNAL（无证据、无提问）；
 - supervisor 状态 NDJSON 持久化，重启自动恢复 next-run。
+
+## Shutdown, Recovery, and Soak Drills
+
+M15-W05 起，观察期运行按 `alphabrief_core/recovery.py` 演练：
+
+- SIGTERM 按 8 步顺序（freeze→stop new cycle→resolve uncertain submit→sync→reconcile→checkpoint→backup→lease release）在 30s 预算内完成；
+- 12 个 cycle/execution 边界任一崩溃确定性恢复或安全 frozen（无重复订单、无 cursor 回退、无丢失 risk 计数、无 partial state）；
+- 有界 soak 演练校验 heartbeat、writer ownership、memory/descriptor budget、projection equality、reconciliation truth、backup integrity；
+- `alphabrief operations recovery-drill --scenario all --compact` 与 `alphabrief operations soak --cycles 1000 --compact` 为可脚本化 runtime drill。
