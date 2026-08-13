@@ -1,5 +1,15 @@
 """Backtesting utilities for AlphaBrief."""
 
+from alphabrief_backtest.evaluation import (
+    EvaluationWindow,
+    FittedParameters,
+    WalkForwardEvaluationError,
+    WalkForwardEvaluationResult,
+    WalkForwardMode,
+    WindowSpec,
+    compute_evaluation_run_id,
+    run_walk_forward_evaluation,
+)
 from alphabrief_backtest.execution import (
     DEFAULT_MAX_PRICE_AGE_SECONDS,
     OrderFill,
@@ -55,7 +65,9 @@ __all__ = [
     "BacktestTrade",
     "CategoryAttribution",
     "EquityPoint",
+    "EvaluationWindow",
     "FinancingEvent",
+    "FittedParameters",
     "OrderFill",
     "OrderRequest",
     "PortfolioSimulator",
@@ -63,13 +75,20 @@ __all__ = [
     "PositionState",
     "VectorizedBacktester",
     "WalkForwardError",
+    "WalkForwardEvaluationError",
+    "WalkForwardEvaluationResult",
+    "WalkForwardMode",
     "WalkForwardResult",
     "WalkForwardWindow",
+    "WindowSpec",
+    "compute_evaluation_run_id",
     "default_session_window",
     "execute_order",
     "financing_charge",
     "normalize_backtest_price",
     "normalize_backtest_units",
+    "round_backtest_price",
     "run_walk_forward",
+    "run_walk_forward_evaluation",
     "write_backtest_report",
 ]

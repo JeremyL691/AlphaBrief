@@ -1526,3 +1526,32 @@ scope profile `strategy_backtest`；risk/execution/strategy 运行时零改动�
 由测试单向引用）。全量 pytest：2503 total（2484 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （420 source files）；acceptance 11/11。下一 READY item：M12-W04。
+
+#### M12-W04 已闭环证据（R-20260813-M12-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M12-W04-01 | Rolling and anchored fixtures create non-overlapping decision boundaries with parameters fitted only on declared in-sample observations | `tests/test_backtest_walk_forward.py`：`WindowSpec` 强制 `step_bars >= oos_bars`（`test_step_smaller_than_oos_is_rejected`）保证 OOS 永不重叠；`test_decision_boundaries_are_non_overlapping`（rolling：每窗口 oos_start > is_end 即决策边界分隔、相邻窗口 OOS 不重叠）；`test_anchored_is_starts_at_the_first_bar_and_grows`（anchored：IS 恒从首 bar 起并增长、OOS 相邻不重叠）；`test_parameters_fitted_only_on_declared_is_observations`（fitter 只收 IS slice——与独立 IS-only fit 的 chosen parameters 与 is_total_return 完全一致，fitted is_start/is_end 等于 IS 边界）；`test_insufficient_bars_are_rejected`/`test_empty_parameter_grid_is_rejected` |
+| AC-M12-W04-02 | Out-of-sample execution uses frozen parameters and cannot access later observations, later revisions, or undisclosed data versions | `test_frozen_parameters_are_used_for_every_oos_run`（每窗口以 `fitted_parameters.parameters` 构造 frozen 实例，其 OOS metrics 与对同 slice 独立回测完全一致——OOS 只见过自己的 slice，无 lookahead）；`test_oos_metrics_equal_standalone_run_on_the_slice`；`test_undisclosed_data_version_is_rejected`（任一 bar 携带未声明 data version → `WalkForwardEvaluationError`）；`test_every_window_records_the_declared_data_version`（result/windows 只引用声明版本，无 later revision 可达） |
+| AC-M12-W04-03 | Repeating a run with the same strategy, data version, costs, seed, and window specification yields the same run ID and normalized result | `tests/test_backtest_reproducibility.py`：`test_identical_inputs_yield_identical_run_id`（sha256 64 hex）；`test_identical_inputs_yield_identical_normalized_result`（`normalized_json()` 逐字节相同）；seed/window spec/data version/costs/grid/strategy identity/bar content 各自绑定进 run_id（`test_seed_is_bound_into_the_run_id`/`test_window_spec_is_bound_into_the_run_id`/`test_data_version_is_bound_into_the_run_id`/`test_costs_are_bound_into_the_run_id`/`test_parameter_grid_is_bound_into_the_run_id`/`test_strategy_identity_is_bound_into_the_run_id`/`test_bar_content_is_bound_into_the_run_id`）；`test_deterministic_fit_picks_the_same_parameters`（同输入 → 同 fitted parameters 与 oos_metrics）；`TestRunIdContract`（compute_evaluation_run_id 确定性、data version 变化改变 run_id） |
+
+#### M12 Requirement Traceability（M12-W01..W04）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-STRAT-001 | W01 `alphabrief_strategy/dsl.py`；`tests/test_strategy_dsl.py` |
+| REQ-STRAT-002 | W02 `alphabrief_strategy/families.py`；`tests/test_strategy_builtins.py`/`test_strategy_admission.py` |
+| REQ-STRAT-003（真实 IS/OOS、rolling/anchored walk-forward、参数冻结、benchmark 和可重复 data version） | W04 `alphabrief_backtest/evaluation.py`：`run_walk_forward_evaluation`（rolling/anchored、`_fit_parameters` IS-only、frozen params OOS、benchmark 经 `oos_report.metrics.benchmark_total_return`、data version 全 bar 校验、run_id=sha256(全部输入)）；`tests/test_backtest_walk_forward.py`/`test_backtest_reproducibility.py` |
+| REQ-STRAT-004 | W03 `alphabrief_backtest/portfolio.py`/`execution.py`/`metadata.py`；相关测试 |
+| REQ-STRAT-007 | W02 `alphabrief_strategy/admission.py`；`tests/test_strategy_admission.py` |
+| REQ-STRAT-008 | W03 `SEMANTICS_VERSION`/`SEMANTICS_DIFFERENCES` + parity；`tests/test_oanda_backtest_parity.py` |
+| REQ-PLAT-009（所有关键 ID 可跨数据、研究、模型、风险、订单和对账追踪） | W04 `run_id`（绑定 strategy/data version/costs/seed/window/bar fingerprint）与 `FittedParameters`（strategy_id/version/family/data_version/IS 边界/parameters/algorithm_version）形成可追踪 ID 链；`tests/test_backtest_reproducibility.py` |
+| REQ-OANDA-003 | W03 `BacktestInstrumentMetadata`；`tests/test_oanda_backtest_parity.py` |
+
+范围说明：`tests/test_backtest_walk_forward.py` 与 `tests/test_backtest_reproducibility.py`
+为 M12-W04 契约声明的测试文件（targeted command 声明，documented forced path）；
+`evaluation.py` 为 M12-W04 契约声明的生产模块（REQ-STRAT-003/REQ-PLAT-009，
+scope profile `strategy_backtest`）；既有 `walk_forward.py` 及其测试零改动。
+全量 pytest：2526 total（2507 passed + 19 pre-existing M08-W03 time-bombed
+risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（423 source files）；
+acceptance 11/11。下一 READY item：M12-W05。
