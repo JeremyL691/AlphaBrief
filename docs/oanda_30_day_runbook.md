@@ -630,3 +630,21 @@ pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissi
   --scenario scheduler-restart`（submits=0）、`weekly-gate --week 1`。
 - 真实 Days 1-7 观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令
   如实输出 BLOCKED_EXTERNAL/WAITING_EXTERNAL。
+
+## M16-W03: Days 8 through 14 (second real week) — R-20260813-M16-W03
+
+- `APPLICABILITY_EVIDENCE_KINDS`（6 项）+ `build_applicability_evidence`：
+  每天显式声明 weekend / session / financing / macro_window /
+  provider_degradation / no_trade 是否适用；True 必须带完整 reason，
+  无 truth 一律 False——绝不假设、绝不伪造。
+- `run_isolated_restore`（`RESTORE_SURFACES` 7 项）：schema / projections /
+  cycle_checkpoints / risk_counters / broker_mappings / transaction_cursor /
+  observation_state 全部在 isolated 目录内复现才算通过；缺 truth 即
+  not reproduced（fail-closed）。
+- `classify_window_incident`（P0..P3）：Week 2 gate 未过 → 分类 incident +
+  窗口 reset，invalid days 绝不前移、绝不请求批准。
+- CLI：`verify-window --from-day 8 --through-day 14`（含 applicability）、
+  `drill --week 2 --scenario isolated-restore`（submits=0）、
+  `weekly-gate --week 2`（含 incident/reset）。
+- 真实 Days 8-14 观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令
+  如实输出 BLOCKED_EXTERNAL / fail-closed restore / classified incident。

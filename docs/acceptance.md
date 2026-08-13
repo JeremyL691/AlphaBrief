@@ -2271,3 +2271,37 @@ BLOCKED_EXTERNAL/WAITING_EXTERNAL，绝不伪造观察日。全量 pytest：3158
 （3139 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
 M10-W03）；ruff/mypy 全仓 clean（506 source files）；acceptance 11/11。
 下一 READY item：M16-W03。
+
+#### M16-W03 已闭环证据（R-20260813-M16-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M16-W03-01 | Days 8 through 14 have complete hashed daily chains with explicit weekend, session, financing, macro-window, provider-degradation, and no-trade applicability evidence | `tests/test_observation_daily_record.py` `TestApplicabilityEvidence`：`APPLICABILITY_EVIDENCE_KINDS` 恰好 6 项（weekend/session/financing/macro_window/provider_degradation/no_trade）；`build_applicability_evidence`——`test_full_applicability_chain_with_reasons`（显式 verdict + 完整 reason）；`test_missing_truth_is_never_fabricated`（无 truth → 全 False，绝不假设）；`test_true_verdict_requires_complete_reason`（True 而无 reason → 回退 False）；`test_applicability_is_deterministic`；`test_day_range_covers_second_real_week`（Day 8-14 每天链完整） |
+| AC-M16-W03-02 | The latest in-window backup restores into an isolated directory and reproduces schema, projections, cycle checkpoints, risk counters, broker mappings, transaction cursor, and observation state | `tests/test_observation_backup_restore.py`（M16-W03 契约声明文件）：`RESTORE_SURFACES` 恰好 7 项；`run_isolated_restore`——`test_full_truth_restores_all_surfaces`（全 truth → passed，isolated=True）；`test_missing_truth_fails_closed_not_reproduced`（无 truth → 全部 not reproduced）；`test_partial_restore_is_not_a_pass`（任一 surface 失败 → 整体不通过）；`test_isolated_directory_never_leaks`；`test_surfaces_are_typed_and_frozen`；`test_deterministic` |
+| AC-M16-W03-03 | Week 2 gate passes all safety and continuity metrics or records the classified incident and required window reset without asking for approval or carrying invalid days forward | `tests/test_observation_incidents.py` `TestWindowIncidentReset`：`INCIDENT_SEVERITIES` 恰好 4 项（P0..P3）；`classify_window_incident`——`test_failed_gate_classifies_incident_and_resets_window`（gate 未过 → reset_required=True、invalid_days_carried_forward=False）；`test_passing_gate_records_no_reset`；`test_unknown_severity_fails_closed_as_p0`；`test_no_approval_and_no_carry_forward_on_reset`（detail 含 "no approval"）；`test_classification_is_deterministic` |
+
+#### M16 Requirement Traceability（M16-W03）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OBS-001 | 合格时钟延续至第二真实周（Day 8-14 窗口）；runtime 命令在 Day 0 未冻结时如实 BLOCKED_EXTERNAL |
+| REQ-OBS-002 | W03 `APPLICABILITY_EVIDENCE_KINDS` 6 项 + `build_applicability_evidence`（显式 verdict、绝不伪造）；配合 W02 `DAILY_EVIDENCE_KINDS` 14 项 hashed chain |
+| REQ-OBS-003 | applicability 链含 weekend/session/no_trade 等非交易证据；无活动配额、无合成订单 |
+| REQ-OBS-004 | restore 契约固定在 observation_controller（`RESTORE_SURFACES` 7 项）；drill 只恢复进 isolated 目录 |
+| REQ-OBS-005 | W03 `classify_window_incident`：gate 失败 → 分类 incident + 窗口 reset，invalid days 绝不前移、绝不请求批准；配合 W02 `run_weekly_gate` 五项零差异 invariants |
+
+范围说明：`tests/test_observation_backup_restore.py` 为 M16-W03 契约声明的测试文件
+（targeted command 声明，documented forced path）；`alphabrief_core/
+observation_controller.py`（新增 APPLICABILITY_EVIDENCE_KINDS/
+DailyApplicabilityEvidence/build_applicability_evidence/RESTORE_SURFACES/
+RestoreSurface/IsolatedRestoreResult/run_isolated_restore/INCIDENT_SEVERITIES/
+WindowIncident/classify_window_incident）与 `apps/cli/observation_commands.py`
+（verify-window 增加 applicability、drill 增加 isolated-restore 场景、weekly-gate
+增加 incident/reset 输出）为契约声明的既有模块扩展（observation profile：
+max_production_files=0，实际 0 个新生产文件）。真实 Days 8-14 观察依赖 Day 0
+冻结（T7 外部证据 PENDING）——runtime 命令如实输出 BLOCKED_EXTERNAL 与
+fail-closed 的 restore/gate 结果（submits=0、all surfaces not reproduced、
+P0 incident + reset），绝不伪造观察日。全量 pytest：3177 total（3158 passed +
+19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
+ruff/mypy 全仓 clean；acceptance 11/11；runtime 3 命令均 exit 0。
+下一 READY item：M16-W04。
