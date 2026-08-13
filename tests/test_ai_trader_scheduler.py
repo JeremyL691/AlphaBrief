@@ -405,7 +405,7 @@ class TestSchedulerRunsAiTask:
                 "GBP_USD",
                 "USD_JPY",
             }
-            assert len(latest["votes"]) == 12
+            assert len(latest["votes"]) == 15
         finally:
             ai_store.close()
             news_store.close()

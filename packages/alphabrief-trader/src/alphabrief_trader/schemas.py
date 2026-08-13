@@ -30,7 +30,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # Literals
 # ---------------------------------------------------------------------------
 
-CommitteeRole = Literal["technical", "fundamental", "risk", "manager"]
+CommitteeRole = Literal[
+    "technical",
+    "news_sentiment",
+    "fundamental",
+    "risk",
+    "manager",
+]
+CommitteeTurnPhase = Literal["opening", "challenge", "summary"]
+CommitteeStance = Literal["agreement", "contradiction", "dissent", "unknown"]
 AnalystView = Literal["bullish", "bearish", "neutral", "uncertain"]
 AnalystAction = Literal["buy", "sell", "hold", "watch", "skip"]
 ConsensusLevel = Literal["unanimous", "majority", "split", "no_consensus"]
@@ -127,9 +135,10 @@ class CommitteeInput(_CommitteeSchema):
     roles: list[CommitteeRole] = Field(
         default_factory=lambda: cast(
             "list[CommitteeRole]",
-            ["technical", "fundamental", "risk", "manager"],
+            ["technical", "news_sentiment", "fundamental", "risk", "manager"],
         )
     )
+    evidence_ids: list[str] = Field(default_factory=list)
 
     @field_validator("roles")
     @classmethod
@@ -139,8 +148,21 @@ class CommitteeInput(_CommitteeSchema):
         if len(set(value)) != len(value):
             raise ValueError("roles must not contain duplicates")
         for role in value:
-            if role not in {"technical", "fundamental", "risk", "manager"}:
+            if role not in {
+                "technical",
+                "news_sentiment",
+                "fundamental",
+                "risk",
+                "manager",
+            }:
                 raise ValueError(f"unknown role: {role!r}")
+        return value
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def _evidence_ids_unique(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("evidence_ids must not contain duplicates")
         return value
 
 
@@ -171,6 +193,8 @@ class CommitteeVote(_CommitteeSchema):
     target_position_pct: Decimal = Field(default=Decimal("0"), ge=0, le=1)
     veto: bool = False
     needs_human_review: bool = False
+    model_call_id: str | None = None
+    cited_evidence_ids: list[str] = Field(default_factory=list)
     created_at: datetime
 
     @field_validator("created_at")
@@ -189,6 +213,63 @@ class CommitteeVote(_CommitteeSchema):
         if value.strip() == "":
             raise ValueError("string fields must not be blank")
         return value
+
+
+# ---------------------------------------------------------------------------
+# Discussion transcript
+# ---------------------------------------------------------------------------
+
+
+class CommitteeTurn(_CommitteeSchema):
+    """One bounded discussion turn in the committee transcript.
+
+    ``phase`` is the bounded turn order: ``opening`` (each role's first
+    judgment), ``challenge`` (an analyst challenging earlier claims), or
+    ``summary`` (the moderator's final synthesis). ``stance`` and
+    ``challenged_claim`` are only meaningful for challenge turns; they
+    preserve agreement, contradiction, dissent, and unknowns instead of
+    flattening them into a single answer. ``cited_evidence_ids`` keeps
+    every evidence ID the turn referenced, so grounding is auditable.
+    """
+
+    turn_id: str = Field(min_length=1)
+    turn_number: int = Field(ge=1)
+    phase: CommitteeTurnPhase
+    role: CommitteeRole
+    model_call_id: str | None = None
+    analysis: str = Field(min_length=1)
+    view: AnalystView
+    confidence: float = Field(ge=0.0, le=1.0)
+    cited_evidence_ids: list[str] = Field(default_factory=list)
+    stance: CommitteeStance | None = None
+    challenged_claim: str | None = None
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _tz(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value)
+
+    @field_validator("analysis")
+    @classmethod
+    def _non_blank(cls, value: str) -> str:
+        if value.strip() == "":
+            raise ValueError("analysis must not be blank")
+        return value
+
+
+class CommitteeTranscript(_CommitteeSchema):
+    """The full bounded discussion record for one committee run.
+
+    ``max_turns`` is the configured bound; ``completed`` is True only
+    when the run reached its final moderator summary turn. The transcript
+    is read-only evidence: it preserves every role's reasoning, stance,
+    and dissent rather than flattening them into one answer.
+    """
+
+    turns: list[CommitteeTurn] = Field(default_factory=list)
+    max_turns: int = Field(ge=1)
+    completed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +424,10 @@ __all__ = [
     "AnalystView",
     "CommitteeInput",
     "CommitteeRole",
+    "CommitteeStance",
+    "CommitteeTranscript",
+    "CommitteeTurn",
+    "CommitteeTurnPhase",
     "CommitteeVote",
     "ConsensusLevel",
     "CycleOutcome",
