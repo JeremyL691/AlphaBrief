@@ -53,6 +53,7 @@ CycleOutcome = Literal[
     "blocked_ethics",
     "blocked_live_trading",
     "blocked_disabled",
+    "expired_without_chase",
     "error",
 ]
 OrderSide = Literal["buy", "sell"]

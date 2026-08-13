@@ -51,6 +51,7 @@ from alphabrief_execution import (
 from alphabrief_risk import RiskGate
 
 from alphabrief_trader.committee import TradingCommittee
+from alphabrief_trader.cycle_schedule import CatchUpPolicy, CatchUpVerdict
 from alphabrief_trader.cycle_state import CYCLE_PHASE_ORDER, CycleStateMachine
 from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
 from alphabrief_trader.execution_backend import (
@@ -567,6 +568,7 @@ class DurableDailyCycle:
         max_order_value: Decimal | None = None,
         preflight_facts_provider: Callable[[], PreflightFacts] | None = None,
         runtime_store: RuntimeTruthStore | None = None,
+        catchup_window_hours: int = 24,
     ) -> None:
         if state_store is None:
             raise TypeError("state_store is required")
@@ -577,6 +579,9 @@ class DurableDailyCycle:
             preflight_facts_provider
             or _default_preflight_facts(enabled, risk_gate)
         )
+        self._catchup_window_hours = catchup_window_hours
+        self._expired = False
+        self._scheduled_at: datetime | None = None
         self._trading = DailyTradingCycle(
             committee=committee,
             risk_gate=risk_gate,
@@ -597,8 +602,10 @@ class DurableDailyCycle:
         *,
         time_horizon: str = "5 trading days",
         cycle_key: str | None = None,
+        scheduled_at: datetime | None = None,
     ) -> DailyCycleRecord:
         """Run or resume one durable cycle and return its terminal record."""
+        self._scheduled_at = scheduled_at
         cycle_id = self._cycle_id(cycle_key, symbols)
         machine = self._state_machine
         machine.begin(cycle_id)
@@ -628,6 +635,13 @@ class DurableDailyCycle:
             self._runtime_store.set_execution_mode(
                 readiness.mode.value, list(readiness.reasons)
             )
+        catchup = CatchUpVerdict(allowed=True, reason="no_schedule")
+        if self._scheduled_at is not None:
+            policy = CatchUpPolicy(
+                window_hours=self._catchup_window_hours, clock=self._clock
+            )
+            catchup = policy.evaluate(self._scheduled_at)
+        self._expired = not catchup.allowed
         input_hashes = {"symbols": _symbols_hash(symbols)}
         self._state_machine.advance(
             cycle_id,
@@ -639,22 +653,36 @@ class DurableDailyCycle:
                 "execution_reasons": json.dumps(
                     list(readiness.reasons), sort_keys=True
                 ),
+                "catchup": catchup.reason,
+                "catchup_age_seconds": str(catchup.age_seconds),
             },
         )
 
     def _phase_ingest(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        output_ids = (
+            {"catchup": "expired_without_chase"} if self._expired else None
+        )
         self._state_machine.advance(
             cycle_id,
             expected_phase="ingest",
             next_phase="snapshot",
             input_hashes={"symbols": _symbols_hash(symbols)},
+            output_ids=output_ids,
         )
 
     def _phase_snapshot(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        if self._expired:
+            self._state_machine.advance(
+                cycle_id,
+                expected_phase="snapshot",
+                next_phase="discuss",
+                output_ids={"catchup": "expired_without_chase"},
+            )
+            return
         snapshots = self._trading._load_snapshots(symbols)
         fingerprint = _snapshot_fingerprint(snapshots)
         output_ids = {
@@ -673,6 +701,14 @@ class DurableDailyCycle:
     def _phase_discuss(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        if self._expired:
+            self._state_machine.advance(
+                cycle_id,
+                expected_phase="discuss",
+                next_phase="propose",
+                output_ids={"catchup": "expired_without_chase"},
+            )
+            return
         # Snapshot loading is a read-only, idempotent side effect: on a
         # resumed run this phase loads them itself instead of depending
         # on instance state left by an earlier (possibly skipped) phase.
@@ -705,6 +741,14 @@ class DurableDailyCycle:
     def _phase_propose(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        if self._expired:
+            self._state_machine.advance(
+                cycle_id,
+                expected_phase="propose",
+                next_phase="risk",
+                output_ids={"catchup": "expired_without_chase"},
+            )
+            return
         # The committee synthesized one TradePlan per symbol; the propose
         # phase converts them into evidence-grounded proposals.
         discuss = self._transitions(cycle_id, "discuss")
@@ -723,6 +767,14 @@ class DurableDailyCycle:
     def _phase_risk(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        if self._expired:
+            self._state_machine.advance(
+                cycle_id,
+                expected_phase="risk",
+                next_phase="execute",
+                output_ids={"catchup": "expired_without_chase"},
+            )
+            return
         discuss = self._transitions(cycle_id, "discuss")
         plans = [
             TradePlan.model_validate(item)
@@ -757,6 +809,18 @@ class DurableDailyCycle:
     def _phase_execute(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        if self._expired:
+            self._state_machine.advance(
+                cycle_id,
+                expected_phase="execute",
+                next_phase="reconcile",
+                output_ids={
+                    "attempts": "[]",
+                    "catchup": "expired_without_chase",
+                },
+                outcome="no_trade",
+            )
+            return
         readiness = self._execution_gate.evaluate(
             self._preflight_facts_provider()
         )
@@ -816,10 +880,14 @@ class DurableDailyCycle:
     def _phase_reconcile(
         self, cycle_id: str, symbols: list[str], *, time_horizon: str
     ) -> None:
+        output_ids = (
+            {"catchup": "expired_without_chase"} if self._expired else None
+        )
         self._state_machine.advance(
             cycle_id,
             expected_phase="reconcile",
             next_phase="report",
+            output_ids=output_ids,
         )
 
     def _phase_report(
@@ -827,11 +895,21 @@ class DurableDailyCycle:
     ) -> None:
         record = self._rebuild_record(cycle_id, symbols)
         self._store.save_cycle(record)
+        if self._runtime_store is not None:
+            current = self._runtime_store.read()
+            self._runtime_store.update(
+                leader_id=current.get("leader_id") if current else None,
+                running_phase="report",
+                last_outcome=record.outcome,
+            )
         self._state_machine.advance(
             cycle_id,
             expected_phase="report",
             next_phase="complete",
-            output_ids={"cycle_record_id": cycle_id},
+            output_ids={
+                "cycle_record_id": cycle_id,
+                "terminal_outcome": record.outcome,
+            },
         )
 
     def _phase_complete(
@@ -880,21 +958,64 @@ class DurableDailyCycle:
             OrderAttempt.model_validate(item)
             for item in json.loads(str(execute.get("attempts", "[]")))
         ]
+        preflight = self._transitions(cycle_id, "preflight")
+        catchup = str(preflight.get("catchup", ""))
+        if catchup == "expired_without_chase":
+            return DailyCycleRecord(
+                cycle_id=cycle_id,
+                trading_day=self._clock().date().isoformat(),
+                symbols=list(symbols),
+                plans=[],
+                votes=[],
+                attempts=[],
+                outcome="expired_without_chase",
+                enabled=True,
+                live_trading_enabled=False,
+                summary=(
+                    "cycle expired without chase: the scheduled run fell "
+                    "outside its catch-up window"
+                ),
+                created_at=self._clock(),
+            )
+
         execute_outcome = state.get("outcome")
         outcome: CycleOutcome
+        terminal_reason = "no_trade"
+        evidence_ids: list[str] = []
         if execute_outcome == "executed":
             outcome = "executed"
+            terminal_reason = "executed"
         elif execute_outcome == "blocked":
             outcome = "blocked_risk_gate"
+            terminal_reason = "risk_rejection"
         elif plans:
             outcome = "skipped_no_intent"
+            terminal_reason = "no_trade"
         elif votes:
             outcome = "skipped_no_consensus"
+            terminal_reason = "insufficient_evidence"
         else:
             outcome = "provider_error"
+            terminal_reason = "budget_exhaustion"
+        if execute_outcome == "blocked":
+            reasons = json.loads(str(preflight.get("execution_reasons", "[]")))
+            if "stale_data" in reasons:
+                terminal_reason = "stale_data"
+            elif "missing_credentials" in reasons:
+                terminal_reason = "blocked"
+            elif any(
+                marker in reasons
+                for marker in ("market_closed", "stale_account_truth")
+            ):
+                terminal_reason = (
+                    "market_closed"
+                    if "market_closed" in reasons
+                    else "blocked"
+                )
         summary = (
-            f"outcome={outcome}; plans={len(plans)}; votes={len(votes)}; "
-            f"attempts={len(attempts)}"
+            f"outcome={outcome}; reason={terminal_reason}; "
+            f"plans={len(plans)}; votes={len(votes)}; "
+            f"attempts={len(attempts)}; evidence={len(evidence_ids)}"
         )
         return DailyCycleRecord(
             cycle_id=cycle_id,
