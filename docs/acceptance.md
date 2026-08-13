@@ -1614,3 +1614,31 @@ tuple 与 required-fields 集合（证明边界用，非真实 forbidden 内容�
 precedent 记录 PASS。全量 pytest：2587 total（2568 passed + 19 pre-existing
 M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （430 source files）；acceptance 11/11。下一 READY item：M12-W07。
+
+#### M12-W07 已闭环证据（R-20260813-M12-W07）— M12 里程碑 gate
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M12-W07-01 | All M12 DSL, strategy, portfolio, cost, walk-forward, metric, leakage, stability, and advisory-boundary fixture suites pass deterministically | targeted 九套（`test_strategy_dsl` 38 + `test_strategy_builtins` + `test_strategy_admission` + `test_backtest_portfolio` + `test_backtest_execution_semantics` + `test_backtest_walk_forward` + `test_backtest_reports` + `test_backtest_leakage` + `test_strategy_overfitting`，207 passed）+ integration 五套（`test_oanda_backtest_parity`/`test_kronos_integration`/`test_gym_invariants`/`test_backtest_commands`/`test_strategies_api`，65 passed）——W01-W06 全部 fixture 套件确定性通过（同输入同输出断言在每轮已建立） |
+| AC-M12-W07-02 | Requirement traceability maps REQ-STRAT-001 through REQ-STRAT-008 to code, versioned reports, automated evidence, and current progress | 见下 M12 Requirement Traceability（W01-W07 全映射，含代码/测试/versioned report/ledger/progress 证据）；progress.yaml M12 → DONE、latest_validation 记录真实 exit code |
+| AC-M12-W07-03 | Full repository, static analysis, autonomous acceptance, and reproducibility gates pass without arbitrary-code execution or broker-side effects | full pytest 2568 passed + 19 pre-existing M08-W03 time-bomb 失败（分类见 M10-W03）；ruff/mypy 全仓 clean（430 source files）；`alphabrief acceptance verify` 11/11；arbitrary-code 不可执行由 W01 safe DSL（禁例表 + allowlist 编译）证明；broker-side effects 零——M12 全部为本地确定性策略/回测/审计模块，无任何执行路径触及 broker（W06 gym/Kronos advisory-boundary 测试证明） |
+
+#### M12 Requirement Traceability（M12-W01..W07 里程碑闭环）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-STRAT-001（safe DSL cannot execute arbitrary code） | W01 `alphabrief_strategy/dsl.py`：`compile_condition`/`evaluate_condition`（typed frozen AST、禁例表、allowlist、declared-leaves-only 求值）；`tests/test_strategy_dsl.py`（38 用例） |
+| REQ-STRAT-002（trend/mean reversion/breakout/volatility regime/no-trade families + 类别限定） | W02 `alphabrief_strategy/families.py` + `FAMILY_APPLICABILITY`；`tests/test_strategy_builtins.py`/`test_strategy_admission.py` |
+| REQ-STRAT-003（真实 IS/OOS、rolling/anchored walk-forward、参数冻结、benchmark、可重复 data version） | W04 `alphabrief_backtest/evaluation.py`；`tests/test_backtest_walk_forward.py`/`test_backtest_reproducibility.py` |
+| REQ-STRAT-004（多品种/组合感知 + spread/slippage/financing/margin/minimum units/market hours/rejected orders） | W03 `alphabrief_backtest/portfolio.py`/`execution.py`/`metadata.py`；`tests/test_backtest_portfolio.py`/`test_backtest_execution_semantics.py` |
+| REQ-STRAT-005（报告含 11 指标 + attribution + cost attribution + benchmark delta） | W05 `alphabrief_backtest/reporting.py`；`tests/test_backtest_reporting.py` |
+| REQ-STRAT-006（overfitting audit、参数稳定性、multiple-testing 警示、leakage/lookahead tests） | W06 `alphabrief_backtest/leakage.py`/`overfitting.py`；`tests/test_backtest_leakage.py`/`test_strategy_overfitting.py` |
+| REQ-STRAT-007（Kronos/Gym/预测仅 advisory evidence，不能绕过 committee/RiskGate） | W02 `admission.PREDICTIVE_FAMILY_IDS`；W06 `tests/test_gym_invariants.py` + 既有 `test_kronos_integration.py`/`test_ai_trader_rules.py` |
+| REQ-STRAT-008（回测与 practice 相同 metadata/关键 semantics，差异显式记录） | W03 `SEMANTICS_VERSION`/`SEMANTICS_DIFFERENCES` + parity；`tests/test_oanda_backtest_parity.py` |
+
+范围说明：M12-W07 为里程碑 gate round——无新生产代码，全部 acceptance 由
+W01-W06 已提交 evidence 与全量 gate 运行证明。全量 pytest：2587 total
+（2568 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，
+分类见 M10-W03）；ruff/mypy 全仓 clean（430 source files）；acceptance 11/11。
+**M12 里程碑 → DONE**（无 T7 runtime 依赖，全部本地确定性 gate 通过）。
+下一 READY item：M13-W01。
