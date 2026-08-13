@@ -56,6 +56,7 @@ API、CLI 和 scheduler 可以是不同入口，但必须依赖同一个持久 r
 | `oanda/trade_ops` | trade command/query port | M06-W04 起：get/list（分页）/close（ALL 或 partial units，fill 事实为准，stale race 以 cancel+no-fill fail-closed）/protective dependents（TP/SL/trailing/GSLO 四选一，GSLO 需账户 ENABLED）；typed responses + request correlation；realized/financing 与 create/fill/trade-close transaction ID 各自独立 |
 | `oanda/position_ops` | position command/query port | M06-W04 起：get/list（long/short 独立 units/avg/PL）/close（显式 ALL/NONE/positive units——OANDA 缺省即 ALL，故未指定侧绝不静默全平）；over-close/未知 instrument fail-closed，无本地合成仓位变更 |
 | `oanda/account_ops` | account summary/changes port | M06-W04 起：summary（balance/NAV/PL/margins/open counts/lastTransactionID）；changes 以 sinceTransactionID 为唯一游标（digit-only，本地时间戳不可替代），lastTransactionID 独立返回供消费者确认后再前进；404/422/protocol 全分类 fail-closed |
+| `oanda/transaction_ops` | transaction details/ranges/cursor primitives | M06-W05 起：get detail、inclusive ID-range（分页自动拉全，上限 50 页）、since-ID；broker transaction ID 是唯一游标权威（digit-only，本地时间戳直接拒绝）；输出确定性规范化（按 broker ID 升序、去重计数）并给出显式 gap spans（空页/重叠/重复/乱序/缺失 range 全覆盖）；`cursor_candidate` 只返回最高完全连续前缀，端口不持有任何 durable cursor——失败的消费者永远无法确认未见 transaction |
 | `alphabrief-data` | bar loaders/providers、quality、features | 保留；增加 OANDA native data、immutable lineage |
 | `alphabrief-news` | news/sentiment providers | 保留；生产化 provenance/freshness/injection defense |
 | `alphabrief-models` | ModelGateway、adapters、evaluation/router | 保留；统一 durable call records/fallback |

@@ -526,6 +526,20 @@ full pytest 1722 passed（+14 transition 测试）；ruff/mypy 全仓 clean。
 语义（缺省 ALL、ALL/NONE/DecimalNumber）已对照官方 API 文档核实。
 full pytest 1755 passed（+33 trade/position/account 测试）；ruff/mypy 全仓 clean。
 
+#### M06-W05 已闭环证据（R-20260813-M06-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M06-W05-01 | detail/ID-range/paginated-range/since-ID 请求以 OANDA transaction ID 为游标权威，绝不替换为本地时间戳 | `TransactionOpsClient`（`test_oanda_transactions.py` + in-memory mock transport）：get detail 全字段精确（id/type/time/instrument/units/price/pl/financing，time 来自 broker 字符串）；range 请求参数精确回显 `idrange?from=..&to=..`、since 精确回显 `sinceid?id=..`；datetime/非 digit 游标一律 `invalid_cursor`；from>to → `invalid_range`；page_size 越界 → `invalid_page_size` |
+| AC-M06-W05-02 | 空页、重叠页、重复 ID、乱序 ID、声明 range、缺失 range 产生确定性规范化输出与显式 gap 信号 | 乱序+重复 → 按 broker ID 升序去重（`duplicate_count` 计数）；声明 range 内缺失 span → `TransactionGap(gap_from,gap_to)`（含整段缺失 → 全 span gap）；分页自动拉全（page_size=2 拉 5 条、跨页重叠去重）；空页容忍；since 模式内部空洞 → gap；无限分页 → `pagination_limit_exceeded` fail-closed |
+| AC-M06-W05-03 | cursor candidate 与 durable advancement 分离，失败消费者不能确认未见 transaction | `cursor_candidate` 仅返回最高完全连续前缀（首个空洞即封顶，since 模式下首 ID 缺失 → candidate None）；端口无 advance API、不持有 durable state：同 since 重复调用结果完全一致；消费者在 candidate 与持久化之间崩溃 → 重试仍见相同窗口 |
+
+范围说明：本 round 无 allowlist 外路径；targeted 测试文件为契约声明的缺失
+文件，按既有先例创建（documented forced path）。分页循环有界（50 页上限
+fail-closed），端口从不隐式推进任何游标（durable advancement 归 M07
+reconciliation 所有）。full pytest 1772 passed（+17 transaction 测试）；
+ruff/mypy 全仓 clean。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
