@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import pytest
 from alphabrief_core import (
+    INCIDENT_SEVERITIES,
     QUALIFIED_OUTCOMES,
+    WindowIncident,
     classify_qualified_outcome,
+    classify_window_incident,
 )
 
 
@@ -63,3 +66,54 @@ class TestNoQuotaNoSynthetic:
         for outcome in QUALIFIED_OUTCOMES:
             qualified = classify_qualified_outcome(outcome, reason="r")
             assert qualified is True
+
+
+class TestWindowIncidentReset:
+    """AC-M16-W03-03: classified incident and window reset decision."""
+
+    def test_all_four_severities_are_declared(self) -> None:
+        assert INCIDENT_SEVERITIES == ("P0", "P1", "P2", "P3")
+
+    def test_failed_gate_classifies_incident_and_resets_window(
+        self,
+    ) -> None:
+        incident = classify_window_incident(
+            window=2, severity="P1", gate_passed=False
+        )
+        assert isinstance(incident, WindowIncident)
+        assert incident.window == 2
+        assert incident.severity == "P1"
+        assert incident.reset_required is True
+        assert incident.invalid_days_carried_forward is False
+
+    def test_passing_gate_records_no_reset(self) -> None:
+        incident = classify_window_incident(
+            window=2, severity="P2", gate_passed=True
+        )
+        assert incident.reset_required is False
+        assert incident.invalid_days_carried_forward is False
+
+    def test_unknown_severity_fails_closed_as_p0(self) -> None:
+        incident = classify_window_incident(
+            window=2, severity="mystery", gate_passed=False
+        )
+        assert incident.severity == "P0"
+        assert incident.reset_required is True
+
+    def test_no_approval_and_no_carry_forward_on_reset(self) -> None:
+        incident = classify_window_incident(
+            window=2, severity="P3", gate_passed=False
+        )
+        assert "no approval" in incident.detail
+        assert incident.invalid_days_carried_forward is False
+
+    def test_classification_is_deterministic(self) -> None:
+        for severity in INCIDENT_SEVERITIES:
+            for passed in (True, False):
+                first = classify_window_incident(
+                    window=2, severity=severity, gate_passed=passed
+                )
+                second = classify_window_incident(
+                    window=2, severity=severity, gate_passed=passed
+                )
+                assert first.model_dump() == second.model_dump()

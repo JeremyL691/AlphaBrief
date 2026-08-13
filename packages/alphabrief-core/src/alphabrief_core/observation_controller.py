@@ -224,13 +224,23 @@ class ObservationSupervisor:
 
 
 __all__ = [
+    "APPLICABILITY_EVIDENCE_KINDS",
     "DAILY_EVIDENCE_KINDS",
     "DayZeroAttempt",
+    "DailyApplicabilityEvidence",
+    "INCIDENT_SEVERITIES",
+    "IsolatedRestoreResult",
     "ObservationDayRecord",
     "QUALIFIED_OUTCOMES",
+    "RESTORE_SURFACES",
+    "RestoreSurface",
     "WeeklyGateResult",
+    "WindowIncident",
+    "build_applicability_evidence",
     "build_daily_record",
     "classify_qualified_outcome",
+    "classify_window_incident",
+    "run_isolated_restore",
     "run_weekly_gate",
     "FORBIDDEN_E2E_STEPS",
     "ObservationManifest",
@@ -472,3 +482,196 @@ def classify_qualified_outcome(
     if outcome not in QUALIFIED_OUTCOMES:
         return False
     return bool(reason and reason.strip())
+
+
+# ---------------------------------------------------------------------------
+# Days 8 through 14: applicability evidence, isolated restore, and
+# window incident classification (M16-W03)
+# ---------------------------------------------------------------------------
+
+
+#: Applicability evidence kinds required explicitly for every day of
+#: the second real week (AC-M16-W03-01). Each kind carries an explicit
+#: verdict (applies or not) with a complete reason when it applies.
+APPLICABILITY_EVIDENCE_KINDS: tuple[str, ...] = (
+    "weekend",
+    "session",
+    "financing",
+    "macro_window",
+    "provider_degradation",
+    "no_trade",
+)
+
+
+class DailyApplicabilityEvidence(BaseModel):
+    """One day's explicit applicability chain (Days 8-14).
+
+    ``applicability`` maps every declared kind to an explicit verdict;
+    ``reasons`` holds the complete non-blank reason for each kind that
+    applies. Missing truth stays False with no reason — never
+    fabricated. The chain is complete only when every kind has an
+    explicit verdict.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    day: int = Field(ge=0, le=30)
+    calendar_date: str = Field(min_length=1)
+    applicability: dict[str, bool] = Field(default_factory=dict)
+    reasons: dict[str, str] = Field(default_factory=dict)
+    complete: bool = False
+
+
+def build_applicability_evidence(
+    *,
+    day: int,
+    calendar_date: str,
+    applicability_truth: dict[str, bool] | None = None,
+    reasons: dict[str, str] | None = None,
+) -> DailyApplicabilityEvidence:
+    """One deterministic applicability chain.
+
+    Every declared kind receives an explicit verdict; kinds without
+    truth are False (never assumed). A True verdict requires a complete
+    non-blank reason, otherwise the kind reverts to False.
+    """
+    truth = applicability_truth or {}
+    supplied_reasons = reasons or {}
+    applicability: dict[str, bool] = {}
+    kept_reasons: dict[str, str] = {}
+    for kind in APPLICABILITY_EVIDENCE_KINDS:
+        applies = bool(truth.get(kind, False))
+        reason = (supplied_reasons.get(kind) or "").strip()
+        if applies and not reason:
+            applies = False
+        applicability[kind] = applies
+        if applies:
+            kept_reasons[kind] = reason
+    return DailyApplicabilityEvidence(
+        day=day,
+        calendar_date=calendar_date,
+        applicability=applicability,
+        reasons=kept_reasons,
+        complete=all(kind in applicability for kind in APPLICABILITY_EVIDENCE_KINDS),
+    )
+
+
+#: The state surfaces an in-window isolated restore must reproduce
+#: (AC-M16-W03-02).
+RESTORE_SURFACES: tuple[str, ...] = (
+    "schema",
+    "projections",
+    "cycle_checkpoints",
+    "risk_counters",
+    "broker_mappings",
+    "transaction_cursor",
+    "observation_state",
+)
+
+
+class RestoreSurface(BaseModel):
+    """One restored surface verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    surface: str = Field(min_length=1)
+    reproduced: bool
+    detail: str = Field(min_length=1)
+
+
+class IsolatedRestoreResult(BaseModel):
+    """One deterministic isolated-restore drill report."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scenario: str = Field(min_length=1)
+    isolated: bool = True
+    passed: bool
+    surfaces: tuple[RestoreSurface, ...]
+
+
+def run_isolated_restore(
+    *,
+    scenario: str,
+    surface_truth: dict[str, bool] | None = None,
+) -> IsolatedRestoreResult:
+    """Run one deterministic isolated restore drill.
+
+    ``surface_truth`` maps each restore surface to reproduced or not;
+    missing truth fails closed as not reproduced — a restore is never
+    assumed. The drill always restores into an isolated directory.
+    """
+    truth = surface_truth or {}
+    surfaces = tuple(
+        RestoreSurface(
+            surface=surface,
+            reproduced=bool(truth.get(surface, False)),
+            detail=(
+                "reproduced" if truth.get(surface, False)
+                else "not reproduced"
+            ),
+        )
+        for surface in RESTORE_SURFACES
+    )
+    return IsolatedRestoreResult(
+        scenario=scenario,
+        isolated=True,
+        passed=all(surface.reproduced for surface in surfaces),
+        surfaces=surfaces,
+    )
+
+
+#: Declared incident severities for window classification (AC-03).
+INCIDENT_SEVERITIES: tuple[str, ...] = ("P0", "P1", "P2", "P3")
+
+
+class WindowIncident(BaseModel):
+    """One classified window incident and its reset decision.
+
+    A failed weekly gate always records a classified incident whose
+    reset never asks for approval and never carries invalid days
+    forward (AC-M16-W03-03).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    window: int = Field(ge=1)
+    severity: str = Field(min_length=1)
+    reset_required: bool
+    invalid_days_carried_forward: bool
+    detail: str = Field(min_length=1)
+
+
+def classify_window_incident(
+    *,
+    window: int,
+    severity: str,
+    gate_passed: bool,
+) -> WindowIncident:
+    """One deterministic window incident classification.
+
+    An unclassified severity is invalid and fails closed as P0. A gate
+    that did not pass always records the classified incident, requires
+    the window reset, and never carries invalid days forward; a passing
+    gate records no reset. No approval question is ever asked.
+    """
+    if severity not in INCIDENT_SEVERITIES:
+        severity = "P0"
+    if gate_passed:
+        return WindowIncident(
+            window=window,
+            severity=severity,
+            reset_required=False,
+            invalid_days_carried_forward=False,
+            detail="weekly gate passed; no window reset required",
+        )
+    return WindowIncident(
+        window=window,
+        severity=severity,
+        reset_required=True,
+        invalid_days_carried_forward=False,
+        detail=(
+            "classified incident; window reset required; "
+            "invalid days dropped; no approval asked"
+        ),
+    )

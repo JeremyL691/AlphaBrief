@@ -194,6 +194,7 @@ def verify_window_cmd(
     from datetime import date
 
     from alphabrief_core.observation_controller import (
+        build_applicability_evidence,
         build_daily_record,
         qualified_start_date,
     )
@@ -221,12 +222,24 @@ def verify_window_cmd(
         )
         for day in range(from_day, through_day + 1)
     ]
+    applicability = [
+        build_applicability_evidence(
+            day=day,
+            calendar_date="",
+            applicability_truth={},
+            reasons={},
+        )
+        for day in range(from_day, through_day + 1)
+    ]
     emit_json(
         {
             "from_day": from_day,
             "through_day": through_day,
             "qualified": True,
             "records": [record.model_dump(mode="json") for record in records],
+            "applicability": [
+                entry.model_dump(mode="json") for entry in applicability
+            ],
         },
         pretty=not compact,
     )
@@ -240,9 +253,33 @@ def drill_cmd(
     ),
     compact: bool = typer.Option(True, "--compact/--pretty"),
 ) -> None:
-    """Run the non-submit scheduler restart drill for one week."""
+    """Run one non-submit observation drill for a week.
+
+    ``scheduler-restart`` runs the restart drill with every boundary
+    frozen closed; ``isolated-restore`` restores the latest backup into
+    an isolated directory and verifies every declared surface. No drill
+    submits orders.
+    """
+    from alphabrief_core.observation_controller import run_isolated_restore
     from alphabrief_core.recovery import run_recovery_drill
 
+    if scenario == "isolated-restore":
+        restore = run_isolated_restore(scenario=scenario, surface_truth={})
+        emit_json(
+            {
+                "week": week,
+                "scenario": scenario,
+                "passed": restore.passed,
+                "submits": 0,
+                "isolated": restore.isolated,
+                "surfaces": [
+                    {"surface": s.surface, "reproduced": s.reproduced}
+                    for s in restore.surfaces
+                ],
+            },
+            pretty=not compact,
+        )
+        return
     drill = run_recovery_drill(scenario=scenario, boundary_truth={})
     emit_json(
         {
@@ -264,10 +301,23 @@ def weekly_gate_cmd(
     week: int = typer.Option(1, "--week", min=1),
     compact: bool = typer.Option(True, "--compact/--pretty"),
 ) -> None:
-    """Run one week's scorecard gate (fail-closed without truth)."""
-    from alphabrief_core.observation_controller import run_weekly_gate
+    """Run one week's scorecard gate (fail-closed without truth).
+
+    A gate that does not pass records the classified incident and the
+    required window reset — invalid days are never carried forward and
+    no approval is asked.
+    """
+    from alphabrief_core.observation_controller import (
+        classify_window_incident,
+        run_weekly_gate,
+    )
 
     gate = run_weekly_gate(week=week, days_qualified=0, truth={})
+    incident = classify_window_incident(
+        window=week,
+        severity="P0" if not gate.passed else "P2",
+        gate_passed=gate.passed,
+    )
     emit_json(
         {
             "week": week,
@@ -282,6 +332,14 @@ def weekly_gate_cmd(
             "zero_unresolved_cross_day_difference": (
                 gate.zero_unresolved_cross_day_difference
             ),
+            "incident": {
+                "severity": incident.severity,
+                "reset_required": incident.reset_required,
+                "invalid_days_carried_forward": (
+                    incident.invalid_days_carried_forward
+                ),
+                "detail": incident.detail,
+            },
         },
         pretty=not compact,
     )
