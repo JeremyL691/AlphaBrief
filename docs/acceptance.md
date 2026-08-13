@@ -593,6 +593,20 @@ full pytest 1819 passed（+14 ledger 测试）；ruff/mypy 全仓 clean；accept
 文件，按既有先例创建（documented forced path）。full pytest 1831 passed
 （+12 cursor 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
 
+#### M07-W03 已闭环证据（R-20260813-M07-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M07-W03-01 | golden transaction history 重建精确的 account/order/fill/trade/position/balance/NAV/margin/PnL/financing projections，带 broker ID 与 UTC 时间戳 | `AccountProjectionStore.rebuild` + `fold_facts`（`test_broker_remote_projection.py`）：golden history（DEPOSIT/CREATE/FILL/CANCEL/DAILY_FINANCING/REDUCE/CLOSE/WITHDRAWAL，10 条）→ 精确断言 balance=10903.13（seed+deposit-withdrawal+realized 3.20+financing -0.07）、realized_pl=3.20、financing_total=-0.07、order o-1 FILLED/o-3 CANCELLED、trade t-1 CLOSED(0 units)/t-2 OPEN(-500, open_time=UTC)、position short 500 @1.10000 unrealized=-4.50（mark=1.10900）、NAV=10898.63、margin_used=500×1.10000×0.05、fills 带 fact_id + UTC 时间戳；rebuild 后重读与首建完全一致；未知 kind 构造期拒绝 |
+| AC-M07-W03-02 | full snapshot + incremental changes 与全部 facts 的干净重放收敛到同一 normalized projection | `apply_changes`（`test_account_projection_store.py`）：Path A 干净重放全量 vs Path B rebuild(full) + apply_changes(delta) → 归一化投影（exclude rebuilt_at）完全相等；多次增量 batch 累加同样收敛；balance/NAV/margin/unrealized/open counts/orders/trades/positions/fills 逐项相等；持久化 authority 与干净重放一致 |
+| AC-M07-W03-03 | API/CLI/scheduler readers 解析同一持久化 account authority，不能暴露冲突的 process-local portfolio state | `resolve_account_snapshot(account_id, db_path)`：三个 reader 全部解析同一 store 文件 → 快照逐位一致；两个 store 实例同文件读写（writer 写入 → 另一实例立即读到相同 authority），零 process-local 分歧 |
+
+范围说明：本 round 无 allowlist 外路径；两个 targeted 测试文件为契约声明的
+缺失文件，按既有先例创建（documented forced path）。margin 采用确定性
+DEFAULT_MARGIN_RATE=0.05；unrealized 以 facts 中最新观察到价格（fill/reduce/
+close）为 mark。full pytest 1839 passed（+8 projection 测试）；ruff/mypy
+全仓 clean；acceptance 11/11。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
