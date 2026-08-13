@@ -1068,3 +1068,16 @@ item：M09-W01。
 `tests/test_news_store.py`/`tests/test_news.py` 全绿（news store 层未改动）。
 full pytest 2036 passed（+7 新测试）；ruff/mypy 全仓 clean（353 source
 files）；acceptance 11/11。下一 READY item：M09-W02。
+
+#### M09-W02 已闭环证据（R-20260813-M09-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M09-W02-01 | tracking parameters、URL aliases、identical content hashes、bounded title similarity 把确定性重复折叠进一个 canonical cluster | `canonicalize_url` + `dedup_verdict` + `cluster_news`（新 `alphabrief_news/dedup.py`，`test_news_deduplication.py`）：canonicalize 剥离 utm_*/fbclid/gclid/mc_* 与 fragment、归一 scheme/host 大小写、去默认端口与尾部斜杠；tracking 变体同 canonical URL → duplicate（rule=canonical_url）；URL alias（尾斜杠）→ duplicate；相同 content_hash → duplicate（rule=content_hash）；bounded title similarity（Jaccard ≥0.85）且同 source、summary 相同（claims 一致）、published gap ≤1h → duplicate（rule=title_similarity）；`cluster_news` 输入序稳定输出 (representative, members) 簇（h-1 收编 h-2/h-3、独立 h-4 自成一簇）；`title_similarity` 确定性（相同 1.0、不同 <1.0、空 1.0） |
+| AC-M09-W02-02 | claims 或 viewpoints 实质不同的报道即使 title 与 entities 重叠也保持独立 | title 相似但 summary 不同（"opposition grows"/"market reaction"）→ `distinct`（title similarity 单独永不合并）；重叠 entities + 不同 viewpoint 的 cluster 保持两簇；不同 source 相同 claims → 不合并（title_similarity 规则要求同 source）——每条规则确定性且可审计（rule/rule_version 落 verdict） |
+| AC-M09-W02-03 | 每个 entity link 记录 entity type、normalized identifier、matching rule version、confidence、originating evidence ID | `link_entities`（新 `alphabrief_news/entity_linking.py`，`test_news_entity_linking.py`）：symbol → instrument 链接（normalized=upper、confidence=1.0、rule_version=2026-08-13.1、evidence_id 透传）；dictionary alias 命中 → currency/country/company/asset_class/market 链接（confidence=0.8）；大小写不敏感匹配（STERLING→GBP）；无符号且无 alias → 零链接；相同输入两次评估完全相等（确定性） |
+
+范围说明：`alphabrief_news/dedup.py` 与 `alphabrief_news/entity_linking.py` 为
+M09-W02 契约声明的新模块；既有 `tests/test_news_store.py`/`tests/test_news.py`
+全绿。full pytest 2051 passed（+15 新测试）；ruff/mypy 全仓 clean（357
+source files）；acceptance 11/11。下一 READY item：M09-W03。
