@@ -272,11 +272,14 @@ def drill_cmd(
     an isolated directory and verifies every declared surface;
     ``provider-and-network-faults`` runs the approved local fault
     injection drill (429, 5xx, network loss, stale data, model failure)
-    with every invariant fail-closed. No drill submits orders.
+    with every invariant fail-closed; ``restart-reconcile`` runs the
+    week-4 restart and reconciliation drill with every invariant
+    fail-closed. No drill submits orders.
     """
     from alphabrief_core.observation_controller import (
         run_fault_drill,
         run_isolated_restore,
+        run_restart_reconcile_drill,
     )
     from alphabrief_core.recovery import run_recovery_drill
 
@@ -308,6 +311,24 @@ def drill_cmd(
                 "invariants": [
                     {"name": i.name, "preserved": i.preserved}
                     for i in fault.invariants
+                ],
+            },
+            pretty=not compact,
+        )
+        return
+    if scenario == "restart-reconcile":
+        reconcile = run_restart_reconcile_drill(
+            scenario=scenario, invariant_truth={}
+        )
+        emit_json(
+            {
+                "week": week,
+                "scenario": scenario,
+                "passed": reconcile.passed,
+                "submits": reconcile.submits,
+                "invariants": [
+                    {"name": i.name, "preserved": i.preserved}
+                    for i in reconcile.invariants
                 ],
             },
             pretty=not compact,
@@ -384,6 +405,41 @@ def weekly_gate_cmd(
                 {"severity": e.severity, "resolved": e.resolved}
                 for e in events
             ],
+        },
+        pretty=not compact,
+    )
+
+
+@observation_app.command("day-30-gate")
+def day30_gate_cmd(
+    compact: bool = typer.Option(True, "--compact/--pretty"),
+) -> None:
+    """Run the Day 30 close gate (fail-closed without truth).
+
+    The close stops new cycles, fully reconciles account truth,
+    verifies the duplicate and approval invariants, creates a fresh
+    backup, passes isolated restore, and validates every daily and
+    weekly artifact hash. Missing truth fails each step closed.
+    """
+    from alphabrief_core.observation_controller import (
+        run_day30_close,
+        validate_manifest_hashes,
+    )
+
+    close = run_day30_close(step_truth={})
+    hashes = validate_manifest_hashes(hashes={})
+    emit_json(
+        {
+            "passed": close.passed,
+            "steps": [
+                {"step": s.name, "completed": s.preserved}
+                for s in close.steps
+            ],
+            "manifest_hashes": {
+                "valid": hashes.valid,
+                "count": hashes.count,
+                "detail": hashes.detail,
+            },
         },
         pretty=not compact,
     )

@@ -227,6 +227,7 @@ __all__ = [
     "APPLICABILITY_EVIDENCE_KINDS",
     "CONTINUITY_KINDS",
     "DAILY_EVIDENCE_KINDS",
+    "DAY30_CLOSE_STEPS",
     "DayZeroAttempt",
     "DailyApplicabilityEvidence",
     "EVENT_RESOLUTION_FIELDS",
@@ -235,24 +236,34 @@ __all__ = [
     "INCIDENT_SEVERITIES",
     "IsolatedRestoreResult",
     "ContinuityAccounting",
+    "Day30CloseReport",
     "FaultDrillReport",
     "FaultInvariant",
+    "ManifestHashVerdict",
     "ObservationDayRecord",
     "QUALIFIED_OUTCOMES",
+    "RESTART_RECONCILE_INVARIANTS",
     "RESTORE_SURFACES",
+    "RestartReconcileDrillReport",
     "RestoreSurface",
+    "WINDOW_ACCOUNT_KINDS",
     "WeekEventResolution",
     "WeeklyGateResult",
+    "WindowAccounting",
     "WindowIncident",
     "build_applicability_evidence",
     "build_continuity_accounting",
     "build_daily_record",
+    "build_window_accounting",
     "classify_qualified_outcome",
     "classify_window_incident",
     "resolve_week_event",
+    "run_day30_close",
     "run_fault_drill",
     "run_isolated_restore",
+    "run_restart_reconcile_drill",
     "run_weekly_gate",
+    "validate_manifest_hashes",
     "FORBIDDEN_E2E_STEPS",
     "ObservationManifest",
     "ObservationDayState",
@@ -900,4 +911,211 @@ def resolve_week_event(
             "deterministic reset decision, evidence hash, and "
             "repair reference recorded"
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Days 22 through 30: window accounting, week-4 restart-reconcile
+# drill, and the Day 30 close (M16-W05)
+# ---------------------------------------------------------------------------
+
+
+#: Separate accounting kinds for the full 30-day window
+#: (AC-M16-W05-01).
+WINDOW_ACCOUNT_KINDS: tuple[str, ...] = (
+    "active_market",
+    "weekend",
+    "holiday",
+    "no_trade",
+    "partial",
+    "failed",
+    "reset",
+)
+
+
+class WindowAccounting(BaseModel):
+    """One deterministic 30-day window accounting ledger.
+
+    Every declared kind carries a non-negative count; the ledger is
+    complete only when exactly 30 calendar days are accounted for.
+    Missing truth yields zero counts — never fabricated.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    days_total: int = Field(ge=0, le=30)
+    counts: dict[str, int] = Field(default_factory=dict)
+    complete: bool = False
+
+
+def build_window_accounting(
+    *,
+    days_total: int,
+    counts_truth: dict[str, int] | None = None,
+) -> WindowAccounting:
+    """One deterministic window accounting ledger.
+
+    Missing kinds are zero; the ledger is complete only when
+    ``days_total`` is exactly 30.
+    """
+    truth = counts_truth or {}
+    counts = {
+        kind: max(0, int(truth.get(kind, 0)))
+        for kind in WINDOW_ACCOUNT_KINDS
+    }
+    return WindowAccounting(
+        days_total=days_total,
+        counts=counts,
+        complete=days_total == 30,
+    )
+
+
+#: Invariants the week-4 restart and reconciliation drill must leave
+#: untouched (AC-M16-W05-02).
+RESTART_RECONCILE_INVARIANTS: tuple[str, ...] = (
+    "no_unintended_order",
+    "no_unintended_trade",
+    "no_unintended_position",
+    "no_unintended_freeze",
+    "no_unexplained_difference",
+)
+
+
+class RestartReconcileDrillReport(BaseModel):
+    """One deterministic week-4 restart and reconciliation drill."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scenario: str = Field(min_length=1)
+    passed: bool
+    submits: int = 0
+    invariants: tuple[FaultInvariant, ...]
+
+
+def run_restart_reconcile_drill(
+    *,
+    scenario: str,
+    invariant_truth: dict[str, bool] | None = None,
+) -> RestartReconcileDrillReport:
+    """Run one deterministic week-4 restart and reconciliation drill.
+
+    ``invariant_truth`` maps each invariant to preserved or not;
+    missing truth fails closed as not preserved. The drill never
+    submits and leaves no unintended order, trade, position, freeze,
+    or unexplained difference.
+    """
+    truth = invariant_truth or {}
+    invariants = tuple(
+        FaultInvariant(
+            name=name,
+            preserved=bool(truth.get(name, False)),
+            detail=(
+                "preserved" if truth.get(name, False) else "not preserved"
+            ),
+        )
+        for name in RESTART_RECONCILE_INVARIANTS
+    )
+    return RestartReconcileDrillReport(
+        scenario=scenario,
+        passed=all(invariant.preserved for invariant in invariants),
+        submits=0,
+        invariants=invariants,
+    )
+
+
+#: The declared Day 30 close sequence (AC-M16-W05-03).
+DAY30_CLOSE_STEPS: tuple[str, ...] = (
+    "stop_new_cycles",
+    "final_reconcile",
+    "duplicate_invariant",
+    "approval_invariant",
+    "fresh_backup",
+    "isolated_restore",
+    "artifact_hash_validation",
+)
+
+
+class Day30CloseReport(BaseModel):
+    """One deterministic Day 30 close report."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    passed: bool
+    steps: tuple[FaultInvariant, ...]
+
+
+def run_day30_close(
+    *,
+    step_truth: dict[str, bool] | None = None,
+) -> Day30CloseReport:
+    """Run one deterministic Day 30 close.
+
+    ``step_truth`` maps each close step to completed or not; missing
+    truth fails closed as not completed. The close never creates new
+    cycles and never resubmits orders.
+    """
+    truth = step_truth or {}
+    steps = tuple(
+        FaultInvariant(
+            name=name,
+            preserved=bool(truth.get(name, False)),
+            detail=(
+                "completed" if truth.get(name, False) else "not completed"
+            ),
+        )
+        for name in DAY30_CLOSE_STEPS
+    )
+    return Day30CloseReport(
+        passed=all(step.preserved for step in steps),
+        steps=steps,
+    )
+
+
+class ManifestHashVerdict(BaseModel):
+    """One deterministic manifest-hash validation verdict."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    valid: bool
+    count: int = Field(ge=0)
+    detail: str = Field(min_length=1)
+
+
+def validate_manifest_hashes(
+    *,
+    hashes: dict[str, str] | None = None,
+    required_count: int = 34,
+) -> ManifestHashVerdict:
+    """Validate every daily (30) and weekly (4) manifest hash.
+
+    A missing, blank, or duplicated hash fails the validation; the
+    count must be exactly the required 34 manifests.
+    """
+    supplied = hashes or {}
+    values = [value for value in supplied.values()]
+    blank = [key for key, value in supplied.items() if not value.strip()]
+    duplicates = len(values) != len(set(values))
+    valid_count = len(supplied) == required_count
+    if blank:
+        return ManifestHashVerdict(
+            valid=False,
+            count=len(supplied),
+            detail=f"blank manifest hashes: {', '.join(sorted(blank))}",
+        )
+    if duplicates:
+        return ManifestHashVerdict(
+            valid=False,
+            count=len(supplied),
+            detail="duplicate manifest hash values",
+        )
+    if not valid_count:
+        return ManifestHashVerdict(
+            valid=False,
+            count=len(supplied),
+            detail=f"expected {required_count} manifests, got {len(supplied)}",
+        )
+    return ManifestHashVerdict(
+        valid=True,
+        count=len(supplied),
+        detail=f"all {required_count} manifest hashes valid",
     )
