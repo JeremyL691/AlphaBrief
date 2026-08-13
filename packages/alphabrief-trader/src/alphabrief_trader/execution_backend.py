@@ -37,6 +37,7 @@ from alphabrief_execution.broker.risk_context import (
     RiskContextError,
     adapter_risk_sources,
 )
+from alphabrief_risk.instrument_rules import validate_execution_inputs
 
 
 class ExecutionBackendError(ValueError):
@@ -259,13 +260,31 @@ class ExternalPaperExecutionBackend:
             time_in_force=BrokerTimeInForce.DAY,
         )
 
+        # M08-W02: when the approved decision binds its executable
+        # inputs, any post-decision change of symbol, units, price,
+        # instrument version, or snapshot hash invalidates the submit
+        # (AC-M08-W02-03, REQ-RISK-010).
+        if decision.execution_input_hash is not None:
+            if not validate_execution_inputs(
+                decision.decision_id,
+                decision.execution_input_hash,
+                symbol=request.symbol,
+                units=request.quantity,
+                price=request.limit_price,
+                instrument_version=context.catalog_version,
+                snapshot_hash=context.captured_at.isoformat(),
+            ):
+                raise ExecutionBackendError(
+                    "execution inputs no longer match the approved "
+                    "RiskDecision"
+                )
+
         try:
             result = _run_blocking(
                 self._adapter.submit(request, client_order_id=intent.intent_id)
             )
         except (BrokerAdapterError, NotImplementedError) as exc:
             raise ExecutionBackendError(str(exc)) from exc
-
         filled = result.status == BrokerOrderStatus.FILLED
         return ExecutionBackendResult(
             execution_backend="external_paper",

@@ -949,3 +949,19 @@ FINAL_ACCEPTANCE_RESULT:
 ```
 
 任意 required 值 unknown/missing/TBD/waived 时 status 不能 COMPLETE。
+
+#### M08-W02 已闭环证据（R-20260813-M08-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M08-W02-01 | boundary/property 测试覆盖 allowed/unknown instruments、active/inactive、tradeable false、units 与 price precision、minimum size、maximum order units、maximum position size、normalized-zero quantity | `evaluate_instrument_rules` + `normalize_instrument_units/price`（新 `alphabrief_risk/instrument_rules.py`，`test_risk_instrument_constraints.py`）：15 条稳定 typed rule（catalog_known/catalog_active/broker_tradeable/session_open/quote_fresh/candle_complete/gap_bounded/conversion_present/pricing_coverage_complete/units_precision/price_precision/minimum_size/normalized_zero/maximum_order_units/position_cap）；合法输入全 pass；无 metadata 权威 → catalog_known + 全部 metadata-gated rule fail-closed（零合成）；evidence catalog_known=False → 只 fail catalog_known 而 precision rules 照常评估；inactive/tradeable false 各自 fail；units precision 0 拒绝 1.001、precision 1 接受 1.5 拒绝 1.55；price 超出 display_precision（1.105001 @ 5 位）拒绝、缺 price 拒绝；minimum size 边界（1 vs 10）；maximum_order_units/position_cap 边界（等于 cap 通过、超出失败、0=未配置永不拒绝）；units=0 → normalized_zero+minimum_size fail；负 units 按绝对值检查；相同 evidence 两次评估结果完全相等（确定性） |
+| AC-M08-W02-02 | closed session、holiday、stale quote、stale catalog、incomplete candle、excessive gap、missing conversion、partial pricing coverage 以稳定 rule results 拒绝新开仓 | 参数化 evidence 矩阵（closed-session/holiday/stale-session-evidence/no-quote/stale-quote/incomplete-candle/excessive-gap/missing-conversion/partial-coverage 9 例）：每例恰好目标 rule fail、其余 14 条全部 pass（sum(failed)==1 断言稳定且定向）；stale catalog 经 inactive/unknown catalog evidence fail-closed；`MarketEvidence` frozen+extra=forbid，`InstrumentRuleResult` 携带 rule/passed/reason 供审计 |
+| AC-M08-W02-03 | instrument normalization 在最终 risk evaluation 之前发生；任何 post-decision 的 units/price/instrument version/snapshot hash 变化使 decision 失效 | `normalize_instrument_units`（quantize 到 trade_units_precision，不可表示即 `InstrumentConstraintError(units_precision)`，绝不静默进位）与 `normalize_instrument_price`（可表示价格规范化，超精度拒绝 `price_precision`——静默舍入会改变订单语义）；`bind_execution_inputs`/`validate_execution_inputs` 把 (decision_id, symbol, units, price, instrument_version, snapshot_hash) 绑定为 sha256——任一字段变化 hash 即不同（5 组 mutation 逐一断言）；`RiskDecision.execution_input_hash`（可选字段，缺省 None 兼容既有构造）由 `ExternalPaperExecutionBackend.submit` 在 adapter.submit 前校验（`test_backend_refuses_post_decision_input_change`）：相同 inputs → 正常提交；quantity 变化 → `ExecutionBackendError` 且 adapter.requests 不增长（REQ-RISK-010） |
+
+范围说明：`alphabrief_risk/instrument_rules.py` 为 M08-W02 契约声明的新模块；
+`RiskDecision.execution_input_hash` 为向后兼容可选字段；backend 校验接入
+M08-W01 的 context 服务（instrument_version=context.catalog_version、
+snapshot_hash=context.captured_at.isoformat()）。RiskGate 本身零改动——本
+层是独立确定性约束层，全部 fail-closed。full pytest 1934 passed（+27 新
+测试）；ruff/mypy 全仓 clean（334 source files）；acceptance 11/11。下一
+READY item：M08-W03。
