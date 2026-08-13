@@ -243,7 +243,14 @@ projection/reconciliation/acceptance。成功后销毁临时 restore（不销毁
   `trade_ops`/`position_ops`/`account_ops` 端口提供，游标只前进到已确认
   消费的 lastTransactionID；
 - realized/unrealized/financing/fees；
-- no-trade/reject 也必须进入日报。
+- no-trade/reject 也必须进入日报；
+- 提交超时/断连（unknown outcome）必须先用持久化的 clientExtensions.id
+  查询 broker（`UnknownOutcomeResolver`）再决定重试；UNRESOLVED 即冻结后续
+  提交（`SubmissionGate`），绝不猜测——M06-W06 起由
+  `faults`/`unknown_outcome` 提供；每次请求的 scrubbed telemetry
+  （method family、endpoint template、status、latency、attempts、error
+  class、hash correlation；不含 token/完整 account ID/敏感 payload）记录
+  在 `request_telemetry` 表。
 
 ### 6.5 End-of-Day Check
 

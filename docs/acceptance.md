@@ -540,6 +540,20 @@ fail-closed），端口从不隐式推进任何游标（durable advancement 归 
 reconciliation 所有）。full pytest 1772 passed（+17 transaction 测试）；
 ruff/mypy 全仓 clean。
 
+#### M06-W06 已闭环证据（R-20260813-M06-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M06-W06-01 | auth/validation/reject/rate limit/transient server/transport timeout/disconnect/parse/unknown-outcome 映射稳定 typed classes，retry eligibility bounded | `classify_http`/`classify_failure`（`test_oanda_transport_faults.py`）：401/403→AUTH、400→VALIDATION、404→NOT_FOUND、422→REJECT、429→RATE_LIMIT、5xx→TRANSIENT_SERVER、299→PARSE；transient 消息标记（HTTP 429/503、"timed out"、"Connection reset"、"ssl handshake"）精确分类；`is_retriable` 仅 RATE_LIMIT/TRANSIENT_SERVER/TIMEOUT/DISCONNECT；`should_retry` 到达 max_attempts 即停；executor GET 429+503 后成功（3 attempts）、3 次 5xx 后 `ClassifiedFailure` fail-closed、422/401 一次即止 |
+| AC-M06-W06-02 | submit 后 timeout/disconnect 必须先按持久化 client identity 查询再重试；unresolved 冻结后续提交，不猜测不询问 | `ClassifiedRequestExecutor`：mutating 请求遇 TIMEOUT/DISCONNECT/TRANSIENT_SERVER → `UnknownOutcomeFailure`（断言仅 1 次 POST，零自动重试）；`UnknownOutcomeResolver`（`test_oanda_order_commands.py`）：absorbed submit → 查询 GET /orders 找到 clientExtensions.id → RESOLVED_ACCEPTED（含 broker_order_id/state）；drop submit → 穷举无匹配 → RESOLVED_NOT_SUBMITTED → 单次 bounded 重试成功且仅 1 单；查询失败/超页 → UNRESOLVED → `SubmissionGate.freeze` → `FrozenSubmissionError` 阻断一切后续提交；resolver 幂等（重复 resolve 结果一致） |
+| AC-M06-W06-03 | telemetry 记录 method family/endpoint template/status/broker request ID/latency/attempts/error class/scrubbed correlation；排除 token/完整 account ID/敏感 payload | `TelemetryRecorder`（`test_oanda_telemetry.py`）：DuckDB round-trip 全字段；token 与 "Bearer" 永不出现；完整 account ID 与所有 digit broker ID 被模板化为 `{account_id}`/`{id}`；payload 的 units/price 不落库（仅 had_body 标志）；correlation 以 `corr-` + sha256 前 16 位非可逆存储、确定性、不含明文；method family 映射 17 种端点稳定（order.create/list/get/update/cancel、trade.*、position.*、account.summary/changes、transaction.get/idrange/sinceid） |
+
+范围说明：本 round 无 allowlist 外路径；targeted 两个与 integration 一个测试
+文件均为契约声明的缺失文件，按既有先例创建（documented forced path）。
+429 视为明确未处理可 bounded 重试；5xx/timeout/disconnect 对 mutating 请求
+一律 unknown-outcome（绝不自动重试）。full pytest 1799 passed（+27
+faults/telemetry/commands 测试）；ruff/mypy 全仓 clean。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
