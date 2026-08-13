@@ -195,6 +195,7 @@ def verify_window_cmd(
 
     from alphabrief_core.observation_controller import (
         build_applicability_evidence,
+        build_continuity_accounting,
         build_daily_record,
         qualified_start_date,
     )
@@ -231,6 +232,14 @@ def verify_window_cmd(
         )
         for day in range(from_day, through_day + 1)
     ]
+    continuity = [
+        build_continuity_accounting(
+            day=day,
+            calendar_date="",
+            continuity_truth={},
+        )
+        for day in range(from_day, through_day + 1)
+    ]
     emit_json(
         {
             "from_day": from_day,
@@ -239,6 +248,9 @@ def verify_window_cmd(
             "records": [record.model_dump(mode="json") for record in records],
             "applicability": [
                 entry.model_dump(mode="json") for entry in applicability
+            ],
+            "continuity": [
+                entry.model_dump(mode="json") for entry in continuity
             ],
         },
         pretty=not compact,
@@ -257,10 +269,15 @@ def drill_cmd(
 
     ``scheduler-restart`` runs the restart drill with every boundary
     frozen closed; ``isolated-restore`` restores the latest backup into
-    an isolated directory and verifies every declared surface. No drill
-    submits orders.
+    an isolated directory and verifies every declared surface;
+    ``provider-and-network-faults`` runs the approved local fault
+    injection drill (429, 5xx, network loss, stale data, model failure)
+    with every invariant fail-closed. No drill submits orders.
     """
-    from alphabrief_core.observation_controller import run_isolated_restore
+    from alphabrief_core.observation_controller import (
+        run_fault_drill,
+        run_isolated_restore,
+    )
     from alphabrief_core.recovery import run_recovery_drill
 
     if scenario == "isolated-restore":
@@ -275,6 +292,22 @@ def drill_cmd(
                 "surfaces": [
                     {"surface": s.surface, "reproduced": s.reproduced}
                     for s in restore.surfaces
+                ],
+            },
+            pretty=not compact,
+        )
+        return
+    if scenario == "provider-and-network-faults":
+        fault = run_fault_drill(scenario="http_429", invariant_truth={})
+        emit_json(
+            {
+                "week": week,
+                "scenario": scenario,
+                "passed": fault.passed,
+                "submits": fault.submits,
+                "invariants": [
+                    {"name": i.name, "preserved": i.preserved}
+                    for i in fault.invariants
                 ],
             },
             pretty=not compact,
@@ -305,10 +338,13 @@ def weekly_gate_cmd(
 
     A gate that does not pass records the classified incident and the
     required window reset — invalid days are never carried forward and
-    no approval is asked.
+    no approval is asked. Every declared week event is resolved
+    deterministically; P0/P1 events stay unresolved and fail the gate.
     """
     from alphabrief_core.observation_controller import (
+        INCIDENT_SEVERITIES,
         classify_window_incident,
+        resolve_week_event,
         run_weekly_gate,
     )
 
@@ -318,6 +354,10 @@ def weekly_gate_cmd(
         severity="P0" if not gate.passed else "P2",
         gate_passed=gate.passed,
     )
+    events = [
+        resolve_week_event(severity=severity)
+        for severity in INCIDENT_SEVERITIES
+    ]
     emit_json(
         {
             "week": week,
@@ -340,6 +380,10 @@ def weekly_gate_cmd(
                 ),
                 "detail": incident.detail,
             },
+            "events": [
+                {"severity": e.severity, "resolved": e.resolved}
+                for e in events
+            ],
         },
         pretty=not compact,
     )

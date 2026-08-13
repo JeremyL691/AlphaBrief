@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import pytest
 from alphabrief_core import (
+    EVENT_RESOLUTION_FIELDS,
     INCIDENT_SEVERITIES,
     QUALIFIED_OUTCOMES,
+    WeekEventResolution,
     WindowIncident,
     classify_qualified_outcome,
     classify_window_incident,
+    resolve_week_event,
 )
 
 
@@ -117,3 +120,88 @@ class TestWindowIncidentReset:
                     window=2, severity=severity, gate_passed=passed
                 )
                 assert first.model_dump() == second.model_dump()
+
+
+class TestWeekEventResolution:
+    """AC-M16-W04-03: no unresolved P0/P1; P2/P3 resolve deterministically."""
+
+    def test_all_three_resolution_fields_are_declared(self) -> None:
+        assert EVENT_RESOLUTION_FIELDS == (
+            "reset_decision",
+            "evidence_hash",
+            "repair_reference",
+        )
+
+    def test_p0_event_never_resolves_in_loop(self) -> None:
+        resolution = resolve_week_event(
+            severity="P0",
+            reset_decision="reset",
+            evidence_hash="hash-1",
+            repair_reference="repair-1",
+        )
+        assert isinstance(resolution, WeekEventResolution)
+        assert resolution.resolved is False
+        assert "fails closed" in resolution.detail
+
+    def test_p1_event_never_resolves_in_loop(self) -> None:
+        resolution = resolve_week_event(
+            severity="P1",
+            reset_decision="reset",
+            evidence_hash="hash-1",
+            repair_reference="repair-1",
+        )
+        assert resolution.resolved is False
+
+    def test_p2_event_resolves_with_all_fields(self) -> None:
+        resolution = resolve_week_event(
+            severity="P2",
+            reset_decision="window-reset-w3",
+            evidence_hash="sha256:abc",
+            repair_reference="M16-W04",
+        )
+        assert resolution.resolved is True
+
+    def test_p3_event_missing_field_does_not_resolve(self) -> None:
+        resolution = resolve_week_event(
+            severity="P3",
+            reset_decision="window-reset-w3",
+            evidence_hash="",
+            repair_reference="M16-W04",
+        )
+        assert resolution.resolved is False
+        assert "evidence_hash" in resolution.detail
+
+    def test_unknown_severity_fails_closed_as_p0(self) -> None:
+        resolution = resolve_week_event(
+            severity="mystery",
+            reset_decision="reset",
+            evidence_hash="hash-1",
+            repair_reference="repair-1",
+        )
+        assert resolution.severity == "P0"
+        assert resolution.resolved is False
+
+    def test_no_operator_question_is_asked(self) -> None:
+        resolution = resolve_week_event(
+            severity="P2",
+            reset_decision="window-reset-w3",
+            evidence_hash="sha256:abc",
+            repair_reference="M16-W04",
+        )
+        assert "question" not in resolution.detail.lower() or resolution.resolved
+
+    def test_resolution_is_deterministic(self) -> None:
+        for severity in ("P0", "P1", "P2", "P3"):
+            first = resolve_week_event(
+                severity=severity,
+                reset_decision="reset",
+                evidence_hash="hash-1",
+                repair_reference="repair-1",
+            )
+            second = resolve_week_event(
+                severity=severity,
+                reset_decision="reset",
+                evidence_hash="hash-1",
+                repair_reference="repair-1",
+            )
+            assert first.model_dump() == second.model_dump()
