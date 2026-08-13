@@ -87,6 +87,41 @@ class RuntimeTruthStore:
             ],
         )
 
+    def set_execution_mode(
+        self,
+        mode: str,
+        reasons: list[str] | None = None,
+    ) -> None:
+        """Persist the current execution mode and its reasons."""
+        self._conn.execute(
+            """
+            INSERT INTO execution_mode (row_id, mode, reasons_json, updated_at)
+            VALUES (1, ?, ?::JSON, ?)
+            ON CONFLICT (row_id) DO UPDATE SET
+                mode = EXCLUDED.mode,
+                reasons_json = EXCLUDED.reasons_json,
+                updated_at = EXCLUDED.updated_at
+            """,
+            [mode, json.dumps(list(reasons or []), sort_keys=True), self._clock()],
+        )
+
+    def get_execution_mode(self) -> dict[str, Any] | None:
+        """Return the persisted execution mode, or ``None`` when absent."""
+        row = self._conn.execute(
+            "SELECT mode, reasons_json, updated_at "
+            "FROM execution_mode WHERE row_id = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        reasons: object = row[1]
+        return {
+            "mode": str(row[0]),
+            "reasons": (
+                json.loads(reasons) if isinstance(reasons, str) else reasons
+            ),
+            "updated_at": row[2],
+        }
+
     def heartbeat(self, *, leader_id: str, running_phase: str | None = None) -> None:
         """Refresh the heartbeat (and optional running phase) for the leader."""
         self._conn.execute(
