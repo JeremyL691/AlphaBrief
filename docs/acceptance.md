@@ -2472,3 +2472,30 @@ PENDING）——`verify-fresh-install`/`restore-drill` 如实输出未完成步�
 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
 pip check clean；ruff/mypy 全仓 clean；acceptance 11/11；runtime 2 命令均
 exit 0。下一 READY item：M17-W03。
+
+#### M17-W03 已闭环证据（R-20260813-M17-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M17-W03-01 | Two clean package builds from the frozen source produce equivalent normalized contents and a versioned checksum manifest without embedding secrets, account data, databases, logs, or observation artifacts | `tests/test_electron_packaging.py`（M17-W03 契约声明文件）：`TestReproducibleBuild`——`test_two_builds_are_identical`（两次 build 逐文件字节一致）、`test_checksum_manifest_matches_actual_files`（CHECKSUMS.sha256 每行 sha256 与文件一致，4 个源文件）、`test_package_contains_only_frozen_source`（仅 4 个冻结源文件 + manifest，无 node_modules）、`test_packaged_json_is_normalized`（无 scripts/devDependencies）、`test_build_is_deterministic_across_runs`；`TestNoEmbeddedData`——`test_no_secret_or_account_data_in_package`、`test_no_database_logs_or_observation_artifacts`（无 .duckdb/.ndjson/observation_manifest）、`test_packaging_refuses_forbidden_input`（`node scripts/package.js selftest` 证明 scanner 拒绝 secret 模式）、`test_source_is_frozen` |
+| AC-M17-W03-02 | The packaged application passes backend readiness, port conflict, duplicate ownership, startup failure, navigation, freeze, graceful shutdown, restart, and error-propagation smoke tests | `tests/test_electron_packaged_smoke.py`（runtime 命令契约声明文件）`TestPackagedSmoke` 9 项（readiness/port conflict/duplicate ownership/startup failure/navigation/freeze/shutdown/restart/error propagation——全部在 packaged main.js 上断言）；既有 `tests/test_electron_lifecycle.py` 回归；`npm --prefix electron run package` 与 `npm --prefix electron test`（check 模式验证 dist artifact 校验和）均 exit 0 |
+| AC-M17-W03-03 | Static and runtime inspection finds no live host, live selector, Alpaca or other broker, simulated production fallback, arbitrary broker proxy, or unapproved auto-update execution path | `tests/test_electron_security.py`（M17-W03 契约声明文件）：`TestNoLivePath`——`test_no_live_host_is_configured`（无 api-fxtrade/api-fxpractice）、`test_no_live_selector_exists`（无 'live' 模式值/live_mode/liveMode）、`test_no_broker_routing_in_shell`（无 alpaca/broker/routing）、`test_no_simulated_production_fallback`（无 simulated/in_memory_fill）、`test_no_arbitrary_broker_proxy`、`test_no_unapproved_auto_update_path`（无 autoUpdater）；`TestPackagedInspection` |
+
+#### M17 Requirement Traceability（M17-W03）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-009 | packaged main.js smoke 覆盖 backend readiness、端口冲突、单实例锁、startup failure overlay、导航、freeze 透传、优雅关闭（SIGTERM）、restart、错误传播（console.error/showErrorOverlay，绝不吞错） |
+| REQ-OBS-007 | packaging scanner 拒绝 live/broker/simulated 标记；security 测试证明包内无 live host、live selector、Alpaca/其他 broker、simulated fallback、broker proxy、未批准 auto-update；包内固定声明 practice-only |
+
+范围说明：`tests/test_electron_packaging.py`、`tests/test_electron_security.py`、
+`tests/test_electron_packaged_smoke.py` 为 M17-W03 契约声明的测试文件（targeted
+/runtime command 声明，documented forced path）；`electron/scripts/package.js`
+（新增 1 个生产文件 ≤ max 7）与 `electron/package.json`（新增 package/test 脚本）
+为契约声明的模块（frontend profile：electron/** 与 tests/test_electron*.py 均在
+allowlist）；`electron/dist/` 为 gitignored 可复现 build artifact（冻结源码已
+提交，任何干净 checkout 可重建）。全量 pytest：3310 total（3291 passed + 19
+pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；frontend
+回归子集 229 passed；ruff/mypy 全仓 clean；acceptance 11/11；`npm --prefix
+electron run package` / `npm --prefix electron test` 均 exit 0。
+下一 READY item：M17-W04。

@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-14T04:28:05+08:00"
+updated_at: "2026-08-14T04:34:15+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M17-W03
+  work_item_id: M17-W04
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M17-W02-FINAL-GATE
-  next_action: build and verify the final Electron release artifact
+  last_verified_gate: M17-W03-FINAL-GATE
+  next_action: pass final acceptance and hand off the paper-only release
   external_evidence_pending: M04-W06 T7 practice catalog evidence; M05-W06 T7 practice market-data evidence; M06-W07 T7 practice lifecycle evidence; M07-W07 T7 practice restart evidence; M08-W08 T7 practice risk-chain evidence
 
 milestones:
@@ -210,9 +210,10 @@ work_item_states:
   M16-W06: DONE
   M17-W01: DONE
   M17-W02: DONE
+  M17-W03: DONE
 
 latest_validation:
-  completed_at: "2026-08-14T04:28:05+08:00"
+  completed_at: "2026-08-14T04:34:15+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -220,7 +221,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 3265
+      passed: 3291
       failed: 19
       warnings: 14
     restricted_sandbox:
@@ -329,5 +330,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M17-W02
-last_ledger_record: R-20260813-M17-W02
+last_completed_round: R-20260813-M17-W03
+last_ledger_record: R-20260813-M17-W03

@@ -733,3 +733,15 @@ pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissi
   `operations restore-drill --latest --isolated --compact`。
 - 真实 fresh-install 验证依赖已提交源码 + 外部注入 secrets（T7 证据
   PENDING）：命令如实输出未完成步骤。
+
+## M17-W03: final Electron release artifact — R-20260813-M17-W03
+
+- `electron/scripts/package.js`：确定性打包契约——从冻结源码（main.js/
+  preload.js/error-overlay.html/package.json）构建 `dist/alphabrief-desktop-
+  <version>/`，写出版本化 CHECKSUMS.sha256；扫描并拒绝 secret、账号数据、
+  数据库、日志、observation artifacts；`selftest` 模式证明 scanner 行为。
+- `npm --prefix electron run package`（build）、`npm --prefix electron test`
+  （check：校验 dist 校验和）。
+- 安全面：包内无 live host、live selector、Alpaca/其他 broker、simulated
+  fallback、broker proxy、未批准 auto-update；packaged smoke 覆盖 readiness/
+  端口冲突/单实例/startup failure/navigation/freeze/优雅关闭/restart/错误传播。
