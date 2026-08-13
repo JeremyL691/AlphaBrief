@@ -620,6 +620,21 @@ close）为 mark。full pytest 1839 passed（+8 projection 测试）；ruff/mypy
 `test_reconciliation.py` 全绿。full pytest 1852 passed（+13 reconcile 测试）；
 ruff/mypy 全仓 clean；acceptance 11/11。
 
+#### M07-W05 已闭环证据（R-20260813-M07-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M07-W05-01 | 每个 blocking diff、unresolved transaction gap、stale remote snapshot、failed resync、corrupt projection 在下一次 new-exposure submit 之前产生一条 deduplicated durable freeze | `ExposureFreezeStore.freeze_new_exposure`（`test_broker_freeze.py`）：六类 alarm（blocking_diff/unresolved_gap/stale_snapshot/resync_failed/corrupt_projection/cursor_failure）各落一条持久化 FROZEN 记录（DuckDB `exposure_freezes`，UTC 时间戳）；`ensure_new_exposure_allowed` 在任一 active freeze 下抛 `FreezeActiveError` 阻断新开仓；同 (account, reason, detail) 重复告警幂等去重——返回同一 freeze_id、active 计数不增长；不同 detail 是独立 freeze；关库重开（restart）后 freeze 仍在且继续阻断 |
+| AC-M07-W05-02 | unfreeze 要求 fresh successful full sync、零 blocking diffs、cursor 与 projection hash 匹配、alerts 已解析，以及不可变的 reason 和 evidence 记录 | `ExposureFreezeStore.unfreeze`（`test_broker_freeze.py`）：五项检查（fresh_sync_ok / blocking_diffs==0 / cursor_match / projection_hash_match / resolved_alerts）任一项不满足 → `UnfreezeDeniedError`（列出全部 failing 项），active freeze 零解除、`exposure_unfreezes` 零写入；全部满足 → 全部 FROZEN 转 UNFROZEN 并在 `exposure_unfreezes` 追加不可变 evidence（event_id 单调、完整 policy 快照 + reason + unfrozen_at）→ 之后 `ensure_new_exposure_allowed` 恢复放行 |
+| AC-M07-W05-03 | 重复 reconcile/unfreeze 命令幂等；任何 API、CLI、scheduler、model 或 fallback 路径都不能靠 omission 或确认提示清除 freeze | 无 active freeze 时重复 unfreeze 是静默 no-op（history 不增长）；unfreeze 五项检查默认值全部为拒绝值——省略任一检查即 `UnfreezeDeniedError`（省略 blocking_diffs → "blocking diffs not verified"，而非 TypeError）；store 无 clear/dismiss/ignore/confirm_unfreeze/acknowledge 任何 API（`hasattr` 逐一断言）；unfreeze 后同 alarm 复发生成新 freeze_id（detail 的 sha256 前 12 位 digest + occurrence sequence），绝不因主键冲突被 `INSERT OR IGNORE` 吞掉而静默丢失 freeze |
+
+范围说明：本 round 的 `freeze_policy.py` 与 `test_broker_freeze.py` 为契约声明
+的缺失文件（上一会话遗留 untracked 文件，recovery audit 唯一归属 M07-W05）。
+修复两个实现缺陷后全绿：freeze_id 原只含 account+reason，不同 detail 主键
+冲突且 unfreeze 后复发告警被吞；unfreeze 原要求全部显式参数，省略即
+TypeError 而非 fail-closed。既有 `test_reconciliation.py` 全绿。full pytest
+1860 passed（+8 freeze 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

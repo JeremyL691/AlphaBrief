@@ -439,6 +439,30 @@ health/preflight -> resume research -> explicit execution unfreeze if clean。
 
 机器重启后不得只凭 scheduler heartbeat 自动开新仓。
 
+### 13.1 Execution Freeze and Unfreeze Policy
+
+execution freeze 由 `ExposureFreezeStore`（`oanda/freeze_policy`）持久化，六类 alarm
+各产生一条 deduplicated 记录：blocking reconciliation diff、unresolved transaction
+gap、stale remote snapshot、failed resync、corrupt projection、cursor failure。
+同 (account, reason, detail) 重复告警幂等去重；restart 后 freeze 仍在。任一 active
+freeze 存在时，所有 new-exposure submit 被 `FreezeActiveError` 阻断（研究/ingestion
+不受影响）。
+
+unfreeze 的唯一路径（M07-W05 起）要求全部证据同时满足：
+
+1. fresh successful full sync；
+2. 零 blocking diffs；
+3. cursor 与本地一致；
+4. projection hash 匹配；
+5. alerts 全部解析；
+6. 显式 reason。
+
+全部通过后 freeze 转 UNFROZEN 并在 `exposure_unfreezes` 追加不可变 evidence
+（完整 policy 快照 + reason + UTC 时间戳）。没有 clear/dismiss/confirm API，
+任何路径都不能靠 omission 或确认提示解冻；不得自动 unfreeze。unfreeze 后同一
+alarm 复发会生成新的 freeze 记录（detail digest + occurrence sequence），
+绝不因主键冲突被静默吞掉。
+
 ## 14. Zero-Intervention Boundaries
 
 M15 必须交付一个由同一 scheduler leader 持有的持久 observation supervisor。Day 0
