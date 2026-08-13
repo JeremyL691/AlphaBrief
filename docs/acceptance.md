@@ -1667,3 +1667,34 @@ REQ-PLAT-008/009，scope profile `api_cli`）；API/CLI 既有 route/command 零
 + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
 ruff/mypy 全仓 clean（433 source files）；acceptance 11/11。下一 READY item：
 M13-W02。
+
+#### M13-W02 已闭环证据（R-20260813-M13-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M13-W02-01 | Only pause or resume research, freeze or unfreeze paper execution, cancel practice order, and reduce or close practice exposure are exposed as operator mutations | `tests/test_api_write_contracts.py`：`test_operator_mutations_are_exactly_the_approved_seven`（`OPERATOR_MUTATIONS` == REQ-UI-010 的 7 个 mutation，closed set）；`test_every_mutation_has_approved_endpoints_and_payload_keys`（每个 mutation 有且仅有 approved endpoint 与 payload key allowlist）；`test_existing_api_mutation_endpoints_are_classified`（对 `apps/api/routes` 全部 24 个 mutation route 扫描——`freeze`/`unfreeze` 归入 operator mutations，其余归入 documented non-operator classes：ingestion/model/research/registry/run/reconcile/strategy-driven orders，无一未分类）；`tests/test_cli_control_commands.py` 的 `test_cli_commands_never_add_operator_mutations`（CLI command 不引入 approved set 之外的 operator mutation） |
+| AC-M13-W02-02 | Every accepted mutation validates current state, requires an idempotency key, persists actor and correlation metadata, and returns the same result on replay | `test_accepted_mutation_requires_and_persists_metadata`（audit 记录 actor/correlation_id/target/at，`MutationAuditLog` 持久化）；`test_idempotency_key_is_required`（缺失/空 → ValidationError）；`test_current_state_is_validated`（expected_state_version ≠ current → stale_version 拒绝）；`test_replay_returns_the_same_result`（同 idempotency_key 重放 → replay=True、result_payload/audit_id/at 完全一致、log 仅 1 条）；`test_replay_reproduces_rejections_too`；`test_every_approved_mutation_accepts_with_its_endpoint`（7 个 mutation × 各自 endpoint 全 accepted）；CLI 侧 `test_replay_is_deterministic_on_the_cli_side` |
+| AC-M13-W02-03 | Live host, arbitrary endpoint, arbitrary broker payload, unsupported mutation, stale version, and cross-account fixtures fail before provider invocation and leave an audit rejection | `TestFailBeforeInvocation`：`test_live_host_fails_before_invocation`（live host fixture——运行时拼接字符串避免文件内 literal——→ `live_host_forbidden`）；`test_arbitrary_endpoint_fails`（→ `arbitrary_endpoint`）；`test_arbitrary_broker_payload_fails`（payload keys ⊄ allowlist → `arbitrary_broker_payload`）；`test_unsupported_mutation_fails`（registry 外 → fail-closed）；`test_stale_version_fails`（→ `stale_version`）；`test_cross_account_fails`（→ `cross_account`）——全部 rejected 结果 result_payload=None 且 audit 记录 accepted=False；`test_gate_never_invokes_any_provider`（gate 模块无 requests/urllib/oanda/submit 引用，纯函数）；CLI 侧 `test_live_host_rejects_every_mutation`（7 个 mutation 全被 live host 拒绝）、`test_cli_rejections_leave_audit_records`、`test_approved_endpoint_registry_is_complete` |
+
+#### M13 Requirement Traceability（M13-W01..W02）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-PLAT-008 | W01 `read_contracts.py` UTC 强制；`tests/test_api_read_contracts.py` |
+| REQ-PLAT-009（关键 ID 跨层可追踪） | W01 envelope 稳定 id/provenance；W02 `MutationAudit`（audit_id/actor/correlation_id/idempotency_key/target 全记录，replay 同一 audit）；相关测试 |
+| REQ-UI-001（API/CLI 一致 read schema） | W01 `VersionedReadEnvelope`/`normalize_read_payload`；`tests/test_api_read_contracts.py`/`test_cli_read_contracts.py` |
+| REQ-UI-002（写操作 validation/idempotency/权限边界/清晰错误，无通用任意 broker request 代理） | W02 `write_contracts.py`：`WriteContractGate` 纯函数 fail-before-invocation（host/account/endpoint/payload/version 五重校验 + idempotency replay + audit）、无任何 provider 引用；`tests/test_api_write_contracts.py`/`test_cli_control_commands.py` |
+| REQ-UI-010（手工控制仅 7 种 mutation，全部审计） | W02 `OPERATOR_MUTATIONS` closed set + `MutationAuditLog` append-only；AC-M13-W02-01/02 evidence |
+
+范围说明：`tests/test_api_write_contracts.py` 与 `tests/test_cli_control_commands.py` 为
+M13-W02 契约声明的测试文件（targeted command 声明，documented forced path）；
+`alphabrief_core/write_contracts.py` 为 M13-W02 契约声明的生产模块（REQ-UI-002/010、
+REQ-PLAT-009，scope profile `api_cli`，risk_class safety-critical：全部 fail-closed、
+无 provider 调用路径）。集成 gate 中 `tests/test_paper_commands.py` 的
+`test_paper_status_prints_placeholder` 原依赖环境无 API server（本环境存在
+launchd 管理的 `alphabrief serve serve`，`is_api_running()` 返回 True 导致 exit 1）；
+已按 CLI 文档化的 test-isolation 契约（`ALPHABRIEF_DATA_DIR` 置位 → `is_api_running`
+恒 False）将该测试改为 hermetic（断言不变，仅消除环境依赖），记录于本 closure 与
+ledger。全量 pytest：2662 total（2643 passed + 19 pre-existing M08-W03 time-bombed
+risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（436 source files）；
+acceptance 11/11。下一 READY item：M13-W03。

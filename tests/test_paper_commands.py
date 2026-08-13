@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from alphabrief_cli.paper_commands import paper_app
 from typer.testing import CliRunner
 
@@ -51,7 +52,16 @@ def _make_spec(path: Path, symbol: str = "BTC-USD") -> None:
     path.write_text(json.dumps(spec), encoding="utf-8")
 
 
-def test_paper_status_prints_placeholder() -> None:
+def test_paper_status_prints_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The offline placeholder path is deterministic under isolation.
+
+    ``ALPHABRIEF_DATA_DIR`` makes the CLI treat the run as test
+    isolation (``is_api_running`` returns False), so the placeholder is
+    printed even when the launchd-managed API server is up.
+    """
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     result = runner.invoke(paper_app, ["status"])
     assert result.exit_code == 0
     assert "Paper portfolio status not yet persisted" in result.output
