@@ -1265,3 +1265,35 @@ forced paths）。安全评估的 prompt 卫生经 recording provider 捕获真�
 pattern。全量 pytest：2214 total（2195 passed + 19 pre-existing M08-W03
 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
 （386 source files）；acceptance 11/11。下一 READY item：M10-W07。
+
+#### M10-W07 已闭环证据（R-20260813-M10-W07）— M10 里程碑 gate
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M10-W07-01 | 全部 M10 provider/persistence/committee/proposal/repair/idempotency/grounding/security fixture 套件无外部 provider 依赖通过 | targeted 十套聚合运行（131 passed）：`test_model_gateway.py`（W01/W02 boundary+records）、`test_model_call_store.py`+`test_model_gateway_budget.py`（W02 durability+budgets）、`test_ai_trader_committee.py`+`test_committee_transcript.py`（W03 roles+transcript）、`test_proposal_grounding.py`（W04）、`test_model_structured_repair.py`+`test_ai_trader_idempotency.py`（W05）、`test_model_evaluator.py`+`test_model_security.py`（W06）——全部 fixture 驱动、确定性、零网络；integration 四套（53 passed）含 `test_prompt_injection.py` |
+| AC-M10-W07-02 | REQ-AI-001..010 traceability 映射到 code、durable evidence、automated tests、current progress | 见下方 M10 Requirement Traceability；progress work_item_states M10-W01..W07 全部 DONE、M10 里程碑 → DONE、ledger 逐轮 ROUND record（R-20260813-M10-W01..W07） |
+| AC-M10-W07-03 | full repository、static、model evaluation、autonomous acceptance gates 通过，且无生产 FakeProvider fallback | full pytest（M10 全量 2195 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（386 source files）；acceptance 11/11；生产 fake fallback 为零——`test_ai_trader_model_factory.py`（auto+无 key → `ModelProviderUnavailableError`）+ `test_model_gateway_boundary.py`（10 个生产模型路径模块全部解析 ModelGateway、无 provider SDK import）+ API `/ai/run` durable no-trade（`test_ai_trader_provider_unavailable.py`） |
+
+#### M10 Requirement Traceability（M10-W01..W07）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-AI-001（所有模型调用经 ModelGateway；provider/profile、timeout、retry classification、fallback policy、cost/latency、schema verdict） | `alphabrief_models/gateway.py`：ModelGateway 唯一边界；`ModelCallRecord` 含 provider/model、latency、cost（Decimal）、retry_count、`classification`（success/malformed/timeout/rate_limit/provider_error/budget_exhausted/no_provider）、schema_verdict；`test_model_gateway.py`+`test_model_gateway_budget.py` |
+| REQ-AI-002（生产路径不默认 FakeProvider；缺模型 → blocked/no-trade） | `model_factory.py`：auto+无 key 抛 `ModelProviderUnavailableError`，显式 fake 才可选；`routes/ai_trading.py` durable no-trade record；`test_ai_trader_model_factory.py`+`test_ai_trader_provider_unavailable.py` |
+| REQ-AI-003（持久化 hash、模板版本、参数、错误、token/cost；敏感内容脱敏） | `ModelCallRecord`+`ModelCallStore`（append-only、call_id 幂等、UTC）；raw prompt/response/secret 永不落库；`test_model_call_store.py` |
+| REQ-AI-004（四分析师角色 + moderator） | `CommitteeRole`=technical/news_sentiment/fundamental/risk/manager；`test_committee_transcript.py::test_run_contains_all_five_roles_and_moderator` |
+| REQ-AI-005（自由讨论反驳；每轮引用 evidence IDs；区分事实/推断/未知/观点） | `TradingCommittee.run` 多轮（opening/challenge/summary）+ `CommitteeTurn`（stance、cited_evidence_ids）；`test_committee_transcript.py` |
+| REQ-AI-006（proposal 全字段 + no_trade） | `ResearchProposal`+`build_research_proposal`；`test_proposal_grounding.py` |
+| REQ-AI-007（JSON/引用不合法有界修复；仍失败 no-trade/blocked） | `repair_structured_output`（max_attempts、typed verdicts）；`test_model_structured_repair.py`+`test_ai_trader_idempotency.py` |
+| REQ-AI-008（无 token/account ID/工具；外部内容不能 tool call） | prompt 消毒（`sanitize_external_text`+`_scrub_secrets`）+ 严格 schema extra=forbid；`test_committee_transcript.py::TestContextHygiene`+`test_model_security.py` |
+| REQ-AI-009（deterministic cycle key；重试不产生多个 intent） | `DailyTradingCycle.run(cycle_key)`+`_snapshot_fingerprint`+`get_cycle_by_key`；`test_ai_trader_idempotency.py` |
+| REQ-AI-010（评测含 schema/grounding/citation/hallucination/injection/latency/cost/stability） | `quality_gate.py` 八指标阈值合取、无 waiver；`security_eval.py` versioned fixtures；`test_model_security.py` |
+| REQ-PLAT-005/009、REQ-OPS-005（append-only UTC、确定性、budget） | W02 store/budget；W05 idempotency；`test_model_call_store.py`+`test_model_gateway_budget.py` |
+| REQ-OPS-008（injection fixtures 进门禁） | W06 security eval fixtures + `test_prompt_injection.py` |
+
+范围说明：M10-W07 为里程碑 gate 轮（无新生产行为，纯证据/文档轮）。
+README 更新 M10 capability 行。全量 pytest：2214 total（2195 passed + 19
+pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
+ruff/mypy 全仓 clean（386 source files）；acceptance 11/11。M10 里程碑 →
+DONE（无 T7 runtime 依赖，全部本地确定性 gate 通过）。下一 READY item：
+M11-W01。
