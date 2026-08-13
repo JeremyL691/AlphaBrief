@@ -27,6 +27,7 @@ Snapshot: 2026-08-13, commit `61ad0eea05c4164ea0ab0dd229caf9ae2b1ac464` (M01 OAN
 | Risk | Symbol/order/exposure/loss/drawdown/news-aware rule primitives | AI auto-execution does not yet pass the full account and news context into every RiskGate call |
 | Execution | In-memory paper broker (explicit local mode), OANDA practice adapter, shared process runtime, reconciliation stores | M01 cutover complete: OANDA practice is the only execution venue; OANDA lifecycle coverage, persistence, and reconciliation are incomplete |
 | Operations | Scheduler, heartbeats, alerts, API/CLI, nine dashboard pages, Electron wrapper; versioned storage migrations, writer lease, and verified backups | Scheduler/control-plane truth, observability, and 30-day evidence are incomplete |
+| API/CLI contracts | Shared versioned read contracts (14 domains) and safe idempotent operator write contracts (7 approved mutations with audit), operational portfolio/equity resources and cycle traceability from shared runtime stores, machine-readable CLI contracts (deterministic exit codes, stable JSON, no prompts), deterministic locked OpenAPI with API-CLI parity | Dashboard redesign lands in M14; T7 practice evidence pending (local deterministic gates only) |
 
 At the baseline, the repository exposed 18 CLI command groups with 57
 subcommands, 86 OpenAPI endpoints, and nine dashboard routes. The quality run
