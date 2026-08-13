@@ -273,6 +273,82 @@ class CommitteeTranscript(_CommitteeSchema):
 
 
 # ---------------------------------------------------------------------------
+# Grounded research proposal
+# ---------------------------------------------------------------------------
+
+
+class EvidenceCitation(_CommitteeSchema):
+    """One factual proposal claim bound to an evidence ID.
+
+    The evidence ID must resolve inside the exact snapshot the committee
+    used; a citation is never fabricated by the proposal builder.
+    """
+
+    evidence_id: str = Field(min_length=1)
+    claim: str = Field(min_length=1)
+
+
+class ResearchProposal(_CommitteeSchema):
+    """The committee's strict evidence-grounded proposal for one symbol.
+
+    Separates thesis, anti-thesis, confidence, horizon, entry rationale,
+    invalidation, suggested exposure, evidence citations, dissent, data
+    freshness, uncertainty, and an explicit ``no_trade`` outcome. A
+    proposal is advisory evidence only — it becomes an ``OrderIntent``
+    candidate only after grounding validation and the deterministic
+    ``RiskGate``.
+    """
+
+    proposal_id: str = Field(min_length=1)
+    symbol: str = Field(min_length=1)
+    thesis: str = Field(min_length=1)
+    anti_thesis: str = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    horizon: str = Field(min_length=1)
+    entry_rationale: str = Field(min_length=1)
+    invalidation: str = Field(min_length=1)
+    suggested_exposure: Decimal = Field(default=Decimal("0"), ge=0, le=1)
+    citations: list[EvidenceCitation] = Field(default_factory=list)
+    dissent: str = Field(min_length=1)
+    data_freshness: datetime
+    uncertainty: float = Field(ge=0.0, le=1.0)
+    no_trade: bool = False
+    created_at: datetime
+
+    @field_validator("data_freshness", "created_at")
+    @classmethod
+    def _tz(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value)
+
+    @field_validator("dissent")
+    @classmethod
+    def _dissent_not_blank(cls, value: str) -> str:
+        if value.strip() == "":
+            raise ValueError("dissent must not be blank")
+        return value
+
+    @field_validator("suggested_exposure", mode="before")
+    @classmethod
+    def _no_float(cls, value: Any) -> Any:
+        return _reject_float(value)
+
+    @model_validator(mode="after")
+    def _exposure_matches_no_trade(self) -> ResearchProposal:
+        # Contradictory exposure fields are rejected at the schema level:
+        # a no-trade proposal must carry zero exposure and a tradeable
+        # proposal must carry positive exposure.
+        if self.no_trade and self.suggested_exposure > 0:
+            raise ValueError(
+                "no_trade proposal must not carry positive suggested exposure"
+            )
+        if not self.no_trade and self.suggested_exposure <= 0:
+            raise ValueError(
+                "tradeable proposal must carry positive suggested exposure"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Synthesized plan
 # ---------------------------------------------------------------------------
 
@@ -433,9 +509,11 @@ __all__ = [
     "CycleOutcome",
     "DailyCycleRecord",
     "DailyCycleSummary",
+    "EvidenceCitation",
     "MarketSnapshot",
     "OrderAttempt",
     "OrderSide",
+    "ResearchProposal",
     "TradePlan",
     "_to_decimal_str",
 ]
