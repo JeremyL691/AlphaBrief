@@ -15,13 +15,36 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def _isolate(tmp_path: Path) -> Generator[None, None, None]:
+def _isolate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
     os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
+    # Evaluations default to the configured real provider and fail closed
+    # when none exists; strip provider env so tests are deterministic and
+    # explicit fake composition is opt-in.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_AI_MODEL_PROVIDER", raising=False)
     _clear_store()
     _set_kronos_runtime(None)
     yield
     _clear_store()
     _set_kronos_runtime(None)
+
+
+def _fake_eval_body(
+    model_id: str = "fake:fake-model",
+    task_type: str = "daily_brief",
+    dataset_id: str = "daily_brief_v1",
+    sample_count: int = 2,
+) -> dict[str, object]:
+    """Build an explicit fake-provider evaluation request (test composition)."""
+    return {
+        "model_id": model_id,
+        "task_type": task_type,
+        "dataset_id": dataset_id,
+        "sample_count": sample_count,
+        "use_real_provider": False,
+    }
 
 
 def test_list_datasets_returns_bundled() -> None:
@@ -33,15 +56,24 @@ def test_list_datasets_returns_bundled() -> None:
     assert "market_summary_v1" in ids
 
 
-def test_evaluate_creates_record() -> None:
+def test_evaluate_default_fails_closed_without_provider() -> None:
     resp = client.post(
         "/api/v1/models/evaluate",
         json={
-            "model_id": "fake:fake-model",
+            "model_id": "openai:gpt-4o-mini",
             "task_type": "daily_brief",
             "dataset_id": "daily_brief_v1",
             "sample_count": 2,
         },
+    )
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error"] == "model_provider_unavailable"
+
+
+def test_evaluate_creates_record() -> None:
+    resp = client.post(
+        "/api/v1/models/evaluate",
+        json=_fake_eval_body(),
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -104,12 +136,7 @@ def test_list_evaluations_empty() -> None:
 def test_list_evaluations_returns_saved() -> None:
     client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "fake:fake-model",
-            "task_type": "daily_brief",
-            "dataset_id": "daily_brief_v1",
-            "sample_count": 1,
-        },
+        json=_fake_eval_body(sample_count=1),
     )
     resp = client.get("/api/v1/models/evaluations")
     assert resp.status_code == 200
@@ -121,21 +148,11 @@ def test_list_evaluations_returns_saved() -> None:
 def test_list_evaluations_filter_by_model_id() -> None:
     client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "fake:fake-model",
-            "task_type": "daily_brief",
-            "dataset_id": "daily_brief_v1",
-            "sample_count": 1,
-        },
+        json=_fake_eval_body(sample_count=1),
     )
     client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "fake:other-model",
-            "task_type": "daily_brief",
-            "dataset_id": "daily_brief_v1",
-            "sample_count": 1,
-        },
+        json=_fake_eval_body(model_id="fake:other-model", sample_count=1),
     )
     resp = client.get("/api/v1/models/evaluations?model_id=fake:fake-model")
     assert resp.status_code == 200
@@ -147,12 +164,7 @@ def test_list_evaluations_filter_by_model_id() -> None:
 def test_get_evaluation_by_id() -> None:
     create = client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "fake:fake-model",
-            "task_type": "daily_brief",
-            "dataset_id": "daily_brief_v1",
-            "sample_count": 1,
-        },
+        json=_fake_eval_body(sample_count=1),
     ).json()
     eid = create["eval_id"]
     resp = client.get(f"/api/v1/models/evaluations/{eid}")
@@ -173,21 +185,16 @@ def test_performance_summary_404_when_empty() -> None:
 def test_performance_summary_aggregates_per_task() -> None:
     client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "fake:fake-model",
-            "task_type": "daily_brief",
-            "dataset_id": "daily_brief_v1",
-            "sample_count": 1,
-        },
+        json=_fake_eval_body(sample_count=1),
     )
     client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "fake:fake-model",
-            "task_type": "market_summary",
-            "dataset_id": "market_summary_v1",
-            "sample_count": 1,
-        },
+        json=_fake_eval_body(
+            model_id="fake:fake-model",
+            task_type="market_summary",
+            dataset_id="market_summary_v1",
+            sample_count=1,
+        ),
     )
     resp = client.get("/api/v1/models/performance/fake:fake-model")
     assert resp.status_code == 200
@@ -205,12 +212,10 @@ def test_performance_summary_rejects_malformed_model_id() -> None:
 def test_route_returns_decision_with_performance() -> None:
     client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "anthropic:claude-3",
-            "task_type": "daily_brief",
-            "dataset_id": "daily_brief_v1",
-            "sample_count": 2,
-        },
+        json=_fake_eval_body(
+            model_id="anthropic:claude-3",
+            sample_count=2,
+        ),
     )
     resp = client.post(
         "/api/v1/models/route",
@@ -253,21 +258,11 @@ def test_route_rejects_empty_capabilities() -> None:
 def test_compare_returns_rows_for_each_model() -> None:
     client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "fake:fake-model",
-            "task_type": "daily_brief",
-            "dataset_id": "daily_brief_v1",
-            "sample_count": 1,
-        },
+        json=_fake_eval_body(sample_count=1),
     )
     client.post(
         "/api/v1/models/evaluate",
-        json={
-            "model_id": "anthropic:claude-3",
-            "task_type": "daily_brief",
-            "dataset_id": "daily_brief_v1",
-            "sample_count": 1,
-        },
+        json=_fake_eval_body(model_id="anthropic:claude-3", sample_count=1),
     )
     resp = client.post(
         "/api/v1/models/compare",

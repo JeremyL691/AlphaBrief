@@ -30,6 +30,7 @@ from alphabrief_trader.execution_backend import (
     is_ai_external_paper_enabled,
 )
 from alphabrief_trader.model_factory import (
+    ModelProviderUnavailableError,
     build_ai_trading_committee,
     build_ai_trading_provider,
     build_conservative_fake_provider,
@@ -79,6 +80,7 @@ __all__ = [
     "HeadlineLoader",
     "LocalPaperExecutionBackend",
     "MarketSnapshot",
+    "ModelProviderUnavailableError",
     "OrderAttempt",
     "OrderSide",
     "PROMPT_VERSION",

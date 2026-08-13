@@ -1,11 +1,23 @@
-"""Tests for AI trading model provider selection."""
+"""Tests for AI trading model provider selection.
+
+Production composition must fail closed: with no real provider
+configured the factory raises ``ModelProviderUnavailableError`` instead
+of silently falling back to a fake provider. The deterministic fake is
+available only through an explicit ``ALPHABRIEF_AI_MODEL_PROVIDER=fake``
+selection (test composition).
+"""
 
 from __future__ import annotations
 
 import pytest
 from alphabrief_models import FakeProviderAdapter, OllamaProviderAdapter
 from alphabrief_models.openai_adapter import OpenAIProviderAdapter
-from alphabrief_trader import build_ai_trading_provider
+from alphabrief_trader import (
+    ModelProviderUnavailableError,
+    build_ai_trading_committee,
+    build_ai_trading_provider,
+    build_conservative_fake_provider,
+)
 
 _AI_ENV_VARS = (
     "ALPHABRIEF_AI_MODEL_PROVIDER",
@@ -23,12 +35,9 @@ def _clean_ai_model_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAiTradingModelFactory:
-    def test_auto_without_openai_key_uses_conservative_fake(self) -> None:
-        provider = build_ai_trading_provider()
-
-        assert isinstance(provider, FakeProviderAdapter)
-        assert provider.model_name == "fake-ai-committee"
-        assert "structured_output" in provider.capabilities
+    def test_auto_without_openai_key_fails_closed(self) -> None:
+        with pytest.raises(ModelProviderUnavailableError, match="provider"):
+            build_ai_trading_provider()
 
     def test_auto_with_openai_key_uses_openai(
         self, monkeypatch: pytest.MonkeyPatch
@@ -39,6 +48,17 @@ class TestAiTradingModelFactory:
 
         assert isinstance(provider, OpenAIProviderAdapter)
         assert provider.model_name == "gpt-4o-mini"
+        assert "structured_output" in provider.capabilities
+
+    def test_explicit_fake_requires_explicit_selection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
+
+        provider = build_ai_trading_provider()
+
+        assert isinstance(provider, FakeProviderAdapter)
+        assert provider.model_name == "fake-ai-committee"
         assert "structured_output" in provider.capabilities
 
     def test_explicit_openai_requires_key(
@@ -68,3 +88,21 @@ class TestAiTradingModelFactory:
 
         with pytest.raises(ValueError, match="auto, fake, openai, ollama"):
             build_ai_trading_provider()
+
+    def test_conservative_fake_requires_explicit_selection(self) -> None:
+        provider = build_conservative_fake_provider()
+        assert isinstance(provider, FakeProviderAdapter)
+        # The fake is never reachable through the default composition path.
+        with pytest.raises(ModelProviderUnavailableError):
+            build_ai_trading_provider()
+
+    def test_committee_without_provider_fails_closed(self) -> None:
+        with pytest.raises(ModelProviderUnavailableError):
+            build_ai_trading_committee()
+
+    def test_committee_with_explicit_fake_is_usable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
+        committee = build_ai_trading_committee()
+        assert committee.roles  # explicit test composition builds a committee

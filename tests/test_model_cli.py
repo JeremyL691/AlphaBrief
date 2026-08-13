@@ -14,14 +14,42 @@ from typer.testing import CliRunner
 
 
 @pytest.fixture(autouse=True)
-def _isolate_db(tmp_path: Path) -> Generator[None, None, None]:
+def _isolate_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
     os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
+    # The evaluate command defaults to the configured real provider and
+    # fails closed when none exists; strip provider env so tests are
+    # deterministic and explicit fake composition is opt-in.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ALPHABRIEF_AI_MODEL_PROVIDER", raising=False)
     yield
 
 
 # ---------------------------------------------------------------------------
 # model evaluate
 # ---------------------------------------------------------------------------
+
+
+def test_evaluate_fails_closed_without_provider() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        model_app,
+        [
+            "evaluate",
+            "--model-id",
+            "openai:gpt-4o-mini",
+            "--task",
+            "daily_brief",
+            "--dataset",
+            "daily_brief_v1",
+            "--sample-count",
+            "1",
+            "--compact",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "model provider unavailable" in result.stderr
 
 
 def test_evaluate_runs_and_prints_json() -> None:
@@ -38,6 +66,7 @@ def test_evaluate_runs_and_prints_json() -> None:
             "daily_brief_v1",
             "--sample-count",
             "2",
+            "--no-real-provider",
             "--compact",
         ],
     )
@@ -114,6 +143,7 @@ def test_evaluate_persists_to_db(tmp_path: Path) -> None:
             "daily_brief_v1",
             "--sample-count",
             "1",
+            "--no-real-provider",
             "--compact",
         ],
     )
