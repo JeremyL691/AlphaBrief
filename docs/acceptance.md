@@ -1949,3 +1949,33 @@ scope profile `frontend`，risk_class safety-critical：双向 link 验证 + red
 全量 pytest：2859 total（2840 passed + 19 pre-existing M08-W03 time-bombed
 risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（463 source files）；
 acceptance 11/11。下一 READY item：M14-W06。
+
+#### M14-W06 已闭环证据（R-20260813-M14-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M14-W06-01 | Scheduler and 30-Day Observation display leader, running, heartbeat, last and next run, phase, qualified day, weekly gate, incident, blocker, and evidence completeness from one runtime authority | `tests/test_dashboard_scheduler.py`：`build_scheduler_view(runtime_truth)` 全字段来自单一 runtime authority——`test_displays_runtime_truth_fields`（leader_id/running/heartbeat_at/last_run_at/next_run_at/phase）；`test_unknown_phase_is_preserved_verbatim`（未知 phase 原样不猜测）；`test_missing_truth_is_explicit_null`；`test_deterministic`。`tests/test_dashboard_observation.py`：`build_observation_view`——`test_displays_qualified_days_and_completeness`（qualified_days/required_days=30/evidence_completeness）；`test_weekly_gates_are_carried_with_detail`（week/passed/detail）；`test_incidents_and_blockers_are_never_hidden`（incident/blocker 显式）；`test_missing_truth_is_explicit_null`；`test_deterministic` |
+| AC-M14-W06-02 | The only write controls are pause or resume research, freeze or rule-governed unfreeze practice execution, cancel a practice order, and reduce or close practice exposure; each requires validation, idempotency, confirmation, and audit | `tests/test_dashboard_controls.py`：`control_actions()` 与 `OPERATOR_MUTATIONS`（REQ-UI-010 closed 7 集）完全一致（`test_controls_are_exactly_the_approved_seven`/`test_no_control_outside_the_approved_set`/`test_every_approved_mutation_has_a_control_action`）；每个 ControlAction requires_validation/idempotency/confirmation/audited 全 True（`test_every_control_requires_validation_idempotency_confirmation_audit`）；`test_controls_are_deterministic` |
+| AC-M14-W06-03 | Settings reveals non-secret provider and version health but cannot edit broker hosts, unlock live trading, select another broker, expose credentials, or send an arbitrary broker request | `tests/test_dashboard_settings.py`：`build_settings_view(health)`——`test_reveals_non_secret_health`（provider/provider_health/blueprint_version/schema_version）；`test_cannot_edit_broker_hosts`/`test_cannot_unlock_live_trading`/`test_cannot_select_another_broker`/`test_never_exposes_credentials`/`test_never_sends_arbitrary_broker_requests`（五个安全不变式全部 False，声明式不可变）；`test_missing_health_is_explicit_null`；`test_deterministic` |
+
+#### M14 Requirement Traceability（M14-W01..W06）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-003 | W01 token 系统/brand audit |
+| REQ-UI-004 | W02 `NAVIGATION_SECTIONS`；W06 Scheduler/Observation/Settings 导航项对应视图 |
+| REQ-UI-005 | W02 page states；W03-W06 workspace 视图 truth-only（缺字段显式 null，blocker/incident 绝不隐藏） |
+| REQ-UI-010（手工控制仅 7 种 mutation，全部审计） | W02 `write_contracts.py` gate；W06 `control_actions()`（7 控制 + validation/idempotency/confirmation/audit 四要求）；`tests/test_dashboard_controls.py` |
+| REQ-UI-006/007 | W03/W04/W05 已闭环 |
+
+范围说明：`tests/test_dashboard_scheduler.py`、`tests/test_dashboard_observation.py`、
+`tests/test_dashboard_settings.py`、`tests/test_dashboard_controls.py` 为 M14-W06
+契约声明的测试文件（targeted command 声明，documented forced path）；
+`dashboard/operations.py` 为 M14-W06 契约声明的生产模块（REQ-UI-004/005/010，
+scope profile `frontend`，risk_class safety-critical：controls 严格有界 + settings
+五项安全不变式声明式不可变）。集成 command 声明的 `tests/test_observation_api.py`/
+`tests/test_operator_controls_api.py` 不存在（覆盖位于 `tests/test_scheduler_api.py`
++ `tests/test_ai_trader_scheduler.py` + `tests/test_api_server.py`，documented
+substitutions）。全量 pytest：2887 total（2868 passed + 19 pre-existing M08-W03
+time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（468 source
+files）；acceptance 11/11。下一 READY item：M14-W07。
