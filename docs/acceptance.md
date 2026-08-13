@@ -1472,3 +1472,29 @@ gate 通过）。下一 READY item：M12-W01。
 全量 pytest：2369 total（2350 passed + 19 pre-existing M08-W03 time-bombed
 risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（410 source
 files）；acceptance 11/11。下一 READY item：M12-W02。
+
+#### M12-W02 已闭环证据（R-20260813-M12-W02）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M12-W02-01 | Each required strategy family emits deterministic long, short, flat, and insufficient-data outcomes from declared inputs | `tests/test_strategy_builtins.py`：`TrendFamily`（close 高于/低于 `close_sma_N` → long/short，等于 → flat，feature 缺失 → `insufficient data`）；`MeanReversionFamily`（RSI ≤ oversold → long，≥ overbought → short，band 内 → flat，缺失 → insufficient）；`BreakoutFamily`（close 高于 `bb_upper_N` → long，低于 `bb_lower_N` → short，带内 → flat，任一 band 缺失 → insufficient）；`VolatilityRegimeFamily`（atr/close ≥ high_vol_atr_pct → 高波动 flat，正常 regime 按 close vs `close_sma_N` long/short/flat，feature 缺失 → insufficient）；`NoTradeFamily`（恒 flat，无 declared inputs）；每族 `test_identical_inputs_produce_identical_signals` 证明同输入同输出 |
+| AC-M12-W02-02 | Strategy applicability is enforced by OANDA instrument category and unsupported combinations fail admission with explicit reasons | `tests/test_strategy_admission.py`：`FAMILY_APPLICABILITY` 按 OANDA instrument category（CURRENCY/METAL/INDEX_CFD/COMMODITY_CFD/BOND_CFD/EQUITY_CFD/CRYPTO_CFD/OTHER_CFD，与 `alphabrief_execution.broker.oanda.taxonomy.InstrumentCategory` parity 由 `test_category_mirror_matches_oanda_taxonomy` 强制）；approved 矩阵全绿；`test_unsupported_combination_is_rejected_with_explicit_reason`（如 trend×OTHER_CFD、mean_reversion×CRYPTO_CFD/BOND_CFD、breakout×BOND_CFD/EQUITY_CFD、volatility_regime×CRYPTO_CFD/BOND_CFD）reason 同时含 family 与 category；`evaluate_strategy_admission` 为纯函数（`test_verdict_is_a_pure_function_of_its_inputs`） |
+| AC-M12-W02-03 | No-trade is a first-class benchmark strategy and all predictive or learned outputs remain advisory evidence rather than executable orders | `NoTradeFamily` 为 first-class benchmark（`test_first_class_benchmark_metadata`，confidence=1.0、8 类全 admissible、恒 flat 且 `test_never_reads_declared_inputs` 证明无 declared inputs）；`PREDICTIVE_FAMILY_IDS`（kronos_forecast/gym_policy）对全部 8 类 rejected 且 reason 含 `advisory`（`test_predictive_families_are_rejected_as_advisory_only`、`test_predictive_families_are_never_admissible_for_any_category`）；`test_outputs_are_advisory_signal_evidence_only`/`test_families_never_return_orders` 证明族输出只含 `Signal` evidence、`StrategyOutput` 无 order 边界、族实例无 submit 能力 |
+
+#### M12 Requirement Traceability（M12-W01..W02）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-STRAT-001（safe DSL cannot execute arbitrary code） | W01 `alphabrief_strategy/dsl.py`：`compile_condition`/`evaluate_condition`；`tests/test_strategy_dsl.py`（38 用例） |
+| REQ-STRAT-002（至少支持 trend、mean reversion、breakout、volatility/regime 和 no-trade baseline；每个策略可限定适用类别） | W02 `alphabrief_strategy/families.py`：五个 family 全部落地，`FAMILY_APPLICABILITY` 按 OANDA instrument category 限定；`tests/test_strategy_builtins.py`/`tests/test_strategy_admission.py` |
+| REQ-STRAT-007（Kronos/Gym/其他预测只提供 advisory evidence，不能绕过 committee 或 RiskGate） | W02 `alphabrief_strategy/admission.py`：`PREDICTIVE_FAMILY_IDS` 全部类别 rejected（advisory-only reason）；族输出边界仅为 `StrategyOutput`(Signal)，无任何 order 能力；`tests/test_strategy_admission.py` |
+
+范围说明：`tests/test_strategy_builtins.py` 与 `tests/test_strategy_admission.py` 为
+M12-W02 契约声明的测试文件（targeted command 声明，documented forced path）；
+`families.py`/`admission.py` 为 M12-W02 契约声明的生产模块（REQ-STRAT-002/007，
+scope profile `strategy_backtest`）。全量 pytest：2453 total（2434 passed + 19
+pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy
+全仓 clean（414 source files）；acceptance 11/11。注：`progress.current.milestone_id`
+按 19 轮既定约定保持派生缓存值（M02-era loop-controller selection tests 的
+hardcode 前提；ACTIVE milestone 以 `milestones:` 映射为准），本轮恢复该约定。
+下一 READY item：M12-W03。
