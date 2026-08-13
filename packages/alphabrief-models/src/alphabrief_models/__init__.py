@@ -76,6 +76,12 @@ from alphabrief_models.prompts import (
     build_default_prompt_registry,
     render_brief_prompt_v2,
 )
+from alphabrief_models.quality_gate import (
+    MetricGateResult,
+    QualityMetrics,
+    QualityThresholds,
+    evaluate_quality_gate,
+)
 from alphabrief_models.registry import ModelProfile, ModelRegistry, ProviderConfig
 from alphabrief_models.repair import (
     RepairVerdict,
@@ -153,6 +159,9 @@ __all__ = [
     "PromptTemplate",
     "PromptTemplateError",
     "PromptTemplateRegistry",
+    "QualityMetrics",
+    "QualityThresholds",
+    "MetricGateResult",
     "RenderedPrompt",
     "RepairVerdict",
     "StructuredOutputErrorCode",
@@ -168,6 +177,7 @@ __all__ = [
     "default_repair_prompt_builder",
     "classify_provider_error",
     "eval_result_to_record",
+    "evaluate_quality_gate",
     "forecast_with_kronos_gateway",
     "generate_daily_alpha_brief",
     "get_dataset_by_id",
