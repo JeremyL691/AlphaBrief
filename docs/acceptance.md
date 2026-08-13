@@ -1111,3 +1111,17 @@ READY item：M09-W04。
 forced path）；既有 `tests/test_sentiment.py`（RuleBasedSentimentAnalyzer）
 全绿未改动。full pytest 2077 passed（+10 新测试）；ruff/mypy 全仓 clean
 （364 source files）；acceptance 11/11。下一 READY item：M09-W05。
+
+#### M09-W05 已闭环证据（R-20260813-M09-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M09-W05-01 | 每条外部文本 fragment 在模型使用前携带 untrusted-evidence marker、source identity、content hash、bounded sanitized representation | `sanitize_external_text`（新 `alphabrief_news/untrusted.py`，`test_news_untrusted_content.py`）：`SanitizedEvidence` 全字段断言（untrusted=True、source、content_hash=sha256 of sanitized form、sanitized_text bounded、original_length、neutralized_instructions、sanitization_version）；chars bound（10000 词 → ≤1000 且 "..." 结尾）、paragraph bound（50 段 → ≤10）；空文本/空 source → `UntrustedContentError` fail-closed；相同输入两次评估完全相等（确定性） |
+| AC-M09-W05-02 | prompt-injection fixtures 不能改变 system instructions、risk limits、execution settings、evidence boundaries、tool permissions | `_INSTRUCTION_PATTERNS` 确定性中和（ignore/disregard any instructions、you are now、system prompt、`<system>` 开闭标签、new system instructions、override risk policy、ignore the risk gate、call the tool/broker(）——替换为 `[NEUTRALIZED-EXTERNAL-INSTRUCTION]` 且计数；`test_prompt_injection.py` 七组 injection fixtures 逐一断言指令语法消失、neutralized_instructions≥1、untrusted=True；system/risk/tool 指令组合 fixture 断言头部与 tool-call 语法不存活且 fragment 保持 untrusted+bounded（系统边界在 ModelGateway——外部文本永不可执行） |
+| AC-M09-W05-03 | sanitization logs 不含 token、authorization header、完整 account ID、prohibited full article、executable external instruction | `_SECRET_PATTERNS` 红action（Bearer、Authorization header、OANDA account ID `\d{3}-\d{3}-\d{7,}-\d{3}`、api_key/token/secret）→ `[REDACTED]`；`build_sanitization_log` 只含 source/content_hash/original_length/sanitized_length/neutralized_instructions/version（无正文、无 secret——rendered payload 逐一断言不含 abc12345/Basic/account ID/super-secret） |
+
+范围说明：`alphabrief_news/untrusted.py` 为 M09-W05 契约声明的新模块；
+`tests/test_news_untrusted_content.py` 与 `tests/test_prompt_injection.py` 为
+契约声明的缺失测试文件（documented forced paths）。full pytest 2090 passed
+（+13 新测试）；ruff/mypy 全仓 clean（367 source files）；acceptance 11/11。
+下一 READY item：M09-W06。
