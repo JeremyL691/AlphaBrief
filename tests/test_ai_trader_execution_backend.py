@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
 from alphabrief_core import OrderIntent, RiskDecision
 from alphabrief_execution import FillSimulator, OrderRouter, PaperBroker, PortfolioState
 from alphabrief_execution.broker.port import (
@@ -110,6 +111,15 @@ def _decision(*, max_quantity: Decimal | None = None) -> RiskDecision:
         source_module="test",
         created_at=datetime.now(UTC),
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the runtime data directory at tmp so the decision-binding
+    store (M08-W07) never touches the developer's real data directory."""
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
 
 
 class TestExternalPaperExecutionBackend:
