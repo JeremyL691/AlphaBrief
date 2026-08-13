@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-14T04:39:41+08:00"
+updated_at: "2026-08-14T04:44:26+08:00"
 
 project:
   status: IN_PROGRESS
@@ -201,6 +201,7 @@ work_item_states:
   M15-W05: DONE
   M15-W06: DONE
   M15-W07: DONE
+  M14-W08: DONE
   M16-W01: DONE
   M16-W02: DONE
   M16-W03: DONE
@@ -213,7 +214,7 @@ work_item_states:
   M17-W04: DONE
 
 latest_validation:
-  completed_at: "2026-08-14T04:39:41+08:00"
+  completed_at: "2026-08-14T04:44:26+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -330,5 +331,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M17-W04
-last_ledger_record: R-20260813-M17-W04
+last_completed_round: R-20260813-M14-W08
+last_ledger_record: R-20260813-M14-W08

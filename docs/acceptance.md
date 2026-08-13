@@ -2531,3 +2531,24 @@ final-release`（4 checks 如实未过）均 exit 0，绝不伪造通过。全�
 失败，分类见 M10-W03）；pip check clean；ruff/mypy 全仓 clean；acceptance
 11/11。工作队列执行完毕——所有可执行 work items 均已按契约闭环；剩余依赖
 仅为外部 T7 practice evidence（见 blocker 报告）。
+
+#### M14-W08 已闭环证据（R-20260813-M14-W08）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M14-W08-01 | All required routes, data states, trace links, portfolio fields, and safe controls pass against versioned M13 API contracts with no fake runtime fallback | `tests/test_dashboard*.py` + `tests/ui` 全量回归（229 passed，含 trace/portfolio/safety-control 与 M13 API contract 断言）；无 fake runtime fallback（fail-closed 契约贯穿） |
+| AC-M14-W08-02 | The complete viewport, theme, keyboard, accessibility, contrast, reduced-motion, and Electron lifecycle matrix passes without waiver | `tests/test_dashboard_accessibility.py`、`tests/test_dashboard_visual_regression.py`（viewport 320/768/1024/1440）、`tests/test_electron_lifecycle.py` 全过；无 waiver |
+| AC-M14-W08-03 | Full repository quality and acceptance gates pass with REQ-UI-003 through REQ-UI-010 mapped to committed code and evidence | 全量 pytest 3306 passed（+19 pre-existing time-bombed）、ruff/mypy clean、acceptance 11/11、`npm --prefix electron test`（打包校验和验证）exit 0；REQ-UI-003..010 由 M14 各 work item 的 acceptance 表逐条 trace |
+
+#### M14 Requirement Traceability（M14-W08 里程碑关闭）
+
+| Requirement | Evidence |
+|---|---|
+| REQ-UI-003..REQ-UI-010 | M14-W01..W07 各轮 acceptance 表 + 本轮全量 dashboard/electron/ui 回归（229 passed）+ full pytest + ruff/mypy + acceptance 11/11 + npm test；`docs/acceptance.md` M14 各节逐条 trace |
+
+范围说明：M14-W08 为纯关闭轮——0 个生产文件变更、0 个新测试文件；targeted
+命令（test_dashboard*/test_electron*/tests/ui）、integration（npm test）、
+static（ruff/mypy）、regression（full pytest + acceptance verify）全部在本轮
+现树重跑通过；README.md 无内容增量（M14 事实已由 M12-M15 行记录）。全量
+pytest：3325 total（3306 passed + 19 pre-existing M08-W03 time-bombed risk
+fixture 失败，分类见 M10-W03）。M14 milestone 关闭完成。
