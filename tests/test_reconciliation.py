@@ -1,11 +1,13 @@
 """Reconciliation runner tests.
 
 Driven by an in-memory fake broker adapter so the tests do not need
-a real Alpaca server. Covers:
+a practice server. Covers:
 
 - startup reconciliation raises a freeze on diff
 - cycle reconciliation also freezes on diff
 - eod reconciliation records but does not freeze
+- a missing OANDA practice broker (null adapter) records a fail-closed
+  non-matching snapshot — never a vacuous all-match placeholder
 - recon store exposes has_open_freeze / clear_freeze correctly
 """
 
@@ -39,6 +41,7 @@ from alphabrief_execution.broker.reconciliation import (
     ReconcilerConfig,
     ReconciliationRunner,
 )
+from alphabrief_execution.broker.runtime import NullBrokerAdapter
 
 
 class FakeAdapter(BrokerAdapter):
@@ -140,6 +143,32 @@ def test_unknown_scope_rejected(store: BrokerReconStore) -> None:
     runner = ReconciliationRunner(adapter=adapter, store=store)
     with pytest.raises(ValueError, match="unknown reconciliation scope"):
         _run(runner.reconcile(scope="not-a-scope"))
+
+
+def test_null_adapter_never_records_vacuous_all_match(
+    store: BrokerReconStore,
+) -> None:
+    """Without an OANDA practice broker a pass is never a placeholder
+    all-match: the snapshot is explicitly non-matching (AC-M07-W06-03)."""
+    runner = ReconciliationRunner(adapter=NullBrokerAdapter(), store=store)
+    result = _run(runner.reconcile(scope="eod"))
+    assert result.snapshot.all_match is False
+    assert result.snapshot.orders_match is False
+    assert result.snapshot.fills_match is False
+    assert result.snapshot.cash_match is False
+    assert result.snapshot.positions_match is False
+    assert result.snapshot.diff["error"] == "broker_not_configured"
+    assert result.freeze_raised is False  # eod never freezes
+
+
+def test_null_adapter_startup_scope_raises_freeze(
+    store: BrokerReconStore,
+) -> None:
+    runner = ReconciliationRunner(adapter=NullBrokerAdapter(), store=store)
+    result = _run(runner.reconcile(scope="startup"))
+    assert result.snapshot.all_match is False
+    assert result.freeze_raised is True
+    assert store.has_open_freeze() is True
 
 
 def test_startup_with_no_diff_records_clean_snapshot(store: BrokerReconStore) -> None:

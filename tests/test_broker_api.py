@@ -41,12 +41,22 @@ def test_broker_status_returns_empty_store(client: TestClient) -> None:
     assert body["open_freezes"] == []
 
 
-def test_broker_reconcile_records_snapshot(client: TestClient) -> None:
+def test_broker_reconcile_fails_closed_without_credentials(
+    client: TestClient,
+) -> None:
+    # With no OANDA practice credentials the shared durable service
+    # records an explicitly non-matching snapshot — never a vacuous
+    # all-match placeholder (AC-M07-W06-03).
     response = client.post("/api/v1/broker/reconcile?scope=eod")
     assert response.status_code == 200
     body = response.json()
     assert body["scope"] == "eod"
-    assert body["all_match"] is True
+    assert body["all_match"] is False
+    assert body["freeze_raised"] is False  # eod scope never freezes
+    status = client.get("/api/v1/broker/status")
+    latest = status.json()["latest_snapshot"]
+    assert latest is not None
+    assert latest["all_match"] is False
 
 
 def test_broker_reconcile_rejects_invalid_scope(client: TestClient) -> None:

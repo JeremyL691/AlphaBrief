@@ -29,7 +29,10 @@ from typing import Any
 
 from alphabrief_execution.broker.errors import BrokerAdapterError
 from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import ALLOWED_SCOPES
+from alphabrief_execution.broker.reconciliation import (
+    ALLOWED_SCOPES,
+    ReconciliationRunner,
+)
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -185,12 +188,13 @@ def broker_status() -> dict[str, Any]:
 
 @router.post("/reconcile")
 def broker_reconcile(scope: str = Query("cycle")) -> dict[str, Any]:
-    """Record one reconciliation snapshot from the local recon store.
+    """Run one real reconciliation pass through the shared durable service.
 
-    The route only persists the snapshot — actual broker HTTP calls
-    are made by the operations scheduler or by the API at startup when
-    an adapter is configured. This endpoint is intentionally limited
-    to record-keeping so callers can mark a snapshot as ``eod`` etc.
+    Uses the same :class:`ReconciliationRunner` as the CLI and the
+    scheduler startup (AC-M07-W06-03). With no OANDA practice
+    credentials the runner records a fail-closed non-matching snapshot —
+    never an unconditional all-match placeholder. Upstream broker
+    failures map to HTTP 503.
     """
     if scope not in ALLOWED_SCOPES:
         raise HTTPException(
@@ -199,21 +203,26 @@ def broker_reconcile(scope: str = Query("cycle")) -> dict[str, Any]:
         )
     store = _store()
     try:
-        snapshot = store.record_snapshot(
-            scope=scope,
-            orders_match=True,
-            fills_match=True,
-            cash_match=True,
-            positions_match=True,
-            diff={"source": "api_offline"},
-        )
+        runner = ReconciliationRunner(adapter=get_broker_adapter(), store=store)
+        try:
+            result = asyncio.run(runner.reconcile(scope=scope))
+        except BrokerAdapterError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "broker_adapter_unavailable",
+                    "kind": type(exc).__name__,
+                    "message": str(exc),
+                },
+            ) from exc
     finally:
         store.close()
     return {
-        "snapshot_id": snapshot.snapshot_id,
-        "captured_at": snapshot.captured_at,
-        "scope": snapshot.scope,
-        "all_match": snapshot.all_match,
+        "snapshot_id": result.snapshot.snapshot_id,
+        "captured_at": result.snapshot.captured_at,
+        "scope": result.snapshot.scope,
+        "all_match": result.snapshot.all_match,
+        "freeze_raised": result.freeze_raised,
     }
 
 

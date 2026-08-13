@@ -43,7 +43,16 @@ def _run_cli(
 
 @pytest.fixture
 def isolated_data_dir(tmp_path: Path) -> dict[str, str]:
-    return {"ALPHABRIEF_DATA_DIR": str(tmp_path)}
+    # Credentials are forced to empty strings so a developer workstation
+    # with real OANDA practice credentials in the environment can never
+    # leak them into a CLI subprocess: the runtime fails closed to the
+    # null adapter instead of hitting the practice API from a test.
+    return {
+        "ALPHABRIEF_DATA_DIR": str(tmp_path),
+        "ALPHABRIEF_OANDA_TOKEN": "",
+        "ALPHABRIEF_OANDA_ACCOUNT_ID": "",
+        "ALPHABRIEF_OANDA_BASE_URL": "",
+    }
 
 
 def test_cli_help_lists_broker_subcommand() -> None:
@@ -86,14 +95,18 @@ def test_cli_broker_status_empty_store(
     assert payload["open_freeze_count"] == 0
 
 
-def test_cli_broker_reconcile_records_snapshot(
+def test_cli_broker_reconcile_fails_closed_without_credentials(
     tmp_path: Path, isolated_data_dir: dict[str, str]
 ) -> None:
+    # Without OANDA practice credentials the shared durable service
+    # records an explicitly non-matching snapshot — never a vacuous
+    # all-match placeholder (AC-M07-W06-03).
     result = _run_cli(["broker", "reconcile", "--scope", "eod"], env=isolated_data_dir)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["scope"] == "eod"
-    assert payload["all_match"] is True
+    assert payload["all_match"] is False
+    assert payload["freeze_raised"] is False  # eod scope never freezes
 
 
 def test_cli_broker_reconcile_rejects_invalid_scope(

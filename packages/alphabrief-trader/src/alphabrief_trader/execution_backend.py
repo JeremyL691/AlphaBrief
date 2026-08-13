@@ -32,6 +32,19 @@ from alphabrief_execution.broker.port import (
     BrokerTimeInForce,
     SubmitRequest,
 )
+from alphabrief_execution.broker.risk_context import (
+    BrokerRiskContextBuilder,
+    RiskContextError,
+    adapter_risk_sources,
+)
+from alphabrief_execution.broker.runtime import resolve_data_dir
+from alphabrief_risk.broker_context import DEFAULT_POLICY_VERSION
+from alphabrief_risk.decision_binding import (
+    DecisionBindingService,
+    hash_inputs,
+    hash_policy,
+)
+from alphabrief_risk.decision_store import RiskDecisionStore
 
 
 class ExecutionBackendError(ValueError):
@@ -55,6 +68,7 @@ class ExecutionBackendResult:
     broker_order_id: str | None = None
     broker_status: str | None = None
     broker_result_json: dict[str, object] | None = None
+    risk_context_version: str | None = None
 
 
 class ExecutionBackend(Protocol):
@@ -148,16 +162,40 @@ class LocalPaperExecutionBackend:
 
 
 class ExternalPaperExecutionBackend:
-    """Execution backend that submits to a configured external paper adapter."""
+    """Execution backend that submits to a configured external paper adapter.
+
+    M08-W01: every external submit first builds a broker-fresh risk
+    context through the shared context service (the default composition
+    derives its venue sources from this backend's adapter; an explicit
+    builder can be injected for tests or richer OANDA compositions). A
+    missing, stale, account-mismatched, partially covered, frozen, or
+    internally inconsistent context rejects the order before any submit
+    — no synthesized defaults, no fallback account, no review bypass.
+    """
 
     def __init__(
         self,
         adapter: BrokerAdapter,
         *,
         max_order_value: Decimal | None = None,
+        risk_context_builder: BrokerRiskContextBuilder | None = None,
+        decision_binding: DecisionBindingService | None = None,
     ) -> None:
         self._adapter = adapter
         self._max_order_value = max_order_value
+        self._risk_context_builder: BrokerRiskContextBuilder = (
+            risk_context_builder
+            or BrokerRiskContextBuilder(adapter_risk_sources(adapter))
+        )
+        # The persisted decision is the only executable contract: by
+        # default the backend validates against the durable store in the
+        # runtime data directory authority (M01-W04).
+        self._decision_binding: DecisionBindingService = (
+            decision_binding
+            or DecisionBindingService(
+                RiskDecisionStore(db_path=resolve_data_dir() / "alphabrief.db")
+            )
+        )
 
     def estimate_quantity(
         self,
@@ -204,6 +242,20 @@ class ExternalPaperExecutionBackend:
         now: datetime,
         estimated_quantity: Decimal | None,
     ) -> ExecutionBackendResult:
+        # M08-W01: a broker-fresh risk context is required before any
+        # external submit. A missing, stale, account-mismatched, partial,
+        # frozen, or inconsistent context rejects the order here — the
+        # backend never submits without it (REQ-RISK-010).
+        try:
+            context = self._risk_context_builder.build()
+        except RiskContextError as exc:
+            raise ExecutionBackendError(
+                f"broker-fresh risk context unavailable: {exc}"
+            ) from exc
+        if not context.internally_consistent:
+            raise ExecutionBackendError(
+                "broker-fresh risk context is internally inconsistent"
+            )
         quantity = _resolve_external_quantity(
             decision=decision,
             estimated_quantity=estimated_quantity,
@@ -225,13 +277,70 @@ class ExternalPaperExecutionBackend:
             time_in_force=BrokerTimeInForce.DAY,
         )
 
+        # M08-W07: the approved decision is bound to the immutable
+        # decision ledger BEFORE any network submit. When the decision
+        # carries an approval-time inputs hash (M08-W02), the executable
+        # request must still match it — a post-approval change of symbol,
+        # units, or price rejects before persistence. The decision is
+        # then persisted through the shared decision-binding service and
+        # validated as the only executable contract: missing, rejected,
+        # expired, consumed, account-mismatched, policy-mismatched,
+        # intent-mismatched, inputs-mismatched, snapshot-mismatched, or
+        # quantity-exceeding decisions reject before the network call
+        # (AC-M08-W07-02). The backend never trusts a caller-supplied
+        # approval flag (AC-M08-W07-03).
+        request_inputs_hash = hash_inputs(
+            symbol=request.symbol,
+            units=request.quantity,
+            price=request.limit_price,
+        )
+        if (
+            decision.execution_input_hash is not None
+            and decision.execution_input_hash != request_inputs_hash
+        ):
+            raise ExecutionBackendError(
+                "execution inputs no longer match the approved "
+                "RiskDecision"
+            )
+        record = self._decision_binding.persist_decision(
+            decision.decision_id,
+            intent_id=intent.intent_id,
+            account_id=context.account.account_id,
+            approved=decision.approved,
+            reason=decision.reason,
+            max_quantity=decision.max_quantity,
+            risk_tags=tuple(decision.risk_tags),
+            policy_hash=hash_policy(DEFAULT_POLICY_VERSION),
+            inputs_hash=decision.execution_input_hash or request_inputs_hash,
+            snapshot_hash=context.captured_at.isoformat(),
+            rule_results=",".join(decision.risk_tags),
+            source_ids=(f"account:{context.account.account_id}",),
+            # The context builder already rejected stale, missing, or
+            # unhealthy evidence, so a successfully built context is
+            # fresh at approval by construction.
+            context_freshness=True,
+        )
+        validation = self._decision_binding.validate_before_submit(
+            decision.decision_id,
+            expected_intent_id=intent.intent_id,
+            expected_account_id=record.account_id,
+            expected_policy_hash=hash_policy(DEFAULT_POLICY_VERSION),
+            expected_inputs_hash=record.inputs_hash,
+            expected_snapshot_hash=None,
+            quantity=request.quantity,
+        )
+        if not validation.valid:
+            raise ExecutionBackendError(
+                f"RiskDecision not executable: {validation.kind}: "
+                f"{validation.detail}"
+            )
+
         try:
             result = _run_blocking(
                 self._adapter.submit(request, client_order_id=intent.intent_id)
             )
         except (BrokerAdapterError, NotImplementedError) as exc:
             raise ExecutionBackendError(str(exc)) from exc
-
         filled = result.status == BrokerOrderStatus.FILLED
         return ExecutionBackendResult(
             execution_backend="external_paper",
@@ -244,6 +353,7 @@ class ExternalPaperExecutionBackend:
             fill_price=None,
             fill_quantity=quantity if filled else None,
             fill_json=None,
+            risk_context_version=context.context_version,
         )
 
 

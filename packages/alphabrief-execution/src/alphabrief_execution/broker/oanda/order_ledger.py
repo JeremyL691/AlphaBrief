@@ -363,6 +363,44 @@ class OrderLedger:
         ).fetchone()
         return int(row[0]) if row else 0
 
+    def in_flight_reservations(self) -> list[dict[str, Any]]:
+        """Reservations whose submit outcome is unknown (SUBMITTED).
+
+        Startup recovery resolves every one of these by querying the
+        broker for the persisted client identity — never by re-submit
+        (REQ-EXEC-011).
+        """
+        rows = self._conn.execute(
+            """SELECT submit_id, cycle_id, intent_id, decision_id,
+                      payload_hash, owner
+               FROM order_ledger_reservations WHERE status = 'SUBMITTED'
+               ORDER BY submit_id"""
+        ).fetchall()
+        return [
+            {
+                "submit_id": str(row[0]),
+                "cycle_id": str(row[1]),
+                "intent_id": str(row[2]),
+                "decision_id": str(row[3]),
+                "payload_hash": str(row[4]),
+                "owner": str(row[5]),
+            }
+            for row in rows
+        ]
+
+    def completed_mappings(self) -> dict[str, str]:
+        """The durable submit_id -> broker_order_id mapping.
+
+        Restored into the process adapter at startup so a replay of any
+        completed cycle can never double-submit (REQ-EXEC-011).
+        """
+        rows = self._conn.execute(
+            """SELECT submit_id, broker_order_id FROM order_ledger_reservations
+               WHERE status = 'COMPLETED' AND broker_order_id IS NOT NULL
+               ORDER BY submit_id"""
+        ).fetchall()
+        return {str(row[0]): str(row[1]) for row in rows}
+
     def close(self) -> None:
         try:
             self._conn.close()

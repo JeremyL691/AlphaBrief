@@ -15,6 +15,7 @@ broker blocks auto-execution and returns 422.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -29,7 +30,30 @@ from alphabrief_execution import (
 from alphabrief_execution.broker import (
     build_account_exposure_context_from_portfolio,
 )
+from alphabrief_execution.broker.risk_context import (
+    AccountSourceDatum,
+    FreshnessPolicy,
+    build_broker_risk_context,
+    project_risk_context_to_exposure,
+)
 from alphabrief_risk import RiskContextDecision
+from alphabrief_risk.broker_context import (
+    DEFAULT_POLICY_VERSION,
+    BrokerRiskContext,
+    ConversionDatum,
+    HealthState,
+    PendingOrderDatum,
+    PositionDatum,
+    PriceDatum,
+    ReconciliationState,
+    TradeDatum,
+)
+from alphabrief_risk.decision_binding import (
+    DecisionBindingService,
+    hash_inputs,
+    hash_policy,
+)
+from alphabrief_risk.decision_store import RiskDecisionStore
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -83,6 +107,25 @@ def _get_broker() -> PaperBroker:
     return _default_broker
 
 
+_decision_binding_service: DecisionBindingService | None = None
+
+
+def _decision_binding() -> DecisionBindingService:
+    """The process-wide decision-binding service (shared authority)."""
+    global _decision_binding_service
+    if _decision_binding_service is None:
+        _decision_binding_service = DecisionBindingService(
+            RiskDecisionStore()
+        )
+    return _decision_binding_service
+
+
+def _reset_decision_binding() -> None:
+    """Clear the decision-binding singleton (test isolation)."""
+    global _decision_binding_service
+    _decision_binding_service = None
+
+
 def _reset_broker() -> None:
     """Reset broker state for test isolation."""
     global _default_broker
@@ -102,6 +145,135 @@ class _MissingMarkPriceError(HTTPException):
     silently turns the $100/$300 caps into no-ops, so a missing price is
     a hard rejection rather than a fallback to a fiction.
     """
+
+
+#: Venue policy for the legacy in-memory paper broker: the only price is
+#: the latest stored daily close, so the venue defines no age ceiling
+#: for it (the route fails closed when no bar exists at all). The other
+#: authority sources have no independent timestamps in this venue.
+_PAPER_FRESHNESS = FreshnessPolicy(
+    {
+        "prices": None,
+        "catalog": None,
+        "reconciliation": None,
+        "health": None,
+    }
+)
+
+
+class _PaperRiskSources:
+    """Venue-truthful context sources for the legacy in-memory broker.
+
+    The venue IS the local process: the portfolio is the account truth,
+    the stored close is the mark, and there is no pending-order, trade,
+    conversion, catalog, or reconciliation authority. No broker fact is
+    synthesized — every value comes from the venue's own state.
+    """
+
+    def __init__(
+        self,
+        broker: PaperBroker,
+        *,
+        symbol: str,
+        reference_price: Decimal,
+        now: datetime,
+    ) -> None:
+        self._broker = broker
+        self._symbol = symbol
+        self._reference_price = reference_price
+        self._now = now
+
+    def fetch_account(self) -> AccountSourceDatum:
+        portfolio = self._broker.portfolio
+        nav = portfolio.cash + sum(
+            position.quantity * position.average_price
+            for position in portfolio.positions.values()
+        )
+        return AccountSourceDatum(
+            account_id="paper_local",
+            state="ACTIVE",
+            tradeable=True,
+            home_currency="USD",
+            balance=portfolio.cash,
+            nav=nav,
+            margin_used=Decimal("0"),
+            margin_available=nav,
+            captured_at=self._now,
+        )
+
+    def fetch_positions(self) -> list[PositionDatum]:
+        return [
+            PositionDatum(
+                symbol=symbol,
+                long_units=position.quantity,
+                short_units=Decimal("0"),
+                average_price=position.average_price,
+            )
+            for symbol, position in sorted(
+                self._broker.portfolio.positions.items()
+            )
+        ]
+
+    def fetch_pending_orders(self) -> list[PendingOrderDatum]:
+        # The venue's order authority is the portfolio state itself.
+        return []
+
+    def fetch_trades(self) -> list[TradeDatum]:
+        # The venue's trade authority is the portfolio state itself.
+        return []
+
+    def fetch_prices(self) -> list[PriceDatum]:
+        return [
+            PriceDatum(
+                symbol=self._symbol,
+                bid=self._reference_price,
+                ask=self._reference_price,
+                captured_at=self._now,
+            )
+        ]
+
+    def fetch_conversions(self) -> list[ConversionDatum]:
+        return []  # the venue has no conversion authority
+
+    def fetch_catalog_version(self) -> str | None:
+        return None  # the venue has no catalog authority
+
+    def fetch_reconciliation_state(self) -> ReconciliationState:
+        return "unknown"  # the venue performs no external reconciliation
+
+    def fetch_health(self) -> HealthState:
+        # The in-memory venue is available whenever the process is.
+        return "healthy"
+
+
+def build_paper_risk_context(
+    broker: PaperBroker,
+    *,
+    symbol: str,
+    reference_price: Decimal,
+    now: datetime,
+    clock: Callable[[], datetime] | None = None,
+) -> BrokerRiskContext:
+    """Build the manual paper venue's broker-fresh risk context.
+
+    Goes through the ONE shared context service
+    (:func:`build_broker_risk_context`) with the venue's truthful
+    sources, stamping the shared context and policy versions
+    (AC-M08-W01-02). Fails closed on account mismatch or internally
+    inconsistent state; never synthesizes broker facts.
+    """
+    return build_broker_risk_context(
+        _PaperRiskSources(
+            broker,
+            symbol=symbol,
+            reference_price=reference_price,
+            now=now,
+        ),
+        expected_account_id="paper_local",
+        freshness=_PAPER_FRESHNESS,
+        require_price_coverage=False,
+        clock=clock,
+    )
 
 
 def _resolve_reference_price(symbol: str) -> Decimal:
@@ -311,16 +483,22 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
 
     reference_price = _resolve_reference_price(intent.symbol)
 
-    # Phase 19: project the in-memory PaperBroker portfolio into an
-    # AccountExposureContext so RiskGate can enforce the runtime
-    # max_total_exposure cap ($300 from PaperExecutionPolicy). The mark
-    # price resolved above (latest stored daily close) is fed in so the
-    # exposure projection uses mark — not cost-basis average_price — for
-    # the order symbol, and so the $100/$300 caps bind against reality.
-    account_context = build_account_exposure_context_from_portfolio(
-        broker.portfolio,
-        account_id="paper_local",
-        mark_prices={intent.symbol: reference_price},
+    # M08-W01: the manual paper path builds its pre-risk context through
+    # the SAME broker-fresh context service as the AI external execution
+    # path (AC-M08-W01-02) — one versioned context type and one policy
+    # version, never caller-selected partial dictionaries. The venue
+    # sources are the legacy in-memory PaperBroker portfolio plus the
+    # stored mark; the venue defines no age ceiling for that mark (the
+    # route already fails closed when no bar exists at all). The context
+    # is projected into the RiskGate exposure contract for the gate.
+    risk_context = build_paper_risk_context(
+        broker,
+        symbol=intent.symbol,
+        reference_price=reference_price,
+        now=now,
+    )
+    account_context = project_risk_context_to_exposure(
+        risk_context, mark_prices={intent.symbol: reference_price}
     )
 
     # R21.3: enrich the context with the drawdown high-water mark and
@@ -393,6 +571,47 @@ def submit_order(body: OrderRequest) -> dict[str, object]:
                 "RiskGate requires human review; auto-execution blocked. "
                 "Approve the decision manually or remove the risk_context."
             ),
+        )
+
+    # M08-W07: the manual paper path persists and validates the approved
+    # decision through the SAME decision-binding service as the AI
+    # execution backend before execution (AC-M08-W07-03). A missing,
+    # rejected, expired, consumed, or mismatched decision is refused
+    # before the broker sees it (AC-M08-W07-02).
+    order_quantity = intent.quantity or Decimal("0")
+    order_inputs_hash = hash_inputs(
+        symbol=intent.symbol,
+        units=order_quantity,
+        price=intent.limit_price,
+    )
+    _decision_binding().persist_decision(
+        decision.decision_id,
+        intent_id=intent.intent_id,
+        account_id="paper_local",
+        approved=decision.approved,
+        reason=decision.reason,
+        max_quantity=decision.max_quantity,
+        risk_tags=tuple(decision.risk_tags),
+        policy_hash=hash_policy(DEFAULT_POLICY_VERSION),
+        inputs_hash=order_inputs_hash,
+        snapshot_hash=f"mark:{reference_price}",
+        rule_results=",".join(decision.risk_tags),
+        source_ids=("account:paper_local",),
+        context_freshness=True,
+    )
+    validation = _decision_binding().validate_before_submit(
+        decision.decision_id,
+        expected_intent_id=intent.intent_id,
+        expected_account_id="paper_local",
+        expected_policy_hash=hash_policy(DEFAULT_POLICY_VERSION),
+        expected_inputs_hash=order_inputs_hash,
+        expected_snapshot_hash=None,
+        quantity=order_quantity,
+    )
+    if not validation.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"RiskDecision not executable: {validation.kind}",
         )
 
     try:

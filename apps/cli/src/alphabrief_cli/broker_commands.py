@@ -18,12 +18,14 @@ Commands
 - ``broker unfreeze <event_id> [--reason <text>]``
   Clear an open freeze by id.
 
-The CLI proxies through the API when the server is running and falls
-back to the local :class:`BrokerReconStore` otherwise.
+The CLI proxies through the API when the server is running and runs
+the identical durable :class:`ReconciliationRunner` against the OANDA
+practice runtime otherwise.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -32,7 +34,11 @@ from typing import Any
 
 import typer
 from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import ALLOWED_SCOPES
+from alphabrief_execution.broker.reconciliation import (
+    ALLOWED_SCOPES,
+    ReconciliationRunner,
+)
+from alphabrief_execution.broker.runtime import get_broker_runtime
 
 from alphabrief_cli.api_client import is_api_running, print_api_unavailable_hint
 
@@ -134,12 +140,14 @@ def reconcile_cmd(
         "--pretty/--compact",
     ),
 ) -> None:
-    """Record a reconciliation snapshot from the local recon store.
+    """Run one reconciliation pass through the shared durable service.
 
-    The actual broker call is only made when the API server is running;
-    without a server, this command records a synthetic snapshot reflecting
-    whatever is in the local id map. This keeps the CLI runnable in
-    development environments that have not enabled the live HTTP path.
+    Uses the same :class:`ReconciliationRunner` as the API and the
+    scheduler (AC-M07-W06-03): with the API running the pass is proxied
+    to it; otherwise the local process runs the identical durable
+    service against the OANDA practice runtime. Missing OANDA practice
+    credentials record a fail-closed non-matching snapshot — never a
+    placeholder all-match.
     """
     if scope not in ALLOWED_SCOPES:
         print(
@@ -163,9 +171,9 @@ def reconcile_cmd(
                 file=sys.stderr,
             )
             print(
-                "note: broker reconcile needs a live broker connection. "
-                "Without OANDA / Alpaca credentials the broker call cannot run; "
-                "start the API server with credentials and try again.",
+                "note: broker reconcile needs OANDA practice credentials "
+                "on the API server; start the API server with credentials "
+                "and try again.",
                 file=sys.stderr,
             )
             print_api_unavailable_hint(command="broker reconcile")
@@ -175,21 +183,18 @@ def reconcile_cmd(
 
     store = _open_store()
     try:
-        snapshot = store.record_snapshot(
-            scope=scope,
-            orders_match=True,
-            fills_match=True,
-            cash_match=True,
-            positions_match=True,
-            diff={"source": "cli_offline"},
+        runner = ReconciliationRunner(
+            adapter=get_broker_runtime().adapter, store=store
         )
+        result = asyncio.run(runner.reconcile(scope=scope))
     finally:
         store.close()
     payload = {
-        "snapshot_id": snapshot.snapshot_id,
-        "captured_at": snapshot.captured_at,
-        "scope": snapshot.scope,
-        "all_match": snapshot.all_match,
+        "snapshot_id": result.snapshot.snapshot_id,
+        "captured_at": result.snapshot.captured_at,
+        "scope": result.snapshot.scope,
+        "all_match": result.snapshot.all_match,
+        "freeze_raised": result.freeze_raised,
     }
     _dump(payload, pretty=pretty)
 
