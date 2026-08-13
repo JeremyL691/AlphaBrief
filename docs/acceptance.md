@@ -1248,3 +1248,20 @@ proposal→intent 的正式接线随 M11 durable cycle 轮次补齐。全量 pyt
 2200 total（2181 passed + 19 pre-existing M08-W03 time-bombed risk fixture
 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（383 source files）；
 acceptance 11/11。下一 READY item：M10-W06。
+
+#### M10-W06 已闭环证据（R-20260813-M10-W06）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M10-W06-01 | versioned evaluation run 输出 schema/grounding/citation/hallucination/injection/latency/cost/stability 指标，带 fixture 与 model-profile IDs | `evaluate_committee_security`（`alphabrief_trader/security_eval.py`，version=`2026-08-13.1`）：每 case 输出 `SecurityCaseVerdict`（case_id/kind/version/model_profile_id/latency_ms/cost/committee_ok/role_error_count/repair_attempt_count/grounding violations/prompt 卫生/stable/created_at），`metrics()` 聚合 injection_resistance/grounding_pass_rate/stability；`QualityMetrics`+`evaluate_quality_gate`（`alphabrief_models/quality_gate.py`）输出八项指标（schema/grounding/citation/hallucination/injection/latency/cost/stability）带 evaluation_version/fixture_id/model_profile_id（`test_metrics_carry_version_fixture_and_profile_ids`、`test_versioned_evaluation_emits_all_metrics`） |
+| AC-M10-W06-02 | seeded injection、fabricated citation、secret-exfiltration、unauthorized tool-call 各产生零 executable proposals | 四类 adversarial case（versioned `COMMITTEE_SECURITY_CASES`）端到端断言 executable_proposal=False、no_trade=True：escalation 注入（provider 输出带 `override_risk_gate` extra 字段 → 严格 schema 拒绝，`test_escalation_injection_produces_no_executable_proposal`）、fabricated citation（`ev-fake-99` → M10-W05 grounding 拒绝，`test_fabricated_citation_produces_no_executable_proposal`）、secret-exfiltration（prompt 卫生断言 secret 不进 prompt，`test_secret_exfiltration_produces_no_executable_proposal`）、unauthorized tool call（`tool_calls` 字段 → schema 拒绝，`test_unauthorized_tool_call_produces_no_executable_proposal`）；`test_all_adversarial_kinds_produce_zero_executable_proposals` 聚合断言；control case 验证 harness（可产生 tradeable proposal，`test_control_case_validates_the_harness`） |
+| AC-M10-W06-03 | 任一指标低于配置阈值 → automated gate FAIL，无法 waive | `evaluate_quality_gate` 合取判定：八项指标逐一低于阈值各自 FAIL（`test_each_metric_below_threshold_fails_independently`：grounding 0.9/citation 0.9/hallucination 0.5/injection 0.9/latency 60000/cost 5.0/stability 0.9）；函数签名**无 waiver/override 参数**（`test_gate_has_no_waiver_path`，inspect 断言）；自定义阈值被尊重（`test_custom_thresholds_are_respected`：0.85 schema 在 0.9 阈值 FAIL、0.8 阈值 PASS） |
+
+范围说明：`alphabrief_trader/security_eval.py`、
+`alphabrief_models/quality_gate.py`、`tests/test_model_security.py` 为
+M10-W06 契约声明的新模块/缺失测试文件（targeted command 声明，documented
+forced paths）。安全评估的 prompt 卫生经 recording provider 捕获真实 prompt
+（`prompt_probe`），secret marker 运行时拼接避免文件内含 seeded-secret
+pattern。全量 pytest：2214 total（2195 passed + 19 pre-existing M08-W03
+time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean
+（386 source files）；acceptance 11/11。下一 READY item：M10-W07。

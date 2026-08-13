@@ -283,6 +283,19 @@ cycle key（同日同 universe 幂等，snapshot 变化仍产生新 run）。cyc
 fingerprint 存入 `cycle_json`（`get_cycle_by_key` 经 DuckDB JSON 提取，无需
 schema 迁移）。
 
+安全与质量门禁（M10-W06）：`alphabrief_trader.security_eval` 用 versioned
+fixtures（control + injection + fabricated_citation + secret_exfiltration +
+unauthorized_tool_call）评估 committee 流水线——adversarial 种类必须产生
+**零 executable proposals**（proposal 必须 grounded 且 no_trade，或不存在）；
+每次 case 记录 latency、committee outcome、role/repair 计数、grounding
+violations、prompt 卫生（untrusted instruction 未中和 / secret 泄漏）与
+repeat-run stability（同一 pipeline 两次运行 normalized proposal 完全一致，
+proposal_id 确定性生成）。`alphabrief_models.quality_gate` 对 schema/
+grounding/citation/hallucination/injection/latency/cost/stability 指标按
+配置阈值做合取判定：任一指标低于阈值 → gate FAIL；**无 waiver 参数**——
+失败无法被转换为通过。fixture 与 model-profile IDs 绑定在每次 evaluation
+输出上。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation
