@@ -260,7 +260,11 @@ class TestChallengeAndDissent:
         assert cited_by_turn[6] == ["ev-macro-1"]
         assert "ev-price-1" in cited_by_turn[10]
 
-    def test_fabricated_evidence_ids_are_not_cited(self) -> None:
+    def test_fabricated_evidence_ids_are_rejected(self) -> None:
+        # A nonexistent citation (ev- prefix not in the available evidence
+        # IDs) is a grounding violation: without repair configured the
+        # role's vote is rejected and never enters the transcript or the
+        # vote list (M10-W05 enforcement).
         provider = _PhasedProvider(
             opening={
                 **_OPENING_PAYLOAD,
@@ -270,10 +274,17 @@ class TestChallengeAndDissent:
             summary=_SUMMARY_PAYLOAD,
         )
         result = _committee(provider=provider).run(_input())
+        assert any(
+            "grounding_failed" in error for error in result.role_errors
+        )
+        assert not any(
+            vote.role == "technical" for vote in result.votes
+        )
         assert result.transcript is not None
-        opening_turn = result.transcript.turns[0]
-        assert opening_turn.cited_evidence_ids == []
-        assert result.votes[0].cited_evidence_ids == []
+        assert not any(
+            turn.role == "technical" and turn.phase == "opening"
+            for turn in result.transcript.turns
+        )
 
     def test_votes_carry_model_call_ids_and_citations(self) -> None:
         result = _committee().run(_input())

@@ -40,6 +40,7 @@ import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
+from hashlib import sha256
 from uuid import uuid4
 
 from alphabrief_core import OrderIntent, OrderSide, RiskDecision
@@ -67,6 +68,42 @@ from alphabrief_trader.schemas import (
 )
 
 SnapshotLoader = Callable[[str], MarketSnapshot | None]
+
+
+def _snapshot_fingerprint(snapshots: dict[str, MarketSnapshot]) -> str:
+    """Deterministic fingerprint of the exact snapshots used by a run.
+
+    The fingerprint covers symbol, data version, capture time, reference
+    price, recent return/volume, and the bounded news/macro context, so
+    identical (cycle key, snapshot) pairs hash identically while any
+    content change produces a different fingerprint.
+    """
+    payload: list[str] = []
+    for symbol in sorted(snapshots):
+        snapshot = snapshots[symbol]
+        payload.append(
+            "|".join(
+                [
+                    symbol,
+                    snapshot.data_version,
+                    snapshot.captured_at.isoformat(),
+                    format(snapshot.reference_price, "f"),
+                    (
+                        format(snapshot.recent_return_pct, "f")
+                        if snapshot.recent_return_pct is not None
+                        else ""
+                    ),
+                    (
+                        format(snapshot.recent_volume, "f")
+                        if snapshot.recent_volume is not None
+                        else ""
+                    ),
+                    snapshot.news_context or "",
+                    snapshot.macro_context or "",
+                ]
+            )
+        )
+    return sha256("\n".join(payload).encode("utf-8")).hexdigest()
 
 
 def is_ai_trading_enabled() -> bool:
@@ -139,12 +176,29 @@ class DailyTradingCycle:
         time_horizon: str = "5 trading days",
         reference_price_resolver: Callable[[str, MarketSnapshot], Decimal]
         | None = None,
+        cycle_key: str | None = None,
     ) -> DailyCycleRecord:
-        """Run one full daily cycle for the given symbols."""
+        """Run one full daily cycle for the given symbols.
+
+        When ``cycle_key`` is provided the cycle is idempotent: a
+        previously persisted terminal record with the same cycle key AND
+        the same deterministic snapshot fingerprint is returned as-is —
+        no committee run, no new proposal or OrderIntent can be created
+        for the same (cycle key, snapshot) pair (REQ-AI-009).
+        """
         trading_day = self._trading_day()
         cycle_id = self._cycle_id_factory()
         now = self._clock()
         live_unlocked = is_live_trading_unlocked()
+
+        snapshots = self._load_snapshots(symbols)
+        fingerprint = _snapshot_fingerprint(snapshots)
+        if cycle_key is not None:
+            existing = self._store.get_cycle_by_key(cycle_key)
+            if existing is not None:
+                rehydrated = DailyCycleRecord.model_validate(existing)
+                if rehydrated.snapshot_fingerprint == fingerprint:
+                    return rehydrated
 
         all_votes: list[CommitteeVote] = []
         all_plans: list[TradePlan] = []
@@ -164,6 +218,8 @@ class DailyTradingCycle:
                 enabled=False,
                 live_trading_enabled=live_unlocked,
                 summary="AI trading disabled (ALPHABRIEF_AI_TRADING_ENABLED=false)",
+                cycle_key=cycle_key,
+                snapshot_fingerprint=fingerprint,
                 created_at=now,
             )
             self._store.save_cycle(record)
@@ -184,13 +240,15 @@ class DailyTradingCycle:
                     "ALPHABRIEF_LIVE_TRADING_ENABLED is set; "
                     "AI trading is paper-only and refused to run"
                 ),
+                cycle_key=cycle_key,
+                snapshot_fingerprint=fingerprint,
                 created_at=now,
             )
             self._store.save_cycle(record)
             return record
 
         for symbol in symbols:
-            snapshot = self._snapshot_loader(symbol)
+            snapshot = snapshots.get(symbol)
             if snapshot is None:
                 continue
 
@@ -248,6 +306,8 @@ class DailyTradingCycle:
             enabled=True,
             live_trading_enabled=False,
             summary=summary,
+            cycle_key=cycle_key,
+            snapshot_fingerprint=fingerprint,
             created_at=now,
         )
         self._store.save_cycle(record)
@@ -425,6 +485,15 @@ class DailyTradingCycle:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _load_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        """Load one snapshot per symbol (skipping symbols without one)."""
+        loaded: dict[str, MarketSnapshot] = {}
+        for symbol in symbols:
+            snapshot = self._snapshot_loader(symbol)
+            if snapshot is not None:
+                loaded[symbol] = snapshot
+        return loaded
 
     def _trading_day(self) -> str:
         return self._clock().date().isoformat()

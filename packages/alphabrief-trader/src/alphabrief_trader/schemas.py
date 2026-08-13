@@ -464,6 +464,8 @@ class DailyCycleRecord(_CommitteeSchema):
     enabled: bool
     live_trading_enabled: bool = False
     summary: str = Field(min_length=1)
+    cycle_key: str | None = None
+    snapshot_fingerprint: str | None = None
     created_at: datetime
 
     @field_validator("created_at")

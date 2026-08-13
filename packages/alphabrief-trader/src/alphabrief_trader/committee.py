@@ -19,14 +19,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from alphabrief_models import (
     ModelGateway,
     ModelRequest,
     parse_structured_output,
+    repair_structured_output,
 )
+from alphabrief_models.repair import RepairVerdict
 from alphabrief_models.structured_output import StructuredOutputResult
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,6 +114,7 @@ class CommitteeResult(BaseModel):
     error_role: CommitteeRole | None = None
     role_errors: list[str] = Field(default_factory=list)
     transcript: CommitteeTranscript | None = None
+    repair_attempts: list[RepairVerdict] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +141,7 @@ class TradingCommittee:
         clock: Any = None,
         max_turns: int = 10,
         challenge_rounds: int = 1,
+        repair_attempts: int = 0,
     ) -> None:
         if gateway is None:
             raise TypeError("gateway is required")
@@ -145,6 +149,8 @@ class TradingCommittee:
             raise ValueError("max_turns must be at least 5")
         if challenge_rounds < 0:
             raise ValueError("challenge_rounds must be non-negative")
+        if repair_attempts < 0:
+            raise ValueError("repair_attempts must be non-negative")
         self._gateway = gateway
         self._discipline = DisciplineGate(
             config=discipline or DisciplineConfig()
@@ -153,6 +159,7 @@ class TradingCommittee:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._max_turns = max_turns
         self._challenge_rounds = challenge_rounds
+        self._repair_attempts = repair_attempts
 
     @property
     def roles(self) -> list[CommitteeRole]:
@@ -173,6 +180,7 @@ class TradingCommittee:
         roles = payload.roles or self._roles
         votes: list[CommitteeVote] = []
         turns: list[CommitteeTurn] = []
+        repair_attempts: list[RepairVerdict] = []
         request_id = f"ait_{uuid4().hex[:12]}"
         role_errors: list[str] = []
         completed = False
@@ -202,12 +210,46 @@ class TradingCommittee:
                     result.response, target=_PartialCommitteeVote
                 )
             )
+            failure_reason: str | None = None
             if not opening_parsed.ok or opening_parsed.parsed is None:
                 code = opening_parsed.error_code or "structured_output_parse_failed"
-                role_errors.append(f"{role}: {code}")
-                continue
+                failure_reason = f"schema_validation_failed:{code}"
+            else:
+                violations = _vote_grounding_violations(
+                    opening_parsed.parsed, payload
+                )
+                if violations:
+                    failure_reason = "grounding_failed:" + ",".join(violations)
+
+            if failure_reason is not None:
+                if self._repair_attempts <= 0:
+                    role_errors.append(f"{role}: {failure_reason}")
+                    continue
+                def _grounding(parsed: _PartialCommitteeVote) -> list[str]:
+                    return _vote_grounding_violations(parsed, payload)
+
+                repaired = repair_structured_output(
+                    gateway=self._gateway,
+                    request=request,
+                    target=_PartialCommitteeVote,
+                    raw_output=result.response.output_text,
+                    failure_reason=failure_reason,
+                    max_attempts=self._repair_attempts,
+                    grounding_check=_grounding,
+                    clock=self._clock,
+                )
+                repair_attempts.extend(repaired.attempts)
+                if not repaired.ok or repaired.parsed is None:
+                    role_errors.append(f"{role}: repair_exhausted")
+                    continue
+                opening_parsed = StructuredOutputResult(
+                    ok=True,
+                    parsed=cast(_PartialCommitteeVote, repaired.parsed),
+                    error_code=None,
+                )
 
             p = opening_parsed.parsed
+            assert p is not None
             cited = _extract_cited_evidence_ids(p.evidence, payload.evidence_ids)
             vote = CommitteeVote(
                 role=role,
@@ -251,6 +293,7 @@ class TradingCommittee:
                 error_role=None,
                 role_errors=role_errors,
                 transcript=transcript,
+                repair_attempts=repair_attempts,
             )
 
         # Bounded challenge round: every analyst may contest earlier
@@ -370,7 +413,9 @@ class TradingCommittee:
                 votes=votes,
                 error_message="missing_manager_vote",
                 error_role="manager",
+                role_errors=role_errors,
                 transcript=transcript,
+                repair_attempts=repair_attempts,
             )
 
         analyst_votes = [v for v in votes if v.role != "manager"]
@@ -384,6 +429,7 @@ class TradingCommittee:
             plan=plan,
             votes=votes,
             transcript=transcript,
+            repair_attempts=repair_attempts,
         )
 
 
@@ -398,6 +444,25 @@ def _select_manager(votes: list[CommitteeVote]) -> CommitteeVote | None:
         if v.role == "manager":
             return v
     return None
+
+
+def _vote_grounding_violations(
+    parsed: _PartialCommitteeVote,
+    payload: CommitteeInput,
+) -> list[str]:
+    """Return grounding violations for one parsed vote, deterministically.
+
+    An evidence entry that looks like a citation (``ev-...`` prefix) but
+    does not resolve to an available evidence ID is a nonexistent
+    citation and triggers bounded repair.
+    """
+    available = set(payload.evidence_ids)
+    violations: list[str] = []
+    for entry in parsed.evidence:
+        token = entry.split(":")[0].strip().split(" ")[0].strip()
+        if token.startswith("ev-") and token not in available:
+            violations.append(f"nonexistent_citation:{token}")
+    return violations
 
 
 def _extract_cited_evidence_ids(

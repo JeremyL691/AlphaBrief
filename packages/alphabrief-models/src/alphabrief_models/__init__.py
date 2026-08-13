@@ -77,6 +77,12 @@ from alphabrief_models.prompts import (
     render_brief_prompt_v2,
 )
 from alphabrief_models.registry import ModelProfile, ModelRegistry, ProviderConfig
+from alphabrief_models.repair import (
+    RepairVerdict,
+    StructuredRepairResult,
+    default_repair_prompt_builder,
+    repair_structured_output,
+)
 from alphabrief_models.router import (
     MIN_JSON_VALID_RATE,
     MIN_SCHEMA_PASS_RATE,
@@ -148,7 +154,9 @@ __all__ = [
     "PromptTemplateError",
     "PromptTemplateRegistry",
     "RenderedPrompt",
+    "RepairVerdict",
     "StructuredOutputErrorCode",
+    "StructuredRepairResult",
     "StructuredOutputResult",
     "SymbolBrief",
     "SymbolDirection",
@@ -157,6 +165,7 @@ __all__ = [
     "build_default_prompt_registry",
     "build_kronos_evidence",
     "build_kronos_model_request",
+    "default_repair_prompt_builder",
     "classify_provider_error",
     "eval_result_to_record",
     "forecast_with_kronos_gateway",
@@ -164,4 +173,5 @@ __all__ = [
     "get_dataset_by_id",
     "parse_structured_output",
     "render_brief_prompt_v2",
+    "repair_structured_output",
 ]
