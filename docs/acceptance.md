@@ -607,6 +607,19 @@ DEFAULT_MARGIN_RATE=0.05；unrealized 以 facts 中最新观察到价格（fill/
 close）为 mark。full pytest 1839 passed（+8 projection 测试）；ruff/mypy
 全仓 clean；acceptance 11/11。
 
+#### M07-W04 已闭环证据（R-20260813-M07-W04）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M07-W04-01 | 匹配 fixtures 与合法的 pre-existing 远端 orders/trades/positions/financing/broker-originated state 无 false missing-local 告警 reconcile | `Reconciler`（`test_broker_reconciliation_matrix.py`）：完全匹配 fixture（orders o-1/o-2 FILLED、trades t-1/t-2 OPEN、position long 1000/short 200、balance/NAV/margin/financing/cursor 精确）→ report.clean=True；无 client identity 的远端 order/trade/position → 一律 INFO（broker-originated，report 仍 clean）；OrderLedger 可解释的 clientExtensions.id → 零告警 |
+| AC-M07-W04-02 | unknown/missing/conflicting/money/quantity/state/cursor/account/order/fill/trade/position/financing 差异产生稳定 typed diffs，带 source ID 与 severity | 全矩阵逐类断言：未解释 client identity 的远端 order → order_diff CRITICAL（source_id=o-rogue-1）；本地 order/trade 在 broker 缺失 → order_diff/trade_diff CRITICAL；整个 position 消失 → position_diff CRITICAL；state 冲突（FILLED vs CANCELLED）→ state_diff CRITICAL；units 冲突 → quantity_diff CRITICAL（source_id 精确）；balance 短缺 → money_diff CRITICAL、financing 差异 → money_diff、fills 缺失 → fill_diff CRITICAL；cursor 落后本地 → cursor_diff CRITICAL / 领先 → INFO；account ID 不符 → account_diff CRITICAL |
+| AC-M07-W04-03 | Decimal/timestamp tolerances 显式、versioned、directionally safe，不能隐藏 material exposure/cash/margin/position 差异 | `ReconcileTolerances(tolerance_version="2026-08-13.1", money=0.01, quantity=0, timestamp=5s)` 显式进 report；balance 短缺 0.005（容差内）→ WARN 仍告警、短缺 9.95 → CRITICAL；remote 更富（windfall）→ 仅 INFO；quantity 零容忍——1 unit 差异即 CRITICAL；margin 双向 material——remote margin 高于本地（低估风险）→ CRITICAL；version 可替换（.2）且随 report 记录 |
+
+范围说明：本 round 无 allowlist 外路径；`test_broker_reconciliation_matrix.py`
+为契约声明的缺失文件，按既有先例创建（documented forced path）；既有
+`test_reconciliation.py` 全绿。full pytest 1852 passed（+13 reconcile 测试）；
+ruff/mypy 全仓 clean；acceptance 11/11。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；
