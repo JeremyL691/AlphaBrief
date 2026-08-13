@@ -110,3 +110,40 @@ def test_api_ai_run_with_explicit_fake_is_explicit_composition(
         "blocked_risk_gate",
         "blocked_human_review",
     }
+
+
+def test_api_ai_run_persists_terminal_call_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The trading path persists every terminal ModelGateway call record."""
+    from alphabrief_api.db.model_call import ModelCallStore
+
+    monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+    monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
+    resp = client.post(
+        "/api/v1/ai/run",
+        json={"symbols": ["SPY"], "reference_prices": {"SPY": "450"}},
+    )
+    assert resp.status_code == 201, resp.text
+
+    store = ModelCallStore(db_path=tmp_path / "alphabrief_db" / "alphabrief.db")
+    try:
+        rows = store.list_calls()
+        # The committee makes one gateway call per role; each must be a
+        # terminal record with a classification and content hashes.
+        assert len(rows) >= 1
+        for row in rows:
+            assert row["status"] in {"succeeded", "failed", "rejected"}
+            assert row["classification"] in {
+                "success",
+                "malformed",
+                "timeout",
+                "rate_limit",
+                "provider_error",
+                "budget_exhausted",
+                "no_provider",
+            }
+            assert len(row["input_hash"]) == 64
+            assert row["task_type"] == "symbol_research"
+    finally:
+        store.close()

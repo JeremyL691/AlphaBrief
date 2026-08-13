@@ -6,6 +6,7 @@ from alphabrief_models import (
     ModelCapability,
     ModelGateway,
     ModelRequest,
+    ModelResponse,
 )
 from pydantic import ValidationError
 
@@ -153,3 +154,97 @@ def test_model_call_record_does_not_store_raw_prompt_or_api_key() -> None:
     assert "api_key" not in record_payload
     assert "Summarize this market note." not in str(record_payload)
     assert "raw model output" not in str(record_payload)
+
+
+# ---------------------------------------------------------------------------
+# M10-W02: terminal classification and durable record sink
+# ---------------------------------------------------------------------------
+
+
+class _TimedOutProvider(FakeProviderAdapter):
+    def call(self, request: ModelRequest) -> ModelResponse:
+        raise TimeoutError("provider timed out")
+
+
+class _RateLimitedProvider(FakeProviderAdapter):
+    def call(self, request: ModelRequest) -> ModelResponse:
+        from alphabrief_models import ModelProviderError
+
+        raise ModelProviderError("openai provider call failed: HTTP Error 429: ...")
+
+
+class _MalformedProvider(FakeProviderAdapter):
+    def call(self, request: ModelRequest) -> ModelResponse:
+        from alphabrief_models import ModelProviderError
+
+        raise ModelProviderError("ollama response is missing text output")
+
+
+def test_gateway_classifies_timeout_errors() -> None:
+    gateway = ModelGateway([_TimedOutProvider()])
+    result = gateway.invoke(make_request())
+    assert result.response is None
+    assert result.record.classification == "timeout"
+    assert result.record.status == "failed"
+
+
+def test_gateway_classifies_rate_limit_errors() -> None:
+    gateway = ModelGateway([_RateLimitedProvider()])
+    result = gateway.invoke(make_request())
+    assert result.response is None
+    assert result.record.classification == "rate_limit"
+
+
+def test_gateway_classifies_malformed_response_errors() -> None:
+    gateway = ModelGateway([_MalformedProvider()])
+    result = gateway.invoke(make_request())
+    assert result.response is None
+    assert result.record.classification == "malformed"
+
+
+def test_gateway_classifies_generic_provider_errors() -> None:
+    gateway = ModelGateway([FakeProviderAdapter(fail=True)])
+    result = gateway.invoke(make_request())
+    assert result.response is None
+    assert result.record.classification == "provider_error"
+
+
+def test_gateway_classifies_missing_provider_as_no_provider() -> None:
+    gateway = ModelGateway(
+        [FakeProviderAdapter(capabilities=["text_generation"])]
+    )
+    result = gateway.invoke(
+        make_request(required_capabilities=["vision"])
+    )
+    assert result.response is None
+    assert result.record.classification == "no_provider"
+    assert result.record.status == "rejected"
+
+
+def test_gateway_sink_receives_every_terminal_record() -> None:
+    from alphabrief_models import ModelCallBudget, ModelCallRecord
+
+    sunk: list[tuple[str, str]] = []
+
+    def sink(record: ModelCallRecord) -> None:
+        sunk.append((record.request_id, record.classification or ""))
+
+    gateway = ModelGateway(
+        [FakeProviderAdapter(capabilities=["text_generation"])],
+        budget=ModelCallBudget(max_calls_per_request=1),
+        record_sink=sink,
+    )
+    gateway.invoke(make_request())
+    gateway.invoke(make_request())
+
+    assert sunk == [("request_1", "success"), ("request_1", "budget_exhausted")]
+
+
+def test_gateway_sink_receives_failure_records() -> None:
+    sunk: list[str] = []
+    gateway = ModelGateway(
+        [FakeProviderAdapter(fail=True)],
+        record_sink=lambda record: sunk.append(record.classification or ""),
+    )
+    gateway.invoke(make_request())
+    assert sunk == ["provider_error"]
