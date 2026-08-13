@@ -554,6 +554,20 @@ ruff/mypy 全仓 clean。
 一律 unknown-outcome（绝不自动重试）。full pytest 1799 passed（+27
 faults/telemetry/commands 测试）；ruff/mypy 全仓 clean。
 
+#### M06-W07 已闭环证据（R-20260813-M06-W07）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M06-W07-01 | contract/fault suites 覆盖 supported orders、TIF、dependent orders、signed units、precision、全部 declared transitions、trade/position close、transactions、errors、redacted telemetry | targeted 六套全绿（`test_oanda_order_models.py` + `test_oanda_order_commands.py` + `test_oanda_order_transitions.py` + `test_oanda_trade_position_lifecycle.py` + `test_oanda_transactions.py` + `test_oanda_transport_faults.py` = 80 passed）：W01 contracts（4 类 order type、FOK/IOC/GTC/GTD、TP/SL/trailing/GSLO、signed units、精度拒绝）、W02 order ops（幂等 create）、W03 全部 10 类 transition、W04 trade/position close + account、W05 transaction ranges/gaps、W06 faults/telemetry scrubbing |
+| AC-M06-W07-02 | controlled practice scenarios 走正式产品路径：fixed minimum risk、approved persisted decision、idempotent client identity、automatic cleanup、final reconciliation evidence | `PracticeScenarioRunner`（`test_oanda_lifecycle_e2e.py`，runtime 命令）：OrderIntent → RiskGate（symbol allowlist + fixed cap=1，intent 构造性封顶）→ approved RiskDecision 持久化到 DuckDB `practice_scenarios` 表（decision_id/approved）→ `client_order_id=scenario-intent` 幂等提交（重跑 reused=True、broker 侧仅 1 单 1 仓）→ 自动 cleanup（FILLED→close trade；幂等 replay → already_closed）→ 最终 reconciliation evidence（open_orders/open_trades/open_position_count/balance 全零/精确）；submit units 严格等于 approved decision（intent=2 → broker 只见 1） |
+| AC-M06-W07-03 | 缺凭证/unsafe account state/cleanup 未决/外部 outage → ENVIRONMENT_BLOCKED 或 FAIL，绝不 fake fill、fallback、waiver、question、DONE | 缺 client → ENVIRONMENT_BLOCKED（含 credential 语义，零请求发出）；cleanup 失败（broker close timeout）→ FAIL + UNRESOLVED cleanup_result、broker trade 保持 OPEN（零本地合成 fill）；gate 拒绝（quantity 超 cap）→ FAIL 零提交；无任何 waiver/人工 review/询问路径（requires_human_review → FAIL） |
+
+范围说明：本 round 无 allowlist 外路径；runtime 测试文件为契约声明的缺失
+文件，按既有先例创建（documented forced path）。真实 OANDA practice E2E
+需要 T7 凭证：M06 里程碑 CODE_COMPLETE 并继承 external_evidence_pending
+（M06-W07 T7 practice lifecycle evidence）。full pytest 1805 passed（+6
+scenario E2E 测试）；ruff/mypy 全仓 clean；acceptance 11/11。
+
 ### M02 Loop Controller
 
 - work/progress schema/topology validation；

@@ -250,7 +250,11 @@ projection/reconciliation/acceptance。成功后销毁临时 restore（不销毁
   `faults`/`unknown_outcome` 提供；每次请求的 scrubbed telemetry
   （method family、endpoint template、status、latency、attempts、error
   class、hash correlation；不含 token/完整 account ID/敏感 payload）记录
-  在 `request_telemetry` 表。
+  在 `request_telemetry` 表；
+- 受控最小风险 practice scenario（`PracticeScenarioRunner`）：正式产品路径
+  intent → RiskGate → persisted decision → 幂等 identity → 自动 cleanup →
+  最终 reconciliation evidence；缺凭证 → ENVIRONMENT_BLOCKED，cleanup 未决
+  → FAIL，绝不 fake fill（M06-W07 起，T7 凭证到位后运行真实场景）。
 
 ### 6.5 End-of-Day Check
 
