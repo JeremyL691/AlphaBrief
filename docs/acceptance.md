@@ -1154,3 +1154,21 @@ clean（370 source files）；acceptance 11/11。下一 READY item：M09-W07。
 （按 M07-W05 先例创建，documented forced paths）；README 增加 M09 capability
 行。M09 里程碑 → DONE（无 T7 runtime 依赖，全部本地确定性 gate 通过）。
 下一 READY item：M10-W01。
+
+#### M10-W01 已闭环证据（R-20260813-M10-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M10-W01-01 | 生产 research/brief/committee/trading 路径解析同一个 ModelGateway 且无直接 provider SDK 调用 | 新静态扫描 `tests/test_model_gateway_boundary.py`：全仓 apps/packages 无任何 provider SDK import（与 acceptance verifier `safety.provider_sdk_imports` 同一 denylist）；10 个生产模型路径模块（routes/research.py、routes/brief.py、routes/models.py、routes/ai_trading.py、model_commands.py、brief_commands.py、trader/committee.py、trader/daily_cycle.py、trader/model_factory.py、research/orchestrator.py）逐一断言引用 ModelGateway 或共享 factory（`build_ai_trading_*`）且无直接 SDK import；acceptance verifier `safety.provider_sdk_imports` 同步 PASS |
+| AC-M10-W01-02 | fake/deterministic test providers 需要显式 test composition，不能成为生产 fallback | `model_factory.build_ai_trading_provider()`：`auto`/未配置且无 `OPENAI_API_KEY` → 抛 `ModelProviderUnavailableError`（`test_ai_trader_model_factory.py` 重写断言 fail-closed）；显式 `ALPHABRIEF_AI_MODEL_PROVIDER=fake` 才返回 conservative fake；openai 显式缺 key → ValueError；`build_ai_trading_committee()` 无 provider → raise（`test_ai_trader_provider_unavailable.py`）；评测表面默认真实 provider：API `use_real_provider` 默认 True、CLI `--real-provider/--no-real-provider` 默认 real，fake 只能显式选择（`test_models_api.py`/`test_model_cli.py` 显式 opt-in 并新增 fail-closed 用例） |
+| AC-M10-W01-03 | missing/disabled/unhealthy providers 产生 durable blocked/no-trade，无 proposal/intent/broker submission | API `/ai/run` 捕获 `ModelProviderUnavailableError` → 持久化 outcome=`skipped_no_intent`、summary 写明 "model provider unavailable … fail closed" 的 `DailyCycleRecord`（plans/votes/attempts 全空，`_blocked_record_without_provider` + `test_ai_trader_provider_unavailable.py` 断言 201、history 与 cycle 详情 durable、零 intent）；unhealthy provider 既有 `test_all_provider_failures_record_provider_error` 保持 `provider_error` durable no-trade；factory raise 使 committee/cycle 在任何 proposal 前 fail closed |
+
+范围说明：`tests/test_model_gateway_boundary.py` 与
+`tests/test_ai_trader_provider_unavailable.py` 为 M10-W01 契约声明的缺失
+测试文件（documented forced paths）；`routes/research.py`、`routes/brief.py`
+的 advisory demo gateway 与 `research_commands.py` 被
+`tests/test_api_server.py`（allowlist 外、本轮不可改）钉住，保持确定性响应且
+不产生任何订单——本轮关闭的是生产 trading/committee/evaluation 组合的 fake
+fallback（`tests/test_ai_trading_api.py` 与 `tests/test_api_server.py` 在本轮
+改动后全绿 124 passed）。full pytest 2122 passed；ruff/mypy 全仓 clean
+（375 source files）；acceptance 11/11。下一 READY item：M10-W02。

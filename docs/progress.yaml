@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-14T01:20:00+08:00"
+updated_at: "2026-08-14T02:00:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M10-W01
+  work_item_id: M10-W02
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M09-W07-FINAL-GATE
-  next_action: close the ModelGateway surface and remove production fake defaults
+  last_verified_gate: M10-W01-FINAL-GATE
+  next_action: persist complete model-call evidence and budgets
   external_evidence_pending: M04-W06 T7 practice catalog evidence; M05-W06 T7 practice market-data evidence; M06-W07 T7 practice lifecycle evidence; M07-W07 T7 practice restart evidence; M08-W08 T7 practice risk-chain evidence
 
 milestones:
@@ -160,9 +160,10 @@ work_item_states:
   M09-W05: DONE
   M09-W06: DONE
   M09-W07: DONE
+  M10-W01: DONE
 
 latest_validation:
-  completed_at: "2026-08-13T15:10:00+08:00"
+  completed_at: "2026-08-14T02:00:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -170,9 +171,9 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 2108
+      passed: 2122
       failed: 0
-      warnings: 12
+      warnings: 14
     restricted_sandbox:
       passed: 1394
       environment_failed: 12
@@ -236,7 +237,12 @@ known_gaps:
   - id: GAP-010
     severity: P1
     owner_milestone: M10
-    summary: Some production-facing research paths default to FakeProvider and model calls are not universally durable.
+    summary: >-
+      Some production-facing research paths default to FakeProvider and
+      model calls are not universally durable. M10-W01 removed the
+      trading/evaluation production fake fallback (fail-closed factory,
+      durable no-trade record); advisory demo surfaces and durable call
+      records remain for M10-W02/W07.
     status: OPEN
   - id: GAP-011
     severity: P1
@@ -273,5 +279,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M09-W07
-last_ledger_record: R-20260813-M09-W07
+last_completed_round: R-20260813-M10-W01
+last_ledger_record: R-20260813-M10-W01

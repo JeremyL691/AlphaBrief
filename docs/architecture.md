@@ -158,8 +158,8 @@ OandaRuntime singleton
 - 现有 market provider factory 还不支持 OANDA source；在 M05 完成前，示例配置
   只能明确使用当前可用的 Yahoo provider，不能把它当作最终多资产行情。
 - Yahoo symbol mapping 只覆盖少数 FX，不能覆盖 OANDA 多资产目录。
-- brief/research 某些 API 默认 FakeProvider。
-- ModelGateway 调用记录主要在进程内；provider selection/fallback 不足。
+- brief/research 某些 API 默认 FakeProvider（advisory demo 面；M10-W01 起 trading/committee 生产组合不再有任何 fake fallback）。
+- ModelGateway 调用记录主要在进程内（M10-W02 处理 durable call records）；provider selection/fallback 已 fail-closed（M10-W01）。
 - daily cycle 的 RiskGate 调用没有完整 account/news risk context。
 - scheduler task listing 和实际 handler/enable state 不同源。
 
@@ -219,6 +219,14 @@ FastAPI lifespan 创建并关闭 coordinator；CLI 若连接已运行 API，则�
 
 `FakeBrokerAdapter`、clock、transport、model fake 和 fixtures 只在 tests 或显式
 test composition root 可达。production settings 没有 `simulated` provider 值。
+
+AI trading provider 组合（`alphabrief_trader.model_factory`）fail-closed：
+`auto`/未配置且无 `OPENAI_API_KEY` 时抛出 `ModelProviderUnavailableError`，
+绝不静默回退到 fake；fake provider 只能通过显式
+`ALPHABRIEF_AI_MODEL_PROVIDER=fake` 选择（测试组合）。API `/ai/run` 在 provider
+缺失时持久化 outcome=`skipped_no_intent`、summary 说明原因的 no-trade cycle
+record；模型评测 API/CLI 默认走配置的真实 provider，未配置时 503/非零退出，
+`use_real_provider=false`/`--no-real-provider` 才是显式 fake 组合。
 
 ## 4. Canonical Data Model
 
