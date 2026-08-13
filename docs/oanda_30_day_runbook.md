@@ -667,3 +667,23 @@ pending（记录 blocker，绝不伪造）；真实 30 日观察待 M16 commissi
   `weekly-gate --week 3`（含 events）。
 - 真实 Days 15-21 观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令
   如实输出 BLOCKED_EXTERNAL / fail-closed fault drill / unresolved events。
+
+## M16-W05: Days 22 through 30 and the Day 30 close — R-20260813-M16-W05
+
+- `WINDOW_ACCOUNT_KINDS`（7 项）+ `build_window_accounting`：active_market /
+  weekend / holiday / no_trade / partial / failed / reset 独立记账；
+  days_total==30 才 complete。
+- `run_restart_reconcile_drill`（`RESTART_RECONCILE_INVARIANTS` 5 项）：
+  无 unintended order/trade/position/freeze、无 unexplained difference；
+  drill 永远 submits=0。
+- `run_day30_close`（`DAY30_CLOSE_STEPS` 7 项）：stop_new_cycles →
+  final_reconcile → duplicate_invariant → approval_invariant → fresh_backup
+  → isolated_restore → artifact_hash_validation；缺 truth 即 not completed。
+- `validate_manifest_hashes`：30 daily + 4 weekly = 34 项；缺失、空白或重复
+  hash 一律失败（REQ-OBS-006 报告将完全由 artifact hashes 驱动）。
+- CLI：`verify-window --from-day 22 --through-day 30`、`drill --week 4
+  --scenario restart-reconcile`（submits=0）、`weekly-gate --week 4`、新增
+  `day-30-gate --compact`。
+- 真实 Days 22-30 观察依赖 Day 0 冻结（T7 外部证据 PENDING）：runtime 命令
+  如实输出 BLOCKED_EXTERNAL / fail-closed drill / unresolved events /
+  day-30-gate（34 hashes missing）。

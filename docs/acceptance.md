@@ -2339,3 +2339,40 @@ gate（4 events unresolved、P0 incident + reset），绝不伪造观察日。�
 3201 total（3182 passed + 19 pre-existing M08-W03 time-bombed risk fixture
 失败，分类见 M10-W03）；ruff/mypy 全仓 clean；acceptance 11/11；runtime 3
 命令均 exit 0。下一 READY item：M16-W05。
+
+#### M16-W05 已闭环证据（R-20260813-M16-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M16-W05-01 | Days 22 through 30 complete a real uninterrupted 30-calendar-day qualified window with 30 daily manifests and separate active-market, weekend, holiday, no-trade, partial, failed, and reset accounting | `tests/test_observation_day_thirty.py` `TestWindowAccounting`：`WINDOW_ACCOUNT_KINDS` 恰好 7 项（active_market/weekend/holiday/no_trade/partial/failed/reset）；`build_window_accounting`——`test_full_window_accounting_is_complete`（days_total=30 → complete）、`test_less_than_thirty_days_is_not_complete`（29 天 → incomplete，绝不伪造第 30 天）、`test_missing_kinds_are_zero_never_fabricated`、`test_deterministic` |
+| AC-M16-W05-02 | Week 4 restart and reconciliation drill passes with naturally present pending state or the predefined minimal controlled scenario and leaves no unintended order, trade, position, freeze, or unexplained difference | `tests/test_observation_final_reconciliation.py`（M16-W05 契约声明文件）：`RESTART_RECONCILE_INVARIANTS` 恰好 5 项（no_unintended_order/trade/position/freeze/no_unexplained_difference）；`run_restart_reconcile_drill`——`test_full_truth_passes`（submits=0）、`test_missing_truth_fails_closed`、`test_unexplained_difference_fails_the_drill`、`test_drill_never_submits`、`test_deterministic` |
+| AC-M16-W05-03 | Day 30 closes new cycles, fully reconciles account truth, verifies duplicate and approval invariants, creates a fresh backup, passes isolated restore, and validates every daily and weekly artifact hash | `tests/test_observation_day_thirty.py` `TestDay30Close`：`DAY30_CLOSE_STEPS` 恰好 7 项（stop_new_cycles/final_reconcile/duplicate_invariant/approval_invariant/fresh_backup/isolated_restore/artifact_hash_validation）；`run_day30_close`——`test_full_truth_passes_the_close`、`test_missing_truth_fails_closed`、`test_partial_close_is_not_a_pass`、`test_close_never_creates_cycles_or_resubmits`、`test_deterministic`；`tests/test_observation_manifest_integrity.py`（M16-W05 契约声明文件）：`validate_manifest_hashes`——`test_all_34_hashes_validate`（30 daily + 4 weekly）、`test_missing_hashes_fail_closed`、`test_blank_hash_fails`、`test_duplicate_hash_fails`、`test_wrong_count_fails`、`test_deterministic` |
+
+#### M16 Requirement Traceability（M16-W05）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-OBS-001 | `WINDOW_ACCOUNT_KINDS` 7 类独立记账；`build_window_accounting` 仅 days_total==30 时 complete |
+| REQ-OBS-002 | 30 天窗口复用 W02 14 项 daily evidence kinds；Day 30 close 校验全部 manifest hashes |
+| REQ-OBS-003 | window accounting 含 no_trade 分类；close/restart-reconcile drill 无提交路径 |
+| REQ-OBS-004 | `RESTART_RECONCILE_INVARIANTS` 保 no_unintended_freeze/no_unexplained_difference；reset 分类记账 |
+| REQ-OBS-005 | `DAY30_CLOSE_STEPS` 含 final_reconcile + duplicate_invariant + approval_invariant + artifact_hash_validation |
+| REQ-OBS-006 | 新增 `validate_manifest_hashes`（34 项，缺/空/重复即失败）——报告将完全由 artifact hashes 驱动，不靠人工拼写通过数 |
+
+范围说明：`tests/test_observation_day_thirty.py`、`tests/test_observation_final_reconciliation.py`、
+`tests/test_observation_manifest_integrity.py` 为 M16-W05 契约声明的测试文件
+（targeted command 声明，documented forced path）；`alphabrief_core/
+observation_controller.py`（新增 WINDOW_ACCOUNT_KINDS/WindowAccounting/
+build_window_accounting/RESTART_RECONCILE_INVARIANTS/
+RestartReconcileDrillReport/run_restart_reconcile_drill/DAY30_CLOSE_STEPS/
+Day30CloseReport/run_day30_close/ManifestHashVerdict/validate_manifest_hashes）
+与 `apps/cli/observation_commands.py`（drill 增加 restart-reconcile 场景、新增
+day-30-gate 命令）为契约声明的既有模块扩展（observation profile：
+max_production_files=0，实际 0 个新生产文件）。真实 Days 22-30 观察依赖 Day 0
+冻结（T7 外部证据 PENDING）——runtime 命令如实输出 BLOCKED_EXTERNAL 与
+fail-closed 的 restart-reconcile drill（submits=0）、week 4 gate（events
+unresolved）与 day-30-gate（34 hashes missing、7 steps not completed），绝不
+伪造观察日。全量 pytest：3228 total（3205 passed + 19 pre-existing M08-W03
+time-bombed risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean；
+acceptance 11/11；runtime 4 命令均 exit 0。
+下一 READY item：M16-W06。
