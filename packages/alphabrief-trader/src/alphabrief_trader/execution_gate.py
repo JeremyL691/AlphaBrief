@@ -36,6 +36,7 @@ class PreflightFacts:
     data_fresh: bool = True
     backup_ok: bool = True
     model_healthy: bool = True
+    market_open: bool = True
     kill_switch_active: bool = False
 
 
@@ -56,6 +57,8 @@ class ExecutionGate:
                 ExecutionMode.BLOCKED, ("kill_switch_active",)
             )
         reasons: list[str] = []
+        if not facts.market_open:
+            reasons.append("market_closed")
         if not facts.credentials_present:
             reasons.append("missing_credentials")
         if not facts.account_truth_fresh:

@@ -352,6 +352,18 @@ tokens/cost，Decimal）永不超限；等价输入产生相同有序候选集�
 在分析集之外仍可查询（verdicts 覆盖全部品种）。候选集与 cycle 的接线随
 M11-W05 轮次补齐。
 
+Catch-up 与 terminal no-trade（M11-W05）：`daily_cycle_key(trading_date,
+snapshot_key)` 生成确定性日键（`DurableDailyCycle.run(cycle_key=...)` 已保证
+同日同 snapshot 幂等——返回既有 terminal record，不重复 committee/proposal/
+intent/order）。`CatchUpPolicy`（注入 clock）判定错过排程：`on_time` /
+`within_catchup_window`（窗口内允许补跑）/ `expired_without_chase`（窗口关闭
+后记录该 terminal outcome 且**不追单**——研究阶段全部短路、零 broker 调用）。
+报告阶段输出结构化 terminal outcome 与 reason（no_trade / risk_rejection /
+market_closed（PreflightFacts.market_open）/ stale_data / blocked /
+insufficient_evidence / budget_exhaustion），evidence 保留在 durable record
+的 votes 中；`CycleOutcome` 新增 `expired_without_chase`。所有 no-trade 类
+outcome 都是 durable successful terminal（成功完成 cycle，非失败）。
+
 ## 4. Canonical Data Model
 
 ### 4.1 Identity and Correlation

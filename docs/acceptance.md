@@ -1369,3 +1369,21 @@ documented forced paths）。候选集→cycle 的接线随 M11-W05 轮次补齐
 pytest：2272 total（2253 passed + 19 pre-existing M08-W03 time-bombed risk
 fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（399 source files）；
 acceptance 11/11。下一 READY item：M11-W05。
+
+#### M11-W05 已闭环证据（R-20260813-M11-W05）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M11-W05-01 | 重复同一 trading date + snapshot key 返回既有 cycle，不产生新 committee/proposal/intent/order | `daily_cycle_key(date, snapshot_key)` 确定性（`test_daily_cycle_key_is_deterministic`）；`test_same_date_and_snapshot_returns_existing_cycle`（同 key 两次 run → 同 cycle_id、store 仅 1 条）；`test_different_snapshot_creates_new_cycle`（不同 snapshot → 新 cycle）；叠加 M10-W05 的 (cycle_key, snapshot fingerprint) 双条件幂等 |
+| AC-M11-W05-02 | missed cycle 只在配置的 catch-up window 内运行；窗口关闭后记录 expired-without-chase | `CatchUpPolicy`（注入 clock）：`test_on_time_cycle_is_allowed`/`test_within_window_is_allowed`/`test_after_window_is_expired`（24h 窗口：on_time/12h 内允许/25h 后 expired_without_chase）；`test_expired_cycle_records_without_chasing`（expired → outcome=expired_without_chase、votes/plans/attempts 全空、零提交、store 持久化）；`test_missed_within_window_still_runs`（12h 内补跑且研究完整）；`test_expired_is_idempotent`（重复 run 同记录）；`CycleOutcome` 新增 `expired_without_chase` |
+| AC-M11-W05-03 | no-trade、risk rejection、market closed、stale data、insufficient evidence、budget exhaustion 为 durable successful terminal outcomes，带 evidence 与 reasons | `test_no_trade_is_durable_successful_outcome`（hold/0 仓位 → skipped_no_intent、votes 持久化、evidence 保留）；`test_risk_rejection_is_durable_terminal_outcome`（kill switch → blocked_risk_gate、attempt approved=False 持久化）；`test_market_closed_is_durable_terminal_outcome`（PreflightFacts.market_open=False → blocked_risk_gate + summary 含 market_closed）；`test_stale_data_is_durable_terminal_outcome`（data_fresh=False → summary 含 stale_data、研究仍运行）；`test_insufficient_evidence_is_durable_terminal_outcome`（无 votes → provider_error、attempts=[]）；budget exhaustion 由 M10-W02/05 覆盖（rejected records → provider_error）——全部为成功完成 cycle 的 durable terminal 记录（非失败） |
+
+范围说明：`alphabrief_trader/cycle_schedule.py`、
+`tests/test_daily_cycle_catchup.py`、`tests/test_daily_cycle_no_trade.py`
+为 M11-W05 契约声明的新模块/缺失测试文件（targeted command 声明，
+documented forced paths）；`ExecutionGate` 新增 `market_open` 事实；
+`DurableDailyCycle.run` 新增 `scheduled_at`；`CycleOutcome` 增加
+`expired_without_chase`。全量 pytest：2306 total（2287 passed + 19
+pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
+ruff/mypy 全仓 clean（402 source files）；acceptance 11/11。下一 READY
+item：M11-W06。
