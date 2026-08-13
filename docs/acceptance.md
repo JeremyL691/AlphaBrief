@@ -1642,3 +1642,28 @@ W01-W06 已提交 evidence 与全量 gate 运行证明。全量 pytest：2587 to
 分类见 M10-W03）；ruff/mypy 全仓 clean（430 source files）；acceptance 11/11。
 **M12 里程碑 → DONE**（无 T7 runtime 依赖，全部本地确定性 gate 通过）。
 下一 READY item：M13-W01。
+
+#### M13-W01 已闭环证据（R-20260813-M13-W01）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M13-W01-01 | Every required read surface has one versioned response schema with UTC timestamps, stable IDs, provenance, freshness, pagination, and explicit empty or partial state | `tests/test_api_read_contracts.py`：`VersionedReadEnvelope` 为每个 read surface 的唯一 versioned schema（`READ_SCHEMA_VERSION="read-v1"`）；`test_each_domain_has_one_versioned_schema`（14 个 domain 全部 parametrize 覆盖）与 `test_all_required_domains_are_covered`（instruments/prices/candles/news/sentiment/committee/risk/orders/trades/positions/cycles/scheduler/alerts/observation）；`test_timestamps_are_utc`/`test_non_utc_or_naive_timestamps_are_rejected`（naive 或非 UTC aware → ValidationError，REQ-PLAT-008）；`test_items_carry_stable_ids_and_deterministic_ordering`（每 item 必有非空 `id`，builder 按 id 排序——稳定 ID 与稳定顺序，REQ-PLAT-009）；`test_provenance_and_freshness_are_present`（source/data_version/retrieved_at + fresh/stale/unknown verdict）；`test_empty_and_partial_states_are_explicit`（items 空 → state 必须 empty，非空 → complete/partial，不一致 ValidationError）；`test_pagination_contract_is_consistent`（has_more ⇔ next_cursor） |
+| AC-M13-W01-02 | API JSON and CLI JSON for the same fixture normalize to the same domain payload and ordering | `tests/test_cli_read_contracts.py`：`_api_style_json`（FastAPI model_dump JSON）与 `_cli_style_json`（CLI `_dump` 约定：sort_keys + str fallback）对同一 fixture envelope 归一化到同一个 `normalize_read_payload` canonical payload（`test_api_and_cli_json_normalize_to_the_same_domain_payload`）；items 顺序两边一致（`test_api_and_cli_share_one_item_ordering`）；`test_normalized_payload_is_byte_stable`；空/partial state 两边相同（`test_empty_and_partial_states_are_identical_across_surfaces`） |
+| AC-M13-W01-03 | Unknown filters, malformed cursors, invalid identifiers, and unavailable sources return typed errors without fake or silently truncated data | `unknown_filter_error`/`malformed_cursor_error`/`invalid_identifier_error`/`unavailable_source_error` 四个 builder 返回 `ReadErrorResponse`（error_code + 显式 message 含违规值 + resource + schema_version）；`test_typed_errors_never_carry_items`（error payload 无 items/pagination——绝不带 fake 或静默截断数据）；`TestSharedTypedErrors`（API/CLI 两侧 error JSON 完全相同）；`test_error_payloads_never_contain_items_or_data` |
+
+#### M13 Requirement Traceability（M13-W01）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-PLAT-008（所有记录使用 UTC，展示层可按用户时区转换） | W01 `alphabrief_core/read_contracts.py`：`generated_at`/`retrieved_at` validator 强制 UTC（naive 或 offset≠0 → ValidationError）；`tests/test_api_read_contracts.py` |
+| REQ-PLAT-009（所有关键 ID 可跨数据、研究、模型、风险、订单和对账追踪） | W01 每 item 稳定 `id` + provenance（source/data_version/retrieved_at）随 envelope 传递；`tests/test_api_read_contracts.py` |
+| REQ-UI-001（API/CLI 对 14 类 read 提供一致 schema） | W01 `VersionedReadEnvelope`/`READ_DOMAINS`/`normalize_read_payload` 共享于 API 与 CLI 两侧；`tests/test_api_read_contracts.py`/`tests/test_cli_read_contracts.py` |
+
+范围说明：`tests/test_api_read_contracts.py` 与 `tests/test_cli_read_contracts.py` 为
+M13-W01 契约声明的测试文件（targeted command 声明，documented forced path）；
+`alphabrief_core/read_contracts.py` 为 M13-W01 契约声明的生产模块（REQ-UI-001/
+REQ-PLAT-008/009，scope profile `api_cli`）；API/CLI 既有 route/command 零改动
+（integration 五套 68 passed 证明无回归）。全量 pytest：2626 total（2607 passed
++ 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
+ruff/mypy 全仓 clean（433 source files）；acceptance 11/11。下一 READY item：
+M13-W02。
