@@ -965,3 +965,18 @@ snapshot_hash=context.captured_at.isoformat()）。RiskGate 本身零改动—�
 层是独立确定性约束层，全部 fail-closed。full pytest 1934 passed（+27 新
 测试）；ruff/mypy 全仓 clean（334 source files）；acceptance 11/11。下一
 READY item：M08-W03。
+
+#### M08-W03 已闭环证据（R-20260813-M08-W03）
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M08-W03-01 | property matrices 覆盖 long/short FX legs、Metal 与 CFD exposure、pending orders、hedged 与 netted positions、account-currency conversion、category totals、currency-direction totals、correlated groups、concentration | `compute_exposure`（新 `alphabrief_risk/exposure_aggregation.py`，`test_risk_exposure_matrix.py`）：long FX leg 10000×1.10×1.0=11000 home-currency gross；short leg 只计 short 侧（net 为负）；hedged（long=short=10000）→ net=0 而 gross=22000（双腿真实 notional）；CFD + pending order → pre 80000/post 120000 投影；`USD_JPY` 150.00×factor 0.00666667=100000.05 home conversion；category totals（CURRENCY 17500/METAL 40000）与 currency-direction totals（EUR/GBP/USD）按 home currency 聚合；correlated-group totals（euro-bloc/precious）带 source_id evidence trail（conversion/correlation evidence 逐 symbol/group 记录）；concentration=max(symbol gross/total gross)；leverage=gross/equity |
+| AC-M08-W03-02 | single-order、symbol、category、direction、gross、net、leverage、concentration limits 对 projected post-trade exposure clamp/reject，Decimal-safe evidence | `evaluate_exposure_limits`（`test_risk_currency_aggregation.py`）：8 类 limit 全部对 post-trade snapshot 求值并产出稳定 typed `ExposureRuleResult`（limit/passed/value/ceiling/detail）；single-order notional 超限 reject、等于上限 pass、notional 缺失 fail-closed；symbol limit 只绑定 order symbol 的 post-trade gross；category（METAL 40000>20000 reject）、direction（long 51000≤60000 pass）、gross（51000>50000 reject）、net、leverage（0.51≤1 pass）、concentration（0.784>0.5 reject）逐一断言；全部 ceiling 满足时 8 条全 pass；无配置 limit → 零结果；value/ceiling 全部 Decimal 字符串化（无 float） |
+| AC-M08-W03-03 | missing/stale/zero/inconsistent/unsupported conversion 与 correlation evidence fail closed，绝不 fallback 到 nominal units 或 cost basis | `ExposureError` 分类矩阵（`test_risk_currency_aggregation.py`）：缺 price → missing_price；缺 conversion → missing_conversion；conversion 超过 `conversion_max_age_seconds`（可注入 clock）→ stale_conversion；factor 零/负在 schema 构造期拒绝（gt=0，绝不进入计算）；缺 category/currency-direction evidence → missing_category/missing_currency_direction；配置了 correlation groups 时 symbol 必须恰属一组——零组或两组都 → unsupported_correlation；equity 零/负构造期拒绝；float 输入在构造期拒绝（Decimal-first）；全部计算以 mid×factor 进行，无 nominal/cost-basis 分支 |
+
+范围说明：`alphabrief_risk/exposure_aggregation.py` 为 M08-W03 契约声明的新
+模块（ExposureInputs 证据输入 + compute_exposure 快照 + evaluate_exposure_limits
+限制求值）；全部 Decimal-safe、frozen、extra=forbid；`compute_exposure` 带可注入
+clock 保证确定性。RiskGate 零改动。full pytest 1957 passed（+23 新测试）；
+ruff/mypy 全仓 clean（337 source files）；acceptance 11/11。下一 READY
+item：M08-W04。

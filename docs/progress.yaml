@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-13T16:40:00+08:00"
+updated_at: "2026-08-13T17:20:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M08-W03
+  work_item_id: M08-W04
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M08-W02-FINAL-GATE
-  next_action: enforce home-currency exposure, concentration, and correlation
+  last_verified_gate: M08-W03-FINAL-GATE
+  next_action: enforce margin, leverage, loss, drawdown, and loss-streak limits
   external_evidence_pending: M04-W06 T7 practice catalog evidence; M05-W06 T7 practice market-data evidence; M06-W07 T7 practice lifecycle evidence; M07-W07 T7 practice restart evidence
 
 milestones:
@@ -147,6 +147,7 @@ work_item_states:
   M07-W07: CODE_COMPLETE
   M08-W01: DONE
   M08-W02: DONE
+  M08-W03: DONE
 
 latest_validation:
   completed_at: "2026-08-13T15:10:00+08:00"
@@ -157,7 +158,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 1934
+      passed: 1957
       failed: 0
       warnings: 12
     restricted_sandbox:
@@ -260,5 +261,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M08-W02
-last_ledger_record: R-20260813-M08-W02
+last_completed_round: R-20260813-M08-W03
+last_ledger_record: R-20260813-M08-W03
