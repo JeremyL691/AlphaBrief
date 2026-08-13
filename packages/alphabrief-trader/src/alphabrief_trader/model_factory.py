@@ -1,8 +1,10 @@
 """Model provider factory for the AI Trading Committee.
 
 The scheduler/API/CLI all need the same model wiring. This module keeps
-that selection in one place and preserves a conservative fake fallback
-when no real provider has been configured.
+that selection in one place and fails closed when no real provider has
+been configured: production composition never falls back to a fake
+provider. A fake provider is available only through an explicit
+``ALPHABRIEF_AI_MODEL_PROVIDER=fake`` selection used by tests.
 """
 
 from __future__ import annotations
@@ -31,8 +33,23 @@ _STRUCTURED_CAPABILITIES: frozenset[ModelCapability] = frozenset(
 )
 
 
+class ModelProviderUnavailableError(RuntimeError):
+    """Raised when no real model provider is configured.
+
+    Production composition must fail closed: a missing provider must
+    never be silently replaced by a deterministic fake that could
+    fabricate research or orders.
+    """
+
+
 def build_ai_trading_committee() -> TradingCommittee:
-    """Build the AI Trading Committee from environment-backed providers."""
+    """Build the AI Trading Committee from environment-backed providers.
+
+    Raises :class:`ModelProviderUnavailableError` when no real provider
+    is configured so the caller can fail closed (for example persist a
+    durable blocked or no-trade cycle) before any proposal or intent
+    exists.
+    """
 
     provider = build_ai_trading_provider()
     gateway = ModelGateway(providers=[provider])
@@ -44,20 +61,27 @@ def build_ai_trading_provider() -> ProviderAdapter:
 
     Selection rules:
 
-    1. ``ALPHABRIEF_AI_MODEL_PROVIDER=fake`` forces the conservative fake.
+    1. ``ALPHABRIEF_AI_MODEL_PROVIDER=fake`` forces the conservative
+       fake. This is an explicit test/dev selection, never a fallback.
     2. ``...=openai`` requires ``OPENAI_API_KEY`` and uses
        ``ALPHABRIEF_AI_MODEL_NAME`` or ``gpt-4o-mini``.
     3. ``...=ollama`` uses local Ollama and requires an explicit model
        name or falls back to ``llama3.1``.
-    4. ``...=auto`` selects OpenAI only when ``OPENAI_API_KEY`` exists,
-       otherwise the conservative fake provider.
+    4. ``...=auto`` (default) selects OpenAI only when
+       ``OPENAI_API_KEY`` exists, otherwise raises
+       :class:`ModelProviderUnavailableError` — production never
+       silently falls back to a fake provider.
     """
 
     requested = os.environ.get(AI_MODEL_PROVIDER_ENV, "auto").strip().lower()
     if requested in {"", "auto"}:
         if os.environ.get("OPENAI_API_KEY"):
             return _build_openai_provider()
-        return build_conservative_fake_provider()
+        raise ModelProviderUnavailableError(
+            "no model provider configured: set ALPHABRIEF_AI_MODEL_PROVIDER "
+            "to 'openai' with OPENAI_API_KEY, or 'ollama' with a local "
+            "server, or select 'fake' explicitly for test composition"
+        )
     if requested == "fake":
         return build_conservative_fake_provider()
     if requested == "openai":
@@ -74,7 +98,12 @@ def build_ai_trading_provider() -> ProviderAdapter:
 
 
 def build_conservative_fake_provider() -> FakeProviderAdapter:
-    """Return the no-trade default provider used when no model is configured."""
+    """Return the deterministic fake provider for explicit test selection.
+
+    Only reachable through an explicit ``ALPHABRIEF_AI_MODEL_PROVIDER=fake``
+    environment selection or a direct test import. It is never used as a
+    production fallback.
+    """
 
     return FakeProviderAdapter(
         provider_name="fake",
@@ -135,6 +164,7 @@ __all__ = [
     "AI_MODEL_NAME_ENV",
     "AI_MODEL_PROVIDER_ENV",
     "AI_MODEL_TIMEOUT_ENV",
+    "ModelProviderUnavailableError",
     "build_ai_trading_committee",
     "build_ai_trading_provider",
     "build_conservative_fake_provider",

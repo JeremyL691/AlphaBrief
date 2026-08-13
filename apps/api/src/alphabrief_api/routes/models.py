@@ -118,17 +118,29 @@ def _default_registry() -> ModelRegistry:
 def _build_evaluator(use_real: bool) -> ModelEvaluator:
     """Build an evaluator.
 
-    When ``use_real`` is False (default), the FakeProviderAdapter is
-    used so tests are deterministic. When True, the evaluator uses the
-    same real provider wiring as the AI Trading Committee (env-backed
-    OpenAI/Ollama provider through ``ModelGateway``).
+    ``use_real`` (the production default) wires the same env-backed
+    provider through ``ModelGateway`` as the AI Trading Committee and
+    fails closed with ``ModelProviderUnavailableError`` when no real
+    provider is configured. ``use_real=False`` is the explicit test
+    composition that uses the deterministic ``FakeProviderAdapter``.
     """
     if use_real:
-        from alphabrief_trader import build_ai_trading_provider
-
-        return ModelEvaluator(
-            ModelGateway([build_ai_trading_provider()])
+        from alphabrief_trader import (
+            ModelProviderUnavailableError,
+            build_ai_trading_provider,
         )
+
+        try:
+            provider = build_ai_trading_provider()
+        except (ModelProviderUnavailableError, ValueError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "model_provider_unavailable",
+                    "kind": type(exc).__name__,
+                },
+            ) from exc
+        return ModelEvaluator(ModelGateway([provider]))
     adapter = FakeProviderAdapter(
         provider_name="fake",
         model_name="fake-model",
@@ -190,7 +202,15 @@ class ModelEvaluationRequest(BaseModel):
     task_type: TaskTypeLiteral
     dataset_id: str = Field(min_length=1)
     sample_count: int = Field(default=10, ge=1, le=50)
-    use_real_provider: bool = False
+    use_real_provider: bool = Field(
+        default=True,
+        description=(
+            "Use the configured real provider through ModelGateway "
+            "(default, fails closed with 503 when none is configured). "
+            "Set false to explicitly compose the deterministic test "
+            "provider."
+        ),
+    )
 
     @field_validator("model_id")
     @classmethod

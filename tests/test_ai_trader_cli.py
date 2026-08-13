@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from alphabrief_cli.ai_commands import ai_app  # noqa: F401  (import side-effects)
+from alphabrief_cli.ai_commands import ai_app
 from alphabrief_cli.main import app
 from typer.testing import CliRunner
 
@@ -33,6 +33,15 @@ def _isolated_data_dir(
 
 
 class TestAiStatus:
+    def test_ai_command_group_is_registered(self) -> None:
+        """The AI committee group is wired into the main CLI."""
+        from alphabrief_cli.main import app as main_app
+
+        assert any(
+            info.typer_instance is ai_app
+            for info in main_app.registered_groups
+        ), "ai_app must be registered in the main CLI"
+
     def test_help(self) -> None:
         res = runner.invoke(app, ["ai", "status", "--help"])
         assert res.exit_code == 0
@@ -88,6 +97,9 @@ class TestAiRun:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        # Explicit fake selection is required: production composition
+        # fails closed without a configured real provider.
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
         res = runner.invoke(
             app,
             ["ai", "run", "--symbols", "SPY,QQQ", "--compact"],
@@ -139,6 +151,7 @@ class TestAiHistory:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
         runner.invoke(app, ["ai", "run", "--symbols", "SPY", "--compact"])
         res = runner.invoke(app, ["ai", "history", "--compact"])
         assert res.exit_code == 0
@@ -159,6 +172,7 @@ class TestAiShow:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
         run_res = runner.invoke(
             app, ["ai", "run", "--symbols", "SPY", "--compact"]
         )

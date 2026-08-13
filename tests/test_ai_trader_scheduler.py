@@ -76,7 +76,9 @@ class _NullAdapter(BrokerAdapter):
     ) -> list[OrderState]:
         return []
 
-    async def list_fills(self, since=None) -> list[Fill]:  # type: ignore[no-untyped-def]
+    async def list_fills(
+        self, since: datetime | None = None
+    ) -> list[Fill]:
         return []
 
     async def get_positions(self) -> list[Position]:
@@ -632,18 +634,21 @@ class TestResearchContentFactory:
     def test_generates_macro_and_evaluation(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Macro indicators and model evaluations are deterministic and
-        # provider-independent; briefs/debates need a real provider whose
-        # output matches the brief/debate schemas (the conservative fake
-        # returns committee-vote shaped output), so they are exercised in
-        # the deployed environment instead.
+        # The content factory builds its ModelGateway through the
+        # production provider factory, which fails closed without a real
+        # provider. Explicit fake selection is test composition; macro
+        # indicators and model evaluations are deterministic and
+        # provider-independent, while briefs/debates need a real provider
+        # whose output matches the brief/debate schemas (the conservative
+        # fake returns committee-vote shaped output), so they are
+        # exercised in the deployed environment instead.
         from alphabrief_api.db import MacroStore
         from alphabrief_api.db.model_eval import ModelEvalStore
         from alphabrief_cli.scheduler_commands import _research_content_factory
 
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.delenv("ALPHABRIEF_AI_MODEL_PROVIDER", raising=False)
 
         handler = _research_content_factory(db_path=isolated_data_dir)
 

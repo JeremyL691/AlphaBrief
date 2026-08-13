@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -30,9 +31,11 @@ from alphabrief_execution import (
 )
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
+    DailyCycleRecord,
     DailyTradingCycle,
     DisciplineConfig,
     MarketSnapshot,
+    ModelProviderUnavailableError,
     SnapshotLoader,
     StoredMarketSnapshotBuilder,
     TradingCommittee,
@@ -353,16 +356,56 @@ def run_cycle(body: AiRunRequest) -> dict[str, object]:
         reference_prices=reference_prices,
     )
     try:
-        cycle = _build_cycle(
-            snapshot_loader=snapshot_loader,
-            symbols=symbols,
-        )
+        try:
+            cycle = _build_cycle(
+                snapshot_loader=snapshot_loader,
+                symbols=symbols,
+            )
+        except ModelProviderUnavailableError as exc:
+            record = _blocked_record_without_provider(
+                symbols=symbols, reason=str(exc)
+            )
+            return _cycle_payload(record)
         record = cycle.run(
             symbols,
             time_horizon=body.time_horizon,
         )
     finally:
         close_snapshot_loader()
+    return _cycle_payload(record)
+
+
+def _blocked_record_without_provider(
+    symbols: list[str], *, reason: str
+) -> DailyCycleRecord:
+    """Persist a durable fail-closed cycle when no model provider exists.
+
+    The cycle cannot produce research without a configured provider, so
+    no proposal, OrderIntent, or broker submission may exist. The record
+    keeps the trading-day ledger honest: outcome is a no-trade value and
+    the summary states the real cause.
+    """
+    record = DailyCycleRecord(
+        cycle_id=f"aic_{os.urandom(6).hex()}",
+        trading_day=datetime.now(UTC).date().isoformat(),
+        symbols=list(symbols),
+        plans=[],
+        votes=[],
+        attempts=[],
+        outcome="skipped_no_intent",
+        enabled=True,
+        live_trading_enabled=False,
+        summary=(
+            "model provider unavailable; cycle produced no research or "
+            f"order intent (fail closed): {reason}"
+        ),
+        created_at=datetime.now(UTC),
+    )
+    _get_store().save_cycle(record)
+    return record
+
+
+def _cycle_payload(record: DailyCycleRecord) -> dict[str, object]:
     return {
         "cycle_id": record.cycle_id,
         "outcome": record.outcome,
@@ -458,6 +501,8 @@ __all__ = [
     "AiRulesResponse",
     "AiRunRequest",
     "AiStatusResponse",
+    "_blocked_record_without_provider",
+    "_cycle_payload",
     "_reset_ai_state",
     "router",
 ]
