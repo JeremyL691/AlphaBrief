@@ -1,7 +1,7 @@
 schema_version: 1
 blueprint_version: "2026-08-13.1"
 queue_id: alphabrief-oanda-final
-updated_at: "2026-08-14T15:10:00+08:00"
+updated_at: "2026-08-14T16:10:00+08:00"
 
 project:
   status: IN_PROGRESS
@@ -68,12 +68,12 @@ current_baseline:
 current:
   round_id: null
   milestone_id: M02
-  work_item_id: M11-W08
+  work_item_id: M12-W01
   phase: READY
   base_commit: null
   attempt: 0
-  last_verified_gate: M11-W07-FINAL-GATE
-  next_action: close the durable daily cycle and scheduler gate
+  last_verified_gate: M11-W08-FINAL-GATE
+  next_action: implement the compiled strategy condition DSL
   external_evidence_pending: M04-W06 T7 practice catalog evidence; M05-W06 T7 practice market-data evidence; M06-W07 T7 practice lifecycle evidence; M07-W07 T7 practice restart evidence; M08-W08 T7 practice risk-chain evidence
 
 milestones:
@@ -92,7 +92,7 @@ milestones:
   M08: CODE_COMPLETE
   M09: DONE
   M10: DONE
-  M11: ACTIVE
+  M11: DONE
   M12: BACKLOG
   M13: BACKLOG
   M14: BACKLOG
@@ -174,9 +174,10 @@ work_item_states:
   M11-W05: DONE
   M11-W06: DONE
   M11-W07: DONE
+  M11-W08: DONE
 
 latest_validation:
-  completed_at: "2026-08-14T15:10:00+08:00"
+  completed_at: "2026-08-14T16:10:00+08:00"
   controller_enforced: false
   targeted_docs_acceptance:
     passed: 22
@@ -184,7 +185,7 @@ latest_validation:
     warnings: 7
   full_pytest:
     approved_loopback_environment:
-      passed: 2305
+      passed: 2312
       failed: 19
       warnings: 14
     restricted_sandbox:
@@ -293,5 +294,5 @@ observation:
   unexplained_cross_day_diffs: null
   live_or_other_broker_attempts: null
 
-last_completed_round: R-20260813-M11-W07
-last_ledger_record: R-20260813-M11-W07
+last_completed_round: R-20260813-M11-W08
+last_ledger_record: R-20260813-M11-W08

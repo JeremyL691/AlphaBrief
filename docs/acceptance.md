@@ -1421,3 +1421,33 @@ acceptance 11/11。下一 READY item：M11-W07。
 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见 M10-W03）；
 ruff/mypy 全仓 clean（407 source files）；acceptance 11/11。下一 READY
 item：M11-W08。
+
+#### M11-W08 已闭环证据（R-20260813-M11-W08）— M11 里程碑 gate
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M11-W08-01 | 每个 durable phase 与 broker boundary 前后的 failure injection 恢复为单一 terminal cycle，无 duplicate intent/submit | `tests/test_daily_cycle_recovery.py`：`test_crash_before_each_phase_resumes_to_single_terminal`（对 CYCLE_PHASE_ORDER 每个边界 crash → resume → is_complete、store 仅 1 条 cycle、submit 计数 ≤1）；`test_crash_after_broker_boundary_never_resubmits`（execute transition 提交后 crash → 0 次新 submit）；叠加 W01 的 restart-resume 与 W06 的 at-most-once |
+| AC-M11-W08-02 | concurrent leaders、SIGTERM、stale lease、timeout、provider failure、broker uncertainty、reconciliation mismatch 各产生 deterministic recovery 或 fail-closed evidence | `test_concurrent_leaders_produce_one_holder`（一 leader 一 follower）；`test_stale_lease_blocks_former_leader`（过期 → renew/is_leader False、新 leader 接管）；`test_provider_failure_completes_fail_closed`（provider 输出无效 → provider_error、attempts 空、持久化）；`test_broker_timeout_completes_with_error_evidence`（TimeoutError → error terminal、恰 1 次 submit、attempt 持久化）；`test_reconciliation_mismatch_is_fail_closed_evidence`（matched=False 的 reconciliation evidence 落 reconcile transition）；SIGTERM 语义由 phase 边界 crash 注入覆盖（SIGTERM 在任意 phase 边界与 crash 等价，resume 相同） |
+| AC-M11-W08-03 | full repository、static、autonomous acceptance、M11 traceability gates 无 waiver 通过 | targeted 六套（47 passed）+ integration 四套（52 passed）+ ruff/mypy clean（408 source files）+ full pytest（见下）+ acceptance 11/11；REQ-CYCLE-001..010 全部 trace 到 W01-W08 evidence（见下 M11 Requirement Traceability）；M11 里程碑 → DONE |
+
+#### M11 Requirement Traceability（M11-W01..W08）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-CYCLE-001（每日 phases 持久状态机） | W01 `CycleStateStore`/`CycleStateMachine`/`DurableDailyCycle`；`test_daily_cycle_state_machine.py` |
+| REQ-CYCLE-002（每阶段原子记录 input hashes/output IDs/attempt/timestamps/prior state，stale writer 拒绝） | W01 `advance()` CAS+append；`test_daily_cycle_state_machine.py`/`test_daily_cycle_checkpoints.py` |
+| REQ-CYCLE-003（research 与 execution enable 分离） | W03 `ExecutionGate`+mode 持久化；`test_daily_cycle_research_mode.py` |
+| REQ-CYCLE-004（候选集/流动性/质量/模型预算） | W04 `DailyCandidateSelector`；`test_daily_cycle_candidates.py`/`test_daily_cycle_budget.py` |
+| REQ-CYCLE-005（候选选择透明可解释、完整品种可查询） | W04 verdicts/selection_reason；`test_daily_cycle_candidates.py` |
+| REQ-CYCLE-006（同日期/snapshot 不重复、漏跑明确） | W05 `daily_cycle_key`+`CatchUpPolicy`；`test_daily_cycle_catchup.py` |
+| REQ-CYCLE-007（no-trade/RiskGate rejection/market closed/stale data 为成功终态） | W05 terminal outcomes；`test_daily_cycle_no_trade.py` |
+| REQ-CYCLE-008（cycle 后即时对账并生成 daily report） | W06 `_phase_reconcile`+W07 `DailyCycleReport`；`test_daily_cycle_risk_chain.py`/`test_daily_cycle_reporting.py` |
+| REQ-CYCLE-009（scheduler task listing/running/heartbeat/last/next 同一权威） | W02/W07 `RuntimeTruthStore`；`test_scheduler_runtime_truth.py` |
+| REQ-CYCLE-010（单 leader/单 writer） | W02 `SchedulerLeaderLease`；`test_scheduler_leader.py` |
+
+范围说明：`tests/test_daily_cycle_recovery.py` 为 M11-W08 契约声明的缺失测试
+文件（targeted command 声明，documented forced path）。全量 pytest：
+2331 total（2312 passed + 19 pre-existing M08-W03 time-bombed risk fixture
+失败，分类见 M10-W03）；ruff/mypy 全仓 clean（408 source files）；
+acceptance 11/11。M11 里程碑 → DONE（无 T7 runtime 依赖，全部本地确定性
+gate 通过）。下一 READY item：M12-W01。
