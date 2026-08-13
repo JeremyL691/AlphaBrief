@@ -1783,3 +1783,31 @@ REQ-UI-002/006、REQ-PLAT-009，scope profile `api_cli`）。全量 pytest：272
 （2701 passed + 19 pre-existing M08-W03 time-bombed risk fixture 失败，分类见
 M10-W03）；ruff/mypy 全仓 clean（444 source files）；acceptance 11/11。
 下一 READY item：M13-W06。
+
+#### M13-W06 已闭环证据（R-20260813-M13-W06）— M13 里程碑 gate
+
+| AC | Predicate | Evidence |
+|---|---|---|
+| AC-M13-W06-01 | API and CLI contract suites cover every required resource and approved control with equivalent schemas, typed errors, stable IDs, and no interactive step | targeted 八套（W01-W05 全部契约套件，123 passed）：read/write contracts、operational resources、traceability、CLI contracts/control、OpenAPI contract、API-CLI parity——equivalent schemas（normalize_payload 等价）、typed errors（ReadErrorResponse/MutationAudit/CliExit）、stable IDs（envelope id/provenance、audit_id、trace 全链）、no interactive step（CLI stdin 关闭运行）全部由各轮证据覆盖 |
+| AC-M13-W06-02 | Static gates find no arbitrary broker proxy, route-local production state, offline-success placeholder, live control, undocumented mutation, or sensitive OpenAPI example | `tests/test_api_cli_static_gate.py`（10 passed）：`TestNoArbitraryBrokerProxy`（route 无 api_route/requests/httpx 代理；write gate 无 provider 引用）；`TestNoRouteLocalProductionState`（operational/trace 无 module-level 可变状态、逐请求开 store 并 finally 关闭）；`TestNoOfflineSuccessPlaceholder`（无硬编码 success、缺数据显式 null/404）；`TestNoLiveControl`（api/cli 源码零 live-host 引用、无 live_mode/--live 开关）；`TestNoUndocumentedMutation`（全部 mutation route 分类）；`TestNoSensitiveOpenapiExamples`（schema 扫描空） |
+| AC-M13-W06-03 | Full repository, static analysis, OpenAPI, API-CLI parity, autonomous acceptance, and M13 traceability gates pass without waiver or human approval | targeted 123 + integration 182（含 test_api_server 的 backtest API 覆盖，documented substitution）+ ruff/mypy clean（445 source files）+ full pytest 2711 passed + 19 pre-existing M08-W03 time-bomb（分类见 M10-W03）+ acceptance 11/11；REQ-UI-001/002/006/007/010 全 trace（见下） |
+
+#### M13 Requirement Traceability（M13-W01..W06 里程碑闭环）
+
+| Requirement | Code / Evidence |
+|---|---|
+| REQ-UI-001（API/CLI 对 14 类 read 提供一致 schema） | W01 `read_contracts.py`（envelope/14 domains/normalize_payload）；W04 `cli/contracts.py`（JSON/parity）；W05 `openapi_contract.py`（OpenAPI 声明 + API-CLI 映射） |
+| REQ-UI-002（写操作 validation/idempotency/权限边界/清晰错误，无通用任意 broker request 代理） | W02 `write_contracts.py`（gate/replay/audit）；W04 exit codes；W05 OpenAPI idempotency header/error model |
+| REQ-UI-006（cycle 一键追溯 evidence→discussion→intent→risk rules→OANDA transaction→reconciliation） | W03 `routes/trace.py`；`test_api_traceability.py` |
+| REQ-UI-007（cash/NAV/margin/P&L/exposure/positions/pending orders/fills/financing/category attribution/时序） | W03 `routes/operational.py`（portfolio/equity）；`test_api_operational_resources.py` |
+| REQ-UI-010（手工控制仅 7 种 mutation，全部审计） | W02 `OPERATOR_MUTATIONS`/`MutationAuditLog`；W05 OpenAPI 声明 |
+| REQ-PLAT-008/009 | W01 UTC/稳定 ID；W02 correlation/audit ID；W05 correlation header |
+
+范围说明：`tests/test_api_cli_static_gate.py` 为 M13-W06 契约声明的静态 gate 测试
+文件（AC-M13-W06-02 evidence，documented forced path）；M13-W06 为里程碑 gate
+round，无新生产代码。集成 command 声明的 `tests/test_backtest_api.py` 不存在
+（backtest API 覆盖位于 `tests/test_api_server.py`，documented substitution）。
+全量 pytest：2730 total（2711 passed + 19 pre-existing M08-W03 time-bombed
+risk fixture 失败，分类见 M10-W03）；ruff/mypy 全仓 clean（445 source files）；
+acceptance 11/11。**M13 里程碑 → DONE**（无 T7 runtime 依赖，全部本地确定性
+gate 通过）。下一 READY item：M14-W01。
