@@ -56,7 +56,9 @@ class RuntimeTruthStore:
         leader_id: str | None,
         active_config: dict[str, Any] | None = None,
         running_phase: str | None = None,
+        phase_started_at: datetime | None = None,
         last_outcome: str | None = None,
+        failure_classification: str | None = None,
         next_due_at: datetime | None = None,
     ) -> None:
         """Upsert the single runtime-truth row."""
@@ -64,15 +66,18 @@ class RuntimeTruthStore:
             """
             INSERT INTO scheduler_runtime (
                 row_id, leader_id, active_config_json, running_phase,
-                heartbeat_at, last_outcome, next_due_at, updated_at
+                phase_started_at, heartbeat_at, last_outcome,
+                failure_classification, next_due_at, updated_at
             )
-            VALUES (1, ?, ?::JSON, ?, ?, ?, ?, ?)
+            VALUES (1, ?, ?::JSON, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (row_id) DO UPDATE SET
                 leader_id = EXCLUDED.leader_id,
                 active_config_json = EXCLUDED.active_config_json,
                 running_phase = EXCLUDED.running_phase,
+                phase_started_at = EXCLUDED.phase_started_at,
                 heartbeat_at = EXCLUDED.heartbeat_at,
                 last_outcome = EXCLUDED.last_outcome,
+                failure_classification = EXCLUDED.failure_classification,
                 next_due_at = EXCLUDED.next_due_at,
                 updated_at = EXCLUDED.updated_at
             """,
@@ -80,8 +85,10 @@ class RuntimeTruthStore:
                 leader_id,
                 json.dumps(active_config or {}, sort_keys=True),
                 running_phase,
+                phase_started_at,
                 self._clock(),
                 last_outcome,
+                failure_classification,
                 next_due_at,
                 self._clock(),
             ],
@@ -137,7 +144,8 @@ class RuntimeTruthStore:
         """Return the persisted runtime truth, or ``None`` when absent."""
         row = self._conn.execute(
             "SELECT leader_id, active_config_json, running_phase, "
-            "heartbeat_at, last_outcome, next_due_at, updated_at "
+            "phase_started_at, heartbeat_at, last_outcome, "
+            "failure_classification, next_due_at, updated_at "
             "FROM scheduler_runtime WHERE row_id = 1"
         ).fetchone()
         if row is None:
@@ -149,10 +157,12 @@ class RuntimeTruthStore:
                 json.loads(config) if isinstance(config, str) else config
             ),
             "running_phase": row[2],
-            "heartbeat_at": row[3],
-            "last_outcome": row[4],
-            "next_due_at": row[5],
-            "updated_at": row[6],
+            "phase_started_at": row[3],
+            "heartbeat_at": row[4],
+            "last_outcome": row[5],
+            "failure_classification": row[6],
+            "next_due_at": row[7],
+            "updated_at": row[8],
         }
 
     def clear(self) -> None:
