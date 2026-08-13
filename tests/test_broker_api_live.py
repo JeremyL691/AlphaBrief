@@ -192,3 +192,73 @@ def test_recon_routes_unchanged_with_live_adapter(
         assert orders.json() == {"orders": []}
     finally:
         server.stop()
+
+
+def test_broker_reconcile_runs_real_pass_with_live_adapter(
+    live_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST /reconcile with a live adapter performs real broker reads and
+    records a genuine verdict — never an unconditional all-match
+    placeholder (AC-M07-W06-03)."""
+    server = MockOandaServer()
+    server.start()
+    try:
+        monkeypatch.setenv(ENV_OANDA_BASE_URL, server.base_url)
+        _reset_broker_adapter()
+        # A remote order with a client identity unknown locally: a real
+        # read must surface it as a mismatch.
+        server.on(
+            "GET",
+            "/v3/accounts/test-account/orders?state=ALL",
+            status=200,
+            body={
+                "orders": [
+                    {
+                        "id": "11",
+                        "instrument": "EUR_USD",
+                        "units": "1000",
+                        "state": "PENDING",
+                        "createTime": "2026-08-13T12:00:00.000000000Z",
+                        "clientExtensions": {"id": "ext-1"},
+                    }
+                ]
+            },
+        )
+        server.on(
+            "GET",
+            "/v3/accounts/test-account/openPositions",
+            status=200,
+            body={"positions": []},
+        )
+        server.on(
+            "GET",
+            "/v3/accounts/test-account",
+            status=200,
+            body={
+                "account": {
+                    "id": "101-004-1234567-001",
+                    "balance": "1000.00",
+                    "NAV": "1000.00",
+                    "marginAvailable": "1000.00",
+                    "currency": "USD",
+                    "status": "ACTIVE",
+                }
+            },
+        )
+
+        response = live_client.post("/api/v1/broker/reconcile?scope=eod")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["scope"] == "eod"
+        # The remote unknown order makes the real pass non-matching.
+        assert body["all_match"] is False
+        assert body["freeze_raised"] is False  # eod scope never freezes
+        # The durable snapshot reflects the real diff.
+        status = live_client.get("/api/v1/broker/status")
+        latest = status.json()["latest_snapshot"]
+        assert latest is not None
+        assert latest["all_match"] is False
+        assert latest["orders_match"] is False
+    finally:
+        server.stop()

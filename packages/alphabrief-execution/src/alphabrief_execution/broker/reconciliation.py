@@ -31,6 +31,7 @@ from alphabrief_execution.broker.port import (
     Position,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore, ReconSnapshot
+from alphabrief_execution.broker.runtime import NullBrokerAdapter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,6 +83,30 @@ class ReconciliationRunner:
     async def reconcile(self, *, scope: str) -> ReconResult:
         if scope not in ALLOWED_SCOPES:
             raise ValueError(f"unknown reconciliation scope: {scope!r}")
+
+        if isinstance(self._adapter, NullBrokerAdapter):
+            # Fail closed (AC-M07-W06-03): with no OANDA practice broker
+            # configured, a pass can never record a vacuous all-match
+            # placeholder. The snapshot is explicitly non-matching and the
+            # per-scope freeze policy still applies.
+            snapshot = self._store.record_snapshot(
+                scope=scope,
+                orders_match=False,
+                fills_match=False,
+                cash_match=False,
+                positions_match=False,
+                diff={
+                    "error": "broker_not_configured",
+                    "detail": (
+                        "no OANDA practice credentials; reconciliation "
+                        "cannot run and is recorded as not matching"
+                    ),
+                },
+            )
+            freeze_raised = self._maybe_raise_freeze(
+                scope, snapshot, source="reconciler"
+            )
+            return ReconResult(snapshot=snapshot, freeze_raised=freeze_raised)
 
         try:
             orders = await self._adapter.list_orders()
