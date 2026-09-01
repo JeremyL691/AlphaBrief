@@ -1,3 +1,46 @@
+<!-- Recruiter TL;DR. The authoritative engineering README below is intentionally unchanged. -->
+
+## Recruiter TL;DR
+
+> A local-first market-data and paper-trading platform that turns multi-source data into reproducible research, backtests, risk-gated OANDA practice execution, and auditable operational evidence.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+[![Tests: 3,325 collected](https://img.shields.io/badge/tests-3%2C325%20collected-blue.svg)](#current-verified-baseline)
+
+### What this demonstrates for a Data Engineer
+
+- **Multi-provider ingestion:** market, news, and macro inputs flow through dedicated `data` and `news` packages with provenance tracking, quality checks, and structured provider boundaries (Yahoo, Binance, Alpha Vantage, RSS, SEC, FRED).
+- **Reproducible storage:** versioned, immutable market and order facts are persisted in DuckDB, keeping research, reconciliation, and replay inspectable.
+- **Reliable orchestration:** the daily scheduler uses a persisted compare-and-set state machine, a renewable leader lease, restart-resume at every phase boundary, and at-most-once external execution with correlation chains.
+- **Auditability by design:** every cycle is recorded end-to-end — evidence, model calls, proposals, risk decisions, orders, transactions, and reconciliation — with deterministic acceptance gates.
+- **Tested contracts:** the published baseline records **1,389 passing tests**, and the current main collects **3,325 tests** across API, CLI, data, strategy, risk, execution, and acceptance boundaries (static local baseline — no CI workflow yet).
+
+```mermaid
+flowchart LR
+    E[electron desktop] --> API[apps/api<br/>FastAPI + dashboard]
+    CLI[apps/cli<br/>CLI + scheduler] --> API
+    API --> DATA[packages/alphabrief-data<br/>providers + bars + quality]
+    API --> NEWS[packages/alphabrief-news<br/>news + sentiment]
+    DATA --> DB[(DuckDB<br/>versioned immutable facts)]
+    NEWS --> DB
+    API --> TRADER[packages/alphabrief-trader<br/>AI committee + daily cycle]
+    TRADER --> STRAT[alphabrief-strategy<br/>signals]
+    TRADER --> BT[alphabrief-backtest<br/>IS/OOS walk-forward]
+    TRADER --> RISK[alphabrief-risk<br/>deterministic risk gates]
+    RISK --> EXEC[alphabrief-execution<br/>OANDA practice only]
+    EXEC --> DB
+```
+
+### Repository map
+
+- [Agent contract](AGENTS.md)
+- [Final product blueprint](ALPHABRIEF_PRODUCT_BLUEPRINT.md)
+- [Current progress ledger](docs/progress.yaml)
+- [Architecture](docs/architecture.md)
+- [Acceptance and traceability](docs/acceptance.md)
+
+---
 # AlphaBrief
 
 AlphaBrief is a local-first market research and paper-trading workstation. It
