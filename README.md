@@ -1,12 +1,10 @@
 # AlphaBrief
 
-> **A local-first data pipeline for market, news, and macro research — ingest from multiple providers, version immutable facts in DuckDB, and run a durable daily cycle with restart-resume and at-most-once OANDA practice execution.**
+A local-first data pipeline for market, news, and macro research. It ingests from multiple providers, versions immutable facts in DuckDB, and runs a durable daily cycle with restart-resume and at-most-once OANDA practice execution.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![Tests: ~3k collected](https://img.shields.io/badge/tests-%7E3k%20collected-blue.svg)](#current-verified-baseline)
-
-I built this to learn how a real data platform handles messy external inputs: different market APIs that fail in different ways, news that needs deduplication and sanitization, and a daily workflow that has to survive restarts without duplicating orders. Every external call is isolated behind a provider boundary, every bar and trade is versioned, and every cycle leaves an audit trail I can replay.
 
 ```mermaid
 flowchart LR
@@ -24,54 +22,44 @@ flowchart LR
     EXEC --> DB
 ```
 
-### What this demonstrates for a Data Engineer
+## Why I built this
 
-- **Multi-provider ingestion** — market (Yahoo, Binance, Alpha Vantage), news (RSS, SEC EDGAR), and macro (FRED) flow through isolated provider modules with a shared retry policy (exponential backoff, jitter, only 429/418/5xx retried) and strict error codes.
-- **Reproducible storage** — bars, news items, and order facts are appended immutably in DuckDB with versioned migrations (`apps/api/src/alphabrief_api/db/`). Nothing is mutated in place, so research and reconciliation can be replayed.
-- **Reliable orchestration** — the daily cycle is a persisted compare-and-set state machine (preflight → ingest → snapshot → discuss → propose → risk → execute/no-trade → reconcile → report) with a renewable leader lease and restart-resume at every phase boundary. External OANDA calls are at-most-once with correlation chains.
-- **Auditability by design** — evidence, model calls, proposals, risk decisions, orders, transactions, and reconciliation are recorded end-to-end with deterministic gates. No observation day is ever fabricated; missing T7 credentials surface as `BLOCKED_EXTERNAL`.
-- **Tested boundaries** — the verified baseline has **1,389 passing tests**; current `main` collects **~3,025 tests** across API/CLI/data/strategy/risk/execution (local static count, no CI yet).
+Market-data scripts kept annoying me in the same way: every provider had its own quirks, failures were silent, and killing a run mid-day either skipped work or duplicated orders. I wanted one place where ingestion is explicit, failures are classified, storage is immutable, and a scheduler can be killed and resumed without losing track. The committee and LLM parts are secondary. The data platform is the point.
 
-### Why I built this
-
-I kept hitting the same problem in market-data scripts: each provider had its own quirks, failures were silent, and a restart midway through a day would either skip work or duplicate orders. I wanted a single place where ingestion is explicit, failures are classified, storage is immutable, and the scheduler can be killed and resumed without losing track. The committee/LLM part is secondary — the data platform is the point.
-
-### What it does, concretely
+## What it does
 
 - Discovers tradable instruments from the configured OANDA practice account (`GET /v3/accounts/{id}/instruments`) instead of hard-coding a catalog.
-- Ingests bars via `alphabrief-data` providers (CSV/Parquet loaders + Yahoo/Binance/Alpha Vantage) with `check_bar_quality` (duplicate timestamps, non-increasing, mixed symbols, zero volume, gap detection).
-- Ingests news via `alphabrief-news` (`fetch_and_ingest`): canonical URL, published/fetched UTC, content hash, bounded summary, `fetch_outcome` in `success/empty/timeout/rate_limit/malformed/source_failure`; copyright-safe retention (metadata-only sources never store full text) and sanitization before research/risk see it.
-- Versions everything in DuckDB (`db/schema.py` + `db/migrations.py` transactional, idempotent).
-- Runs a daily cycle (`alphabrief-trader/cycle_state.py`, `cycle_execution.py`, `scheduler_leader.py`) that is fully persisted; killing the process and restarting resumes the same phase.
-- Applies deterministic `RiskGate` before any `OrderIntent` reaches OANDA practice; reconciliation freezes execution on unexplained differences.
-- Keeps live trading permanently unreachable — only `api-fxpractice.oanda.com` and `stream-fxpractice.oanda.com` are allowlisted.
+- Ingests bars through `alphabrief-data` providers (CSV/Parquet loaders plus Yahoo, Binance, Alpha Vantage), with `check_bar_quality` covering duplicate timestamps, non-increasing sequences, mixed symbols, zero volume, and gap detection.
+- Ingests news through `alphabrief-news` (`fetch_and_ingest`): canonical URL, published/fetched UTC, content hash, bounded summary, and a `fetch_outcome` in `success/empty/timeout/rate_limit/malformed/source_failure`.
+- Runs a persisted compare-and-set daily cycle: preflight, ingest, snapshot, discuss, propose, risk, execute or no-trade, reconcile, report. A renewable leader lease and restart-resume at every phase boundary keep a crashed run recoverable, and external OANDA calls are at-most-once with correlation chains.
+- Records evidence end to end: model calls, proposals, risk decisions, orders, transactions, reconciliation. Missing credentials surface as `BLOCKED_EXTERNAL`; no observation day is ever fabricated.
+- Appends bars, news items, and order facts immutably in DuckDB (`db/schema.py` plus `db/migrations.py`, transactional and idempotent), under versioned migrations in `apps/api/src/alphabrief_api/db/`. Nothing is mutated in place, so research and reconciliation can be replayed.
+- Runs a persisted daily cycle (`alphabrief-trader/cycle_state.py`, `cycle_execution.py`, `scheduler_leader.py`); killing the process and restarting resumes the same phase.
+- Applies a deterministic `RiskGate` before any `OrderIntent` reaches OANDA practice. Reconciliation freezes execution on unexplained differences.
+- Keeps live trading permanently unreachable. Only `api-fxpractice.oanda.com` and `stream-fxpractice.oanda.com` are allowlisted.
 
-### Engineering highlights
+## Engineering notes
 
-**Provider boundaries.** `providers/base.py` defines `RetryPolicy` (max_retries, initial_backoff, factor, jitter) and `call_with_retry` that only retries 429/418/5xx and transient network errors. Each provider returns `Bar` lists and never calls a third-party SDK directly; tests inject a fake `http_get` callable so no real network is needed.
+- **Provider boundaries.** `providers/base.py` defines `RetryPolicy` (`max_retries`, `initial_backoff`, `factor`, `jitter`) and `call_with_retry`, which only retries 429/418/5xx plus transient network errors. Providers return `Bar` lists and never call a third-party SDK directly; tests inject a fake `http_get` callable, so no real network is involved.
+- **Data quality.** `quality.py` checks identity consistency (mixed symbols/sources/versions), timestamp ordering (duplicates, non-increasing), expected interval gaps, and zero volume. `phases` are `error` vs `warning`, so pipelines can decide to block or just warn.
+- **News provenance.** `news/ingestion.py` persists `item_id, source, canonical_url, published_at, fetched_at, content_hash, summary, fetch_outcome, correlation_id, metadata_only` with `INSERT OR IGNORE`, keeps copyright-safe retention (metadata-only sources never store full text), and sanitizes content before research or risk sees it. Daily regime and sentiment snapshots are immutable and shared by research and risk.
+- **Durable cycle.** `cycle_state.py` stores `phase, phase_order, output_ids` with `ON CONFLICT DO UPDATE`; `scheduler_leader.py` uses a renewable lease so only one scheduler runs. At-most-once is enforced with idempotency keys and immediate reconciliation after every OANDA call.
 
-**Data quality.** `quality.py` checks identity consistency (mixed symbols/sources/versions), timestamp ordering (duplicates, non-increasing), expected interval gaps, and zero volume. `phases` are `error` vs `warning` so pipelines can decide to block or just warn.
+### Not done yet
 
-**News provenance.** `news/ingestion.py` persists `item_id, source, canonical_url, published_at, fetched_at, content_hash, summary, fetch_outcome, correlation_id, metadata_only` with `INSERT OR IGNORE`; daily regime/sentiment snapshots are immutable and shared by research and risk.
-
-**Durable cycle.** `cycle_state.py` stores `phase, phase_order, output_ids` with `ON CONFLICT DO UPDATE`; `scheduler_leader.py` uses a renewable lease so only one scheduler runs. At-most-once is enforced via idempotency keys and immediate reconciliation after every OANDA call.
-
-### Limitations — honest state
-
+- The daily cycle is wired end to end, but T7 practice runtime evidence for M15/M16 (30-day observation, weekly zero-difference invariants, fault drills) is still pending real credentials. Commands report `BLOCKED_EXTERNAL` or `WAITING_EXTERNAL` honestly.
+- The strategy DSL is a typed AST allowlist, so no arbitrary code runs; backtests reproduce with frozen params. The IS/OOS and strategy read surfaces landed in M13 and still need T7 evidence.
+- Execution is OANDA practice only. Alpaca and live paths were removed and stay removed; missing credentials fail closed, and an in-memory fill is never presented as an OANDA fill.
 - OANDA account-wide discovery is not complete (M04); current providers are not OANDA-native, so production bars still come from Yahoo/Binance/Alpha Vantage.
-- Production freshness, source reliability, and sentiment calibration are incomplete — daily runs work locally but are not yet proven over 30 real days without manual watch.
-- Model composition fails closed: without `OPENAI_API_KEY` or `OLLAMA_*`, `ModelGateway` refuses; `FakeProvider` exists only in tests.
-- The daily cycle is end-to-end wired, but T7 practice runtime evidence for M15/M16 (30-day observation, weekly zero-difference invariants, fault drills) is still pending real credentials. Commands report `BLOCKED_EXTERNAL` / `WAITING_EXTERNAL` honestly.
-- Strategy DSL is safe (typed AST allowlist, no arbitrary code) and backtests are reproducible with frozen params, but API surfaces for IS/OOS and strategy reads landed in M13 and still need T7 evidence.
-- Execution is OANDA practice only; Alpaca and live paths were removed and must stay removed. Missing credentials fail closed — no silent in-memory fill is ever presented as an OANDA fill.
+- Model composition fails closed: without `OPENAI_API_KEY` or `OLLAMA_*`, `ModelGateway` refuses, and `FakeProvider` exists only in tests.
 
 <details>
-<summary>Milestone contract status (M09–M17) — contracts closed, T7 evidence pending</summary>
+<summary>Milestone contract status (M09-M17) - contracts closed, T7 evidence pending</summary>
 
 - M09 content pipeline (DONE): deterministic news ingestion with provenance, URL canonicalization + dedup + entity linking, revision-aware macro calendar, multi-scope sentiment, untrusted sanitization, immutable snapshots.
 - M10 ModelGateway (DONE): exclusive gateway, fail-closed composition, durable call records/budgets, five-role committee, grounded proposals, bounded structured-output repair, cycle-key idempotency.
 - M11 durable cycle (DONE): persisted CAS state machine with restart-resume every phase, leader lease, single runtime truth, research/execution separation, bounded candidate selection, catch-up windows, terminal no-trade.
-- M12–M15 (DONE): read/write contracts, strategy backtest closure, dashboard redesign, engineering readiness. Frozen build is OANDA practice-only; network allowlist enforced.
+- M12-M15 (DONE): read/write contracts, strategy backtest closure, dashboard redesign, engineering readiness. Frozen build is OANDA practice-only; network allowlist enforced.
 - M16 observation (DONE, evidence PENDING): Day 0 manifest, 14-kind daily chains, weekly gates, fault drills, Day 30 close.
 - M17 handoff (DONE, evidence PENDING): evidence-derived final acceptance report, fresh-install/runbook, deterministic Electron packaging, 11-gate final release (`COMPLETE_PAPER_ONLY`).
 
@@ -79,7 +67,7 @@ I kept hitting the same problem in market-data scripts: each provider had its ow
 
 ## Current Verified Baseline
 
-Snapshot: 2026-08-14, commit `0a1016a` (all M01–M17 closed as contracts; 30-day observation pending T7 credentials; status `IN_PROGRESS`).
+Snapshot: 2026-08-14, commit `0a1016a` (all M01-M17 closed as contracts; 30-day observation pending T7 credentials; status `IN_PROGRESS`).
 
 | Area | What exists now | Important limitation |
 |---|---|---|
@@ -93,7 +81,7 @@ Snapshot: 2026-08-14, commit `0a1016a` (all M01–M17 closed as contracts; 30-da
 | Operations | Scheduler, heartbeats, alerts, API/CLI, 9 dashboard pages, Electron; versioned migrations, writer lease, backups | 30-day evidence and control-plane truth incomplete |
 | API/CLI contracts | 14 read domains, 7 idempotent operator writes with audit, 18 CLI groups / 57 subcommands / 86 OpenAPI endpoints / 9 dashboard routes, locked OpenAPI with CLI parity | Dashboard redesign in M14; T7 evidence pending |
 
-Local quality at baseline: **1,389 passing tests + 12 local-HTTP failures from sandbox `127.0.0.1` bind refuse**; Ruff and Mypy passed. Current `main` collects **~3,025 tests** (21 collection errors without `httpx` — needs `pip install -e '.[dev]'`).
+Local quality at baseline: **1,389 passing tests + 12 local-HTTP failures from sandbox `127.0.0.1` bind refuse**; Ruff and Mypy passed. Current `main` collects **~3,025 tests** (21 collection errors without `httpx` - needs `pip install -e '.[dev]'`).
 
 ## Repository Layout
 
