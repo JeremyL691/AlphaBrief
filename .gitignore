@@ -44,3 +44,6 @@ _reference_sources/
 *.tmp
 *.orig
 *.rej
+
+# omp (oh-my-pi) runtime state - not source
+.omo/
