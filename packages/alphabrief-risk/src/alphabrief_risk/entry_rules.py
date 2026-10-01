@@ -27,6 +27,7 @@ from decimal import Decimal
 from alphabrief_core import OrderIntent
 
 from alphabrief_risk.account_context import AccountExposureContext
+from alphabrief_risk.spread_policy import evaluate_spread
 
 #: Rejection codes, exactly as named in PROJECT_GUIDE 5.7.
 RuleCode = str
@@ -64,6 +65,11 @@ class EntryRulePolicy:
     #: Rule 11: block entries while the drawdown state machine says so.
     #: ``False`` leaves the rule unenforced.
     block_on_drawdown: bool = False
+    #: Rule 4: reject when the live spread exceeds this multiple of the
+    #: same-period median. ``None`` leaves the rule unenforced.
+    max_spread_median_multiplier: Decimal | None = None
+    #: Minimum same-period samples before rule 4 can judge a spread.
+    min_spread_samples: int = 5
 
 
 def _is_open_intent(intent: OrderIntent) -> bool:
@@ -153,6 +159,25 @@ def evaluate_entry_rules(
         return tuple(rejections)
 
     context = account_context
+
+    # Rule 4 — the spread against its own recent same-period median.
+    if policy.max_spread_median_multiplier is not None:
+        if context is None or context.current_spread is None:
+            rejections.append(
+                RuleRejection(
+                    "SPREAD_WIDE",
+                    "no live spread supplied for the instrument",
+                )
+            )
+        else:
+            verdict = evaluate_spread(
+                current_spread=context.current_spread,
+                recent_spreads=context.recent_spreads,
+                multiplier=policy.max_spread_median_multiplier,
+                min_samples=policy.min_spread_samples,
+            )
+            if not verdict.allowed:
+                rejections.append(RuleRejection("SPREAD_WIDE", verdict.reason))
 
     # Rule 7 — daily intent caps.
     if policy.max_daily_opens is not None:

@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 最后一条规则 4 点差（需 S5 报价历史，本批已具备报价样本表条件）与 S4-6（每条规则的通过/拒绝测试 + S4 退出标准全 universe 跑，需模型额度） |
+| 下一项任务 | S4-6：14 条规则的显式通过/拒绝矩阵测试 + EUR_USD/USD_JPY 仓位矩阵；随后 S4 退出标准全 universe 跑（需模型额度） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-2 第七批：规则 11 回撤状态机（3% 封禁 48h → 半仓、5% 熔断）接入真实 NAV 并实测 |
+| 最近更新 | 2026-10-01，S4-2 第八批：规则 4 点差（同品种同时段中位数 2 倍）落地并实测，14 条规则全部实现 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,14 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-2 第八批（本提交）：**规则 4 点差（5.7）——14 条规则全部实现**。
+  - 新增 `alphabrief_data.quote_samples`（数据层，自带 DDL）：`quote_spread_samples`（symbol/captured_at/bid/ask/spread/mid/source，按 `(symbol, captured_at)` 幂等），`recent_spreads(symbol, hour, limit=20)` 取**同一 UTC 小时**内最近 20 个样本（"同时段"的操作化定义：02:00 的点差不该拿伦敦开盘时段当基准），`QuoteSample` 校验 ask ≥ bid、spread ≥ 0。
+  - 新增 `alphabrief_risk.spread_policy`（纯规则）：`median`（偶数取中间两值均值）、`evaluate_spread`——当前点差 > 2 × 同品种同时段最近样本中位数即 `SPREAD_WIDE`；**历史不足 `min_samples`（默认 5）或无样本时失败闭合**（没有基准可比较时不假设安全，理由串写明样本数）；用中位数而非均值，单个尖峰不会放宽所有人的容忍度。
+  - 接入：`AccountExposureContext.current_spread/recent_spreads`（调用方读样本，gate 只应用规则）；`EntryRulePolicy.max_spread_median_multiplier/min_spread_samples`（未配置不启用），仅约束入场、平仓豁免；`OandaRiskContextSources` 新增 `live_spread`/`live_quote`；CLI 的账户上下文提供者在每次评估时把当前报价写入样本表（幂等）并读取同时段历史，受审 policy 设 2 倍/最少 5 个样本；`alphabrief data sync-oanda` 每次同步也记录样本（输出新增 `spread_samples_recorded`）。
+  - 真实实测（practice 账户，真实报价）：`data sync-oanda --instrument EUR_USD --instrument USD_JPY` → 写入 2 个样本；再连续同步 6 次后，当前 UTC 小时内有 7 个真实 EUR_USD 样本（0.00016–0.00017，即 1.6–1.7 pips）。规则判定：真实点差 → 允许（"within 2 x the median 0.00017 of the last 7 samples"）；把点差放大 5 倍（0.00080）→ `SPREAD_WIDE` 拒绝；空历史 → `SPREAD_WIDE` 失败闭合。
+  - 测试：新增 `tests/test_spread_rule.py` 21 个（中位数奇偶与空序列、恰好 2 倍放行、超过 2 倍拒绝、单个尖峰不抬高容忍度、样本不足/无样本失败闭合、参数校验、verdict 序列化、样本表幂等、同时段过滤、按品种与 limit 过滤、ask<bid 拒绝、非法小时拒绝、规则拒绝/放行/缺样本失败闭合/默认不启用/平仓豁免、gate 报 `SPREAD_WIDE`）。命令与结果：`pytest -q -m "not practice"` → 2651 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (233 source files)；`secret_scan` → OK。
+  - 至此 GUIDE 5.7 的 14 条规则全部有实现与确定性测试；S4-2 可勾选。下一批 S4-6：把 14 条规则整理成显式的"通过+拒绝"矩阵测试（防止后续改动悄悄漏掉某条规则），并补 EUR_USD/USD_JPY 仓位测试的矩阵断言。
 
 - S4-2 第七批（本提交）：**规则 11 回撤状态机（5.7）**。
   - 新增 `alphabrief_risk.drawdown_policy`（纯状态机 + DuckDB 持久化）：以**试运行期最高 NAV** 为基准，回撤 <3% 正常全仓；≥3% 立即禁止新开仓 48 小时，48 小时后自动恢复为**半仓**（风险 ×0.5）直到回撤回到 3% 以下；≥5% 直接 `soak_halted`，试运行剩余期间禁止新开仓且**不会**因 NAV 回升而解除（状态只会收紧）。高水位只升不降；平仓与对账不受影响。`DrawdownStateStore`（表 `ai_drawdown_state`，按账户单行）保证重启不会重置封禁。
@@ -240,7 +248,7 @@
 
 ### S4 风控与决策补全
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
-- [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（已完成：5.4 委员会协议、5.5 意图、5.6 仓位、规则 3/5/6/7/8/11/12/13/14、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；仅剩规则 4 点差，需要 S5 的报价样本历史）
+- [x] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（2026-10-01 完成：5.4 委员会协议、5.5 意图、5.6 仓位、5.7 全部 14 条规则、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；证据见下方 S4-2 八批记录）
 - [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
 - [x] S4-4 影子评估、日报、预算（2026-10-01，本提交：5.11 影子评估、5.12 日报、5.13 预算；遗留 T+4h/24h 自动计分待 S5 调度器）
 - [x] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗（2026-10-01，本提交：6 个家族、货币标签、pipeline 去重清洗 + 真实 37 条入库溯源）
