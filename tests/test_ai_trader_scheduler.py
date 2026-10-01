@@ -429,6 +429,8 @@ class TestSchedulerRunsAiTask:
         # to match the default policy. Insert a EUR_USD bar instead of SPY
         # because SPY is no longer in the default allowlist.
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        # Submission requires the explicit trading switch (default is off).
+        monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "on")
         monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
         monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
         adapter = _SubmittingAdapter()

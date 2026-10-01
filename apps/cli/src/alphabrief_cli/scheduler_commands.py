@@ -391,6 +391,16 @@ def _configure_logging() -> None:
     )
 
 
+def trading_mode() -> str:
+    """Return the configured trading switch: ``on`` or ``off``.
+
+    Defaults to ``off``: an unattended run must be explicitly switched on
+    (PROJECT_GUIDE 4.1), and every other value is treated as off.
+    """
+    raw = os.environ.get("ALPHABRIEF_TRADING_MODE", "").strip().lower()
+    return "on" if raw == "on" else "off"
+
+
 def _build_ai_committee(database: Path | None = None) -> TradingCommittee:
     """Build the configured AI committee, persisting every model call.
 
@@ -715,6 +725,9 @@ def _ai_cycle_factory(
                 execution_backend=execution_backend,
                 enabled=is_ai_trading_enabled(),
                 max_order_value=policy.max_order_notional,
+                # The unattended runtime honours the configured trading
+                # switch; anything other than "on" stops before submitting.
+                trading_mode=trading_mode(),
             )
             cycle.run(list(universe))
         except Exception:

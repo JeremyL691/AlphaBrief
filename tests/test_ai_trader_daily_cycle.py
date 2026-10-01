@@ -136,6 +136,7 @@ class TestDailyTradingCycle:
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
+            trading_mode="on",
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "blocked_live_trading"
@@ -150,6 +151,7 @@ class TestDailyTradingCycle:
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
+            trading_mode="on",
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "executed"
@@ -169,6 +171,7 @@ class TestDailyTradingCycle:
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
+            trading_mode="on",
         )
         record = cycle.run(["SPY"])
         # Hold action synthesizes a zero-target plan → no intent → no attempt
@@ -185,6 +188,7 @@ class TestDailyTradingCycle:
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
+            trading_mode="on",
         )
         record = cycle.run(["SPY"])
         # RiskGate rejects when kill switch is on → no fill
@@ -204,6 +208,7 @@ class TestDailyTradingCycle:
             store=store,
             snapshot_loader=lambda s: None,
             enabled=True,
+            trading_mode="on",
         )
         record = cycle.run(["SPY", "QQQ"])
         # No snapshots → no votes → no plans → skipped_no_consensus
@@ -218,6 +223,7 @@ class TestDailyTradingCycle:
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
+            trading_mode="on",
         )
         record = cycle.run(["SPY", "QQQ"])
         # Both symbols should have produced attempts.
@@ -250,6 +256,7 @@ class TestDailyTradingCycle:
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
+            trading_mode="on",
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "provider_error"
@@ -292,6 +299,7 @@ class TestDailyTradingCycle:
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
+            trading_mode="on",
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "executed"

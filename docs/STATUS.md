@@ -75,6 +75,8 @@
 
 #### S3 证据（进行中）
 
+- S3-4/S3-5 命令面（本提交）：新增 `alphabrief cycle run --once --instrument --units --trading on|off [--force-direction long|short --reason TEXT]` 与 `alphabrief cycle close --instrument [--trading]`。`DailyTradingCycle` 新增三项安全机制：`trading_mode`（默认 off，off 时跑完委员会与风控后在下单前停下并记录 `blocked_trading_off` + `NO_TRADE_TRADING_OFF`）、`quantity_override`（首单固定 1000 units，覆盖仓位计算）、`direction_override`（垂直切片例外：必须带 reason，只改方向，委员会原始输出照常落库，reason 写进 intent rationale）。scheduler 的无人值守轮次改读 `ALPHABRIEF_TRADING_MODE`（默认 off）。CLI 拒绝不在受审universe内的品种、拒绝无 reason 的 `--force-direction`。测试 `tests/test_cycle_commands.py` 15 个：trading off 不下单、trading on 下单、固定 units 覆盖仓位、无覆盖时用委员会仓位、方向覆盖需 reason、方向覆盖只改方向且委员会输出不变、CLI 参数校验。命令与结果：`pytest -q -m "not practice"` → 2406 passed / 5 deselected；`mypy` → Success (404 files)；`ruff` → All checks passed；`secret_scan` → exit 0。真实下单与平仓仍待 S2-5 授权后执行（S3-4/S3-5 未勾选）。
+
 - S3-3（本提交）：删除旧的 `broker/reconciliation.py`（它把"任何远端持仓、任何未登记订单"都当差异，一旦真成交就会冻结调度器），改为 `broker/oanda/live_reconciliation.py`：一次 pass = 取一次账户摘要 → 用 broker 报告的 account id 作为本地键的权威 → 从持久化游标拉 `transactions/sinceid` 并原子推进（`TransactionCursorStore`）→ 把可投影的流水折叠进账户投影（不可投影类型记录但不折叠）→ 用类型化的 `Reconciler` 比较 → 只有不可解释差异才冻结，快照照常落库。`clientExtensions.tag=alphabrief` 视为本系统订单（GUIDE 5.9），`RemoteOrder`/`OrderStateResult` 增加 `client_tag`；无本地投影的持仓只有在本地有同品种未平仓交易时才视为投影滞后（INFO），否则判为"非本系统持仓"（CRITICAL → 冻结）。scheduler / API `POST /broker/reconcile` / CLI `broker reconcile` 全部改用新实现（无凭证时记录显式 non-matching 快照并按 scope 冻结）。真实 practice 实测：`ALPHABRIEF_HOME=/tmp/ab-recon-check2 .venv/bin/alphabrief broker reconcile --scope cycle --compact` → `{"all_match": true, "clean": true, "cursor": "3", "diffs": [], "facts_applied": 0, "freeze_raised": false, "gap_count": 0, "scope": "cycle", ...}`（cursor 3 与 S0 探测到的 lastTransactionID=3 一致）。测试：`tests/test_reconciliation.py` 14 个（自有成交/止损/融资不冻结、外来持仓冻结、eod 只记录、游标与快照落库、无凭证按 scope 处理、冻结存储语义）、`tests/test_broker_reconciliation_matrix.py` 与 `tests/test_broker_api_live.py` 更新到新契约、practice `tests/test_live_reconciliation_practice.py` → 1 passed。命令与结果：`pytest -q -m "not practice"` → 2391 passed / 5 deselected；`mypy` → Success (403 files)；`ruff` → All checks passed；`secret_scan` → exit 0。
 
 - S3-2（本提交）：下单路径改由 `order_ops.create_order` + `orders.serialize_order` 唯一实现 —— 带符号整数 units（买单正、卖单负，不再发送 v20 不存在的 `side` 字段）、`stopLossOnFill`/`takeProfitOnFill`（来自新增的 `SubmitRequest.stop_loss`/`take_profit`）、`clientExtensions` 带 `id`（幂等键）、`tag=alphabrief`、`comment=<轮次 ID>`；市价单固定 `FOK`，挂单必须显式给 GTC/IOC/FOK，不再把 `DAY` 悄悄改写成别的时效；品种精度与最小下单量取自账户自己的 instrument catalog（未知品种在下单前失败）。删除 `adapter.py` 的旧下单路径与三个失效辅助函数（`_SIDE_MAP`、`_decimal_to_oanda_units`、`_decimal_to_oanda_price`、`_submit_broker_order_id`）。命令与结果：`pytest -q -m "not practice"` → 2391 passed / 4 deselected；`mypy` → Success (402 files)；`ruff` → All checks passed；`secret_scan` → exit 0。确定性测试 `tests/test_oanda_adapter.py`（7 个）覆盖：payload 形状与幂等（同一 client id 只发一单）、卖单负数 units 且无 `side`、止损止盈挂单字段、未知品种失败闭合、挂单缺时效被拒。practice 测试 `tests/test_oanda_order_path_practice.py` 用真实账户的 instrument 元数据校验序列化（不提交订单：安全不变量 5 要求订单必须经过 决策 → RiskGate → 持久化 RiskDecision 链，该链在 S3-4 验证）→ 1 passed。
@@ -124,8 +126,8 @@
 - [x] S3-1 OANDA K 线和报价入库
 - [x] S3-2 `order_ops` + `orders` 下单（止损止盈、带符号整数 units、clientExtensions）；删除旧下单路径
 - [x] S3-3 流水游标与新对账逻辑
-- [ ] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`
-- [ ] S3-5 平仓与对账
+- [~] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`（命令与选项已实现并测试；真实下单待 S2-5 授权）
+- [~] S3-5 平仓与对账（`alphabrief cycle close` 已实现；真实平仓待 S2-5 授权）
 - [ ] 退出标准：`lastTransactionID` 增加并有 `ORDER_FILL` 和止损止盈单；全链路可追溯；对账干净
 
 ### S4 风控与决策补全

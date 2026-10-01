@@ -52,6 +52,7 @@ CycleOutcome = Literal[
     "blocked_human_review",
     "blocked_ethics",
     "blocked_live_trading",
+    "blocked_trading_off",
     "blocked_disabled",
     "expired_without_chase",
     "error",
