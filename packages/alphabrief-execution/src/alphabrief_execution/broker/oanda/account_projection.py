@@ -493,6 +493,24 @@ class AccountProjectionStore:
         self._persist(account_id, snapshot)
         return snapshot
 
+    def advance_cursor(self, account_id: str, last_transaction_id: str) -> None:
+        """Move the projection's cursor without changing account state.
+
+        The transaction cursor and the projection are separate durable
+        records; when a window contains no projectable facts the
+        projection must still record how far it has consumed, otherwise
+        every pass reports a cursor difference.
+        """
+        current = self.snapshot(account_id)
+        if current is None:
+            return
+        if int(last_transaction_id or 0) <= int(current.last_transaction_id or 0):
+            return
+        self._persist(
+            account_id,
+            current.model_copy(update={"last_transaction_id": last_transaction_id}),
+        )
+
     def snapshot(self, account_id: str) -> AccountSnapshot | None:
         row = self._conn.execute(
             """SELECT last_transaction_id, state_json

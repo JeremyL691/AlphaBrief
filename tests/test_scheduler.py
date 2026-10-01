@@ -17,6 +17,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from alphabrief_execution.broker.oanda.live_reconciliation import (
+    ALLOWED_SCOPES,
+    LiveReconcileResult,
+    ReconcilerConfig,
+)
+from alphabrief_execution.broker.oanda.reconcile import (
+    DiffRecord,
+    ReconciliationReport,
+)
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -32,10 +41,6 @@ from alphabrief_execution.broker.port import (
     SubmitResult,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import (
-    ReconcilerConfig,
-    ReconciliationRunner,
-)
 from alphabrief_execution.operations.scheduler import (
     AlertSink,
     HeartbeatStore,
@@ -135,9 +140,8 @@ def _build_scheduler(
     tmp_path.mkdir(parents=True, exist_ok=True)
     heartbeats = HeartbeatStore(db_path=tmp_path / "sched.db")
     recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
-    adapter = _StubAdapter()
-    runner = ReconciliationRunner(
-        adapter=adapter, store=recon_store, config=reconciler_config
+    runner = _StubReconciler(
+        store=recon_store, config=reconciler_config, clean=True
     )
     alert_sink = AlertSink(heartbeat_store=heartbeats)
     scheduler = OperationsScheduler(
@@ -149,6 +153,69 @@ def _build_scheduler(
         config=config or SchedulerConfig(max_consecutive_failures=2),
     )
     return scheduler, heartbeats, recon_store, alert_sink
+
+
+class _StubReconciler:
+    """Deterministic reconciler double for scheduler tests.
+
+    The real reconciler talks to OANDA; scheduler tests only need the
+    freeze/no-freeze contract, so this double records the snapshot the
+    same way the production path does.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: BrokerReconStore,
+        config: ReconcilerConfig | None = None,
+        clean: bool = True,
+    ) -> None:
+        self._store = store
+        self._config = config or ReconcilerConfig()
+        self._clean = clean
+
+    def reconcile(self, *, scope: str = "cycle") -> LiveReconcileResult:
+        if scope not in ALLOWED_SCOPES:
+            raise ValueError(f"unknown reconciliation scope: {scope!r}")
+        snapshot = self._store.record_snapshot(
+            scope=scope,
+            orders_match=self._clean,
+            fills_match=self._clean,
+            cash_match=self._clean,
+            positions_match=self._clean,
+            diff={} if self._clean else {"kind": "order_diff"},
+        )
+        freeze_raised = False
+        if not self._clean and self._config.should_freeze(scope):
+            self._store.raise_freeze(
+                reason="unexplained reconciliation difference",
+                source="reconciler",
+                related_snapshot_id=snapshot.snapshot_id,
+            )
+            freeze_raised = True
+        return LiveReconcileResult(
+            report=ReconciliationReport(
+                account_id="test",
+                tolerance_version="test",
+                diffs=(
+                    ()
+                    if self._clean
+                    else (
+                        DiffRecord(
+                            kind="order_diff",
+                            source_id="test",
+                            severity="CRITICAL",
+                            detail="unexplained",
+                        ),
+                    )
+                ),
+                compared_at=datetime.now(UTC),
+            ),
+            cursor="0",
+            facts_applied=0,
+            gap_count=0,
+            freeze_raised=freeze_raised,
+        )
 
 
 def _run(coro: Any) -> Any:
@@ -169,12 +236,10 @@ def test_startup_reconciliation_freeze_blocks_scheduler(tmp_path: Path) -> None:
         tmp_path,
         tasks=[_ok_task()],
     )
-    # Replace the runner's adapter with one that has an orphan order
-    # so startup reconciliation raises a freeze.
-    orphan_adapter = _OrphanAdapter()
-    scheduler._recon = ReconciliationRunner(
-        adapter=orphan_adapter,
-        store=scheduler._recon_store,
+    # Replace the reconciler with one that reports an unexplained
+    # difference, so startup reconciliation raises a freeze.
+    scheduler._recon = _StubReconciler(
+        store=scheduler._recon_store, clean=False
     )
     try:
         with pytest.raises(SchedulerStartupBlockedError):
