@@ -715,17 +715,12 @@ def test_risk_config_returns_200() -> None:
     assert body["trading_enabled"] is True
     assert body["live_trading_enabled"] is False
     assert body["enabled_strategies"] == []
-    # Round 0065: default allowlist is the 35-symbol routed multi-asset
-    # universe (FX + metals + index CFDs + US equities + crypto).
+    # The reviewed boundary is the five FX majors the practice account
+    # can actually trade; signal-only symbols are never orderable.
     assert body["symbol_allowlist"] == sorted([
-        "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD",
-        "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CHF_JPY",
-        "XAU_USD", "XAG_USD",
-        "US30_USD", "SPX500_USD", "NAS100_USD", "DE30_EUR", "JP225_USD",
-        "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "SPY", "QQQ",
-        "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
+        "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD",
     ])
-    # Round 0065: caps are USD notional; auto-execution is enabled.
+    # Caps are USD notional; auto-execution is enabled.
     assert body["max_order_value"] == "2000"
     # Phase 19: the runtime account-exposure cap from PaperExecutionPolicy.
     assert body["max_total_exposure"] == "20000"

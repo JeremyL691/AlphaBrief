@@ -129,14 +129,11 @@ def _scheduler_ai_test_defaults(
         "ALPHABRIEF_OBSERVATION_DIR", str(tmp_path / "observation")
     )
     # The project's local ``.env`` is auto-loaded at CLI / API import
-    # time (before pytest sets ``PYTEST_CURRENT_TEST``), so OANDA and
-    # Alpaca credentials from the developer's machine would otherwise
-    # leak into these tests. Strip both broker-credential sets so each
-    # test can opt in cleanly.
+    # time (before pytest sets ``PYTEST_CURRENT_TEST``), so OANDA
+    # credentials from the developer's machine would otherwise leak into
+    # these tests. Strip them so each test can opt in cleanly.
     monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
 
 
 @pytest.fixture
@@ -436,7 +433,6 @@ class TestSchedulerRunsAiTask:
         # to match the default policy. Insert a EUR_USD bar instead of SPY
         # because SPY is no longer in the default allowlist.
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
-        monkeypatch.setenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "true")
         monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
         monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
         adapter = _SubmittingAdapter()

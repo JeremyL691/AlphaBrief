@@ -1,13 +1,12 @@
 """Broker-neutral port types for AlphaBrief external paper execution.
 
 The port defines the **only** contract that business code (strategy,
-risk, research, dashboard) is allowed to depend on when interacting
-with an external broker. Concrete broker SDKs (Alpaca, IBKR, ...)
-live in sibling subpackages and must not leak their types past the
-adapter boundary.
+risk, trader, dashboard) is allowed to depend on when interacting
+with the broker. Concrete broker clients live in sibling subpackages
+and must not leak their types past the adapter boundary.
 
-Phase 17 introduces one concrete adapter (Alpaca Paper). Adding a
-second broker must not require any change outside this package.
+The only concrete adapter is the OANDA v20 practice adapter; this
+project never adds another venue.
 """
 
 from __future__ import annotations

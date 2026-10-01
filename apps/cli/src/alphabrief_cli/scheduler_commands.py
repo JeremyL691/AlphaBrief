@@ -58,7 +58,6 @@ from alphabrief_trader import (
     StoredMarketSnapshotBuilder,
     TradingCommittee,
     build_ai_trading_committee,
-    is_ai_external_paper_enabled,
     is_ai_trading_enabled,
 )
 
@@ -744,11 +743,10 @@ def run_cmd(
     _LOGGER = logging.getLogger(__name__)
     _LOGGER.info(
         "scheduler: starting (reconcile_interval=%.1fs, max_failures=%d, "
-        "ai_trading=%s, external_paper=%s, universe=%s)",
+        "ai_trading=%s, universe=%s)",
         reconcile_interval_seconds,
         max_consecutive_failures,
         is_ai_trading_enabled(),
-        is_ai_external_paper_enabled(),
         ",".join(_ai_scheduler_universe()),
     )
 
