@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 余下三条规则（4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5）；随后 S4-3 真实策略/输入哈希、S4-4 影子评估/日报/预算 |
+| 下一项任务 | S4-4 影子评估/日报/预算（模型额度受限时先做 S4-5 新闻与不依赖模型的部分）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-2 第五批：5.5 确定性意图 ID、5.6 风险仓位接入 cycle、平仓走完整风控链（含真实 practice 实测） |
+| 最近更新 | 2026-10-01，S4-3：决策持久化改用真实配置/快照内容哈希（policy:e54ca5bfb209） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,13 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-3（本提交）：**决策持久化改用真实哈希**（PROJECT_GUIDE 5.7）。此前 `ExternalPaperExecutionBackend` 落库的 `policy_hash` 是常量 `DEFAULT_POLICY_VERSION` 的哈希、`snapshot_hash` 是 `captured_at` 时间戳，两者都不是"配置内容/快照内容"的哈希，配置改动后旧决策仍会被认为合法。现在：
+  - 新增 `alphabrief_core.policy_version`：`policy_version_hash()` 对受审配置文件（`config/paper_execution_policy.yaml`、`config/alphabrief.yaml`）的真实字节按路径排序后逐条 `路径:sha256` 再哈希；文件缺失或为空时抛 `PolicyVersionError` 失败闭合，绝不悄悄少算一个文件。`policy_version_label()` 给出 `policy:<12 位>` 短标签。
+  - `ExternalPaperExecutionBackend` 构造时算一次 policy 哈希；读不到配置时 submit 直接失败（不落占位值）。
+  - 新增 `snapshot_content_hash(context)`：对真实券商快照（账户资金、持仓、挂单、交易、报价、换算、采集时间）做规范化 JSON 哈希，落库到决策记录的 `snapshot_hash`；时间戳不再是哈希。
+  - 测试：新增 `tests/test_policy_version_hash.py` 7 个（哈希覆盖真实文件、内容变则哈希变、缺文件/空文件失败闭合、项目根发现、快照哈希随资金与采集时间变化、哈希不是时间戳），`tests/test_ai_trader_execution_backend.py` 新增 1 个端到端断言（落库记录的 `policy_hash` 等于真实配置哈希、`snapshot_hash` 为 64 位内容哈希）。命令与结果：`pytest -q -m "not practice"` → 2531 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (221 source files)；`secret_scan` → OK。
+  - 当前真实哈希标签：`policy:e54ca5bfb209`（随配置内容变化）。
 
 - S4-2 第五批（本提交）：**决策→意图（5.5）、风险仓位（5.6）与平仓走完整风控链**。
   - 新增 `alphabrief_trader.intents`：`intent_id = hash(cycle_id, instrument, action)`（`ai_` + 12 位十六进制，同一轮重跑得到同一个 ID），action 区分 `entry:*` 与 `close:*`；`close` 生成 reduce-only 意图（数量等于当前持仓的反向：多仓卖出、空仓买回）。cycle 与 durable cycle 都改用该确定性 ID，不再用随机 UUID。
@@ -187,7 +194,7 @@
 ### S4 风控与决策补全
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
 - [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（已完成：5.4 委员会协议、5.5 意图、5.6 仓位、规则 3/5/7/8/12/13/14、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；未完成：规则 4 点差、规则 6 事件窗口、规则 11 回撤状态机，见下方证据与依赖）
-- [ ] S4-3 真实的策略版本哈希和输入哈希
+- [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
 - [ ] S4-4 影子评估、日报、预算
 - [ ] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗
 - [ ] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试
