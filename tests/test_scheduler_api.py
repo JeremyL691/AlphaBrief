@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from alphabrief_api.main import create_app
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.operations.scheduler import HeartbeatStore
 from fastapi.testclient import TestClient
@@ -55,7 +56,7 @@ def test_scheduler_heartbeats_lists_each_task_after_record_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Seed the heartbeat store directly; the API only reads from it.
-    store = HeartbeatStore(db_path=tmp_path / "alphabrief.db")
+    store = HeartbeatStore(db_path=tmp_path / _paths.DATABASE_NAME)
     store.record_run(task_name="reconcile", status="ok", error=None)
     store.record_run(task_name="other", status="error", error="boom")
     store.close()
@@ -74,7 +75,7 @@ def test_scheduler_alerts_returns_recent_alerts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = HeartbeatStore(db_path=tmp_path / "alphabrief.db")
+    store = HeartbeatStore(db_path=tmp_path / _paths.DATABASE_NAME)
     import asyncio
 
     async def _emit_two() -> None:
@@ -109,7 +110,7 @@ def test_scheduler_alerts_limit_query_param_respected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = HeartbeatStore(db_path=tmp_path / "alphabrief.db")
+    store = HeartbeatStore(db_path=tmp_path / _paths.DATABASE_NAME)
     import asyncio
 
     async def _emit_three() -> None:
@@ -161,7 +162,7 @@ def test_scheduler_freezes_returns_open_freeze(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = BrokerReconStore(db_path=tmp_path / "alphabrief.db")
+    store = BrokerReconStore(db_path=tmp_path / _paths.DATABASE_NAME)
     store.raise_freeze(reason="manual test", source="test")
     store.close()
 
@@ -177,11 +178,11 @@ def test_scheduler_status_aggregates_counts_from_multiple_stores(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    heartbeats = HeartbeatStore(db_path=tmp_path / "alphabrief.db")
+    heartbeats = HeartbeatStore(db_path=tmp_path / _paths.DATABASE_NAME)
     heartbeats.record_run(task_name="reconcile", status="ok", error=None)
     heartbeats.record_run(task_name="other", status="ok", error=None)
     heartbeats.close()
-    recon = BrokerReconStore(db_path=tmp_path / "alphabrief.db")
+    recon = BrokerReconStore(db_path=tmp_path / _paths.DATABASE_NAME)
     recon.raise_freeze(reason="r1", source="t")
     recon.raise_freeze(reason="r2", source="t")
     recon.close()
@@ -303,10 +304,10 @@ def test_scheduler_routes_serve_scheduler_db_snapshot(
 
     sched_dir = tmp_path / "scheduler_data"
     sched_dir.mkdir()
-    store = HeartbeatStore(db_path=sched_dir / "alphabrief.db")
+    store = HeartbeatStore(db_path=sched_dir / _paths.DATABASE_NAME)
     store.record_run(task_name="reconcile", status="ok", error=None)
     store.close()
-    recon = BrokerReconStore(db_path=sched_dir / "alphabrief.db")
+    recon = BrokerReconStore(db_path=sched_dir / _paths.DATABASE_NAME)
     recon.raise_freeze(reason="external", source="test")
     recon.close()
 
@@ -341,7 +342,7 @@ def test_scheduler_routes_fallback_to_local_data_dir_without_snapshot_env(
     """Without ALPHABRIEF_SCHEDULER_DB_DIR the routes read the local
     ALPHABRIEF_DATA_DIR DB exactly as before."""
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
-    store = HeartbeatStore(db_path=tmp_path / "alphabrief.db")
+    store = HeartbeatStore(db_path=tmp_path / _paths.DATABASE_NAME)
     store.record_run(task_name="local", status="ok", error=None)
     store.close()
 
@@ -373,7 +374,7 @@ def test_dashboard_routes_merge_scheduler_db_content(
     sched_dir.mkdir()
     from alphabrief_news import MacroIndicator, NewsHeadline
 
-    news = NewsStore(db_path=sched_dir / "alphabrief.db")
+    news = NewsStore(db_path=sched_dir / _paths.DATABASE_NAME)
     news.insert_headlines(
         [
             NewsHeadline(
@@ -391,7 +392,7 @@ def test_dashboard_routes_merge_scheduler_db_content(
         ]
     )
     news.close()
-    macro = MacroStore(db_path=sched_dir / "alphabrief.db")
+    macro = MacroStore(db_path=sched_dir / _paths.DATABASE_NAME)
     macro.insert_indicators(
         [
             MacroIndicator(

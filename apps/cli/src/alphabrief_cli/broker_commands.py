@@ -23,6 +23,7 @@ the identical durable :class:`ReconciliationRunner` against the OANDA
 practice runtime otherwise.
 """
 
+
 from __future__ import annotations
 
 import asyncio
@@ -33,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.broker.reconciliation import (
     ALLOWED_SCOPES,
@@ -55,7 +57,7 @@ def _open_store() -> BrokerReconStore:
     if db_dir_str:
         db_dir = Path(db_dir_str)
         db_dir.mkdir(parents=True, exist_ok=True)
-        return BrokerReconStore(db_path=db_dir / "alphabrief.db")
+        return BrokerReconStore(db_path=_paths.db_path())
     return BrokerReconStore()
 
 

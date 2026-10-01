@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import duckdb
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.oanda.instruments import (
     InstrumentCatalogSnapshot,
     InstrumentMetadata,
@@ -113,7 +114,7 @@ class InstrumentCatalogStore:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         if db_path is None:
-            db_path = _default_db_path()
+            db_path = _paths.db_path()
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
@@ -412,14 +413,6 @@ def _compute_diff(
         reactivated=(),
         metadata_changed=tuple(metadata_changed),
     )
-
-
-def _default_db_path() -> Path:
-    import os
-
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    base = Path(env_dir) if env_dir else Path.home() / ".alphabrief" / "data"
-    return base / "alphabrief.db"
 
 
 __all__ = [

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from alphabrief_api.db.paper import PaperStore
 from alphabrief_api.main import create_app
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_trader.db_store import AiTradingStore
 from alphabrief_trader.schemas import (
@@ -41,7 +42,7 @@ def client() -> TestClient:
 
 
 def _db_path(tmp_path: Path) -> Path:
-    return tmp_path / "alphabrief.db"
+    return tmp_path / _paths.DATABASE_NAME
 
 
 def _vote() -> CommitteeVote:

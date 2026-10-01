@@ -5,6 +5,7 @@ This module owns the final paper execution hop: an explicit paper-only
 bridge to the broker-neutral ``BrokerAdapter`` port (OANDA practice).
 """
 
+
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +17,7 @@ from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from alphabrief_core import OrderIntent, RiskDecision
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.errors import BrokerAdapterError
 from alphabrief_execution.broker.port import (
     BrokerAdapter,
@@ -30,7 +32,6 @@ from alphabrief_execution.broker.risk_context import (
     RiskContextError,
     adapter_risk_sources,
 )
-from alphabrief_execution.broker.runtime import resolve_data_dir
 from alphabrief_risk.broker_context import DEFAULT_POLICY_VERSION
 from alphabrief_risk.decision_binding import (
     DecisionBindingService,
@@ -119,7 +120,7 @@ class ExternalPaperExecutionBackend:
         self._decision_binding: DecisionBindingService = (
             decision_binding
             or DecisionBindingService(
-                RiskDecisionStore(db_path=resolve_data_dir() / "alphabrief.db")
+                RiskDecisionStore(db_path=_paths.db_path())
             )
         )
 

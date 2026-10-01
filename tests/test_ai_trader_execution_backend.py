@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from alphabrief_core import OrderIntent, RiskDecision
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -189,7 +190,7 @@ class TestExternalPaperExecutionBackend:
                 "needs_human_review": False,
             },
         )
-        store = AiTradingStore(db_path=tmp_path / "alphabrief.db")
+        store = AiTradingStore(db_path=tmp_path / _paths.DATABASE_NAME)
         try:
             cycle = DailyTradingCycle(
                 committee=TradingCommittee(

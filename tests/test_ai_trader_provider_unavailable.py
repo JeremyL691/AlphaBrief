@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from alphabrief_api.main import app
 from alphabrief_api.routes.ai_trading import _reset_ai_state
+from alphabrief_core import paths as _paths
 from alphabrief_trader import (
     ModelProviderUnavailableError,
     build_ai_trading_committee,
@@ -126,7 +127,7 @@ def test_api_ai_run_persists_terminal_call_records(
     )
     assert resp.status_code == 201, resp.text
 
-    store = ModelCallStore(db_path=tmp_path / "alphabrief_db" / "alphabrief.db")
+    store = ModelCallStore(db_path=tmp_path / "alphabrief_db" / _paths.DATABASE_NAME)
     try:
         rows = store.list_calls()
         # The committee makes one gateway call per role; each must be a

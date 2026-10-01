@@ -26,6 +26,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from alphabrief_core import paths as _paths
+
 # ---------------------------------------------------------------------------
 # Defaults & helpers
 # ---------------------------------------------------------------------------
@@ -41,11 +43,11 @@ def _base_url() -> str:
 def is_api_running() -> bool:
     """Return ``True`` if the API server responds on ``/health``.
 
-    When ``ALPHABRIEF_DATA_DIR`` is set (test isolation), always return
-    ``False`` so the CLI never proxies through an external API server
-    and uses the isolated test DB directly instead.
+    When a data directory override is set (test isolation), always
+    return ``False`` so the CLI never proxies through an external API
+    server and uses the isolated test DB directly instead.
     """
-    if os.environ.get("ALPHABRIEF_DATA_DIR"):
+    if os.environ.get(_paths.ENV_HOME) or os.environ.get(_paths.ENV_DATA_DIR):
         return False
     url = f"{_base_url()}/health"
     try:

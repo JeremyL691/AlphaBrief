@@ -13,6 +13,7 @@ from _helpers import FakeExecutionBackend
 from alphabrief_api.db import AiTradingStore, MarketDataStore, NewsStore
 from alphabrief_cli.scheduler_commands import _ai_cycle_factory
 from alphabrief_core import Bar
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -176,7 +177,7 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
         assert is_ai_trading_enabled() is True
 
-        db_path = isolated_data_dir / "alphabrief.db"
+        db_path = isolated_data_dir / _paths.DATABASE_NAME
 
         payload = {
             "analysis": "Bullish continuation.",
@@ -309,7 +310,7 @@ class TestSchedulerRunsAiTask:
 
         def _seed_bars(symbol: str, *, now: datetime) -> None:
             """Persist two OANDA-shaped bars per symbol before the cycle."""
-            store = MarketDataStore(db_path=isolated_data_dir / "alphabrief.db")
+            store = MarketDataStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
             try:
                 store.insert_bars(
                     [
@@ -377,9 +378,9 @@ class TestSchedulerRunsAiTask:
 
         asyncio.run(_run_handler())
 
-        market_store = MarketDataStore(db_path=isolated_data_dir / "alphabrief.db")
-        news_store = NewsStore(db_path=isolated_data_dir / "alphabrief.db")
-        ai_store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
+        market_store = MarketDataStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
+        news_store = NewsStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
+        ai_store = AiTradingStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
         try:
             assert market_store.get_bar_count("EUR_USD") == 2
             headlines = news_store.list_headlines(symbol="EUR_USD", limit=10)
@@ -415,7 +416,7 @@ class TestSchedulerRunsAiTask:
 
         asyncio.run(_run_handler())
 
-        store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
+        store = AiTradingStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
         try:
             latest = store.get_latest_cycle()
             assert latest is not None
@@ -463,7 +464,7 @@ class TestSchedulerRunsAiTask:
             ),
         )
 
-        market_store = MarketDataStore(db_path=isolated_data_dir / "alphabrief.db")
+        market_store = MarketDataStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
         try:
             market_store.insert_bars(
                 [
@@ -498,7 +499,7 @@ class TestSchedulerRunsAiTask:
         # units at the stored EUR_USD price before external submission.
         assert adapter.requests[0].quantity == Decimal("100") / Decimal("1.14")
 
-        store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
+        store = AiTradingStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
         try:
             latest = store.get_latest_cycle()
             assert latest is not None

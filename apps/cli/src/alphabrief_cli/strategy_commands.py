@@ -35,7 +35,6 @@ The CLI never imports RiskGate, broker code, or
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -43,6 +42,7 @@ from typing import Any
 import typer
 import yaml
 from alphabrief_api.db import StrategySignalStore, StrategySpecStore
+from alphabrief_core import paths as _paths
 from alphabrief_strategy import StrategySpec
 
 # When the API server is running, proxy through HTTP to avoid DuckDB file-lock
@@ -69,23 +69,13 @@ strategy_app = typer.Typer(help="Manage the local strategy registry.")
 
 
 def _open_store() -> StrategySpecStore:
-    """Return a store rooted at ``$ALPHABRIEF_DATA_DIR`` (if set)."""
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return StrategySpecStore(db_path=db_dir / "alphabrief.db")
-    return StrategySpecStore()
+    """Return the strategy store on the shared database path."""
+    return StrategySpecStore(db_path=_paths.db_path())
 
 
 def _open_signal_store() -> StrategySignalStore:
-    """Return a signal store rooted at ``$ALPHABRIEF_DATA_DIR`` (if set)."""
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return StrategySignalStore(db_path=db_dir / "alphabrief.db")
-    return StrategySignalStore()
+    """Return the signal store on the shared database path."""
+    return StrategySignalStore(db_path=_paths.db_path())
 
 
 # ---------------------------------------------------------------------------

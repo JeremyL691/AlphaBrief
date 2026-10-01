@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from alphabrief_cli import macro_commands
 from alphabrief_cli.macro_commands import macro_app
+from alphabrief_core import paths as _paths
 from alphabrief_news.macro_release import (
     DEFAULT_STALE_AFTER_SECONDS,
     MacroRelease,
@@ -56,7 +57,7 @@ def test_cli_macro_releases_returns_ordered_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(macro_commands, "_now", lambda: NOW)
-    store = MacroReleaseStore(db_path=tmp_path / "alphabrief.db")
+    store = MacroReleaseStore(db_path=tmp_path / _paths.DATABASE_NAME)
     try:
         store.ingest(_release())
         store.ingest(

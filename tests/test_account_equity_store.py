@@ -17,6 +17,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from alphabrief_api.db import PaperStore
+from alphabrief_core import paths as _paths
 
 ACCOUNT = "paper_local"
 
@@ -28,7 +29,7 @@ def _fresh_store(tmp_path: Path) -> PaperStore:
     import os
 
     os.environ["ALPHABRIEF_DATA_DIR"] = str(db_dir)
-    return PaperStore(db_path=db_dir / "alphabrief.db")
+    return PaperStore(db_path=db_dir / _paths.DATABASE_NAME)
 
 
 def _ts(day: int, hour: int = 14) -> datetime:
@@ -61,7 +62,7 @@ def test_high_water_mark_persists_across_store_reopen(tmp_path: Path) -> None:
 
     # Reopen against the same file — HWM must survive (tighten-only across
     # restarts; an in-memory HWM would reset and silently widen the floor).
-    store2 = PaperStore(db_path=tmp_path / "alphabrief_db" / "alphabrief.db")
+    store2 = PaperStore(db_path=tmp_path / "alphabrief_db" / _paths.DATABASE_NAME)
     try:
         assert store2.get_high_water_mark(ACCOUNT) == Decimal("120000")
         assert hwm_before == Decimal("120000")
