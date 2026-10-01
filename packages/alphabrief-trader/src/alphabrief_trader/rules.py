@@ -55,13 +55,23 @@ class DisciplineConfig:
     max_position_pct: Decimal = Decimal("0.25")
 
     # Below this confidence, the plan is forced to ``hold`` with zero
-    # target. The committee cannot override this.
-    no_trade_below_confidence: float = 0.45
+    # target (PROJECT_GUIDE 5.4: ``confidence < 0.55`` -> ``no_trade``).
+    # The committee cannot override this.
+    no_trade_below_confidence: float = 0.55
 
     # Below this consensus quality, the plan is forced to ``hold`` and
     # ``needs_human_review=true``. ``unanimous`` / ``majority`` /
     # ``split`` / ``no_consensus``.
     require_min_consensus: ConsensusLevel = "split"
+
+    # An opening needs at least this many analyst roles supporting its
+    # direction (PROJECT_GUIDE 5.4: at least two analysts must agree with
+    # the manager's direction before new exposure is opened).
+    min_analysts_supporting_direction: int = 2
+
+    # The ``risk`` role's own veto is honoured as a hard block
+    # (PROJECT_GUIDE 5.4: ``risk`` veto -> ``no_trade``).
+    honour_risk_role_veto: bool = True
 
     # Ethics veto keywords (matched case-insensitively against the
     # manager vote's analysis text). When any keyword is present the
@@ -248,6 +258,71 @@ class DisciplineGate:
                 assigned_roles=[v.role for v in analyst_list]
                 + [manager_vote.role],
             )
+
+        # Risk-role veto (PROJECT_GUIDE 5.4): the risk analyst can block
+        # new exposure outright, not merely request human review.
+        if self.config.honour_risk_role_veto:
+            risk_veto = next(
+                (
+                    vote
+                    for vote in analyst_list
+                    if vote.role == "risk" and vote.veto
+                ),
+                None,
+            )
+            if risk_veto is not None:
+                return TradePlan(
+                    symbol=symbol,
+                    side="buy",
+                    target_position_pct=ZERO,
+                    confidence=manager_vote.confidence,
+                    consensus_level=consensus_level,
+                    rationale=self._rationale(
+                        manager_vote,
+                        consensus_level,
+                        reason_block="risk role vetoed the trade",
+                    ),
+                    needs_human_review=True,
+                    key_evidence=key_evidence,
+                    key_risks=key_risks,
+                    assigned_roles=[v.role for v in analyst_list]
+                    + [manager_vote.role],
+                )
+
+        # Direction agreement (PROJECT_GUIDE 5.4): an opening needs at
+        # least ``min_analysts_supporting_direction`` analysts whose view
+        # supports the manager's direction. A lone bullish manager against
+        # uncertain analysts is not a mandate to open exposure.
+        opening = manager_vote.suggested_action in {"buy", "sell"}
+        if opening:
+            required = self.config.min_analysts_supporting_direction
+            supporters = [
+                vote
+                for vote in analyst_list
+                if _view_weight(vote.view, manager_vote.suggested_action) > ZERO
+            ]
+            if len(supporters) < required:
+                return TradePlan(
+                    symbol=symbol,
+                    side="buy",
+                    target_position_pct=ZERO,
+                    confidence=manager_vote.confidence,
+                    consensus_level=consensus_level,
+                    rationale=self._rationale(
+                        manager_vote,
+                        consensus_level,
+                        reason_block=(
+                            f"only {len(supporters)} analyst(s) support the "
+                            f"{manager_vote.suggested_action} direction; "
+                            f"{required} required"
+                        ),
+                    ),
+                    needs_human_review=True,
+                    key_evidence=key_evidence,
+                    key_risks=key_risks,
+                    assigned_roles=[v.role for v in analyst_list]
+                    + [manager_vote.role],
+                )
 
         # No-trade actions.
         if manager_vote.suggested_action in {"skip", "watch", "hold"}:
