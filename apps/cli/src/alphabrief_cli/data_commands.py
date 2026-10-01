@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -175,3 +176,66 @@ def check_cmd(
 
 
 __all__ = ["data_app"]
+
+
+@data_app.command("sync-oanda")
+def sync_oanda_cmd(
+    instrument: list[str] = typer.Option(  # noqa: B008
+        None,
+        "--instrument",
+        help="OANDA instrument (repeatable). Defaults to the FX majors.",
+    ),
+    pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
+) -> None:
+    """Sync OANDA practice candles and quotes into the local database.
+
+    Read-only against the practice account. Missing credentials fail
+    closed: nothing is written and the command exits non-zero.
+    """
+    import json
+
+    from alphabrief_api.db.market_data import MarketDataStore
+    from alphabrief_execution.broker.oanda.market_sync import sync_market_data
+
+    default_instruments = ("EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD")
+    instruments = tuple(instrument) or default_instruments
+
+    from alphabrief_execution.broker.oanda.client import OandaHttpClient
+    from alphabrief_execution.broker.oanda.config import (
+        load_oanda_paper_config,
+        read_oanda_credentials,
+    )
+    from alphabrief_execution.broker.runtime import oanda_is_configured
+
+    if not oanda_is_configured():
+        print(
+            "error: OANDA practice credentials are required (set "
+            "ALPHABRIEF_OANDA_TOKEN and ALPHABRIEF_OANDA_ACCOUNT_ID)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    config_path = Path(
+        os.environ.get("ALPHABRIEF_OANDA_CONFIG", "config/oanda_paper.yaml")
+    )
+    try:
+        token, account_id = read_oanda_credentials()
+        client = OandaHttpClient(
+            config=load_oanda_paper_config(config_path),
+            token=token,
+            account_id=account_id,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"error: OANDA configuration unusable: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    store = MarketDataStore()
+    try:
+        report = sync_market_data(client, instruments=instruments, store=store)
+    finally:
+        store.close()
+
+    json.dump(report.to_dict(), sys.stdout, indent=2 if pretty else None, default=str)
+    sys.stdout.write("\n")
+    if report.errors:
+        sys.exit(1)
