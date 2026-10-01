@@ -64,7 +64,14 @@ class BrokerOrderStatus(StrEnum):
 
 
 class SubmitRequest(BaseModel):
-    """Input to ``BrokerAdapter.submit`` after RiskGate approval."""
+    """Input to ``BrokerAdapter.submit`` after RiskGate approval.
+
+    ``stop_loss`` and ``take_profit`` are absolute prices attached to the
+    order as ``stopLossOnFill`` / ``takeProfitOnFill`` so protection is in
+    place the moment the order fills. ``cycle_id`` is recorded in the
+    order's ``clientExtensions.comment`` so every order can be traced back
+    to the committee round that produced it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -74,6 +81,9 @@ class SubmitRequest(BaseModel):
     quantity: Decimal = Field(gt=0)
     limit_price: Decimal | None = None
     time_in_force: BrokerTimeInForce = BrokerTimeInForce.DAY
+    stop_loss: Decimal | None = Field(default=None, gt=0)
+    take_profit: Decimal | None = Field(default=None, gt=0)
+    cycle_id: str | None = None
 
 
 class SubmitResult(BaseModel):

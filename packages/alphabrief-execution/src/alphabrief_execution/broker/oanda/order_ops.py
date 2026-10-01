@@ -112,11 +112,15 @@ class OrderOpsClient:
         *,
         client_order_id: str,
         request_id: str | None = None,
+        tag: str | None = None,
+        comment: str | None = None,
     ) -> OrderCreateResult:
         """Create one order; idempotent on ``client_order_id``.
 
         Retries with the same ``client_order_id`` return the prior
-        result instead of duplicating the order.
+        result instead of duplicating the order. ``tag`` and ``comment``
+        land in ``clientExtensions`` so reconciliation can recognise this
+        system's orders and trace them back to a committee round.
         """
         if not client_order_id.strip():
             raise OrderOperationError("invalid_request_id", "client_order_id is empty")
@@ -125,7 +129,12 @@ class OrderOpsClient:
             return existing.model_copy(update={"reused": True})
 
         payload = serialize_order(request, instrument)
-        payload["clientExtensions"] = {"id": client_order_id}
+        extensions: dict[str, str] = {"id": client_order_id}
+        if tag is not None:
+            extensions["tag"] = tag
+        if comment is not None:
+            extensions["comment"] = comment
+        payload["clientExtensions"] = extensions
         correlation = request_id or f"create-{client_order_id}"
         response = self._client.request(
             "POST",

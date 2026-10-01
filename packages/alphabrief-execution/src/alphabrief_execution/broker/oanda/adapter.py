@@ -3,11 +3,18 @@
 Maps the broker-neutral :mod:`alphabrief_execution.broker.port` to
 the OANDA v20 REST API.
 
+Order path: every submit is serialized by
+:mod:`alphabrief_execution.broker.oanda.orders` (signed integer units, no
+``side`` field, ``stopLossOnFill`` / ``takeProfitOnFill``) and sent by
+:mod:`alphabrief_execution.broker.oanda.order_ops`, so precision
+normalization and payload shape come from one implementation.
+
 Idempotency contract: a submit that re-uses an existing
 ``client_order_id`` returns the previously issued ``broker_order_id``
 without creating a duplicate order. The mapping is kept in-memory for
-the life of the adapter. OANDA ``clientExtensions.id`` is also populated
-so broker-side responses can carry the caller's ID when available.
+the life of the adapter and flushed to the durable recon store by the
+runtime. ``clientExtensions`` carries ``id`` (the idempotency key),
+``tag=alphabrief`` and the originating cycle id as ``comment``.
 """
 
 from __future__ import annotations
@@ -21,6 +28,20 @@ from pydantic import ValidationError
 
 from alphabrief_execution.broker.errors import BrokerProtocolError, BrokerRejectError
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
+from alphabrief_execution.broker.oanda.instruments import (
+    InstrumentMetadata,
+    fetch_instruments,
+)
+from alphabrief_execution.broker.oanda.order_ops import (
+    OrderOperationError,
+    OrderOpsClient,
+)
+from alphabrief_execution.broker.oanda.orders import (
+    DependentOrder,
+    OandaOrderRequest,
+    OandaOrderType,
+    OandaTimeInForce,
+)
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -54,17 +75,12 @@ _STATUS_MAP: dict[str, BrokerOrderStatus] = {
     "expired": BrokerOrderStatus.EXPIRED,
 }
 
-_SIDE_MAP: dict[BrokerOrderSide, str] = {
-    BrokerOrderSide.BUY: "buy",
-    BrokerOrderSide.SELL: "sell",
-}
-
-_TYPE_MAP: dict[BrokerOrderType, str] = {
+_TYPE_MAP: dict[BrokerOrderType, OandaOrderType] = {
     BrokerOrderType.MARKET: "MARKET",
     BrokerOrderType.LIMIT: "LIMIT",
 }
 
-_TIF_MAP: dict[BrokerTimeInForce, str] = {
+_TIF_MAP: dict[BrokerTimeInForce, OandaTimeInForce] = {
     BrokerTimeInForce.GTC: "GTC",
     BrokerTimeInForce.IOC: "IOC",
     BrokerTimeInForce.FOK: "FOK",
@@ -107,6 +123,7 @@ class OandaPaperAdapter(BrokerAdapter):
         self._client = client
         self._client_to_broker: dict[str, str] = dict(known_client_order_ids or {})
         self._clock = clock or datetime
+        self._instruments: dict[str, InstrumentMetadata] = {}
 
     # ------------------------------------------------------------------
     # Idempotency helpers
@@ -178,47 +195,74 @@ class OandaPaperAdapter(BrokerAdapter):
                 accepted_at=current.submitted_at,
             )
 
-        order: dict[str, Any] = {
-            "type": _TYPE_MAP[request.order_type],
-            "instrument": request.symbol,
-            "units": _decimal_to_oanda_units(request.quantity),
-            "side": _SIDE_MAP[request.side],
-            "timeInForce": _time_in_force_to_oanda(
-                request.time_in_force, request.order_type
+        instrument = self.instrument_metadata(request.symbol)
+        units = (
+            request.quantity
+            if request.side == BrokerOrderSide.BUY
+            else -request.quantity
+        )
+        order_request = OandaOrderRequest(
+            type=_TYPE_MAP[request.order_type],
+            instrument=request.symbol,
+            units=units,
+            time_in_force=_time_in_force_for(request),
+            price=request.limit_price,
+            position_fill="DEFAULT",
+            stop_loss=(
+                DependentOrder(kind="stop_loss", price=request.stop_loss)
+                if request.stop_loss is not None
+                else None
             ),
-            "clientExtensions": {"id": client_order_id},
-        }
-        if request.limit_price is not None:
-            order["price"] = _decimal_to_oanda_price(request.limit_price)
-
+            take_profit=(
+                DependentOrder(kind="take_profit", price=request.take_profit)
+                if request.take_profit is not None
+                else None
+            ),
+        )
         try:
-            response = self._client.request(
-                "POST", self._client.account_path("/orders"), json_body={"order": order}
+            created = OrderOpsClient(self._client).create_order(
+                order_request,
+                instrument,
+                client_order_id=client_order_id,
+                tag=ORDER_TAG,
+                comment=request.cycle_id,
             )
-        except BrokerRejectError as exc:
-            raise BrokerRejectError(exc.reason, broker_code=exc.broker_code) from exc
+        except OrderOperationError as exc:
+            raise BrokerRejectError(f"oanda rejected the order: {exc}") from exc
 
-        body = response.json_body
-        if not isinstance(body, dict):
-            raise BrokerProtocolError("oanda submit response was not a JSON object")
-        create_tx = body.get("orderCreateTransaction")
-        if not isinstance(create_tx, dict):
-            raise BrokerProtocolError(
-                "oanda submit response missing 'orderCreateTransaction'"
-            )
-        fill_tx = body.get("orderFillTransaction")
-        broker_order_id = _submit_broker_order_id(create_tx, fill_tx)
-        self._client_to_broker[client_order_id] = broker_order_id
+        self._client_to_broker[client_order_id] = created.broker_order_id
         return SubmitResult(
-            broker_order_id=broker_order_id,
+            broker_order_id=created.broker_order_id,
             client_order_id=client_order_id,
             status=(
                 BrokerOrderStatus.FILLED
-                if isinstance(fill_tx, dict)
+                if created.state == "FILLED"
                 else BrokerOrderStatus.NEW
             ),
-            accepted_at=_parse_oanda_timestamp(create_tx.get("time")),
+            accepted_at=self._clock.now(UTC),
         )
+
+    # ------------------------------------------------------------------
+    # Instrument metadata
+    # ------------------------------------------------------------------
+
+    def instrument_metadata(self, symbol: str) -> InstrumentMetadata:
+        """Return the account's metadata for ``symbol`` (fail closed).
+
+        Precision and minimum size come from the account's own catalog,
+        never from the symbol's spelling. An unknown or unclassified
+        instrument can therefore never be ordered.
+        """
+        if symbol in self._instruments:
+            return self._instruments[symbol]
+        catalog = fetch_instruments(self._client, account_id=self._client.account_id)
+        for instrument in catalog.instruments:
+            self._instruments[instrument.name] = instrument
+        if symbol not in self._instruments:
+            raise BrokerRejectError(
+                f"{symbol} is not in the account's instrument catalog"
+            )
+        return self._instruments[symbol]
 
     async def cancel(self, broker_order_id: str) -> CancelResult:
         """Cancel one pending OANDA order."""
@@ -482,39 +526,26 @@ def _oanda_isoformat(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _decimal_to_oanda_units(value: Decimal) -> str:
-    if value <= 0:
-        raise BrokerRejectError("quantity must be positive")
-    if value != value.to_integral_value():
-        raise BrokerRejectError("oanda quantity must be a whole number of units")
-    return str(value.quantize(Decimal("1")))
+#: Tag written into every order's ``clientExtensions``.
+ORDER_TAG = "alphabrief"
 
 
-def _decimal_to_oanda_price(value: Decimal) -> str:
-    if value <= 0:
-        raise BrokerRejectError("limit_price must be positive")
-    return str(value)
+def _time_in_force_for(request: SubmitRequest) -> OandaTimeInForce:
+    """Return the OANDA time-in-force for one submit.
 
-
-def _time_in_force_to_oanda(
-    value: BrokerTimeInForce, order_type: BrokerOrderType
-) -> str:
-    if value == BrokerTimeInForce.DAY:
-        # ponytail: OANDA has no DAY in the requested v20 subset; use the
-        # nearest default (FOK for market orders, GTC for resting limit orders).
-        return "FOK" if order_type == BrokerOrderType.MARKET else "GTC"
-    return _TIF_MAP[value]
-
-
-def _submit_broker_order_id(create_tx: dict[str, Any], fill_tx: Any) -> str:
-    if isinstance(fill_tx, dict):
-        broker_order_id = str(fill_tx.get("orderID", "")).strip()
-        if broker_order_id:
-            return broker_order_id
-    broker_order_id = str(create_tx.get("id", "")).strip()
-    if not broker_order_id:
-        raise BrokerProtocolError("oanda submit response missing order id")
-    return broker_order_id
+    Market orders are Fill-or-Kill (PROJECT_GUIDE 5.8) so a partially
+    filled market order can never rest on the book unnoticed; resting
+    limit orders keep the caller's explicit time-in-force. The
+    broker-neutral ``DAY`` default is never silently remapped: market
+    orders are FOK by design and limit orders must say what they want.
+    """
+    if request.order_type == BrokerOrderType.MARKET:
+        return "FOK"
+    if request.time_in_force == BrokerTimeInForce.DAY:
+        raise BrokerRejectError(
+            "resting limit orders require an explicit GTC/IOC/FOK time in force"
+        )
+    return _TIF_MAP[request.time_in_force]
 
 
 def _client_order_id(body: dict[str, Any]) -> str:
