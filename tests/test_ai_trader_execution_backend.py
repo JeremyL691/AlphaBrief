@@ -172,6 +172,41 @@ class TestExternalPaperExecutionBackend:
 
         assert adapter.requests[0].quantity == Decimal("1")
 
+    def test_persisted_decision_carries_real_policy_and_snapshot_hashes(
+        self,
+    ) -> None:
+        """PROJECT_GUIDE 5.7: the persisted decision binds real content.
+
+        The policy hash must come from the reviewed config files (so it
+        changes when they change) and the snapshot hash from the broker
+        snapshot content (never a timestamp).
+        """
+        from alphabrief_core.policy_version import policy_version_hash
+        from alphabrief_risk.decision_store import RiskDecisionStore
+
+        adapter = _FakeAdapter()
+        backend = ExternalPaperExecutionBackend(adapter)
+
+        backend.submit(
+            _intent(),
+            _decision(),
+            reference_price=Decimal("50"),
+            now=datetime.now(UTC),
+            estimated_quantity=Decimal("2"),
+        )
+
+        store = RiskDecisionStore(db_path=_paths.db_path())
+        try:
+            record = store.get("risk_test")
+        finally:
+            store.close()
+        assert record is not None
+        assert record.policy_hash == policy_version_hash()
+        assert record.snapshot_hash is not None
+        assert len(record.snapshot_hash) == 64
+        assert "T" not in record.snapshot_hash
+        assert record.rule_results == "approved"
+
     def test_daily_cycle_records_external_broker_metadata(self, tmp_path: Path) -> None:
         adapter = _FakeAdapter()
         provider = FakeProviderAdapter(

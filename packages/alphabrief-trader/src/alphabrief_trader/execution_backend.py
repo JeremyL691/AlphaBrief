@@ -9,15 +9,18 @@ bridge to the broker-neutral ``BrokerAdapter`` port (OANDA practice).
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from hashlib import sha256
 from typing import Any, Literal, Protocol
 
 from alphabrief_core import OrderIntent, RiskDecision
 from alphabrief_core import paths as _paths
+from alphabrief_core.policy_version import PolicyVersionError, policy_version_hash
 from alphabrief_execution.broker.errors import BrokerAdapterError
 from alphabrief_execution.broker.oanda.faults import UnknownOutcomeFailure
 from alphabrief_execution.broker.oanda.unknown_outcome import UnknownOutcomeResolver
@@ -35,17 +38,31 @@ from alphabrief_execution.broker.risk_context import (
     RiskContextSources,
     adapter_risk_sources,
 )
-from alphabrief_risk.broker_context import DEFAULT_POLICY_VERSION
+from alphabrief_risk.broker_context import BrokerRiskContext
 from alphabrief_risk.decision_binding import (
     DecisionBindingService,
     hash_inputs,
-    hash_policy,
 )
 from alphabrief_risk.decision_store import RiskDecisionStore
 
 
 class ExecutionBackendError(ValueError):
     """Raised when a paper execution backend refuses or fails an order."""
+
+
+def snapshot_content_hash(context: BrokerRiskContext) -> str:
+    """Hash the real broker snapshot a decision was approved against.
+
+    The persisted decision must record *what* was true when it was
+    approved (PROJECT_GUIDE 5.7): the account money, positions, orders,
+    trades, quotes, conversions and capture time, serialized
+    deterministically. A timestamp is not a content hash, so this value
+    changes whenever any of those facts change.
+    """
+    payload = json.dumps(
+        context.model_dump(mode="json"), sort_keys=True, default=str
+    )
+    return sha256(payload.encode()).hexdigest()
 
 
 ExecutionBackendName = Literal["external_paper"]
@@ -113,9 +130,15 @@ class ExternalPaperExecutionBackend:
         decision_binding: DecisionBindingService | None = None,
         risk_symbols: Sequence[str] = (),
         unknown_outcome_resolver: UnknownOutcomeResolver | None = None,
+        policy_hash: str | None = None,
     ) -> None:
         self._adapter = adapter
         self._max_order_value = max_order_value
+        # The persisted decision records the hash of the reviewed
+        # configuration files it was approved under (PROJECT_GUIDE 5.7).
+        # Computed once per backend; when the files cannot be read the
+        # submit path fails closed rather than persisting a placeholder.
+        self._policy_hash = policy_hash or self._compute_policy_hash()
         # Ambiguous submits are resolved by querying the broker for the
         # client identity that was persisted before the request; they are
         # never re-sent (PROJECT_GUIDE 5.8).
@@ -135,6 +158,14 @@ class ExternalPaperExecutionBackend:
                 RiskDecisionStore(db_path=_paths.db_path())
             )
         )
+
+    @staticmethod
+    def _compute_policy_hash() -> str | None:
+        """The hash of the reviewed config files, or ``None`` when unreadable."""
+        try:
+            return policy_version_hash()
+        except PolicyVersionError:
+            return None
 
     def _resolve_unknown_outcome(
         self,
@@ -292,6 +323,11 @@ class ExternalPaperExecutionBackend:
                 "execution inputs no longer match the approved "
                 "RiskDecision"
             )
+        if self._policy_hash is None:
+            raise ExecutionBackendError(
+                "the reviewed configuration files cannot be read, so the "
+                "decision cannot be bound to a real policy version"
+            )
         record = self._decision_binding.persist_decision(
             decision.decision_id,
             intent_id=intent.intent_id,
@@ -300,9 +336,11 @@ class ExternalPaperExecutionBackend:
             reason=decision.reason,
             max_quantity=decision.max_quantity,
             risk_tags=tuple(decision.risk_tags),
-            policy_hash=hash_policy(DEFAULT_POLICY_VERSION),
+            policy_hash=self._policy_hash,
             inputs_hash=decision.execution_input_hash or request_inputs_hash,
-            snapshot_hash=context.captured_at.isoformat(),
+            # A real content hash of the broker snapshot the decision was
+            # approved against, never a timestamp.
+            snapshot_hash=snapshot_content_hash(context),
             rule_results=",".join(decision.risk_tags),
             source_ids=(f"account:{context.account.account_id}",),
             # The context builder already rejected stale, missing, or
@@ -314,7 +352,7 @@ class ExternalPaperExecutionBackend:
             decision.decision_id,
             expected_intent_id=intent.intent_id,
             expected_account_id=record.account_id,
-            expected_policy_hash=hash_policy(DEFAULT_POLICY_VERSION),
+            expected_policy_hash=self._policy_hash,
             expected_inputs_hash=record.inputs_hash,
             expected_snapshot_hash=None,
             quantity=request.quantity,
