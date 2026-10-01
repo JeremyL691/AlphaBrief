@@ -57,6 +57,23 @@ def _hash_text(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
 
 
+def _error_code(exc: Exception) -> str:
+    """Return a provider error's stable code, when it has one."""
+    code = getattr(exc, "code", None)
+    return str(code) if isinstance(code, str) else ""
+
+
+def _error_type_for(exc: Exception) -> str:
+    """Return ``TypeName`` or ``TypeName:channel_code`` for the record.
+
+    The channel code is what makes a failure actionable (usage limit,
+    scope missing, re-authorization required), so it is preserved next to
+    the exception type instead of replacing it.
+    """
+    code = _error_code(exc)
+    return f"{type(exc).__name__}:{code}" if code else type(exc).__name__
+
+
 def classify_provider_error(exc: Exception, detail: str) -> ModelCallClassification:
     """Classify a provider exception into a stable terminal category.
 
@@ -132,6 +149,8 @@ class ModelResponse(AlphaBriefModelSchema):
     structured_output: dict[str, Any] | None = None
     status: ModelResponseStatus = "succeeded"
     finish_reason: str = Field(min_length=1)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
 
 
 class ModelCallRecord(AlphaBriefModelSchema):
@@ -230,6 +249,18 @@ class ModelCallBudget:
         return None
 
 
+#: Failure classifications that mean "this channel cannot serve the
+#: request", so an explicitly enabled fallback channel may be used.
+_FALLBACK_CLASSIFICATIONS: frozenset[str] = frozenset(
+    {"provider_error", "timeout", "rate_limit", "no_provider"}
+)
+
+
+def _default_fallback_eligible(record: ModelCallRecord) -> bool:
+    """Fallback policy: switch channels only for channel-level failures."""
+    return record.classification in _FALLBACK_CLASSIFICATIONS
+
+
 class ModelProviderError(Exception):
     """Raised when a provider adapter cannot complete a model call."""
 
@@ -301,14 +332,25 @@ class ModelGateway:
         call_id_factory: Callable[[], str] | None = None,
         budget: ModelCallBudget | None = None,
         record_sink: Callable[[ModelCallRecord], None] | None = None,
+        fallback_enabled: bool = False,
+        fallback_eligible: Callable[[ModelCallRecord], bool] | None = None,
     ) -> None:
         self._providers = list(providers)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._call_id_factory = call_id_factory or (lambda: f"model_call_{uuid4().hex}")
         self._budget = budget
         self._record_sink = record_sink
+        # Channel fallback is opt-in: it is only used when the caller
+        # explicitly allows switching billing channels, and only for
+        # failures that mean "this channel cannot serve the request".
+        self._fallback_enabled = fallback_enabled
+        self._fallback_eligible = fallback_eligible or _default_fallback_eligible
         self.call_records: list[ModelCallRecord] = []
         self._invoke_counts: dict[str, int] = {}
+
+    def set_budget(self, budget: ModelCallBudget | None) -> None:
+        """Attach or replace the call budget after construction."""
+        self._budget = budget
 
     def invoke(self, request: ModelRequest) -> ModelGatewayResult:
         retry_count = self._invoke_counts.get(request.request_id, 0)
@@ -331,8 +373,8 @@ class ModelGateway:
                 self._emit(record)
                 return ModelGatewayResult(response=None, record=record)
 
-        provider = self._select_provider(request.required_capabilities)
-        if provider is None:
+        candidates = self._eligible_providers(request.required_capabilities)
+        if not candidates:
             record = self._build_record(
                 request=request,
                 provider="unselected",
@@ -347,54 +389,68 @@ class ModelGateway:
             self._emit(record)
             return ModelGatewayResult(response=None, record=record)
 
-        started_at = perf_counter()
-        try:
-            response = provider.call(request)
-        except Exception as exc:
+        last_result: ModelGatewayResult | None = None
+        for index, provider in enumerate(candidates):
+            started_at = perf_counter()
+            try:
+                response = provider.call(request)
+            except Exception as exc:
+                latency_ms = int((perf_counter() - started_at) * 1000)
+                record = self._build_record(
+                    request=request,
+                    provider=provider.provider_name,
+                    model=provider.model_name,
+                    output_text="",
+                    latency_ms=latency_ms,
+                    status="failed",
+                    error_type=_error_type_for(exc),
+                    classification=classify_provider_error(exc, str(exc)),
+                    retry_count=retry_count,
+                )
+                self._emit(record)
+                last_result = ModelGatewayResult(response=None, record=record)
+                if index + 1 < len(candidates) and self._fallback_eligible(record):
+                    continue
+                return last_result
             latency_ms = int((perf_counter() - started_at) * 1000)
-            detail = str(exc)
             record = self._build_record(
                 request=request,
-                provider=provider.provider_name,
-                model=provider.model_name,
-                output_text="",
+                provider=response.provider,
+                model=response.model,
+                output_text=response.output_text,
                 latency_ms=latency_ms,
-                status="failed",
-                error_type=type(exc).__name__,
-                classification=classify_provider_error(exc, detail),
+                status="succeeded",
+                error_type=None,
+                classification="success",
                 retry_count=retry_count,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
             )
             self._emit(record)
-            return ModelGatewayResult(response=None, record=record)
+            return ModelGatewayResult(response=response, record=record)
 
-        latency_ms = int((perf_counter() - started_at) * 1000)
-        record = self._build_record(
-            request=request,
-            provider=response.provider,
-            model=response.model,
-            output_text=response.output_text,
-            latency_ms=latency_ms,
-            status="succeeded",
-            error_type=None,
-            classification="success",
-            retry_count=retry_count,
-        )
-        self._emit(record)
-        return ModelGatewayResult(response=response, record=record)
+        assert last_result is not None  # every candidate was attempted
+        return last_result
 
     def _emit(self, record: ModelCallRecord) -> None:
         self.call_records.append(record)
         if self._record_sink is not None:
             self._record_sink(record)
 
-    def _select_provider(
+    def _eligible_providers(
         self, required_capabilities: Sequence[ModelCapability]
-    ) -> ProviderAdapter | None:
+    ) -> list[ProviderAdapter]:
         required = frozenset(required_capabilities)
-        for provider in self._providers:
-            if required.issubset(provider.capabilities):
-                return provider
-        return None
+        eligible = [
+            provider
+            for provider in self._providers
+            if required.issubset(provider.capabilities)
+        ]
+        if self._fallback_enabled:
+            return eligible
+        # Without explicit opt-in only the first eligible provider may
+        # serve the request: the billing channel never switches silently.
+        return eligible[:1]
 
     def _build_record(
         self,
@@ -408,6 +464,8 @@ class ModelGateway:
         error_type: str | None,
         classification: ModelCallClassification | None = None,
         retry_count: int = 0,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
     ) -> ModelCallRecord:
         return ModelCallRecord(
             call_id=self._call_id_factory(),
@@ -423,6 +481,8 @@ class ModelGateway:
             status=status,
             classification=classification,
             error_type=error_type,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             retry_count=retry_count,
             snapshot_id=request.snapshot_id,
             cycle_key=request.cycle_key,

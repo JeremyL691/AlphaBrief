@@ -9,11 +9,11 @@
 | 字段 | 值 |
 |---|---|
 | 当前阶段 | **S2 模型通道** |
-| 状态 | `IN_PROGRESS` |
-| 下一项任务 | S2-1 `chatgpt_plan` 适配器与 OAuth（`alphabrief model login|status|logout|test`） |
+| 状态 | `WAITING_OWNER_LOGIN` |
+| 下一项任务 | S2-5 用户在终端运行 `alphabrief model login` 完成一次 ChatGPT 授权（之后可继续 S3） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-09-30，S1 全部任务与退出标准通过（见"S1 证据"） |
+| 最近更新 | 2026-09-30，S2-1 至 S2-4 完成，等待用户完成一次 ChatGPT 授权 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -73,7 +73,15 @@
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
-#### S1 证据（进行中）
+#### S2 证据（进行中）
+
+- S2-1/S2-2（提交见下）：新增 `alphabrief_models.chatgpt_plan`（授权 URL 构造、PKCE S256、凭证记录与 0600 原子存储、Responses SSE 解析、错误码映射、模型目录发现、`ChatGptPlanAdapter`）与 `alphabrief_models.chatgpt_oauth`（回环回调服务、code 换 token、JWKS 校验 ID token、refresh、`login()`）；`alphabrief_core.jwt_verify` 用纯标准库实现 RS256/JWKS 校验。实现严格对齐官方文档（授权端点、token 端点、scope、`resource`、`store=false`/`stream=true`、只有 `response.completed` 才算成功），并已用线上 discovery 文档核对 `issuer`/`jwks_uri`/`grant_types`。新增 `openai_compatible` 适配器与 `model.fallback_enabled`（默认 false；只有显式开启才允许切通道，切换逐条记录），主机含 `opencode.ai` 直接报错拒绝。`config/alphabrief.yaml` 首次创建（`model.fallback_enabled: false`）。
+- S2-3：`ModelGateway` 支持 opt-in 通道回退（每次尝试各写一条调用记录），调用记录新增 token 用量与 `类型:错误码` 形式的原因；API 与 scheduler 的委员会构建都传入持久化 sink（`ModelCallStore`）。`model test` 会落库并打印记录。
+- S2-4：确定性测试 `tests/test_chatgpt_channel.py`（30 个：PKCE、授权 URL、SSE 解析、错误映射、适配器失败闭合、token 解析与 refresh、登录全流程含 state 校验/拒绝授权/client id 不匹配/缺少推理 scope）与 `tests/test_model_channels.py`（21 个：备用通道装载与 `opencode.ai` 拒绝、成本估算、显式切换策略、通道构建）。practice 测试 `tests/test_chatgpt_channel_practice.py`（`@pytest.mark.practice`，CI 用 `-m "not practice"` 排除）在登录前按预期失败（`not_configured`）。
+- 命令与结果：`pytest -q -m "not practice"` → 2379 passed / 2 deselected；`mypy` → Success: no issues found in 398 source files；`ruff check .` → All checks passed；`python scripts/secret_scan.py` → exit 0。
+- 模型工厂改造：`build_ai_trading_committee` 现在构建在真实通道上，产品不再读取 `OPENAI_API_KEY`/`OPENAI_BASE_URL`（那是用户的编程工具凭证）；`fake` 仅保留给显式测试选择。
+
+#### S1 证据（已完成）
 
 - S1-0（S0 完成提交回填）：S0 的检查表、证据与决策已随提交 `5b56d0e` 落库。
 - S1-1（提交 `e58f444`）：
@@ -97,12 +105,12 @@
 - S1-3：重写 `tests/test_project_scaffold.py`，检查 `AGENTS.md`、`docs/PROJECT_GUIDE.md`、`docs/STATUS.md`、`docs/AGENT_PROMPT.md` 存在，`docs/` 只有这四个（含 `images`），已删除的旧文档与旧目录确实不存在，STATUS 只有一个当前阶段与状态，markdown 本地链接可解析。命令与结果：`pytest -q -m "not practice"` → 2315 passed / 0 failed；`mypy` → Success: no issues found in 386 source files；`ruff check .` → All checks passed。
 
 ### S2 模型通道
-- [ ] S2-1 `chatgpt_plan` 适配器与 OAuth（`alphabrief model login|status|logout|test`）
-- [ ] S2-2 `openai_compatible` 备用适配器、拒绝 `opencode.ai`、`fallback_enabled` 开关
-- [ ] S2-3 完整的调用记录；委员会构建时传入记录器
-- [ ] S2-4 确定性测试，加一个 practice 测试
+- [x] S2-1 `chatgpt_plan` 适配器与 OAuth（`alphabrief model login|status|logout|test`）
+- [x] S2-2 `openai_compatible` 备用适配器、拒绝 `opencode.ai`、`fallback_enabled` 开关
+- [x] S2-3 完整的调用记录；委员会构建时传入记录器
+- [x] S2-4 确定性测试，加一个 practice 测试（practice 待登录后通过）
 - [ ] S2-5 用户完成 ChatGPT 授权
-- [ ] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库
+- [ ] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库（等 S2-5）
 
 ### S3 打通一单
 - [ ] S3-1 OANDA K 线和报价入库
@@ -171,7 +179,7 @@
 
 ## 需要用户做的事
 
-- （S2 到达时）在终端运行 `alphabrief model login`，在浏览器点授权。整个项目只需要这一次。
+- **（现在需要，只此一次）** 在项目目录下运行 `.venv/bin/alphabrief model login`，浏览器会自动打开 OpenAI 授权页，点一次同意即可。完成后把终端输出贴给我，或直接让我继续（我会用 `alphabrief model status` 自查）。若浏览器没有自动打开，终端会打印授权 URL，手动打开同样可以。
 - （长期）试运行期间保持 Mac 接电源、不休眠（目前由 Amphetamine 保证）。
 - （可选）如果想启用备用模型通道：提供一个按量付费的 OpenAI 兼容 key（例如 DeepSeek 官方），写入 `.env` 的 `ALPHABRIEF_LLM_BASE_URL`、`ALPHABRIEF_LLM_API_KEY`、`ALPHABRIEF_LLM_MODEL`，并在配置中开启 `model.fallback_enabled`。
 - （可选）申请免费的 `FRED_API_KEY` 以启用宏观日历；没有也能运行（会用新闻冲击过滤代替）。

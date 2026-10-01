@@ -86,6 +86,10 @@ class TestAiRun:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        # Explicit fake composition keeps this test deterministic without
+        # a signed-in ChatGPT channel (the real channel would fail closed
+        # with provider_error, which is covered by the channel tests).
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
         res = client.post(
             "/api/v1/ai/run",
             json={

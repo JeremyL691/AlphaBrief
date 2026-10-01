@@ -74,6 +74,15 @@ from alphabrief_core.read_contracts import (
     unavailable_source_error,
     unknown_filter_error,
 )
+from alphabrief_core.secrets import (
+    SECRET_DIR_MODE,
+    SECRET_FILE_MODE,
+    SecretStoreError,
+    delete_secret,
+    read_secret,
+    redact,
+    write_secret,
+)
 from alphabrief_core.write_contracts import (
     APPROVED_ENDPOINTS,
     APPROVED_PAYLOAD_KEYS,
@@ -120,6 +129,9 @@ __all__ = [
     "PageCursor",
     "PaperExecutionPolicy",
     "PathConfigError",
+    "SECRET_DIR_MODE",
+    "SECRET_FILE_MODE",
+    "SecretStoreError",
     "backups_dir",
     "cache_dir",
     "daily_reports_dir",
@@ -127,8 +139,12 @@ __all__ = [
     "db_path",
     "logs_dir",
     "reports_dir",
+    "delete_secret",
+    "read_secret",
+    "redact",
     "runtime_lock_path",
     "secrets_dir",
+    "write_secret",
     "Provenance",
     "READ_DOMAINS",
     "READ_SCHEMA_VERSION",

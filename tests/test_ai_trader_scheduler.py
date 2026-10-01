@@ -458,7 +458,7 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setattr(
             scheduler_commands,
             "_build_ai_committee",
-            lambda: TradingCommittee(
+            lambda database=None: TradingCommittee(
                 gateway=ModelGateway(providers=[provider]),
                 discipline=DisciplineConfig(),
             ),

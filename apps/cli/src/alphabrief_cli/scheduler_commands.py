@@ -388,9 +388,23 @@ def _configure_logging() -> None:
     )
 
 
-def _build_ai_committee() -> TradingCommittee:
-    """Build the configured AI committee for the scheduler."""
-    return build_ai_trading_committee()
+def _build_ai_committee(database: Path | None = None) -> TradingCommittee:
+    """Build the configured AI committee, persisting every model call.
+
+    The scheduler is the unattended runtime, so its committee must write
+    the same durable model-call evidence as the API: channel, model,
+    latency, token usage, status, and error code per terminal call.
+    """
+    from alphabrief_api.db.model_call import ModelCallStore
+
+    sink = None
+    if database is not None:
+        store = ModelCallStore(db_path=database)
+
+        def sink(record: object) -> None:
+            store.save_call(record)  # type: ignore[arg-type]
+
+    return build_ai_trading_committee(record_sink=sink)
 
 
 # Default AI cycle universe: OANDA practice FX majors. Operators can
@@ -672,7 +686,7 @@ def _ai_cycle_factory(
                     )
                 ),
             )
-            committee = _build_ai_committee()
+            committee = _build_ai_committee(database)
             policy = load_paper_execution_policy(
                 load_settings().execution_policy_file
             )
