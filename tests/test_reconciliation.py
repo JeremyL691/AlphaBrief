@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.request import Request
@@ -343,3 +345,145 @@ class TestFreezeStore:
 
         assert len(snapshots) == 3
         assert snapshots[0].scope == "eod"
+
+
+class TestDependentOrdersAndTradeLinks:
+    """The shapes a real fill produces (verified against the practice API)."""
+
+    def test_dependent_orders_parse_without_an_instrument(self) -> None:
+        """Stop-loss/take-profit rows carry tradeID, no instrument/units."""
+        from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
+
+        def send(request: Request, timeout: float) -> bytes:
+            del timeout
+            return json.dumps(
+                {
+                    "orders": [
+                        {
+                            "id": "7",
+                            "type": "STOP_LOSS",
+                            "state": "PENDING",
+                            "instrument": None,
+                            "units": None,
+                            "timeInForce": "GTC",
+                            "tradeID": "5",
+                            "price": "1.13002",
+                            "clientExtensions": None,
+                        },
+                        {
+                            "id": "4",
+                            "type": "MARKET",
+                            "state": "FILLED",
+                            "instrument": "EUR_USD",
+                            "units": "1000",
+                            "timeInForce": "FOK",
+                            "clientExtensions": {"id": "ai_1", "tag": "alphabrief"},
+                        },
+                    ]
+                }
+            ).encode()
+
+        client = OandaHttpClient(
+            config=_config(),
+            http_send=send,
+            token="test-token",
+            account_id=ACCOUNT,
+        )
+
+        orders = OrderOpsClient(client).list_orders().orders
+
+        stop, entry = orders
+        assert stop.symbol is None
+        assert stop.trade_id == "5"
+        assert stop.units == Decimal("0")
+        assert entry.symbol == "EUR_USD"
+        assert entry.client_tag == "alphabrief"
+
+    def test_closing_fill_links_to_the_trade_it_closes(self) -> None:
+        """``tradesClosed`` associates a close with its trade."""
+        from alphabrief_execution.broker.oanda.transaction_ops import (
+            TransactionOpsClient,
+        )
+
+        def send(request: Request, timeout: float) -> bytes:
+            del timeout
+            return json.dumps(
+                {
+                    "transactions": [
+                        {
+                            "id": "5",
+                            "type": "ORDER_FILL",
+                            "time": "2026-09-30T10:00:00.000000000Z",
+                            "instrument": "EUR_USD",
+                            "units": "1000",
+                            "price": "1.13173",
+                            "pl": "0.0000",
+                            "tradeOpened": {"tradeID": "5", "units": "1000"},
+                        },
+                        {
+                            "id": "9",
+                            "type": "ORDER_FILL",
+                            "time": "2026-09-30T11:00:00.000000000Z",
+                            "instrument": "EUR_USD",
+                            "units": "-1000",
+                            "price": "1.13165",
+                            "pl": "-0.0800",
+                            "tradesClosed": [{"tradeID": "5", "units": "-1000"}],
+                        },
+                    ],
+                    "lastTransactionID": "9",
+                }
+            ).encode()
+
+        client = OandaHttpClient(
+            config=_config(),
+            http_send=send,
+            token="test-token",
+            account_id=ACCOUNT,
+        )
+
+        window = TransactionOpsClient(client).transactions_since("4", request_id="test")
+
+        assert [tx.trade_id for tx in window.transactions] == ["5", "5"]
+
+    def test_projection_closes_the_trade_on_the_closing_fill(
+        self, tmp_path: Path
+    ) -> None:
+        """A closing fill zeroes the trade and the position it held."""
+        from alphabrief_execution.broker.oanda.account_projection import (
+            AccountProjectionStore,
+        )
+        from alphabrief_execution.broker.oanda.live_reconciliation import (
+            facts_from_transactions,
+        )
+        from alphabrief_execution.broker.oanda.transaction_ops import (
+            TransactionResult,
+        )
+
+        def tx(tx_id: str, units: str, *, trade_id: str) -> TransactionResult:
+            return TransactionResult(
+                transaction_id=tx_id,
+                transaction_type="ORDER_FILL",
+                time=datetime(2026, 9, 30, 10, 0, tzinfo=UTC),
+                instrument="EUR_USD",
+                units=Decimal(units),
+                price=Decimal("1.13173"),
+                realized_pl=Decimal("0"),
+                financing=Decimal("0"),
+                trade_id=trade_id,
+                request_id="test",
+            )
+
+        facts, _ = facts_from_transactions(
+            [tx("5", "1000", trade_id="5"), tx("9", "-1000", trade_id="5")]
+        )
+        store = AccountProjectionStore(db_path=tmp_path / "projection.duckdb")
+        try:
+            snapshot = store.rebuild(ACCOUNT, facts, initial_balance=Decimal("100000"))
+        finally:
+            store.close()
+
+        assert [t.state for t in snapshot.trades] == ["CLOSED"]
+        assert snapshot.trades[0].current_units == 0
+        assert list(snapshot.positions) == []
+        assert snapshot.balance == Decimal("100000")

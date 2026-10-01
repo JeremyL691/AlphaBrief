@@ -47,6 +47,8 @@ class TransactionResult(BaseModel):
     price: Decimal | None = None
     realized_pl: Decimal | None = None
     financing: Decimal | None = None
+    #: The trade a fill or close belongs to (``tradeID`` when reported).
+    trade_id: str | None = None
     request_id: str = Field(min_length=1)
 
 
@@ -349,6 +351,26 @@ def _gaps_and_candidate(
     return gaps, candidate
 
 
+def _trade_ids(row: dict[str, Any]) -> tuple[str, ...]:
+    """Return every trade id this transaction references.
+
+    A fill reports the trade it opened (``tradeOpened``), closed
+    (``tradesClosed``) or reduced (``tradesReduced``); the projection needs
+    that link to keep trades and positions in step.
+    """
+    ids: list[str] = []
+    opened = row.get("tradeOpened")
+    if isinstance(opened, dict) and opened.get("tradeID"):
+        ids.append(str(opened["tradeID"]))
+    for key in ("tradesClosed", "tradesReduced"):
+        entries = row.get(key)
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, dict) and entry.get("tradeID"):
+                    ids.append(str(entry["tradeID"]))
+    return tuple(dict.fromkeys(ids))
+
+
 def _transaction_from_row(row: dict[str, Any], *, request_id: str) -> TransactionResult:
     return TransactionResult(
         transaction_id=str(row["id"]),
@@ -359,6 +381,9 @@ def _transaction_from_row(row: dict[str, Any], *, request_id: str) -> Transactio
         price=_optional_decimal(row.get("price")),
         realized_pl=_optional_decimal(row.get("pl")),
         financing=_optional_decimal(row.get("financing")),
+        trade_id=_optional_str(row.get("tradeID")) or (
+            _trade_ids(row)[0] if _trade_ids(row) else None
+        ),
         request_id=request_id,
     )
 

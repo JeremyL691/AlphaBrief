@@ -59,16 +59,33 @@ def _exit_error(message: str) -> None:
 
 
 def _snapshot_loader(market_store: MarketDataStore) -> SnapshotLoader:
-    """Build snapshots from stored OANDA bars (no synthetic prices)."""
+    """Build snapshots from stored OANDA bars (no synthetic prices).
+
+    The ATR(14) of the H1 series is computed from the same stored candles
+    and attached to the snapshot: the stop distance depends on it, and a
+    missing ATR means no protective order (never a guessed one).
+    """
+    from alphabrief_trader.stops import atr_from_bars
 
     def _loader(symbol: str) -> MarketSnapshot | None:
         bars = market_store.get_bar_models(symbol)
         if not bars:
             return None
         latest = bars[-1]
+        h1 = [
+            bar
+            for bar in bars
+            if bar.data_version.endswith(":H1")
+        ]
+        atr = atr_from_bars(
+            [bar.high for bar in h1],
+            [bar.low for bar in h1],
+            [bar.close for bar in h1],
+        )
         return MarketSnapshot(
             symbol=symbol,
             reference_price=latest.close,
+            atr=atr,
             data_version=latest.data_version,
             captured_at=latest.timestamp,
         )
@@ -108,13 +125,18 @@ def _require_instrument(instrument: str) -> str:
     return normalized
 
 
-def _execution_backend() -> ExternalPaperExecutionBackend:
+def _execution_backend(
+    *, symbols: tuple[str, ...] = DEFAULT_UNIVERSE
+) -> ExternalPaperExecutionBackend:
     if not oanda_is_configured():
         _exit_error(
             "OANDA practice credentials are required "
             "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
         )
-    return ExternalPaperExecutionBackend(get_broker_runtime().adapter)
+    return ExternalPaperExecutionBackend(
+        get_broker_runtime().adapter,
+        risk_symbols=symbols,
+    )
 
 
 @cycle_app.command("run")
@@ -183,7 +205,9 @@ def run_cmd(
             committee=build_ai_trading_committee(),
             risk_gate=_risk_gate(symbol),
             execution_backend=(
-                _execution_backend() if trading == "on" else _DisabledBackend()
+                _execution_backend(symbols=(symbol,))
+                if trading == "on"
+                else _DisabledBackend()
             ),
             store=store,
             snapshot_loader=loader,

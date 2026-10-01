@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S3 打通一单（垂直切片）** |
+| 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S3-4/S3-5 垂直切片：`cycle run --once --instrument EUR_USD --units 1000 --trading on` → 对账 → 平仓 → 再对账 |
+| 下一项任务 | S4-2 委员会协议/意图/仓位/14 条规则/结果未知处理/平仓/kill switch 补全 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S2 全部完成（主通道真实可用）；开始 S3-4/S3-5 垂直切片 |
+| 最近更新 | 2026-10-01，S3 垂直切片完成：真实下单 + 止损止盈 + 平仓 + 对账干净（见 S3 退出标准证据） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -73,6 +73,17 @@
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
+#### S3 退出标准证据（2026-10-01，真实 practice 账户）
+
+- 下单前账户：`lastTransactionID=3`，balance=NAV=100000.0000，marginUsed=0，持仓/交易/订单均为 0。
+- `alphabrief data sync-oanda --instrument EUR_USD` → 332 根 K 线 + 1 报价入库；快照由真实 H1 K 线计算 ATR(14)=0.0011836，价格 1.1318。
+- 委员会真实运行（5 个角色各一次真实模型调用）→ 全员 view=uncertain、manager 给出不持仓，cycle 记录 `skipped_no_intent`（这是合法结果，未凑单）。
+- 按 GUIDE S3-5 的一次性例外执行：`alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on --force-direction long --reason "S3 vertical slice"` → `{"outcome": "executed", "attempt_count": 1, "attempts": [{"intent_id": "ai_e482fc8865b9", "risk_decision_id": "risk_0f29f0ff42d54440ab6e34bf7a631015", "approved": true, "outcome": "executed", "order_id": "4", "broker_order_id": "4", "filled": true}]}`（委员会原始输出照常落库，reason 写进 intent rationale）。
+- OANDA 流水（`lastTransactionID` 3 → 11）：tx4 `MARKET_ORDER` EUR_USD +1000；tx5 `ORDER_FILL` 1000 @ 1.13173；tx6 `TAKE_PROFIT_ORDER` @ 1.13535；tx7 `STOP_LOSS_ORDER` @ 1.13002（止损止盈价由 ATR×1.5 / ×2.0 计算并随成交挂上，当时均 PENDING）；tx8 `MARKET_ORDER` EUR_USD −1000（`alphabrief cycle close --instrument EUR_USD`，order id 8）；tx9 `ORDER_FILL` −1000 @ 1.13165，pl −0.0800；tx10/tx11 `ORDER_CANCEL`（持仓平掉后保护单自动撤销）。最终 balance 99999.9200、NAV 99999.9200、持仓/交易/订单 0。
+- 全链路可追溯：轮次 ID `aic_d22761752a0a` → 意图 `ai_e482fc8865b9` → 风控决策 `risk_0f29f0ff42d54440ab6e34bf7a631015` → OANDA 订单 4（`clientExtensions={id: ai_e482fc8865b9, tag: alphabrief, comment: 轮次}`）→ 成交 tx5 → 平仓 tx9。
+- 对账：下单后与平仓后各跑一次 `alphabrief broker reconcile --scope cycle` → 均 `clean: true`、`freeze_raised: false`、`gap_count: 0`，剩余差异全部为 INFO（止损止盈挂单无 client identity、NAV/margin 为券商计算标记）。
+- 过程中发现并修复 4 个真实缺陷：模型目录返回形状（`models[].slug`）、流解析重复文本、依赖单（止损/止盈）行没有 instrument/units 导致解析失败、平仓成交缺少 `tradesClosed` 关联导致投影认为持仓"非本系统"；另修投影重建的期初余额算法（原先用当前余额播种会重复计入历史盈亏）。新增回归测试覆盖依赖单解析、`tradesOpened/tradesClosed` 关联、平仓成交关仓投影。
+
 #### S2 完成证据（2026-10-01）
 
 - S2-5 用户完成授权后实测：`alphabrief model status --compact` → `{"primary": {"authorized": true, "inference_scope": true, "refresh_token_present": true, "expires_at": "2026-10-01T07:50:35Z", "scopes": ["chatgpt.tokens.use.direct","email","offline_access","openid","profile","resource.invoke"], "default_model": "gpt-6-astra", ...}}`；`alphabrief model test --compact` → `{"ok": true, "channel": "chatgpt_plan", "model": "gpt-6-astra", "text": "{\"ok\": true}", "parsed_ok": true, "parsed": {"ok": true}, "input_tokens": 18, "output_tokens": 9, "latency_ms": 2297}`，调用记录已落库（`ModelCallStore.list_calls` → 1 条，provider=chatgpt_plan、model=gpt-6-astra、status=succeeded、latency_ms=3270、tokens 18/9）。`pytest -m practice` → 5 passed（行情入库、下单序列化、对账、通道登录态、通道真实调用）。
@@ -81,7 +92,7 @@
 
 #### S4 证据（进行中）
 
-- S4-1 第二部分（进行中，提交见下）：新增 `alphabrief_execution.broker.oanda.risk_sources.OandaRiskContextSources`，从真实 practice 端点取风控上下文所需事实：`/summary`（balance/NAV/marginUsed/marginAvailable/币种）、`/positions`（多空分开 + 均价）、`/orders?state=PENDING`、`/trades`、`/pricing`（bid/ask + 本币换算因子）、`/instruments`（目录版本）、对账状态改读持久化 recon store（frozen/clean/unknown，不再恒为 unknown）、健康状态由账户摘要探测；报价覆盖"配置品种 ∪ 当前持仓 ∪ 挂单品种"。`OandaPaperAdapter` 增加只读 `client` 访问器以便构造这些来源。**该模块尚未接入执行后端默认路径**（当前仅新增模块与访问器，运行时行为未变），接入与测试是 S4-1 的下一步。命令与结果：`pytest -q -m "not practice"` → 2417 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (408 files)。
+- S4-1 第二部分（本提交）：新增 `alphabrief_execution.broker.oanda.risk_sources.OandaRiskContextSources`，从真实 practice 端点取风控上下文所需事实：`/summary`（balance/NAV/marginUsed/marginAvailable/币种）、`/positions`（多空分开 + 均价）、`/orders?state=PENDING`、`/trades`、`/pricing`（bid/ask + 本币换算因子）、`/instruments`（目录版本）、对账状态改读持久化 recon store（frozen/clean/unknown，不再恒为 unknown）、健康状态由账户摘要探测；报价覆盖"配置品种 ∪ 当前持仓 ∪ 挂单品种"。`OandaPaperAdapter` 增加只读 `client` 访问器以便构造这些来源。接入已完成：`ExternalPaperExecutionBackend` 在适配器为 `OandaPaperAdapter` 时默认使用这些真实来源（并接收 `risk_symbols` 以覆盖配置品种；cycle CLI 传当前品种、scheduler 传配置 universe），其它适配器仍走端口组合；对账状态来自持久化 recon store，健康状态来自账户摘要探测。命令与结果：`pytest -q -m "not practice"` → 2418 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (408 files)。
 
 - S4-1 第一部分（本提交）：新增 `alphabrief_trader.data_quality`（版本化规则：报价必须为正、`data_version` 非空、`captured_at` 必须带时区且不晚于当前时间、年龄超过 2 小时判为过期；任何缺陷都失败闭合并给出稳定原因串），`DailyTradingCycle` 的三处风控调用不再写死 `data_quality_passed=True`，改为传入真实判定结果（过期/不完整输入会被 RiskGate 规则 5 拒绝并记录原因，绝不假定通过）。同时删除两处冗余的 `require_data_quality_passed=True`（`RiskLimitConfig` 的字段默认值本就是 True，策略只保留在一处）。命令与结果：`grep -rn "data_quality_passed=True" packages apps` → 无输出；`pytest -q -m "not practice"` → 2417 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (407 files)；新增 `tests/test_data_quality.py` 7 个用例（新鲜通过、过期带年龄、临界值通过、未来时间失败、verdict JSON 安全、过期输入被风控拒绝且不下单、新鲜输入成交）。为保持既有用例语义，`tests/test_ai_trader_daily_cycle.py` 与 `tests/test_ai_trader_idempotency.py` 注入与快照时间一致的时钟（它们验证的是执行路径，不是新鲜度）。
 
@@ -142,12 +153,12 @@
 - [x] S3-1 OANDA K 线和报价入库
 - [x] S3-2 `order_ops` + `orders` 下单（止损止盈、带符号整数 units、clientExtensions）；删除旧下单路径
 - [x] S3-3 流水游标与新对账逻辑
-- [~] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`（命令与选项已实现并测试；真实下单待 S2-5 授权）
-- [~] S3-5 平仓与对账（`alphabrief cycle close` 已实现；真实平仓待 S2-5 授权）
-- [ ] 退出标准：`lastTransactionID` 增加并有 `ORDER_FILL` 和止损止盈单；全链路可追溯；对账干净
+- [x] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`（真实下单完成，见下）
+- [x] S3-5 平仓与对账（真实平仓与对账完成，见下）
+- [x] 退出标准：`lastTransactionID` 3→11 并有 `ORDER_FILL` 与止损止盈单；全链路可追溯；对账干净（2026-10-01 实测）
 
 ### S4 风控与决策补全
-- [~] S4-1 真实风控上下文：已删除写死的 `data_quality_passed=True`（改为真实输入质量判定）；伪造账户上下文的删除仍在进行
+- [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
 - [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch
 - [ ] S4-3 真实的策略版本哈希和输入哈希
 - [ ] S4-4 影子评估、日报、预算
