@@ -25,6 +25,7 @@ from typing import Any, Literal
 import typer
 from alphabrief_api.db import AiTradingStore
 from alphabrief_api.db.market_data import MarketDataStore
+from alphabrief_api.db.model_call import ModelCallStore
 from alphabrief_core import (
     load_paper_execution_policy,
     load_settings,
@@ -232,6 +233,29 @@ def _sizing_provider(sources: Any) -> Any:
     return _build
 
 
+def _call_recorder(store: Any) -> Any:
+    """Adapt the call store's ``save_call`` to the gateway's sink contract."""
+
+    def _record(record: Any) -> None:
+        store.save_call(record)
+
+    return _record
+
+
+def _model_budget(store: Any) -> Any:
+    """The durable daily model budget for one cycle (PROJECT_GUIDE 5.13).
+
+    The limits come from ``config/alphabrief.yaml`` and the usage from the
+    recorded model calls, so a restart cannot hand the system a fresh
+    allowance.
+    """
+    from alphabrief_models.channels import load_model_settings
+    from alphabrief_models.model_budget import ModelBudgetGuard
+
+    settings = load_model_settings()
+    return ModelBudgetGuard(store, policy=settings.budget_policy())
+
+
 def _parse_units(raw: str | None) -> Decimal | None:
     """Parse the optional fixed order size as a Decimal."""
     if raw is None:
@@ -332,6 +356,10 @@ def run_cmd(
 
     store = AiTradingStore(db_path=_paths.db_path())
     market_store = MarketDataStore(db_path=_paths.db_path())
+    # Created before the committee so every terminal model call is
+    # persisted: the daily budget (5.13) and the daily report (5.12) both
+    # count real recorded calls, never an in-memory counter.
+    model_calls = ModelCallStore(db_path=_paths.db_path())
     try:
         loader = _snapshot_loader(market_store)
         missing = [name for name in symbols if loader(name) is None]
@@ -345,7 +373,11 @@ def run_cmd(
         # fixed-size pre-run and its reviewed absolute caps.
         nav = _nav(sources) if parsed_units is None else None
         cycle = DailyTradingCycle(
-            committee=build_ai_trading_committee(),
+            committee=build_ai_trading_committee(
+                # save_call returns the call id; the sink contract is
+                # "record it", so the return value is discarded.
+                record_sink=_call_recorder(model_calls),
+            ),
             risk_gate=_risk_gate(symbols, nav=nav),
             execution_backend=(
                 _execution_backend(symbols=(symbol,))
@@ -372,9 +404,14 @@ def run_cmd(
             # from the real account rather than from the committee's
             # own fraction estimate.
             sizing_provider=_sizing_provider(sources),
+            # 5.13 budget: the daily channel allowance is enforced against
+            # the recorded calls, so an exhausted plan stops the round
+            # instead of burning the remaining quota.
+            model_budget=_model_budget(model_calls),
         )
         record = cycle.run(list(symbols))
     finally:
+        model_calls.close()
         market_store.close()
         store.close()
 
@@ -454,6 +491,8 @@ def _close_through_the_cycle(
     try:
         sources = _risk_sources((instrument,))
         cycle = DailyTradingCycle(
+            # The close path never runs the committee (no snapshot), so no
+            # model call can happen here and no sink is needed.
             committee=build_ai_trading_committee(),
             risk_gate=_risk_gate((instrument,)),
             execution_backend=(

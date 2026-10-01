@@ -332,6 +332,84 @@ class TestDailyTradingCycle:
             )
 
 
+class TestModelBudgetGate:
+    """PROJECT_GUIDE 5.13: an exhausted channel stops the round."""
+
+    def _cycle(self, store: AiTradingStore, budget: object) -> DailyTradingCycle:
+        return DailyTradingCycle(
+            committee=_build_committee(_BULLISH_PAYLOAD),
+            risk_gate=_build_risk_gate(["SPY"]),
+            execution_backend=_build_execution_backend(),
+            store=store,
+            snapshot_loader=lambda s: _snapshot(s),
+            enabled=True,
+            trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
+            model_budget=budget,  # type: ignore[arg-type]
+        )
+
+    def test_exhausted_budget_records_the_guide_reason(
+        self, store: AiTradingStore
+    ) -> None:
+        from alphabrief_models.model_budget import (
+            NO_TRADE_MODEL_BUDGET,
+            ChannelUsage,
+            ModelBudgetGuard,
+        )
+
+        class _Spent:
+            def daily_usage(self, since: object) -> dict[str, ChannelUsage]:
+                return {"chatgpt_plan": ChannelUsage(calls=999)}
+
+            def disabled_channel_reason(self, channel: str, day: str) -> None:
+                return None
+
+            def disable_channel(self, channel: str, day: str, reason: str) -> None:
+                return None
+
+        guard = ModelBudgetGuard(_Spent(), clock=lambda: SNAPSHOT_NOW)
+        record = self._cycle(store, guard).run(["SPY"])
+
+        assert record.outcome == "skipped_model_budget"
+        assert NO_TRADE_MODEL_BUDGET in record.summary
+        # No model call was made: no votes, no plans, no attempts.
+        assert record.votes == []
+        assert record.plans == []
+        assert record.attempts == []
+
+    def test_disabled_channel_records_unavailable(
+        self, store: AiTradingStore
+    ) -> None:
+        from alphabrief_models.model_budget import (
+            NO_TRADE_MODEL_UNAVAILABLE,
+            ChannelUsage,
+            ModelBudgetGuard,
+        )
+
+        class _Disabled:
+            def daily_usage(self, since: object) -> dict[str, ChannelUsage]:
+                return {}
+
+            def disabled_channel_reason(self, channel: str, day: str) -> str:
+                return "usage_limit_exceeded"
+
+            def disable_channel(self, channel: str, day: str, reason: str) -> None:
+                return None
+
+        guard = ModelBudgetGuard(_Disabled(), clock=lambda: SNAPSHOT_NOW)
+        record = self._cycle(store, guard).run(["SPY"])
+
+        assert record.outcome == "skipped_model_unavailable"
+        assert NO_TRADE_MODEL_UNAVAILABLE in record.summary
+
+    def test_without_a_budget_the_cycle_is_unchanged(
+        self, store: AiTradingStore
+    ) -> None:
+        record = self._cycle(store, None).run(["SPY"])
+
+        assert record.outcome == "executed"
+
+
 class TestEnvHelpers:
     def test_ai_trading_enabled_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ALPHABRIEF_AI_TRADING_ENABLED", raising=False)

@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-4 影子评估/日报/预算（模型额度受限时先做 S4-5 新闻与不依赖模型的部分）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
+| 下一项任务 | S4-4 余下：5.11 影子评估与 5.12 日报（影子评估的单次调用基准需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-3：决策持久化改用真实配置/快照内容哈希（policy:e54ca5bfb209） |
+| 最近更新 | 2026-10-01，S4-4 第一批：模型每日预算（5.13）上线并实测（额度错误即禁用当天通道） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,15 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-4 第一批（本提交）：**模型每日预算（5.13）**。
+  - 新增 `alphabrief_models.model_budget`：`ModelBudgetPolicy`（`chatgpt_plan` 每日调用上限，默认 150；`openai_compatible` 每日成本上限，默认 $2.00）、`ModelBudgetGuard.admit(channel)` 按**已记录的真实调用**判定，`record_channel_unavailable()` 在收到 429/额度错误时把该通道禁用当天。理由码用规格原文 `NO_TRADE_MODEL_BUDGET` / `NO_TRADE_MODEL_UNAVAILABLE`。
+  - 持久化在 `ModelCallStore`：新增 `daily_usage(since)`（按通道汇总调用数与估算成本）与 `model_channel_day_state` 表（`disabled_channel_reason` / `disable_channel`），跨进程、跨重启生效。
+  - 委员会把失败分类为 `provider_unavailable:<code>`（rate_limit / budget_exhausted / usage_limit_exceeded / quota_exceeded / rate_limit_exceeded），其它失败仍是 `provider_call_failed`，既有消费者不受影响。
+  - cycle 接入：新增 `skipped_model_budget` / `skipped_model_unavailable` 两个 `CycleOutcome`，summary 里带 `reasons=[...]`；预算判定优先于通用 provider_error，不会把"额度用尽"混成"模型故障"。CLI 的 `cycle run` 现在把 `ModelCallStore` 接到委员会的 `record_sink`（此前委员会调用根本不落库，预算和日报都会少算），并用 `config/alphabrief.yaml` 的 `model.daily_call_limit` / `model.daily_cost_limit_usd` 配置上限。
+  - 真实实测（当前通道额度确实已用尽）：`alphabrief cycle run --once --trading off`（全 universe）→ 第 1 个品种 5 次真实调用全部 `usage_limit_exceeded`，被分类为 `provider_unavailable:usage_limit_exceeded` 并禁用当天；其余 4 个品种**一次调用都没发**，记录 `NO_TRADE_MODEL_UNAVAILABLE: chatgpt_plan is disabled for 2026-10-01: usage_limit_exceeded`（此前同类运行会烧掉 25 次调用）。随后单独再跑一次 `--instrument EUR_USD`：`outcome=skipped_model_unavailable`，落库调用数仍为 2（未新增），证明禁用状态跨进程持久。
+  - 测试：新增 `tests/test_model_budget.py` 9 个（阈值边界、成本上限、无限制通道、按天禁用、策略参数校验、真实存储汇总只算当天、跨实例持久、真实记录触发上限），`tests/test_ai_trader_daily_cycle.py` 新增 3 个（预算用尽记 `skipped_model_budget` 且不发模型调用、通道禁用记 `skipped_model_unavailable`、无预算时行为不变）。命令与结果：`pytest -q -m "not practice"` → 2543 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (222 source files)；`secret_scan` → OK。
+  - 本批未做（S4-4 余下）：5.11 影子评估（委员会/单次调用/动量/随机/不交易五个基准 + 4h/24h 计分 + bootstrap 置信区间）与 5.12 日报生成器。
 
 - S4-3（本提交）：**决策持久化改用真实哈希**（PROJECT_GUIDE 5.7）。此前 `ExternalPaperExecutionBackend` 落库的 `policy_hash` 是常量 `DEFAULT_POLICY_VERSION` 的哈希、`snapshot_hash` 是 `captured_at` 时间戳，两者都不是"配置内容/快照内容"的哈希，配置改动后旧决策仍会被认为合法。现在：
   - 新增 `alphabrief_core.policy_version`：`policy_version_hash()` 对受审配置文件（`config/paper_execution_policy.yaml`、`config/alphabrief.yaml`）的真实字节按路径排序后逐条 `路径:sha256` 再哈希；文件缺失或为空时抛 `PolicyVersionError` 失败闭合，绝不悄悄少算一个文件。`policy_version_label()` 给出 `policy:<12 位>` 短标签。
@@ -274,7 +283,7 @@
 
 ## 阻塞
 
-- 2026-10-01：模型通道返回 `usage_limit_exceeded`（`alphabrief model test` → `ChatGptPlanError:usage_limit_exceeded`）。ChatGPT 计划的本窗口调用额度已用尽（本轮为取 S4-2 真实证据跑了多次 5 角色委员会）。额度按窗口自动恢复，不需要用户操作；恢复前所有需要委员会的验证（S4-2 余项真实复验、S4-4 影子评估、S4-6 全 universe 退出标准）暂停，先做不依赖模型的工作（S4-3 哈希、S4-5 新闻、S5 运行时）。额度长期不足时改用"需要用户做的事"里的备用付费通道。
+- 2026-10-01：模型通道返回 `usage_limit_exceeded`（`alphabrief model test` → `ChatGptPlanError:usage_limit_exceeded`）。ChatGPT 计划的本窗口调用额度已用尽（本轮为取 S4-2/S4-3 真实证据跑了多次 5 角色委员会）。S4-4 的每日预算（5.13）已上线并实测：额度错误被分类为 `provider_unavailable:usage_limit_exceeded`，该通道当天被禁用，后续轮次记录 `NO_TRADE_MODEL_UNAVAILABLE` 而不再调用。额度按窗口自动恢复，不需要用户操作；恢复前所有需要委员会的验证（S4-2 余项真实复验、S4-4 影子评估的单次调用基准、S4-6 全 universe 退出标准）暂停，先做不依赖模型的工作（S4-5 新闻、S5 运行时）。额度长期不足时改用"需要用户做的事"里的备用付费通道。
 
 ## 试运行日志
 

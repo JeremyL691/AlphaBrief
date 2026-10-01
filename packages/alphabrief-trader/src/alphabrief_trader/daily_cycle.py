@@ -46,6 +46,11 @@ from typing import Any
 from uuid import uuid4
 
 from alphabrief_core import OrderIntent, OrderSide, RiskDecision
+from alphabrief_models import ModelBudgetGuard
+from alphabrief_models.model_budget import (
+    CHATGPT_PLAN_CHANNEL,
+    NO_TRADE_MODEL_BUDGET,
+)
 from alphabrief_risk import RiskGate
 
 from alphabrief_trader.committee import TradingCommittee
@@ -165,6 +170,8 @@ class DailyTradingCycle:
         trading_mode: str = "off",
         account_context_provider: Callable[[str], Any] | None = None,
         sizing_provider: SizingProvider | None = None,
+        model_budget: ModelBudgetGuard | None = None,
+        model_channel: str = CHATGPT_PLAN_CHANNEL,
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -204,6 +211,11 @@ class DailyTradingCycle:
         # returns nothing for a symbol, no entry is sized for that symbol:
         # the cycle records the refusal instead of guessing a size.
         self._sizing_provider = sizing_provider
+        # The daily model-channel budget (PROJECT_GUIDE 5.13): when the
+        # channel has spent its day the cycle records the reason and stops
+        # calling the model instead of burning the remaining quota.
+        self._model_budget = model_budget
+        self._model_channel = model_channel
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -299,11 +311,22 @@ class DailyTradingCycle:
             if snapshot is None:
                 continue
 
+            budget_block = self._budget_block()
+            if budget_block is not None:
+                # PROJECT_GUIDE 5.13: the channel is out of budget or
+                # unavailable for the day. Record it for this and every
+                # remaining symbol instead of calling the model.
+                blocked_outcome, blocked_reason = budget_block
+                overall_outcome = blocked_outcome
+                committee_role_errors.append(blocked_reason)
+                continue
+
             payload = CommitteeInput(snapshot=snapshot, time_horizon=time_horizon)
             result = self._committee.run(payload)
             all_votes.extend(result.votes)
             if not result.ok or result.plan is None:
                 committee_role_errors.extend(result.role_errors)
+                self._record_channel_unavailability(result.role_errors)
                 continue
             plan = result.plan
             all_plans.append(plan)
@@ -326,7 +349,14 @@ class DailyTradingCycle:
             if attempt.outcome == "executed":
                 overall_outcome = "executed"
 
-        if overall_outcome != "executed":
+        if overall_outcome not in {
+            "executed",
+            # A model-budget verdict is authoritative: the round stopped
+            # before any committee call, so it must not be relabelled as a
+            # generic provider error (PROJECT_GUIDE 5.13).
+            "skipped_model_budget",
+            "skipped_model_unavailable",
+        }:
             if any(a.outcome.startswith("blocked") for a in all_attempts):
                 overall_outcome = next(
                     (
@@ -474,6 +504,40 @@ class DailyTradingCycle:
             execution_result=execution_result,
             now=now,
         )
+
+    def _budget_block(self) -> tuple[CycleOutcome, str] | None:
+        """The outcome/reason when the model channel may not be called now."""
+        if self._model_budget is None:
+            return None
+        verdict = self._model_budget.admit(self._model_channel)
+        if verdict.allowed:
+            return None
+        outcome: CycleOutcome = (
+            "skipped_model_budget"
+            if verdict.reason == NO_TRADE_MODEL_BUDGET
+            else "skipped_model_unavailable"
+        )
+        return outcome, f"{verdict.reason}: {verdict.detail}"
+
+    def _record_channel_unavailability(self, role_errors: list[str]) -> None:
+        """Disable the channel for the day when the provider said no.
+
+        The committee reports stable codes; a rate limit or quota error is
+        recorded as ``provider_unavailable:<code>`` so the remaining
+        symbols of this round stop calling the channel (PROJECT_GUIDE
+        5.13) and the next rounds do too.
+        """
+        if self._model_budget is None:
+            return
+        marker = ": provider_unavailable:"
+        for error in role_errors:
+            if marker not in error:
+                continue
+            detail = error.split(marker, 1)[1]
+            self._model_budget.record_channel_unavailable(
+                self._model_channel, detail=detail
+            )
+            return
 
     def _account_context(self, symbol: str) -> Any | None:
         """Fetch the broker-fresh account context for one evaluation.
@@ -811,8 +875,11 @@ class DailyTradingCycle:
         executed = sum(1 for a in attempts if a.outcome == "executed")
         blocked = sum(1 for a in attempts if a.outcome.startswith("blocked"))
         suffix = ""
-        if outcome == "provider_error" and role_errors:
-            suffix = f"; roles=[{', '.join(role_errors)}]"
+        if role_errors:
+            if outcome in {"skipped_model_budget", "skipped_model_unavailable"}:
+                suffix = f"; reasons=[{', '.join(role_errors)}]"
+            elif outcome == "provider_error":
+                suffix = f"; roles=[{', '.join(role_errors)}]"
         return (
             f"outcome={outcome}; plans={len(plans)}; "
             f"executed={executed}; blocked={blocked}; "

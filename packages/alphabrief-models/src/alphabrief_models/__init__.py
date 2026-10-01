@@ -39,6 +39,19 @@ from alphabrief_models.gateway import (
     ProviderAdapter,
     classify_provider_error,
 )
+from alphabrief_models.model_budget import (
+    CHATGPT_PLAN_CHANNEL,
+    DEFAULT_CHATGPT_DAILY_CALLS,
+    DEFAULT_FALLBACK_DAILY_USD,
+    NO_TRADE_MODEL_BUDGET,
+    NO_TRADE_MODEL_UNAVAILABLE,
+    OPENAI_COMPATIBLE_CHANNEL,
+    BudgetVerdict,
+    ChannelUsage,
+    ModelBudgetGuard,
+    ModelBudgetPolicy,
+    ModelUsageSource,
+)
 from alphabrief_models.openai_adapter import OpenAIProviderAdapter
 from alphabrief_models.openai_compatible import (
     FallbackConfig,
@@ -80,6 +93,17 @@ __all__ = [
     "ModelCallBudget",
     "ModelCallClassification",
     "ModelCallRecord",
+    "BudgetVerdict",
+    "CHATGPT_PLAN_CHANNEL",
+    "ChannelUsage",
+    "DEFAULT_CHATGPT_DAILY_CALLS",
+    "DEFAULT_FALLBACK_DAILY_USD",
+    "ModelBudgetGuard",
+    "ModelBudgetPolicy",
+    "ModelUsageSource",
+    "NO_TRADE_MODEL_BUDGET",
+    "NO_TRADE_MODEL_UNAVAILABLE",
+    "OPENAI_COMPATIBLE_CHANNEL",
     "ModelCallStatus",
     "ModelCapability",
     "ModelGateway",
