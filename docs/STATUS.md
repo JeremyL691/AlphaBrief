@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 委员会协议/意图/仓位/14 条规则/结果未知处理/平仓/kill switch 补全 |
+| 下一项任务 | S4-2 余下：点差规则（需 S5 报价历史）、事件窗口（需 S4-5 新闻）、回撤状态机（需 S5 持久化）、结果未知处理与平仓路径 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S3 垂直切片完成：真实下单 + 止损止盈 + 平仓 + 对账干净（见 S3 退出标准证据） |
+| 最近更新 | 2026-10-01，S4-2 第一批：6 条缺口规则 + 持久化 kill switch + 真实账户上下文接入运行时 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -72,6 +72,16 @@
 - [x] S1-6 `scripts/secret_scan.py`
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
+
+#### S4 证据（进行中）
+
+- S4-2 第一批（本提交）：
+  - **补齐 6 条缺口风控规则**（新增 `alphabrief_risk.entry_rules`，纯函数 + 稳定拒绝码）：规则 3 报价新鲜/可交易（`QUOTE_STALE`/`NOT_TRADEABLE`）、规则 7 当日开仓上限（`DAILY_INTENT_CAP`，计数来自持久化的 attempt 历史 `AiTradingStore.count_daily_opens`，不是内存计数）、规则 8 最多同时持仓（`MAX_POSITIONS`，仅开仓、已持有同品种时允许加仓）、规则 12 连亏冻结品种（`LOSS_STREAK`）、规则 13 周五 13:00 UTC 后与周末只许平仓（`WEEKEND`）、规则 14 保护单与合法 units（`ORDER_INVALID`，多空方向与止损止盈相对位置都校验）。**平仓豁免**：`reduce_only` 或 `target_position_pct=0` 的意图不受任何入场规则约束（只有规则 1 的 kill switch 能拦平仓）。
+  - **接入运行时**：`RiskGate` 新增 `entry_rules` 策略（未配置时保持旧行为）；cycle CLI 的 gate 现在带受审 policy（报价 15s、每日 5 笔/单品种 1 笔、最多 3 个持仓、周五与周末只平仓、必须有保护单），并在每次评估时传入真实账户上下文（新增 `OandaRiskContextSources.account_exposure_context`：真实 NAV/现金/持仓敞口按券商换算因子折算、报价时间与 tradeable、持仓数、当日开仓计数）。
+  - **kill switch 持久化**：新增 `KillSwitchStore`（DuckDB，单行状态），新增 `alphabrief risk kill-switch --activate/--deactivate/--reason`；cycle 与 scheduler 的 gate 都从持久化状态加载，重启后仍然生效。真实实测：激活后 `cycle run --once --instrument EUR_USD --trading off --force-direction long` → `blocked_risk_gate`，拒绝原因含 `verify runtime blocks`（kill switch 理由）。
+  - 真实 dry run：`alphabrief cycle run --once --trading off`（全 universe）→ 5 个品种各 5 个角色共 25 次真实模型调用、5 份 plan、`skipped_no_intent`（委员会全员 uncertain，属合法 no_trade）；`data sync-oanda`（全 universe）→ 1330 根 K 线 + 5 个报价、0 错误。
+  - 测试：`tests/test_entry_rules.py` 29 个（每条规则通过+拒绝、平仓豁免、gate 集成）、`tests/test_kill_switch_store.py` 7 个（持久化跨进程、空白理由拒绝、激活拦所有单含平仓）。命令与结果：`pytest -q -m "not practice"` → 2458 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (412 files)；`secret_scan` → exit 0。
+  - 尚未完成（下一步）：规则 4 点差（需要最近 20 个报价样本，随 S5 报价轮询落库）、规则 6 事件窗口（需要 S4-5 新闻/宏观）、规则 11 回撤状态机（48 小时禁开/半仓，需要持久化窗口状态）、规则 2 的品种分类白名单（instrument_rules 已存在，待接入）、5.8 结果未知处理与 5.10 平仓触发条件（委员会平仓、48 小时最长持仓、周五 19:00 全平）。
 
 #### S3 退出标准证据（2026-10-01，真实 practice 账户）
 
