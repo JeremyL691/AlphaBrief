@@ -73,6 +73,10 @@
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
+#### 环境修复（2026-09-30，S3 期间）
+
+- 本地 `.env`（未跟踪）里的 `ALPHABRIEF_DATA_DIR=data/local` 是相对路径，S1-5 之后 `alphabrief_core.paths` 按 GUIDE 4.3 对相对路径直接报错，导致所有 CLI 命令都会抛 traceback。已把该行改成绝对路径 `/Users/jeremyliu/Library/Application Support/AlphaBrief`（备份在 /tmp），并在 CLI 增加环境守卫：`--help` 不受影响，路径不合法时输出一行 `error: ... must be an absolute path` 并退出码 2（不再打印 traceback）。新增 `tests/test_cli_environment_guard.py` 4 个用例（相对路径退出码 2 且无 traceback、绝对路径可用、`--help` 可用、`ALPHABRIEF_HOME` 同样要求绝对路径）。命令与结果：`pytest -q -m "not practice"` → 2410 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (405 files)。
+
 #### S3 证据（进行中）
 
 - S3-4/S3-5 命令面（本提交）：新增 `alphabrief cycle run --once --instrument --units --trading on|off [--force-direction long|short --reason TEXT]` 与 `alphabrief cycle close --instrument [--trading]`。`DailyTradingCycle` 新增三项安全机制：`trading_mode`（默认 off，off 时跑完委员会与风控后在下单前停下并记录 `blocked_trading_off` + `NO_TRADE_TRADING_OFF`）、`quantity_override`（首单固定 1000 units，覆盖仓位计算）、`direction_override`（垂直切片例外：必须带 reason，只改方向，委员会原始输出照常落库，reason 写进 intent rationale）。scheduler 的无人值守轮次改读 `ALPHABRIEF_TRADING_MODE`（默认 off）。CLI 拒绝不在受审universe内的品种、拒绝无 reason 的 `--force-direction`。测试 `tests/test_cycle_commands.py` 15 个：trading off 不下单、trading on 下单、固定 units 覆盖仓位、无覆盖时用委员会仓位、方向覆盖需 reason、方向覆盖只改方向且委员会输出不变、CLI 参数校验。命令与结果：`pytest -q -m "not practice"` → 2406 passed / 5 deselected；`mypy` → Success (404 files)；`ruff` → All checks passed；`secret_scan` → exit 0。真实下单与平仓仍待 S2-5 授权后执行（S3-4/S3-5 未勾选）。
