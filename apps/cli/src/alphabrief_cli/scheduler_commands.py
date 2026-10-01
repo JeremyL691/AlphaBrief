@@ -688,9 +688,32 @@ def _assert_external_policy_matches_broker(
         )
 
 
+def _reconcile_runner(recon_store: BrokerReconStore) -> Callable[[str], None]:
+    """A synchronous reconcile callable bound to a store (fail closed)."""
+
+    def _reconcile_once(scope: str) -> None:
+        from alphabrief_execution.broker.runtime import (
+            build_oanda_paper_client,
+            oanda_is_configured,
+        )
+
+        if not oanda_is_configured():
+            record_broker_not_configured(recon_store, scope=scope)
+            return
+        reconciler = LiveReconciler(
+            client=build_oanda_paper_client(),
+            store=recon_store,
+        )
+        try:
+            reconciler.reconcile(scope=scope)
+        finally:
+            reconciler.close()
+
+    return _reconcile_once
+
 def _ai_cycle_factory(
     *, db_path: Path
-) -> Callable[[], Awaitable[None]]:
+) -> Callable[..., Awaitable[None]]:
     """Build an ``on_ai_cycle`` coroutine bound to ``db_path``.
 
     The cycle runs the AI Trading Committee for the operator-curated
@@ -708,7 +731,7 @@ def _ai_cycle_factory(
         NewsStore as _NewsStore,
     )
 
-    async def _handler() -> None:
+    async def _handler(*, cycle_key: str | None = None) -> None:
         # The store is opened and closed per-call so a long-running
         # scheduler can survive a DuckDB single-writer lock between
         # cycles (the AI store is currently the same DB as the broker
@@ -775,7 +798,10 @@ def _ai_cycle_factory(
                 # switch; anything other than "on" stops before submitting.
                 trading_mode=trading_mode(),
             )
-            cycle.run(list(universe))
+            # The cycle key makes a re-dispatched round idempotent: the
+            # same (key, snapshot) pair returns the persisted record
+            # instead of running the committee again (PROJECT_GUIDE 5.1).
+            cycle.run(list(universe), cycle_key=cycle_key)
         except Exception:
             logging.getLogger(__name__).exception("ai cycle failed")
             raise
@@ -822,24 +848,7 @@ def run_cmd(
     try:
         alert_sink = AlertSink(heartbeat_store=heartbeats)
 
-        def _reconcile_once(scope: str) -> None:
-            """Reconcile against the live practice account (fail closed)."""
-            from alphabrief_execution.broker.runtime import (
-                build_oanda_paper_client,
-                oanda_is_configured,
-            )
-
-            if not oanda_is_configured():
-                record_broker_not_configured(recon_store, scope=scope)
-                return
-            reconciler = LiveReconciler(
-                client=build_oanda_paper_client(),
-                store=recon_store,
-            )
-            try:
-                reconciler.reconcile(scope=scope)
-            finally:
-                reconciler.close()
+        _reconcile_once = _reconcile_runner(recon_store)
 
         async def _on_reconcile(scope: str) -> None:
             # Reconciliation is synchronous (urllib); keep the event loop

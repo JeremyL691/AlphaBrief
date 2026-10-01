@@ -87,6 +87,14 @@ from alphabrief_core.runtime_lock import (
     RuntimeLockError,
     lock_status,
 )
+from alphabrief_core.schedule_plan import (
+    DEFAULT_CATCH_UP_MINUTES,
+    DEFAULT_SCHEDULE,
+    DueEvent,
+    PlannedEvent,
+    due_events,
+    evaluate_schedule,
+)
 from alphabrief_core.secrets import (
     SECRET_DIR_MODE,
     SECRET_FILE_MODE,
@@ -157,6 +165,12 @@ __all__ = [
     "redact",
     "runtime_lock_path",
     "RuntimeLock",
+    "DEFAULT_CATCH_UP_MINUTES",
+    "DEFAULT_SCHEDULE",
+    "DueEvent",
+    "PlannedEvent",
+    "due_events",
+    "evaluate_schedule",
     "RuntimeLockError",
     "lock_status",
     "secrets_dir",

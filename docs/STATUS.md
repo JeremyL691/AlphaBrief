@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S5 常驻运行时** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S5 余下：`alphabrief run` 单进程 FastAPI+调度器（时间表/补跑/报价轮询/影子计分）、CLI-over-HTTP、LaunchAgent `ai.alphabrief.backend`、备份与恢复命令；S4 退出标准的全 universe 跑待模型额度恢复 |
+| 下一项任务 | S5 余下：CLI-over-HTTP、LaunchAgent `ai.alphabrief.backend`（service install|uninstall|status）、备份与恢复命令、macOS 通知；随后 S5 退出标准的 `kill -9` 重启实测（需 practice 环境） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S5 第一批：单实例锁 + `alphabrief doctor`（真实 7 PASS/3 WARN/0 FAIL）+ 日报接入 doctor 摘要 |
+| 最近更新 | 2026-10-01，S5 第二批：`alphabrief run` 单进程运行时 + 时钟时间表/补跑（真实启动、第二实例被拒、优雅停止） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,15 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S5 第二批（本提交）：**`alphabrief run` 单进程运行时 + 时钟时间表（5.1）**。
+  - 新增 `alphabrief_core.schedule_plan`（纯函数）：5.1 的时钟表（决策轮 00:30/07:30/13:00、周五 19:00 全平、21:30 日报、22:00 备份）+ 补跑规则（**90 分钟内可补跑**；超过即 `missed_window`，"never run late"；周末决策轮记 `market_closed` 而日报/备份照常；已跑过的事件不再触发）。`cycle_key_for()` 给出"事件+UTC 日期"的幂等键。
+  - 新增 CLI `alphabrief run run [--host --port --catch-up-minutes]`：一个进程里跑 **uvicorn（FastAPI）+ OperationsScheduler + 时钟规划器**；启动即取单实例锁（第二个进程退出码 2 且打印 `Could not set lock ... (held by pid N)`）；SIGINT/SIGTERM 优雅停止并释放锁；拒绝 live-trading 解锁。任务都带超时：对账 60s/60s、报价轮询 60s/60s、影子计分 900s/300s、日报 300s、备份 600s、周五全平 600s。阻塞工作走 `asyncio.to_thread`（对账、报价、计分、日报、备份、全平）。
+  - **重启安全的"已跑过"判定来自持久化产物**（不是内存）：决策轮看 cycle store 里当天该轮 cycle key 的轮次、日报看当天报告文件、备份看当天 manifest；`scheduler_commands._ai_cycle_factory` 改为接受 `cycle_key` 并把键传给 `DailyTradingCycle.run(cycle_key=...)`（同一轮重跑返回已持久化记录，不重复跑委员会）；对账 runner 抽成模块级 `_reconcile_runner(store)`，`scheduler run` 与 `alphabrief run` 共用一份实现。
+  - 任务实现：报价轮询把真实 bid/ask 写成规则 4 的样本；影子计分对到期的 4h/24h 决策用真实中间价与点差计分（无报价的品种跳过而不是编造价格）；日报与备份在进程内直接生成（复用 S4-4 的渲染与 `db/backup.py`）；周五全平走 `cycle close` 的同一条 reduce-only 风控链。
+  - 真实实测（本机 practice，trading_mode=off）：`alphabrief run run --port 8123` → uvicorn 起在 8123、`/health` 返回 `{"status":"healthy","version":"0.0.0"}`、规划器记录三个真实错过的决策轮（"missed by 1240m/820m/490m (window 90m); never run late"）、报价轮询写入真实点差样本（累计 11 条，EUR_USD 0.00044 / GBP_USD 0.00132 / USD_JPY 0.086）、heartbeat 出现 reconcile/quote_poll/shadow_score 三行；第二个实例 `exit=2` 且明确报出持锁 pid；`kill -TERM` → `{"status": "stopped"}`，`lock_status()` 回到 None，无残留进程。
+  - 测试：新增 `tests/test_runtime_schedule.py` 15 个（准点触发、补跑窗口内/外、90 分钟边界含端点、已跑过不再触发、周末只跑日报备份、周五全平仅周五、日报/备份每日、非法窗口拒绝、cycle key 按轮次与日期、规划器派发决策轮/日报/备份、错过不派发、停止事件结束循环）。命令与结果：`pytest -q -m "not practice"` → 2709 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (237 source files)；`secret_scan` → OK。
+  - S5 余下：CLI-over-HTTP（后台不在线时只读）、LaunchAgent `ai.alphabrief.backend`（`service install|uninstall|status`）、备份/恢复的 CLI 命令、macOS 通知；S5 退出标准里的 `kill -9` 重启实测（`ALPHABRIEF_TEST_CRASH_AT=after_submit`，仅 practice）留待进入试运行前做。
 
 - S5 第一批（本提交）：**单实例锁 + `alphabrief doctor` + 日报接入 doctor 摘要**。
   - 新增 `alphabrief_core.runtime_lock`：`RuntimeLock` 用 `flock(runtime.lock)` 实现单实例（第二个进程立即 `Could not set lock`，文件里记录 pid 与启动时间；进程退出/崩溃时内核自动释放，陈旧锁文件不会挡住重启），`lock_status()` 供 doctor 非阻塞探测持有者。
@@ -272,8 +281,8 @@
 
 ### S5 常驻运行时
 - [x] S5-0 单实例锁（`RuntimeLock`/`lock_status`）与 `alphabrief doctor`（GUIDE 4.9 全项，真实实测 7 PASS/3 WARN/0 FAIL）
-- [ ] S5-1 `alphabrief run`（单进程、单实例锁、`to_thread`、超时）
-- [ ] S5-2 按时钟的时间表、补跑窗口、阶段持久化
+- [x] S5-1 `alphabrief run`（单进程、单实例锁、`to_thread`、超时；2026-10-01 本提交，含 5.1 时钟表/补跑/报价轮询/影子计分）
+- [x] S5-2 按时钟的时间表、补跑窗口、阶段持久化（2026-10-01 本提交：`schedule_plan` + 持久化产物判定已跑过；轮次阶段持久化沿用 DurableDailyCycle/cycle key）
 - [ ] S5-3 CLI 走 HTTP；后台不在线时只读
 - [ ] S5-4 `alphabrief service install|uninstall|status`
 - [ ] S5-5 macOS 通知（doctor 已完成，见 S5-0）
