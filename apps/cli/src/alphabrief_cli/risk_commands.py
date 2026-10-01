@@ -133,6 +133,56 @@ def _parse_reference_mark_prices(
     return out
 
 
+@risk_app.command("kill-switch")
+def kill_switch_cmd(
+    activate: bool = typer.Option(  # noqa: B008
+        False,
+        "--activate",
+        help="Block all order flow (requires --reason).",
+    ),
+    deactivate: bool = typer.Option(  # noqa: B008
+        False,
+        "--deactivate",
+        help="Release the switch.",
+    ),
+    reason: str = typer.Option(  # noqa: B008
+        "",
+        "--reason",
+        help="Why the switch is being changed (recorded durably).",
+    ),
+    pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
+) -> None:
+    """Show or change the persisted kill switch."""
+    from alphabrief_core import paths as _paths
+    from alphabrief_risk import KillSwitchStore
+
+    if activate and deactivate:
+        print("error: choose either --activate or --deactivate", file=sys.stderr)
+        sys.exit(1)
+
+    store = KillSwitchStore(db_path=_paths.db_path())
+    try:
+        if activate:
+            if not reason.strip():
+                print("error: --activate requires --reason", file=sys.stderr)
+                sys.exit(1)
+            state = store.activate(reason=reason)
+        elif deactivate:
+            state = store.deactivate(
+                reason=reason.strip() or "manual deactivate"
+            )
+        else:
+            state = store.load() or {
+                "active": False,
+                "reason": "kill switch inactive",
+                "updated_at": None,
+            }
+    finally:
+        store.close()
+    json.dump(state, sys.stdout, indent=2 if pretty else None, sort_keys=True)
+    sys.stdout.write("\n")
+
+
 @risk_app.command("check")
 def check_cmd(
     intent: Path = typer.Option(  # noqa: B008 - typer pattern

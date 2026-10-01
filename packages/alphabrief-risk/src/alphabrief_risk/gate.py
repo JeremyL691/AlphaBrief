@@ -12,6 +12,11 @@ from alphabrief_core import OrderIntent, PaperExecutionPolicy, RiskDecision
 
 from alphabrief_risk.account_context import AccountExposureContext
 from alphabrief_risk.context import RiskContextDecision
+from alphabrief_risk.entry_rules import (
+    EntryRulePolicy,
+    evaluate_entry_rules,
+    rejection_codes,
+)
 from alphabrief_risk.kill_switch import KillSwitch
 
 
@@ -61,6 +66,11 @@ class RiskLimitConfig:
     # wired). ponytail: no holiday calendar — upgrade path is a
     # market-calendar provider.
     require_market_open: bool = False
+    # Entry rules from PROJECT_GUIDE 5.7 that the base checks do not cover
+    # (quote freshness/tradeability, daily caps, max positions, losing
+    # streak, weekend, protective orders). ``None`` leaves them disabled so
+    # existing callers keep their behavior; the production policy sets one.
+    entry_rules: EntryRulePolicy | None = None
     # The session policy used by the market-state check. Optional; when
     # ``require_market_open`` is True and this is None the gate fails
     # closed.
@@ -313,6 +323,12 @@ class RiskGate:
         self._check_drawdown(
             intent=intent,
             estimated_price=estimated_price,
+            account_context=account_context,
+            failures=failures,
+            tags=tags,
+        )
+        self._check_entry_rules(
+            intent=intent,
             account_context=account_context,
             failures=failures,
             tags=tags,
@@ -796,6 +812,34 @@ class RiskGate:
         if loss_pct > pct:
             failures.append("order would breach max_daily_loss_pct")
             tags.append("max_daily_loss")
+
+    def _check_entry_rules(
+        self,
+        *,
+        intent: OrderIntent,
+        account_context: AccountExposureContext | None,
+        failures: list[str],
+        tags: list[str],
+    ) -> None:
+        """Apply the entry rules from PROJECT_GUIDE 5.7.
+
+        Closes are exempt: a position must always be closable, so these
+        rules only guard new exposure.
+        """
+        policy = self.limits.entry_rules
+        if policy is None:
+            return
+        rejections = evaluate_entry_rules(
+            intent,
+            policy=policy,
+            now=self.clock(),
+            account_context=account_context,
+        )
+        for rejection in rejections:
+            failures.append(f"{rejection.code}: {rejection.detail}")
+        for code in rejection_codes(rejections):
+            if code not in tags:
+                tags.append(code)
 
     def _check_drawdown(
         self,

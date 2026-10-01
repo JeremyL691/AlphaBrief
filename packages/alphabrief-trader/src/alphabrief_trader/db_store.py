@@ -163,6 +163,37 @@ class AiTradingStore:
                 ],
             )
 
+    def count_daily_opens(self, *, trading_day: str) -> tuple[int, dict[str, int]]:
+        """Count the entry orders this system opened on ``trading_day``.
+
+        An "open" is an attempt that actually submitted an order (outcome
+        ``executed``) for a symbol; the count is read from the durable
+        attempt rows, so the daily intent caps (PROJECT_GUIDE 5.7 rule 7)
+        are enforced against real history rather than a memory counter that
+        resets when the process restarts.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT attempt_json
+            FROM ai_order_attempts
+            WHERE outcome = 'executed'
+              AND CAST(created_at AS DATE) = CAST(? AS DATE)
+            """,
+            [trading_day],
+        ).fetchall()
+        per_symbol: dict[str, int] = {}
+        for (payload,) in rows:
+            try:
+                attempt = json.loads(str(payload))
+            except (TypeError, ValueError):
+                continue
+            intent = attempt.get("order_intent_json") or {}
+            symbol = str(intent.get("symbol") or "").strip()
+            if not symbol:
+                continue
+            per_symbol[symbol] = per_symbol.get(symbol, 0) + 1
+        return sum(per_symbol.values()), per_symbol
+
     def get_cycle(self, cycle_id: str) -> dict[str, Any] | None:
         """Return the full cycle record JSON, or ``None``."""
         row = self._conn.execute(

@@ -42,6 +42,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha256
+from typing import Any
 from uuid import uuid4
 
 from alphabrief_core import OrderIntent, OrderSide, RiskDecision
@@ -153,6 +154,7 @@ class DailyTradingCycle:
         direction_override: str | None = None,
         override_reason: str | None = None,
         trading_mode: str = "off",
+        account_context_provider: Callable[[], Any] | None = None,
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -183,6 +185,10 @@ class DailyTradingCycle:
         self._direction_override = direction_override
         self._override_reason = override_reason
         self._trading_mode = trading_mode
+        # Supplies the broker-fresh account context for every risk
+        # evaluation; without it the gate cannot see the real account and
+        # fails closed on the rules that need it.
+        self._account_context_provider = account_context_provider
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -386,6 +392,7 @@ class DailyTradingCycle:
             # The real input-quality verdict (PROJECT_GUIDE 5.7 rule 5):
             # stale or incomplete inputs are rejected, never assumed.
             data_quality_passed=quality.passed,
+            account_context=self._account_context(),
         )
 
         if not decision.approved:
@@ -443,6 +450,12 @@ class DailyTradingCycle:
             execution_result=execution_result,
             now=now,
         )
+
+    def _account_context(self) -> Any | None:
+        """Fetch the broker-fresh account context for one evaluation."""
+        if self._account_context_provider is None:
+            return None
+        return self._account_context_provider()
 
     def _materialize_intent(
         self,

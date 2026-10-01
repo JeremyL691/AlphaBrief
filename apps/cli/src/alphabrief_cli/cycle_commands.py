@@ -25,6 +25,10 @@ from typing import Any, Literal
 import typer
 from alphabrief_api.db import AiTradingStore
 from alphabrief_api.db.market_data import MarketDataStore
+from alphabrief_core import (
+    load_paper_execution_policy,
+    load_settings,
+)
 from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.runtime import (
     build_oanda_paper_client,
@@ -93,13 +97,73 @@ def _snapshot_loader(market_store: MarketDataStore) -> SnapshotLoader:
     return _loader
 
 
-def _risk_gate(instrument: str) -> RiskGate:
+def _risk_gate(instruments: tuple[str, ...]) -> RiskGate:
+    """The reviewed risk boundary for one cycle (PROJECT_GUIDE 5.6/5.7)."""
+    from alphabrief_risk import KillSwitch, KillSwitchStore
+    from alphabrief_risk.entry_rules import EntryRulePolicy
+
+    policy = load_paper_execution_policy(load_settings().execution_policy_file)
+    switch_store = KillSwitchStore(db_path=_paths.db_path())
+    try:
+        kill_switch = KillSwitch.from_store(switch_store)
+    finally:
+        switch_store.close()
     return RiskGate(
         limits=RiskLimitConfig(
             trading_enabled=True,
-            symbol_allowlist=frozenset({instrument}),
-        )
+            symbol_allowlist=frozenset(instruments),
+            max_order_value=policy.max_order_notional,
+            max_total_exposure=policy.max_total_exposure,
+            entry_rules=EntryRulePolicy(
+                # Rule 3: quotes must be fresh and tradeable.
+                max_quote_age_seconds=15,
+                require_quote_tradeable=True,
+                # Rule 7: at most 5 opens a day, at most 1 per symbol.
+                max_daily_opens=5,
+                max_daily_symbol_opens=1,
+                # Rule 8: at most 3 instruments at once.
+                max_open_positions=3,
+                # Rule 13: close-only from Friday 13:00 UTC and all weekend.
+                block_weekend_and_late_friday=True,
+                # Rule 14: an entry must carry usable protective orders.
+                require_protective_orders=True,
+            ),
+        ),
+        kill_switch=kill_switch,
     )
+
+
+def _account_context_provider(
+    symbols: tuple[str, ...],
+    *,
+    trading_day: str,
+    store: AiTradingStore,
+) -> Any:
+    """Fetch the broker-fresh account context for each risk evaluation.
+
+    The daily intent counters come from the durable attempt history, so the
+    daily caps are enforced against what this system actually opened today
+    rather than against a process-local counter.
+    """
+    from alphabrief_execution.broker.oanda.risk_sources import (
+        OandaRiskContextSources,
+    )
+    from alphabrief_execution.broker.recon_store import BrokerReconStore
+
+    sources = OandaRiskContextSources(
+        build_oanda_paper_client(),
+        symbols=symbols,
+        recon_store=BrokerReconStore(db_path=_paths.db_path()),
+    )
+
+    def _build() -> Any:
+        total, per_symbol = store.count_daily_opens(trading_day=trading_day)
+        return sources.account_exposure_context(
+            daily_open_count=total,
+            daily_symbol_open_count=per_symbol.get(symbols[0], 0),
+        )
+
+    return _build
 
 
 def _parse_units(raw: str | None) -> Decimal | None:
@@ -146,10 +210,13 @@ def run_cmd(
         "--once",
         help="Run exactly one cycle and exit.",
     ),
-    instrument: str = typer.Option(  # noqa: B008
-        "EUR_USD",
+    instrument: str | None = typer.Option(  # noqa: B008
+        None,
         "--instrument",
-        help="Instrument to trade (must be in the reviewed universe).",
+        help=(
+            "Instrument to trade (must be in the reviewed universe). "
+            "Omit to run the whole reviewed universe."
+        ),
     ),
     units: str | None = typer.Option(  # noqa: B008
         None,
@@ -184,7 +251,12 @@ def run_cmd(
         _exit_error(
             "only --once is supported here; use 'alphabrief run' for the daemon"
         )
-    symbol = _require_instrument(instrument)
+    symbols = (
+        (_require_instrument(instrument),)
+        if instrument is not None
+        else DEFAULT_UNIVERSE
+    )
+    symbol = symbols[0]
     parsed_units = _parse_units(units)
     if force_direction is not None:
         if force_direction not in {"long", "short"}:
@@ -196,14 +268,15 @@ def run_cmd(
     market_store = MarketDataStore(db_path=_paths.db_path())
     try:
         loader = _snapshot_loader(market_store)
-        if loader(symbol) is None:
+        missing = [name for name in symbols if loader(name) is None]
+        if missing:
             _exit_error(
-                f"no stored OANDA bars for {symbol}; run "
-                f"'alphabrief data sync-oanda --instrument {symbol}' first"
+                f"no stored OANDA bars for {', '.join(missing)}; run "
+                f"'alphabrief data sync-oanda' first"
             )
         cycle = DailyTradingCycle(
             committee=build_ai_trading_committee(),
-            risk_gate=_risk_gate(symbol),
+            risk_gate=_risk_gate(symbols),
             execution_backend=(
                 _execution_backend(symbols=(symbol,))
                 if trading == "on"
@@ -216,8 +289,16 @@ def run_cmd(
             direction_override=force_direction,
             override_reason=reason,
             trading_mode=trading,
+            # The account context is read-only and is fetched in both
+            # modes: with trading off the cycle still evaluates every rule
+            # against the real account, it just stops before submitting.
+            account_context_provider=_account_context_provider(
+                symbols,
+                trading_day=datetime.now(UTC).date().isoformat(),
+                store=store,
+            ),
         )
-        record = cycle.run([symbol])
+        record = cycle.run(list(symbols))
     finally:
         market_store.close()
         store.close()
@@ -225,7 +306,8 @@ def run_cmd(
     _dump(
         {
             "cycle_id": record.cycle_id,
-            "instrument": symbol,
+            "instrument": symbol if len(symbols) == 1 else None,
+            "symbols": list(symbols),
             "trading": trading,
             "outcome": record.outcome,
             "summary": record.summary,
@@ -294,7 +376,12 @@ def close_cmd(
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Close the current position with a reduce-only market order."""
-    symbol = _require_instrument(instrument)
+    symbols = (
+        (_require_instrument(instrument),)
+        if instrument is not None
+        else DEFAULT_UNIVERSE
+    )
+    symbol = symbols[0]
     if not oanda_is_configured():
         _exit_error(
             "OANDA practice credentials are required "

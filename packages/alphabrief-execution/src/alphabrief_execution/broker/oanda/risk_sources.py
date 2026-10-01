@@ -21,8 +21,10 @@ builder fails closed on incomplete coverage.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
+from alphabrief_risk.account_context import AccountExposureContext
 from alphabrief_risk.broker_context import (
     ConversionDatum,
     HealthState,
@@ -225,6 +227,80 @@ class OandaRiskContextSources:
         except Exception:  # noqa: BLE001 - health is a probe, not a decision
             return "unhealthy"
         return "healthy" if summary.account_id else "unhealthy"
+
+    # ------------------------------------------------------------------
+    # Account exposure context for the risk gate
+    # ------------------------------------------------------------------
+
+    def account_exposure_context(
+        self,
+        *,
+        now: datetime | None = None,
+        open_position_count: int | None = None,
+        daily_open_count: int | None = None,
+        daily_symbol_open_count: int | None = None,
+        frozen_symbols: dict[str, str] | None = None,
+        equity_high_water_mark: Decimal | None = None,
+        day_start_equity: Decimal | None = None,
+        day_realized_pnl: Decimal | None = None,
+    ) -> AccountExposureContext:
+        """Project the live account into the risk gate's context.
+
+        Exposure is gross notional per symbol in the account's home
+        currency, using the broker's own conversion factors; the quote
+        fields come from the same pricing snapshot the gate's freshness
+        rule checks. Nothing is synthesized: a missing price simply leaves
+        that symbol out of the exposure map, which the gate treats as a
+        coverage failure rather than as zero exposure.
+        """
+        captured = now or self._captured_at()
+        summary = AccountOpsClient(self._client).account_summary(
+            request_id=f"{self._request_id}-exposure"
+        )
+        positions = self.fetch_positions()
+        prices = self._prices_by_symbol()
+        conversions = {
+            conversion.symbol: conversion.factor
+            for conversion in self.fetch_conversions()
+        }
+
+        exposure_by_symbol: dict[str, Decimal] = {}
+        for position in positions:
+            price = prices.get(position.symbol)
+            if price is None:
+                continue
+            factor = conversions.get(position.symbol, Decimal("1"))
+            units = position.long_units + position.short_units
+            mark = (price.bids[0].price + price.asks[0].price) / Decimal(2)
+            exposure_by_symbol[position.symbol] = abs(units) * mark * factor
+
+        first_symbol = self._symbols[0] if self._symbols else None
+        quote = prices.get(first_symbol) if first_symbol else None
+        return AccountExposureContext(
+            current_total_exposure=sum(exposure_by_symbol.values(), Decimal("0")),
+            exposure_by_symbol=exposure_by_symbol,
+            cash=summary.balance,
+            account_id=summary.account_id,
+            captured_at=captured,
+            equity=summary.nav,
+            reference_mark_prices={
+                symbol: (price.bids[0].price + price.asks[0].price) / Decimal(2)
+                for symbol, price in prices.items()
+            },
+            equity_high_water_mark=equity_high_water_mark,
+            day_start_equity=day_start_equity,
+            day_realized_pnl=day_realized_pnl,
+            open_position_count=(
+                open_position_count
+                if open_position_count is not None
+                else summary.open_position_count
+            ),
+            daily_open_count=daily_open_count,
+            daily_symbol_open_count=daily_symbol_open_count,
+            quote_captured_at=captured if quote is not None else None,
+            quote_tradeable=(quote.tradeable if quote is not None else None),
+            frozen_symbols=dict(frozen_symbols or {}),
+        )
 
     # ------------------------------------------------------------------
 
