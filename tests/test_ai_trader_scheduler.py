@@ -403,7 +403,7 @@ class TestSchedulerRunsAiTask:
                     [
                         Bar(
                             symbol=symbol,
-                            timestamp=now - timedelta(days=2),
+                            timestamp=now - timedelta(hours=2),
                             open=Decimal("99"),
                             high=Decimal("101"),
                             low=Decimal("98"),
@@ -414,7 +414,7 @@ class TestSchedulerRunsAiTask:
                         ),
                         Bar(
                             symbol=symbol,
-                            timestamp=now - timedelta(days=1),
+                            timestamp=now - timedelta(hours=1),
                             open=Decimal("100"),
                             high=Decimal("102"),
                             low=Decimal("99"),
@@ -551,10 +551,16 @@ class TestSchedulerRunsAiTask:
         try:
             latest = store.get_latest_cycle()
             assert latest is not None
-            assert latest["outcome"] == "skipped_no_consensus"
+            assert latest["outcome"] == "skipped_data_stale"
             assert latest["votes"] == []
             assert latest["plans"] == []
             assert latest["attempts"] == []
+            assert len(latest["input_quality"]) == len(latest["symbols"])
+            assert all(
+                q["no_trade_reason"] == "NO_TRADE_DATA_STALE"
+                and q["reasons"] == ["snapshot_missing"]
+                for q in latest["input_quality"]
+            )
         finally:
             store.close()
 

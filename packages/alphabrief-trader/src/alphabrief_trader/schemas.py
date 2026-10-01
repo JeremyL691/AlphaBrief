@@ -49,6 +49,7 @@ CycleOutcome = Literal[
     "skipped_no_intent",
     "skipped_model_budget",
     "skipped_model_unavailable",
+    "skipped_data_stale",
     "provider_error",
     "blocked_risk_gate",
     "blocked_human_review",
@@ -458,6 +459,24 @@ class OrderAttempt(_CommitteeSchema):
         return _reject_float(value)
 
 
+class InputQualityRecord(_CommitteeSchema):
+    """The pre-model verdict for one requested symbol, including missing inputs."""
+
+    symbol: str = Field(min_length=1)
+    passed: bool
+    reasons: list[str] = Field(default_factory=list)
+    policy_version: str = Field(min_length=1)
+    no_trade_reason: Literal["NO_TRADE_DATA_STALE"] | None = None
+    snapshot_captured_at: datetime | None = None
+    data_version: str | None = None
+    evaluated_at: datetime
+
+    @field_validator("snapshot_captured_at", "evaluated_at")
+    @classmethod
+    def _tz(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else _validate_timezone_aware(value)
+
+
 class DailyCycleRecord(_CommitteeSchema):
     """The complete, auditable record of one daily trading cycle.
 
@@ -475,6 +494,7 @@ class DailyCycleRecord(_CommitteeSchema):
     plans: list[TradePlan] = Field(default_factory=list)
     votes: list[CommitteeVote] = Field(default_factory=list)
     attempts: list[OrderAttempt] = Field(default_factory=list)
+    input_quality: list[InputQualityRecord] = Field(default_factory=list)
     outcome: CycleOutcome
     enabled: bool
     live_trading_enabled: bool = False

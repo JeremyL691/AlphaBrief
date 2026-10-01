@@ -12,14 +12,16 @@ beyond the limit is a rejection, never an assumption.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
 from alphabrief_trader.schemas import MarketSnapshot
 
 #: Version of the quality rules; bump when a limit changes.
-QUALITY_POLICY_VERSION = "2026-09-30.1"
+QUALITY_POLICY_VERSION = "2026-10-01.1"
+NO_TRADE_DATA_STALE: Literal["NO_TRADE_DATA_STALE"] = "NO_TRADE_DATA_STALE"
 
 #: Maximum age of a snapshot's capture time (PROJECT_GUIDE 5.3: the latest
 #: completed H1 candle must be at most 2 hours old during the session).
@@ -80,14 +82,21 @@ def evaluate_snapshots(
     *,
     now: datetime,
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
+    symbols: Sequence[str] | None = None,
 ) -> dict[str, DataQualityVerdict]:
     """Judge every snapshot in one cycle; missing symbols fail closed."""
-    return {
-        symbol: evaluate_snapshot_quality(
-            snapshot, now=now, max_age_seconds=max_age_seconds
-        )
-        for symbol, snapshot in snapshots.items()
-    }
+    verdicts: dict[str, DataQualityVerdict] = {}
+    for symbol in snapshots if symbols is None else symbols:
+        snapshot = snapshots.get(symbol)
+        if snapshot is None:
+            verdicts[symbol] = DataQualityVerdict(False, ("snapshot_missing",))
+        elif snapshot.symbol != symbol:
+            verdicts[symbol] = DataQualityVerdict(False, ("snapshot_symbol_mismatch",))
+        else:
+            verdicts[symbol] = evaluate_snapshot_quality(
+                snapshot, now=now, max_age_seconds=max_age_seconds
+            )
+    return verdicts
 
 
 def quality_clock(
@@ -101,6 +110,7 @@ __all__ = [
     "DEFAULT_MAX_ACCOUNT_AGE_SECONDS",
     "DEFAULT_MAX_AGE_SECONDS",
     "QUALITY_POLICY_VERSION",
+    "NO_TRADE_DATA_STALE",
     "DataQualityVerdict",
     "evaluate_snapshot_quality",
     "evaluate_snapshots",

@@ -222,9 +222,13 @@ class TestDailyTradingCycle:
             clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY", "QQQ"])
-        # No snapshots → no votes → no plans → skipped_no_consensus
-        assert record.outcome == "skipped_no_consensus"
+        # Missing inputs are an explicit refusal before the committee runs.
+        assert record.outcome == "skipped_data_stale"
         assert record.plans == []
+        assert record.votes == []
+        assert record.attempts == []
+        assert [q.symbol for q in record.input_quality] == ["SPY", "QQQ"]
+        assert all(q.reasons == ["snapshot_missing"] for q in record.input_quality)
 
     def test_multi_symbol_loop(self, store: AiTradingStore) -> None:
         cycle = DailyTradingCycle(

@@ -7,7 +7,9 @@ trading committee. One cycle = one calendar day, one universe, one
 1. Loads a market snapshot for each symbol in the universe
    (``MarketDataProvider``-driven or supplied by the caller — the
    cycle never calls provider SDKs directly).
-2. Builds a :class:`MarketSnapshot` per symbol and asks
+2. Checks each requested symbol before calling the model; missing or
+   stale inputs are recorded as ``NO_TRADE_DATA_STALE`` without an intent.
+   Builds a :class:`MarketSnapshot` per usable symbol and asks
    :class:`TradingCommittee` for a ``TradePlan``.
 3. Applies the deterministic ``RiskGate`` to the synthesized
    ``OrderIntent`` candidate.
@@ -29,7 +31,7 @@ deterministic fakes:
 * ``risk_gate: RiskGate`` — the deterministic risk layer.
 * ``execution_backend`` — the broker-neutral execution hop.
 * ``snapshot_loader: Callable[[str], MarketSnapshot | None]`` — turns a
-  symbol into a snapshot. ``None`` skips the symbol.
+  symbol into a snapshot. ``None`` records a missing-input refusal.
 * ``store: AiTradingStore`` — DuckDB persistence.
 * ``enabled: bool`` — feature flag.
 """
@@ -61,7 +63,11 @@ from alphabrief_trader.cycle_execution import (
 )
 from alphabrief_trader.cycle_schedule import CatchUpPolicy, CatchUpVerdict
 from alphabrief_trader.cycle_state import CYCLE_PHASE_ORDER, CycleStateMachine
-from alphabrief_trader.data_quality import evaluate_snapshot_quality
+from alphabrief_trader.data_quality import (
+    NO_TRADE_DATA_STALE,
+    evaluate_snapshot_quality,
+    evaluate_snapshots,
+)
 from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
 from alphabrief_trader.execution_backend import (
     ExecutionBackend,
@@ -86,6 +92,7 @@ from alphabrief_trader.schemas import (
     CommitteeVote,
     CycleOutcome,
     DailyCycleRecord,
+    InputQualityRecord,
     MarketSnapshot,
     OrderAttempt,
     TradePlan,
@@ -273,6 +280,7 @@ class DailyTradingCycle:
         all_votes: list[CommitteeVote] = []
         all_plans: list[TradePlan] = []
         all_attempts: list[OrderAttempt] = []
+        input_quality: list[InputQualityRecord] = []
         committee_role_errors: list[str] = []
         overall_outcome: CycleOutcome = "skipped_no_intent"
 
@@ -319,7 +327,21 @@ class DailyTradingCycle:
 
         for symbol in symbols:
             snapshot = snapshots.get(symbol)
-            if snapshot is None:
+            checked_at = self._clock()
+            quality = evaluate_snapshots(
+                snapshots, symbols=[symbol], now=checked_at
+            )[symbol]
+            input_quality.append(InputQualityRecord(
+                symbol=symbol, passed=quality.passed,
+                reasons=list(quality.reasons), policy_version=quality.policy_version,
+                no_trade_reason=None if quality.passed else NO_TRADE_DATA_STALE,
+                snapshot_captured_at=None if snapshot is None else snapshot.captured_at,
+                data_version=None if snapshot is None else snapshot.data_version,
+                evaluated_at=checked_at,
+            ))
+            if not quality.passed or snapshot is None:
+                # Missing/stale inputs produce a durable refusal before any
+                # model call, plan, or OrderIntent (PROJECT_GUIDE 5.3).
                 continue
 
             budget_block = self._budget_block()
@@ -380,7 +402,7 @@ class DailyTradingCycle:
             attempt = self._attempt_execution(
                 plan=plan,
                 snapshot=snapshot,
-                now=now,
+                now=self._clock(),
                 cycle_id=cycle_id,
                 reference_price_resolver=reference_price_resolver,
             )
@@ -409,12 +431,20 @@ class DailyTradingCycle:
                 overall_outcome = "skipped_no_intent"
             elif committee_role_errors:
                 overall_outcome = "provider_error"
+            elif any(not item.passed for item in input_quality):
+                overall_outcome = "skipped_data_stale"
             else:
                 overall_outcome = "skipped_no_consensus"
 
         summary = self._build_summary(
             all_plans, all_attempts, overall_outcome, committee_role_errors
         )
+        refused_inputs = [
+            f"{item.symbol}:{','.join(item.reasons)}"
+            for item in input_quality if not item.passed
+        ]
+        if refused_inputs:
+            summary += f"; {NO_TRADE_DATA_STALE}=[{'; '.join(refused_inputs)}]"
         record = DailyCycleRecord(
             cycle_id=cycle_id,
             trading_day=trading_day,
@@ -422,6 +452,7 @@ class DailyTradingCycle:
             plans=all_plans,
             votes=all_votes,
             attempts=all_attempts,
+            input_quality=input_quality,
             outcome=overall_outcome,
             enabled=True,
             live_trading_enabled=False,
