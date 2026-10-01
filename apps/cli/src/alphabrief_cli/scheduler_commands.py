@@ -59,6 +59,7 @@ from alphabrief_execution.operations.scheduler import (
     SchedulerStartupBlockedError,
     build_default_tasks,
 )
+from alphabrief_news.ingestion import NewsIngestionStore
 from alphabrief_trader import (
     is_ai_trading_enabled,
 )
@@ -550,63 +551,87 @@ def _ingest_ai_news(
     start = now - timedelta(hours=lookback_hours)
     data_version = f"ai-precycle-{source}-v1"
 
+    from uuid import uuid4
+
+    from alphabrief_news.ingestion import NewsIngestionResult, classify_fetch_failure
     from alphabrief_news.pipeline import prepare_headlines
     from alphabrief_news.providers import NewsProviderError
     from alphabrief_news.types import NewsFetchQuery
 
-    try:
-        provider = _build_news_provider(source)
-    except (NewsProviderError, ValueError) as exc:
-        print(f"scheduler: news pre-cycle ingest disabled: {exc}", file=sys.stderr)
-        return 0
-
     ingestion_store = _news_ingestion_store()
     inserted_total = 0
-    for feed in feeds:
-        query = NewsFetchQuery(
-            symbols=[feed],
-            start=start,
-            end=now,
-            limit=limit,
-            data_version=data_version,
-        )
+    try:
+        provider = None
+        build_failure = "invalid_config"
         try:
-            headlines = provider.fetch_headlines(query)
-        except NewsProviderError as exc:
-            print(
-                f"scheduler: news pre-cycle ingest failed for {feed}: "
-                f"[{exc.code}] {exc}",
-                file=sys.stderr,
+            provider = _build_news_provider(source)
+        except (NewsProviderError, ValueError) as exc:
+            build_failure = (
+                exc.code if isinstance(exc, NewsProviderError) else "invalid_config"
             )
-            continue
-        # One deterministic pass: sanitize untrusted text, record
-        # provenance, and deduplicate (PROJECT_GUIDE S4-5). Headlines keep
-        # their currency-relevance tags from the provider — they are never
-        # re-tagged with every traded symbol.
-        prepared = prepare_headlines(
-            headlines,
-            source=feed,
-            correlation_id=f"precycle-{feed}-{now.strftime('%Y%m%dT%H%M%SZ')}",
-            clock=lambda: now,
-        )
-        tagged = [
-            _tag_ai_news_headline(
-                headline,
-                feed=feed,
+            print("scheduler: news provider unavailable", file=sys.stderr)
+
+        for feed in feeds:
+            correlation_id = f"precycle-{feed}-{uuid4().hex}"
+
+            def record_failure(
+                code: str, *, feed: str = feed, correlation_id: str = correlation_id
+            ) -> None:
+                ingestion_store.persist(NewsIngestionResult(
+                    source=feed, correlation_id=correlation_id,
+                    fetch_outcome=classify_fetch_failure(code), fetched_at=now,
+                ))
+                # Provider messages can contain URLs or credentials. Only
+                # the classified outcome is logged or persisted.
+                print(
+                    f"scheduler: news fetch failed for {feed}: "
+                    f"{classify_fetch_failure(code)}", file=sys.stderr,
+                )
+
+            if provider is None:
+                record_failure(build_failure)
+                continue
+            query = NewsFetchQuery(
+                symbols=[feed], start=start, end=now, limit=limit,
                 data_version=data_version,
             )
-            for headline in prepared.headlines
-        ]
-        inserted_total += int(news_store.insert_headlines(tagged))
-        if prepared.ingestion is not None:
-            ingestion_store.persist(prepared.ingestion)
-        if prepared.dropped:
-            print(
-                f"scheduler: withheld {len(prepared.dropped)} headline(s) "
-                f"from {feed} for prompt-injection patterns (hashes kept)",
-                file=sys.stderr,
-            )
-    return inserted_total
+            try:
+                headlines = provider.fetch_headlines(query)
+            except NewsProviderError as exc:
+                record_failure(exc.code)
+                continue
+            except TimeoutError:
+                record_failure("network_error")
+                continue
+            except Exception:  # noqa: BLE001 - persist unknown provider failures safely
+                record_failure("unexpected_provider_failure")
+                continue
+            # Sanitize and deduplicate once; health and item provenance commit
+            # together, even for an empty batch. No fabricated news fallback.
+            try:
+                prepared = prepare_headlines(
+                    headlines, source=feed, correlation_id=correlation_id,
+                    clock=lambda: now,
+                )
+            except (ValueError, TypeError):
+                record_failure("parse_error")
+                continue
+            tagged = [
+                _tag_ai_news_headline(headline, feed=feed, data_version=data_version)
+                for headline in prepared.headlines
+            ]
+            inserted_total += int(news_store.insert_headlines(tagged))
+            if prepared.ingestion is not None:
+                ingestion_store.persist(prepared.ingestion)
+            if prepared.dropped:
+                print(
+                    f"scheduler: withheld {len(prepared.dropped)} headline(s) "
+                    f"from {feed} for prompt-injection patterns (hashes kept)",
+                    file=sys.stderr,
+                )
+        return inserted_total
+    finally:
+        ingestion_store.close()
 
 
 def _configured_news_feeds() -> tuple[str, ...]:
@@ -648,10 +673,8 @@ def _tag_ai_news_headline(
     )
 
 
-def _news_ingestion_store() -> Any:
+def _news_ingestion_store() -> NewsIngestionStore:
     """The durable ingestion-provenance store for the pre-cycle fetch."""
-    from alphabrief_news.ingestion import NewsIngestionStore
-
     return NewsIngestionStore(db_path=_paths.db_path())
 
 

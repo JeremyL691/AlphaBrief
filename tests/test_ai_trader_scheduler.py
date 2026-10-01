@@ -512,9 +512,15 @@ class TestSchedulerRunsAiTask:
             )
             try:
                 records = ingestion.records()
+                fetches = ingestion.fetch_records()
+                families = ingestion.successful_source_families(now=datetime.now(UTC))
             finally:
                 ingestion.close()
             assert len(records) == 1
+            assert len(fetches) == 1
+            assert fetches[0]["fetch_outcome"] == "success"
+            assert fetches[0]["item_count"] == 1
+            assert families == frozenset({"marketwatch"})
             assert records[0]["metadata_only"] is True
             assert len(str(records[0]["content_hash"])) == 64
 
@@ -861,3 +867,89 @@ class TestRuntimeComposition:
 
         with pytest.raises(RuntimeError, match="news impact evidence unavailable"):
             cycle_commands._high_impact_event_map(BrokenNews())
+
+
+@pytest.mark.parametrize("failure,expected", [
+    ("network_error", "timeout"), ("parse_error", "malformed"),
+    ("rate_limited", "rate_limit"), ("unexpected", "source_failure"),
+])
+def test_runtime_persists_news_failures_and_closes_health_store(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], failure: str, expected: str,
+) -> None:
+    from alphabrief_news.providers import NewsProviderError
+
+    now = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    monkeypatch.setenv("ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED", "true")
+    monkeypatch.setenv("ALPHABRIEF_AI_NEWS_FEEDS", "marketwatch-rss,fxstreet-rss")
+    closed: list[bool] = []
+
+    class TrackingStore(NewsIngestionStore):
+        def close(self) -> None:
+            closed.append(True)
+            super().close()
+
+    class Provider:
+        def fetch_headlines(self, query: NewsFetchQuery) -> list[NewsHeadline]:
+            if query.symbols == ["marketwatch-rss"]:
+                if failure == "unexpected":
+                    raise RuntimeError("private provider diagnostic")
+                raise NewsProviderError(failure, "private provider diagnostic")
+            return []
+
+    monkeypatch.setattr(
+        scheduler_commands, "_build_news_provider", lambda s: Provider()
+    )
+    database = isolated_data_dir / _paths.DATABASE_NAME
+    monkeypatch.setattr(
+        scheduler_commands, "_news_ingestion_store",
+        lambda: TrackingStore(db_path=database),
+    )
+    news = NewsStore(db_path=database)
+    try:
+        counts = scheduler_commands._run_ai_pre_cycle_ingestion(
+            news_store=news, symbols=("EUR_USD",), now=now
+        )
+        assert counts == {"bars": 0, "headlines": 0}
+        assert news.list_headlines() == []
+    finally:
+        news.close()
+    assert closed == [True]
+    with_health = NewsIngestionStore(db_path=database)
+    try:
+        rows = with_health.fetch_records()
+        assert [(row["source"], row["fetch_outcome"]) for row in rows] == [
+            ("marketwatch-rss", expected), ("fxstreet-rss", "empty")
+        ]
+        assert all(row["item_count"] == 0 for row in rows)
+        assert with_health.successful_source_families(now=now) == frozenset()
+    finally:
+        with_health.close()
+    assert "private provider diagnostic" not in capsys.readouterr().err
+
+
+def test_runtime_persists_provider_construction_failure_for_each_feed(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED", "true")
+    monkeypatch.setenv("ALPHABRIEF_AI_NEWS_FEEDS", "marketwatch-rss,fxstreet-rss")
+
+    def unavailable(source: str) -> object:
+        raise ValueError("invalid provider configuration")
+
+    monkeypatch.setattr(scheduler_commands, "_build_news_provider", unavailable)
+    database = isolated_data_dir / _paths.DATABASE_NAME
+    news = NewsStore(db_path=database)
+    try:
+        scheduler_commands._run_ai_pre_cycle_ingestion(
+            news_store=news, symbols=("EUR_USD",), now=datetime.now(UTC)
+        )
+    finally:
+        news.close()
+    health = NewsIngestionStore(database)
+    try:
+        records = health.fetch_records()
+        assert len(records) == 2
+        assert all(row["fetch_outcome"] == "malformed" for row in records)
+    finally:
+        health.close()

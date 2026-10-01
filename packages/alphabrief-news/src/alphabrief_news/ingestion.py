@@ -16,7 +16,7 @@ full text; they retain only permitted metadata and bounded summaries
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -93,6 +93,24 @@ class NewsIngestionResult(BaseModel):
     fetch_outcome: NewsFetchOutcome
     items: tuple[IngestedNewsItem, ...] = ()
     fetched_at: datetime
+
+    @field_validator("fetched_at")
+    @classmethod
+    def fetched_at_must_be_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("fetch time must be timezone-aware")
+        return value.astimezone(UTC)
+
+
+def classify_fetch_failure(code: str) -> NewsFetchOutcome:
+    """One stable classification shared by ingestion and the runtime."""
+    if code in ("network_error", "http_error"):
+        return "timeout"
+    if code == "rate_limited":
+        return "rate_limit"
+    if code in ("parse_error", "invalid_config", "invalid_symbol"):
+        return "malformed"
+    return "source_failure"
 
 
 class NewsIngestionError(RuntimeError):
@@ -237,19 +255,10 @@ class NewsIngestionService:
         fetched_at: datetime,
         detail: str = "",
     ) -> NewsIngestionResult:
-        outcome: NewsFetchOutcome
-        if code in ("network_error", "http_error"):
-            outcome = "timeout"
-        elif code == "rate_limited":
-            outcome = "rate_limit"
-        elif code in ("parse_error", "invalid_config", "invalid_symbol"):
-            outcome = "malformed"
-        else:
-            outcome = "source_failure"
         return NewsIngestionResult(
             source=source,
             correlation_id=correlation_id,
-            fetch_outcome=outcome,
+            fetch_outcome=classify_fetch_failure(code),
             fetched_at=fetched_at,
         )
 
@@ -280,11 +289,48 @@ class NewsIngestionStore:
             );
             CREATE INDEX IF NOT EXISTS news_ingestion_source ON
                 news_ingestion_records (source, fetched_at);
+            CREATE TABLE IF NOT EXISTS news_fetch_records (
+                source TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                fetched_at TIMESTAMPTZ NOT NULL,
+                fetch_outcome TEXT NOT NULL,
+                item_count INTEGER NOT NULL,
+                result_hash TEXT NOT NULL,
+                PRIMARY KEY (source, correlation_id)
+            );
             """
         )
 
     def persist(self, result: NewsIngestionResult) -> int:
-        """Persist one ingestion result; duplicate item IDs are ignored."""
+        """Atomically append the fetch outcome and its items, including failures.
+
+        Identical attempt replays are idempotent. Reusing an attempt identity
+        for different evidence fails instead of rewriting historical health.
+        """
+        result_hash = hashlib.sha256(result.model_dump_json().encode()).hexdigest()
+        self._conn.execute("BEGIN")
+        try:
+            previous = self._conn.execute(
+                "SELECT result_hash FROM news_fetch_records "
+                "WHERE source = ? AND correlation_id = ?",
+                [result.source, result.correlation_id],
+            ).fetchone()
+            if previous is not None and previous[0] != result_hash:
+                raise ValueError("news fetch identity reused with different evidence")
+            self._conn.execute(
+                "INSERT OR IGNORE INTO news_fetch_records VALUES (?, ?, ?, ?, ?, ?)",
+                [result.source, result.correlation_id, result.fetched_at,
+                 result.fetch_outcome, len(result.items), result_hash],
+            )
+            count = self._persist_items(result)
+            self._conn.execute("COMMIT")
+            return count
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def _persist_items(self, result: NewsIngestionResult) -> int:
+        """Insert item provenance inside the caller's transaction."""
         count = 0
         for item in result.items:
             inserted = self._conn.execute(
@@ -312,6 +358,46 @@ class NewsIngestionStore:
             if inserted and inserted[0] > 0:
                 count += 1
         return count
+
+    def fetch_records(self, source: str | None = None) -> list[dict[str, Any]]:
+        """Return durable attempts, even those with no usable headlines."""
+        where = "WHERE source = ?" if source else ""
+        rows = self._conn.execute(
+            f"SELECT source, correlation_id, fetched_at, fetch_outcome, "
+            f"item_count, result_hash FROM news_fetch_records {where} "
+            "ORDER BY fetched_at, rowid",
+            [source] if source else [],
+        ).fetchall()
+        return [dict(zip(
+            ("source", "correlation_id", "fetched_at", "fetch_outcome",
+             "item_count", "result_hash"), row, strict=True
+        )) for row in rows]
+
+    def successful_source_families(
+        self, *, now: datetime, max_age_seconds: int = 6 * 60 * 60
+    ) -> frozenset[str]:
+        """Count fresh latest successes using the canonical publisher registry.
+
+        Older successes never conceal a later failure. Empty, unknown,
+        stale, or future-dated sources do not count as successful families.
+        """
+        from alphabrief_news.providers.rss import feed_source
+
+        if now.tzinfo is None or now.utcoffset() is None or max_age_seconds < 0:
+            raise ValueError("health query requires an aware time and non-negative age")
+        latest = {str(row["source"]): row for row in self.fetch_records()}
+        families: set[str] = set()
+        oldest = now - timedelta(seconds=max_age_seconds)
+        for source, row in latest.items():
+            if row["fetch_outcome"] != "success" or row["item_count"] <= 0:
+                continue
+            if not oldest <= row["fetched_at"] <= now:
+                continue
+            try:
+                families.add(feed_source(source).family)
+            except NewsProviderError:
+                continue
+        return frozenset(families)
 
     def records(self, source: str | None = None) -> list[dict[str, Any]]:
         where = "WHERE source = ?" if source else ""
@@ -351,6 +437,7 @@ class NewsIngestionStore:
 
 
 __all__ = [
+    "classify_fetch_failure",
     "DEFAULT_METADATA_ONLY_SUMMARY_CHARS",
     "IngestedNewsItem",
     "NewsFetchOutcome",
