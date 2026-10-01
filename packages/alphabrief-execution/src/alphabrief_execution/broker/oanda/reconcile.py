@@ -36,6 +36,9 @@ DiffKind = Literal[
 
 Severity = Literal["INFO", "WARN", "CRITICAL"]
 
+#: ``clientExtensions.tag`` written on every order this system places.
+OWN_ORDER_TAG = "alphabrief"
+
 #: The versioned default tolerance set (explicit and directionally safe).
 DEFAULT_TOLERANCE_VERSION = "2026-08-13.1"
 
@@ -49,6 +52,9 @@ class RemoteOrder(BaseModel):
     state: str = Field(min_length=1)
     units: Decimal
     client_order_id: str | None = None
+    #: ``clientExtensions.tag``; ``alphabrief`` means this system placed it
+    #: (PROJECT_GUIDE 5.9: own orders are explainable, never a difference).
+    client_tag: str | None = None
     create_time: datetime | None = None
 
 
@@ -235,6 +241,7 @@ class Reconciler:
                     kind="order_diff",
                     source_id=order_id,
                     client_order_id=remote_order.client_order_id,
+                    client_tag=remote_order.client_tag,
                     ledger=ledger,
                     detail="remote order has no local projection",
                     diffs=diffs,
@@ -404,12 +411,26 @@ class Reconciler:
                 None,
             )
             if matched_local is None:
+                # A position with no local projection is only explainable
+                # when our own projected trades account for it; otherwise
+                # it was opened outside this system and freezes new
+                # exposure (PROJECT_GUIDE 5.9).
+                ours = any(
+                    trade.instrument == remote_position.instrument
+                    and trade.current_units != 0
+                    and trade.state == "OPEN"
+                    for trade in local.trades
+                )
                 diffs.append(
                     DiffRecord(
                         kind="position_diff",
                         source_id=remote_position.instrument,
-                        severity="INFO",
-                        detail="broker-originated position (no local projection)",
+                        severity="INFO" if ours else "CRITICAL",
+                        detail=(
+                            "position awaiting local projection"
+                            if ours
+                            else "position is not from this system"
+                        ),
                         local_value=None,
                         remote_value=(
                             f"{remote_position.long_units}/"
@@ -549,7 +570,11 @@ class Reconciler:
         ledger: OrderLedger | None,
         detail: str,
         diffs: list[DiffRecord],
+        client_tag: str | None = None,
     ) -> None:
+        if client_tag == OWN_ORDER_TAG:
+            # This system's own order (clientExtensions.tag): explainable.
+            return
         if client_order_id is None:
             # No client identity: legitimate broker-originated state.
             diffs.append(

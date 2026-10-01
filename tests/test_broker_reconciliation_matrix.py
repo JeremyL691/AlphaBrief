@@ -209,12 +209,17 @@ def test_broker_originated_remote_state_never_false_alarms(tmp_path: Path) -> No
         }
     )
     report = _reconcile(tmp_path, remote)
-    # All broker-originated differences are INFO: the report stays clean.
-    assert report.clean is True
+    # Orders and trades without our client identity are explainable (INFO):
+    # they do not by themselves move exposure.
     info_kinds = {d.kind for d in report.diffs if d.severity == "INFO"}
     assert "order_diff" in info_kinds
+    # An unexplained open position is not: PROJECT_GUIDE 5.9 freezes new
+    # exposure when a position did not come from this system.
+    critical = [d for d in report.diffs if d.severity == "CRITICAL"]
+    assert [d.kind for d in critical] == ["position_diff"]
+    assert critical[0].source_id == "USD_JPY"
+    assert report.clean is False
     assert "trade_diff" in info_kinds
-    assert "position_diff" in info_kinds
 
 
 def test_ledger_matched_client_identity_is_not_unknown(tmp_path: Path) -> None:

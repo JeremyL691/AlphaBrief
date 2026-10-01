@@ -27,7 +27,6 @@ from alphabrief_execution.broker.port import (
     SubmitResult,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import ReconciliationRunner
 from alphabrief_execution.operations.scheduler import (
     AlertSink,
     HeartbeatStore,
@@ -254,14 +253,10 @@ class TestSchedulerRunsAiTask:
             heartbeats = HeartbeatStore(db_path=db_path)
             recon_store = BrokerReconStore(db_path=db_path)
             try:
-                runner = ReconciliationRunner(
-                    adapter=_NullAdapter(), store=recon_store
-                )
                 scheduler = OperationsScheduler(
                     tasks=tasks,
                     heartbeat_store=heartbeats,
                     alert_sink=AlertSink(heartbeat_store=heartbeats),
-                    recon_runner=runner,
                     recon_store=recon_store,
                     config=SchedulerConfig(
                         reconcile_on_start=False,
@@ -434,6 +429,8 @@ class TestSchedulerRunsAiTask:
         # to match the default policy. Insert a EUR_USD bar instead of SPY
         # because SPY is no longer in the default allowlist.
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        # Submission requires the explicit trading switch (default is off).
+        monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "on")
         monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
         monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
         adapter = _SubmittingAdapter()

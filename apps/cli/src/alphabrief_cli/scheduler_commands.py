@@ -39,11 +39,14 @@ from alphabrief_core import (
     load_settings,
 )
 from alphabrief_core import paths as _paths
+from alphabrief_execution.broker.oanda.live_reconciliation import (
+    LiveReconciler,
+    record_broker_not_configured,
+)
 from alphabrief_execution.broker.port import (
     BrokerAdapter,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import ReconciliationRunner
 from alphabrief_execution.operations.scheduler import (
     AlertSink,
     HeartbeatStore,
@@ -388,6 +391,16 @@ def _configure_logging() -> None:
     )
 
 
+def trading_mode() -> str:
+    """Return the configured trading switch: ``on`` or ``off``.
+
+    Defaults to ``off``: an unattended run must be explicitly switched on
+    (PROJECT_GUIDE 4.1), and every other value is treated as off.
+    """
+    raw = os.environ.get("ALPHABRIEF_TRADING_MODE", "").strip().lower()
+    return "on" if raw == "on" else "off"
+
+
 def _build_ai_committee(database: Path | None = None) -> TradingCommittee:
     """Build the configured AI committee, persisting every model call.
 
@@ -712,6 +725,9 @@ def _ai_cycle_factory(
                 execution_backend=execution_backend,
                 enabled=is_ai_trading_enabled(),
                 max_order_value=policy.max_order_notional,
+                # The unattended runtime honours the configured trading
+                # switch; anything other than "on" stops before submitting.
+                trading_mode=trading_mode(),
             )
             cycle.run(list(universe))
         except Exception:
@@ -758,12 +774,31 @@ def run_cmd(
     heartbeats = _open_heartbeat_store()
     recon_store = _open_recon_store()
     try:
-        adapter = _build_adapter()
-        runner = ReconciliationRunner(adapter=adapter, store=recon_store)
         alert_sink = AlertSink(heartbeat_store=heartbeats)
 
+        def _reconcile_once(scope: str) -> None:
+            """Reconcile against the live practice account (fail closed)."""
+            from alphabrief_execution.broker.runtime import (
+                build_oanda_paper_client,
+                oanda_is_configured,
+            )
+
+            if not oanda_is_configured():
+                record_broker_not_configured(recon_store, scope=scope)
+                return
+            reconciler = LiveReconciler(
+                client=build_oanda_paper_client(),
+                store=recon_store,
+            )
+            try:
+                reconciler.reconcile(scope=scope)
+            finally:
+                reconciler.close()
+
         async def _on_reconcile(scope: str) -> None:
-            await runner.reconcile(scope=scope)
+            # Reconciliation is synchronous (urllib); keep the event loop
+            # free so timers and the API stay responsive.
+            await asyncio.to_thread(_reconcile_once, scope)
 
         ai_handler = _ai_cycle_factory(db_path=_paths.data_dir())
 
@@ -799,7 +834,6 @@ def run_cmd(
             tasks=tasks,
             heartbeat_store=heartbeats,
             alert_sink=alert_sink,
-            recon_runner=runner,
             recon_store=recon_store,
             config=SchedulerConfig(
                 # The startup reconcile runs as the first tick of the

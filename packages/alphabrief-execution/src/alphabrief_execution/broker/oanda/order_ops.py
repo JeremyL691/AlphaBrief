@@ -46,6 +46,9 @@ class OrderStateResult(BaseModel):
 
     broker_order_id: str = Field(min_length=1)
     client_order_id: str | None = None
+    #: ``clientExtensions.tag`` as reported by the broker; ``alphabrief``
+    #: marks an order as this system's own (reconciliation evidence).
+    client_tag: str | None = None
     symbol: str = Field(min_length=1)
     state: OrderStateValue
     units: Decimal
@@ -112,11 +115,15 @@ class OrderOpsClient:
         *,
         client_order_id: str,
         request_id: str | None = None,
+        tag: str | None = None,
+        comment: str | None = None,
     ) -> OrderCreateResult:
         """Create one order; idempotent on ``client_order_id``.
 
         Retries with the same ``client_order_id`` return the prior
-        result instead of duplicating the order.
+        result instead of duplicating the order. ``tag`` and ``comment``
+        land in ``clientExtensions`` so reconciliation can recognise this
+        system's orders and trace them back to a committee round.
         """
         if not client_order_id.strip():
             raise OrderOperationError("invalid_request_id", "client_order_id is empty")
@@ -125,7 +132,12 @@ class OrderOpsClient:
             return existing.model_copy(update={"reused": True})
 
         payload = serialize_order(request, instrument)
-        payload["clientExtensions"] = {"id": client_order_id}
+        extensions: dict[str, str] = {"id": client_order_id}
+        if tag is not None:
+            extensions["tag"] = tag
+        if comment is not None:
+            extensions["comment"] = comment
+        payload["clientExtensions"] = extensions
         correlation = request_id or f"create-{client_order_id}"
         response = self._client.request(
             "POST",
@@ -181,6 +193,7 @@ class OrderOpsClient:
             return OrderStateResult(
                 broker_order_id=str(order.get("id", "")).strip(),
                 client_order_id=_client_extensions_id(order),
+                client_tag=_client_extensions_tag(order),
                 symbol=str(order.get("instrument", "")).strip(),
                 state=state,
                 units=units,
@@ -297,6 +310,7 @@ class OrderOpsClient:
             return OrderStateResult(
                 broker_order_id=str(row.get("id", "")).strip(),
                 client_order_id=_client_extensions_id(row),
+                client_tag=_client_extensions_tag(row),
                 symbol=str(row.get("instrument", "")).strip(),
                 state=_parse_state(str(row.get("state", ""))),
                 units=Decimal(str(row.get("units", "0"))),
@@ -324,6 +338,16 @@ def _parse_state(raw: str) -> OrderStateValue:
     if normalized not in _ORDER_STATES:
         raise OrderOperationError("protocol_error", f"unknown order state {raw!r}")
     return normalized  # type: ignore[return-value]
+
+
+def _client_extensions_tag(order: dict[str, Any]) -> str | None:
+    """Return ``clientExtensions.tag`` when the broker reports one."""
+    extensions = order.get("clientExtensions")
+    if isinstance(extensions, dict):
+        tag = str(extensions.get("tag", "")).strip()
+        if tag:
+            return tag
+    return None
 
 
 def _client_extensions_id(order: dict[str, Any]) -> str | None:

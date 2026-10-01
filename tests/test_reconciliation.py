@@ -1,298 +1,345 @@
-"""Reconciliation runner tests.
+"""Reconciliation safety tests for the live OANDA reconciler (S3-3).
 
-Driven by an in-memory fake broker adapter so the tests do not need
-a practice server. Covers:
+The old runner treated every remote position and every unregistered order
+as a difference, which froze the scheduler on the first real fill. These
+tests pin the corrected contract:
 
-- startup reconciliation raises a freeze on diff
-- cycle reconciliation also freezes on diff
-- eod reconciliation records but does not freeze
-- a missing OANDA practice broker (null adapter) records a fail-closed
-  non-matching snapshot — never a vacuous all-match placeholder
-- recon store exposes has_open_freeze / clear_freeze correctly
+* our own orders (client ``tag=alphabrief``), protective-order fills and
+  financing are explainable and must never freeze;
+* a foreign position freezes new exposure;
+* without credentials the verdict is explicitly non-matching, and the
+  per-scope freeze policy still applies;
+* snapshots and freezes land in the durable recon store.
 """
 
 from __future__ import annotations
 
-import asyncio
+import json
 from collections.abc import Iterator
-from datetime import UTC, datetime
-from decimal import Decimal
+from pathlib import Path
 from typing import Any
+from urllib.request import Request
 
 import pytest
-from alphabrief_execution.broker.errors import BrokerTransientError
-from alphabrief_execution.broker.port import (
-    AccountSnapshot,
-    BrokerAdapter,
-    BrokerHealth,
-    BrokerOrderSide,
-    BrokerOrderStatus,
-    BrokerOrderType,
-    CancelResult,
-    Fill,
-    OrderState,
-    Position,
-    SubmitRequest,
-    SubmitResult,
+from alphabrief_execution.broker.oanda.account_projection import AccountProjectionStore
+from alphabrief_execution.broker.oanda.client import OandaHttpClient
+from alphabrief_execution.broker.oanda.config import OandaPaperConfig
+from alphabrief_execution.broker.oanda.live_reconciliation import (
+    ALLOWED_SCOPES,
+    LiveReconciler,
+    ReconcilerConfig,
+    record_broker_not_configured,
+)
+from alphabrief_execution.broker.oanda.order_ledger import OrderLedger
+from alphabrief_execution.broker.oanda.transaction_cursor import (
+    TransactionCursorStore,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import (
-    ALLOWED_SCOPES,
-    ReconcilerConfig,
-    ReconciliationRunner,
-)
-from alphabrief_execution.broker.runtime import NullBrokerAdapter
 
-
-class FakeAdapter(BrokerAdapter):
-    """Configurable in-memory adapter for reconciliation tests."""
-
-    def __init__(self) -> None:
-        self.orders: list[OrderState] = []
-        self.positions: list[Position] = []
-        self.account = AccountSnapshot(
-            account_id="acct-fake",
-            cash=Decimal("1000"),
-            equity=Decimal("1000"),
-            buying_power=Decimal("2000"),
-            currency="USD",
-            captured_at=datetime(2026, 6, 20, tzinfo=UTC),
-        )
-        self.fail_with: Exception | None = None
-
-    async def health(self) -> BrokerHealth:
-        return BrokerHealth(
-            healthy=True, detail="ok", checked_at=datetime(2026, 6, 20, tzinfo=UTC)
-        )
-
-    async def submit(
-        self, request: SubmitRequest, *, client_order_id: str
-    ) -> SubmitResult:
-        order = OrderState(
-            broker_order_id=f"b-{client_order_id}",
-            client_order_id=client_order_id,
-            symbol=request.symbol,
-            side=request.side,
-            order_type=request.order_type,
-            quantity=request.quantity,
-            filled_quantity=Decimal("0"),
-            limit_price=request.limit_price,
-            status=BrokerOrderStatus.NEW,
-            submitted_at=datetime(2026, 6, 20, tzinfo=UTC),
-            updated_at=datetime(2026, 6, 20, tzinfo=UTC),
-        )
-        self.orders.append(order)
-        return SubmitResult(
-            broker_order_id=order.broker_order_id,
-            client_order_id=client_order_id,
-            status=BrokerOrderStatus.NEW,
-            accepted_at=order.submitted_at,
-        )
-
-    async def cancel(self, broker_order_id: str) -> CancelResult:
-        for o in self.orders:
-            if o.broker_order_id == broker_order_id:
-                o.status = BrokerOrderStatus.CANCELLED
-                return CancelResult(
-                    broker_order_id=broker_order_id,
-                    status=BrokerOrderStatus.CANCELLED,
-                    cancelled_at=datetime(2026, 6, 20, tzinfo=UTC),
-                )
-        raise ValueError("unknown")
-
-    async def get_order(self, broker_order_id: str) -> OrderState:
-        for o in self.orders:
-            if o.broker_order_id == broker_order_id:
-                return o
-        raise ValueError("unknown")
-
-    async def list_orders(
-        self, status: BrokerOrderStatus | None = None
-    ) -> list[OrderState]:
-        if self.fail_with is not None:
-            raise self.fail_with
-        return list(self.orders)
-
-    async def list_fills(self, since: datetime | None = None) -> list[Fill]:
-        return []
-
-    async def get_positions(self) -> list[Position]:
-        return list(self.positions)
-
-    async def get_account(self) -> AccountSnapshot:
-        return self.account
+ACCOUNT = "101-004-1234567-001"
 
 
 @pytest.fixture
-def store(tmp_path: Any) -> Iterator[BrokerReconStore]:
-    s = BrokerReconStore(db_path=tmp_path / "recon.db")
-    yield s
-    s.close()
-
-
-def _run(coro: Any) -> Any:
-    loop = asyncio.new_event_loop()
+def store(tmp_path: Path) -> Iterator[BrokerReconStore]:
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
     try:
-        return loop.run_until_complete(coro)
+        yield recon_store
     finally:
-        loop.close()
+        recon_store.close()
 
 
-def test_unknown_scope_rejected(store: BrokerReconStore) -> None:
-    adapter = FakeAdapter()
-    runner = ReconciliationRunner(adapter=adapter, store=store)
-    with pytest.raises(ValueError, match="unknown reconciliation scope"):
-        _run(runner.reconcile(scope="not-a-scope"))
-
-
-def test_null_adapter_never_records_vacuous_all_match(
+def _reconciler(
     store: BrokerReconStore,
-) -> None:
-    """Without an OANDA practice broker a pass is never a placeholder
-    all-match: the snapshot is explicitly non-matching (AC-M07-W06-03)."""
-    runner = ReconciliationRunner(adapter=NullBrokerAdapter(), store=store)
-    result = _run(runner.reconcile(scope="eod"))
-    assert result.snapshot.all_match is False
-    assert result.snapshot.orders_match is False
-    assert result.snapshot.fills_match is False
-    assert result.snapshot.cash_match is False
-    assert result.snapshot.positions_match is False
-    assert result.snapshot.diff["error"] == "broker_not_configured"
-    assert result.freeze_raised is False  # eod never freezes
+    tmp_path: Path,
+    *,
+    client: OandaHttpClient,
+) -> LiveReconciler:
+    """Build a reconciler whose stores are all inside the test directory.
 
-
-def test_null_adapter_startup_scope_raises_freeze(
-    store: BrokerReconStore,
-) -> None:
-    runner = ReconciliationRunner(adapter=NullBrokerAdapter(), store=store)
-    result = _run(runner.reconcile(scope="startup"))
-    assert result.snapshot.all_match is False
-    assert result.freeze_raised is True
-    assert store.has_open_freeze() is True
-
-
-def test_startup_with_no_diff_records_clean_snapshot(store: BrokerReconStore) -> None:
-    adapter = FakeAdapter()
-    runner = ReconciliationRunner(adapter=adapter, store=store)
-    result = _run(runner.reconcile(scope="startup"))
-    assert result.snapshot.all_match is True
-    assert result.freeze_raised is False
-    assert store.has_open_freeze() is False
-
-
-def test_unknown_broker_order_raises_freeze_on_startup(store: BrokerReconStore) -> None:
-    adapter = FakeAdapter()
-    adapter.orders.append(
-        OrderState(
-            broker_order_id="orphan",
-            client_order_id="orphan-cli",
-            symbol="SPY",
-            side=BrokerOrderSide.BUY,
-            order_type=BrokerOrderType.MARKET,
-            quantity=Decimal("1"),
-            filled_quantity=Decimal("0"),
-            status=BrokerOrderStatus.NEW,
-            submitted_at=datetime(2026, 6, 20, tzinfo=UTC),
-            updated_at=datetime(2026, 6, 20, tzinfo=UTC),
-        )
+    The production defaults point at the user's data directory; tests must
+    never read or write that.
+    """
+    database = tmp_path / "recon-state.duckdb"
+    return LiveReconciler(
+        client=client,
+        store=store,
+        cursor_store=TransactionCursorStore(db_path=database),
+        projection_store=AccountProjectionStore(db_path=database),
+        order_ledger=OrderLedger(db_path=database),
     )
-    runner = ReconciliationRunner(adapter=adapter, store=store)
-    result = _run(runner.reconcile(scope="startup"))
-    assert result.snapshot.all_match is False
-    assert result.freeze_raised is True
-    assert store.has_open_freeze() is True
 
 
-def test_eod_with_diff_records_but_does_not_freeze(store: BrokerReconStore) -> None:
-    adapter = FakeAdapter()
-    adapter.orders.append(
-        OrderState(
-            broker_order_id="orphan",
-            client_order_id="orphan-cli",
-            symbol="SPY",
-            side=BrokerOrderSide.BUY,
-            order_type=BrokerOrderType.MARKET,
-            quantity=Decimal("1"),
-            filled_quantity=Decimal("0"),
-            status=BrokerOrderStatus.NEW,
-            submitted_at=datetime(2026, 6, 20, tzinfo=UTC),
-            updated_at=datetime(2026, 6, 20, tzinfo=UTC),
-        )
+def _config() -> OandaPaperConfig:
+    return OandaPaperConfig(
+        base_url="http://oanda.test",
+        timeout_seconds=1.0,
+        max_retries=0,
+        retry_backoff_seconds=0.001,
+        allow_insecure_base_url=True,
     )
-    runner = ReconciliationRunner(adapter=adapter, store=store)
-    result = _run(runner.reconcile(scope="eod"))
-    assert result.snapshot.all_match is False
-    assert result.freeze_raised is False
-    assert store.has_open_freeze() is False
 
 
-def test_failed_recon_pass_raises_freeze(store: BrokerReconStore) -> None:
-    adapter = FakeAdapter()
-    adapter.fail_with = RuntimeError("adapter offline")
-    runner = ReconciliationRunner(adapter=adapter, store=store)
-    result = _run(runner.reconcile(scope="startup"))
-    assert result.snapshot.all_match is False
-    assert result.freeze_raised is True
+def _account_summary(*, last_transaction_id: str = "10") -> dict[str, Any]:
+    return {
+        "account": {
+            "id": ACCOUNT,
+            "currency": "USD",
+            "balance": "100000.0000",
+            "NAV": "100000.0000",
+            "unrealizedPL": "0.0000",
+            "marginUsed": "0.0000",
+            "marginAvailable": "100000.0000",
+            "openOrderCount": 0,
+            "openTradeCount": 0,
+            "openPositionCount": 0,
+            "lastTransactionID": last_transaction_id,
+        }
+    }
 
 
-def test_transient_recon_failure_does_not_freeze(store: BrokerReconStore) -> None:
-    adapter = FakeAdapter()
-    adapter.fail_with = BrokerTransientError(
-        "oanda transport error: <urlopen error timed out>"
+def _fill(
+    *,
+    transaction_id: str,
+    order_id: str = "7",
+    units: str = "1000",
+    transaction_type: str = "ORDER_FILL",
+) -> dict[str, Any]:
+    return {
+        "id": transaction_id,
+        "type": transaction_type,
+        "time": "2026-09-30T10:00:00.000000000Z",
+        "instrument": "EUR_USD",
+        "units": units,
+        "price": "1.10000",
+        "pl": "0.0000",
+        "financing": "0.0000",
+        "orderID": order_id,
+    }
+
+
+def _our_order() -> dict[str, Any]:
+    return {
+        "id": "7",
+        "type": "MARKET",
+        "state": "FILLED",
+        "instrument": "EUR_USD",
+        "units": "1000",
+        "timeInForce": "FOK",
+        "clientExtensions": {"id": "cli-1", "tag": "alphabrief"},
+        "createTime": "2026-09-30T10:00:00.000000000Z",
+    }
+
+
+def _foreign_position() -> dict[str, Any]:
+    return {
+        "instrument": "EUR_USD",
+        "long": {"units": "5000", "averagePrice": "1.10000"},
+        "short": {"units": "0"},
+    }
+
+
+def _client(
+    *,
+    orders: list[dict[str, Any]] | None = None,
+    positions: list[dict[str, Any]] | None = None,
+    trades: list[dict[str, Any]] | None = None,
+    transactions: list[dict[str, Any]] | None = None,
+    last_transaction_id: str = "10",
+) -> OandaHttpClient:
+    """Client double: summary, orders, positions, trades, transactions."""
+
+    def send(request: Request, timeout: float) -> bytes:
+        del timeout
+        url = request.full_url
+        if "/summary" in url:
+            return json.dumps(
+                _account_summary(last_transaction_id=last_transaction_id)
+            ).encode()
+        if "/openPositions" in url or "/positions" in url:
+            return json.dumps({"positions": positions or []}).encode()
+        if "/openTrades" in url or "/trades" in url:
+            return json.dumps({"trades": trades or []}).encode()
+        if "/orders" in url:
+            return json.dumps({"orders": orders or []}).encode()
+        if "/transactions/sinceid" in url or "/transactions/idrange" in url:
+            rows = transactions or []
+            return json.dumps(
+                {
+                    "transactions": rows,
+                    "lastTransactionID": last_transaction_id,
+                }
+            ).encode()
+        raise AssertionError(f"unexpected request: {url}")
+
+    return OandaHttpClient(
+        config=_config(), http_send=send, token="test-token", account_id=ACCOUNT
     )
-    runner = ReconciliationRunner(adapter=adapter, store=store)
-    with pytest.raises(BrokerTransientError):
-        _run(runner.reconcile(scope="cycle"))
-    snapshot = store.latest_snapshot(scope="cycle")
-    assert snapshot is not None
-    assert snapshot.all_match is False
-    assert snapshot.diff["error"] == "reconciliation probe failed (transient)"
-    assert store.has_open_freeze() is False
 
 
-def test_non_transient_recon_failure_still_freezes(store: BrokerReconStore) -> None:
-    adapter = FakeAdapter()
-    adapter.fail_with = RuntimeError("adapter offline")
-    runner = ReconciliationRunner(adapter=adapter, store=store)
-    result = _run(runner.reconcile(scope="startup"))
-    assert result.snapshot.all_match is False
-    assert result.freeze_raised is True
-    assert store.has_open_freeze() is True
-
-
-def test_clear_freeze_resets_open_state(store: BrokerReconStore) -> None:
-    store.raise_freeze(reason="manual", source="test")
-    assert store.has_open_freeze() is True
-    event = store.list_freezes(only_open=True)[0]
-    store.clear_freeze(event_id=event.event_id, reason="manual unfreeze")
-    assert store.has_open_freeze() is False
-
-
-def test_clear_unknown_freeze_raises(store: BrokerReconStore) -> None:
-    with pytest.raises(ValueError, match="unknown freeze event_id"):
-        store.clear_freeze(event_id="not-an-event")
-
-
-def test_snapshot_listing_returns_recent_first(store: BrokerReconStore) -> None:
-    for scope in ("startup", "cycle", "eod"):
-        store.record_snapshot(
-            scope=scope,
-            orders_match=True,
-            fills_match=True,
-            cash_match=True,
-            positions_match=True,
+class TestOwnActivityIsExplainable:
+    def test_our_filled_order_and_protective_fill_never_freeze(
+        self, store: BrokerReconStore, tmp_path: Path
+    ) -> None:
+        """The regression that mattered: a real fill must not freeze."""
+        reconciler = _reconciler(
+            store,
+            tmp_path,
+            client=_client(
+                orders=[_our_order()],
+                transactions=[
+                    _fill(transaction_id="8"),
+                    _fill(transaction_id="9", transaction_type="STOP_LOSS_ORDER"),
+                    _fill(
+                        transaction_id="10",
+                        transaction_type="DAILY_FINANCING",
+                        units="0",
+                    ),
+                ],
+            ),
         )
-    snapshots = store.list_snapshots()
-    assert len(snapshots) == 3
-    assert snapshots[0].scope == "eod"
+        try:
+            result = reconciler.reconcile(scope="cycle")
+        finally:
+            reconciler.close()
+
+        # ORDER_FILL and DAILY_FINANCING move the account and are folded;
+        # the protective-order transaction is recognised but not folded.
+        assert result.facts_applied == 2
+        assert set(result.warnings) >= {
+            "ORDER_FILL",
+            "STOP_LOSS_ORDER",
+            "DAILY_FINANCING",
+        }
+        # Own activity is explainable: nothing here may freeze new exposure.
+        assert result.freeze_raised is False
+        assert store.has_open_freeze() is False
+
+    def test_cursor_advances_and_snapshot_is_recorded(
+        self, store: BrokerReconStore, tmp_path: Path
+    ) -> None:
+        reconciler = _reconciler(
+            store, tmp_path, client=_client(transactions=[_fill(transaction_id="8")])
+        )
+        try:
+            result = reconciler.reconcile(scope="cycle")
+        finally:
+            reconciler.close()
+
+        assert result.cursor is not None
+        snapshots = store.list_snapshots()
+        assert snapshots and snapshots[0].scope == "cycle"
 
 
-def test_allowed_scopes_constant_is_complete() -> None:
-    assert ALLOWED_SCOPES == frozenset({"startup", "cycle", "eod"})
+class TestUnexplainedDifferencesFreeze:
+    def test_foreign_position_freezes(
+        self, store: BrokerReconStore, tmp_path: Path
+    ) -> None:
+        reconciler = _reconciler(
+            store, tmp_path, client=_client(positions=[_foreign_position()])
+        )
+        try:
+            result = reconciler.reconcile(scope="cycle")
+        finally:
+            reconciler.close()
+
+        assert result.clean is False
+        assert result.freeze_raised is True
+        assert store.has_open_freeze() is True
+
+    def test_eod_scope_records_but_does_not_freeze(
+        self, store: BrokerReconStore, tmp_path: Path
+    ) -> None:
+        reconciler = _reconciler(
+            store, tmp_path, client=_client(positions=[_foreign_position()])
+        )
+        try:
+            result = reconciler.reconcile(scope="eod")
+        finally:
+            reconciler.close()
+
+        assert result.clean is False
+        assert result.freeze_raised is False
+        assert store.has_open_freeze() is False
+
+    def test_unknown_scope_is_rejected(
+        self, store: BrokerReconStore, tmp_path: Path
+    ) -> None:
+        reconciler = _reconciler(store, tmp_path, client=_client())
+        try:
+            with pytest.raises(ValueError, match="unknown reconciliation scope"):
+                reconciler.reconcile(scope="garbage")
+        finally:
+            reconciler.close()
 
 
-def test_reconciler_config_rejects_unknown_scope() -> None:
-    config = ReconcilerConfig()
-    snapshot = type("S", (), {"all_match": True})()
-    with pytest.raises(ValueError, match="unknown reconciliation scope"):
-        config.should_freeze("garbage", snapshot)
+class TestUnconfiguredBroker:
+    def test_records_non_matching_snapshot_and_freezes_startup(
+        self, store: BrokerReconStore
+    ) -> None:
+        result = record_broker_not_configured(store, scope="startup")
+
+        assert result.clean is False
+        assert result.freeze_raised is True
+        assert store.has_open_freeze() is True
+        snapshots = store.list_snapshots()
+        assert snapshots[0].all_match is False
+
+    def test_eod_scope_never_freezes_even_when_unconfigured(
+        self, store: BrokerReconStore
+    ) -> None:
+        result = record_broker_not_configured(store, scope="eod")
+
+        assert result.freeze_raised is False
+        assert store.has_open_freeze() is False
+
+    def test_unknown_scope_is_rejected(self, store: BrokerReconStore) -> None:
+        with pytest.raises(ValueError, match="unknown reconciliation scope"):
+            record_broker_not_configured(store, scope="garbage")
+
+
+class TestScopeAndPolicyConstants:
+    def test_allowed_scopes_constant_is_complete(self) -> None:
+        assert ALLOWED_SCOPES == frozenset({"startup", "cycle", "eod"})
+
+    def test_reconciler_config_rejects_unknown_scope(self) -> None:
+        with pytest.raises(ValueError, match="unknown reconciliation scope"):
+            ReconcilerConfig().should_freeze("garbage")
+
+    def test_reconciler_config_defaults_freeze_startup_and_cycle(self) -> None:
+        config = ReconcilerConfig()
+
+        assert config.should_freeze("startup") is True
+        assert config.should_freeze("cycle") is True
+        assert config.should_freeze("eod") is False
+
+
+class TestFreezeStore:
+    def test_clear_freeze_resets_open_state(self, store: BrokerReconStore) -> None:
+        store.raise_freeze(reason="manual", source="test")
+        assert store.has_open_freeze() is True
+
+        event = store.list_freezes(only_open=True)[0]
+        store.clear_freeze(event_id=event.event_id, reason="manual unfreeze")
+
+        assert store.has_open_freeze() is False
+
+    def test_clear_unknown_freeze_raises(self, store: BrokerReconStore) -> None:
+        with pytest.raises(ValueError, match="unknown freeze event_id"):
+            store.clear_freeze(event_id="not-an-event")
+
+    def test_snapshot_listing_returns_recent_first(
+        self, store: BrokerReconStore
+    ) -> None:
+        for scope in ("startup", "cycle", "eod"):
+            store.record_snapshot(
+                scope=scope,
+                orders_match=True,
+                fills_match=True,
+                cash_match=True,
+                positions_match=True,
+            )
+
+        snapshots = store.list_snapshots()
+
+        assert len(snapshots) == 3
+        assert snapshots[0].scope == "eod"

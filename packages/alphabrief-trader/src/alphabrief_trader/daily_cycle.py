@@ -147,6 +147,10 @@ class DailyTradingCycle:
         clock: Callable[[], datetime] | None = None,
         cycle_id_factory: Callable[[], str] | None = None,
         max_order_value: Decimal | None = None,
+        quantity_override: Decimal | None = None,
+        direction_override: str | None = None,
+        override_reason: str | None = None,
+        trading_mode: str = "off",
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -154,6 +158,17 @@ class DailyTradingCycle:
             raise TypeError("risk_gate is required")
         if execution_backend is None:
             raise TypeError("execution_backend is required")
+        if direction_override is not None:
+            if direction_override not in {"long", "short"}:
+                raise ValueError("direction_override must be 'long' or 'short'")
+            if not (override_reason or "").strip():
+                # The vertical-slice exception is only allowed with a
+                # recorded reason (PROJECT_GUIDE S3-5).
+                raise ValueError("direction_override requires a non-empty reason")
+        if quantity_override is not None and quantity_override <= 0:
+            raise ValueError("quantity_override must be positive")
+        if trading_mode not in {"on", "off"}:
+            raise ValueError("trading_mode must be 'on' or 'off'")
         if store is None:
             raise TypeError("store is required")
         if snapshot_loader is None:
@@ -162,6 +177,10 @@ class DailyTradingCycle:
         self._risk_gate = risk_gate
         self._execution_backend = execution_backend
         self._max_order_value = max_order_value
+        self._quantity_override = quantity_override
+        self._direction_override = direction_override
+        self._override_reason = override_reason
+        self._trading_mode = trading_mode
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -373,6 +392,18 @@ class DailyTradingCycle:
                 now=now,
             )
 
+        if self._trading_mode != "on":
+            # PROJECT_GUIDE 4.1: with trading off the cycle still runs the
+            # committee and the risk gate, then stops here.
+            return self._attempt_record(
+                intent=intent,
+                decision=decision,
+                outcome="blocked_trading_off",
+                execution_result=None,
+                now=now,
+                error_message="NO_TRADE_TRADING_OFF",
+            )
+
         try:
             execution_result = self._execution_backend.submit(
                 intent,
@@ -399,8 +430,8 @@ class DailyTradingCycle:
             now=now,
         )
 
-    @staticmethod
     def _materialize_intent(
+        self,
         *,
         plan: TradePlan,
         snapshot: MarketSnapshot,
@@ -408,6 +439,28 @@ class DailyTradingCycle:
         now: datetime,
     ) -> OrderIntent:
         side: OrderSide = "buy" if plan.side == "buy" else "sell"
+        rationale = plan.rationale
+        if self._direction_override is not None:
+            # Vertical-slice exception (PROJECT_GUIDE S3-5): the committee
+            # output is recorded unchanged; only the direction and the
+            # fixed quantity come from the command line, and the reason is
+            # part of the persisted intent.
+            side = "buy" if self._direction_override == "long" else "sell"
+            rationale = (
+                f"{plan.rationale} [direction overridden: "
+                f"{self._override_reason}]"
+            )
+        if self._quantity_override is not None:
+            return OrderIntent(
+                intent_id=intent_id,
+                source="manual",
+                symbol=plan.symbol,
+                side=side,
+                order_type="market",
+                quantity=self._quantity_override,
+                rationale=rationale,
+                created_at=now,
+            )
         return OrderIntent(
             intent_id=intent_id,
             source="model",
@@ -415,7 +468,7 @@ class DailyTradingCycle:
             side=side,
             order_type="market",
             target_position_pct=plan.target_position_pct,
-            rationale=plan.rationale,
+            rationale=rationale,
             created_at=now,
         )
 

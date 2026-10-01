@@ -106,6 +106,7 @@ def _cycle(
         store=store,
         snapshot_loader=lambda s: _snapshot(s),
         enabled=True,
+            trading_mode="on",
         clock=lambda: datetime(2026, 8, 13, 12, 0, tzinfo=UTC),
     )
 

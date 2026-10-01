@@ -26,15 +26,17 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 import duckdb
 from alphabrief_core import paths as _paths
 
 from alphabrief_execution.broker.errors import BrokerTransientError
+from alphabrief_execution.broker.oanda.live_reconciliation import (
+    LiveReconcileResult,
+)
 from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import ReconciliationRunner
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -372,6 +374,12 @@ class BrokerAvailabilityTracker:
         self._alert_emitted_for_outage = False
 
 
+class ReconcilerLike(Protocol):
+    """The slice of the reconciler the scheduler depends on."""
+
+    def reconcile(self, *, scope: str = "cycle") -> LiveReconcileResult: ...
+
+
 class OperationsScheduler:
     """Long-running asyncio scheduler for paper broker operations."""
 
@@ -381,8 +389,8 @@ class OperationsScheduler:
         tasks: list[ScheduledTask],
         heartbeat_store: HeartbeatStore,
         alert_sink: AlertSink,
-        recon_runner: ReconciliationRunner,
         recon_store: BrokerReconStore,
+        recon_runner: ReconcilerLike | None = None,
         config: SchedulerConfig | None = None,
         clock: Callable[[], datetime] | None = None,
         broker_tracker: BrokerAvailabilityTracker | None = None,
@@ -408,15 +416,17 @@ class OperationsScheduler:
         self._stop.set()
 
     async def run(self) -> None:
-        if self._config.reconcile_on_start:
-            result = await self._recon.reconcile(scope="startup")
+        if self._config.reconcile_on_start and self._recon is not None:
+            # The live reconciler is synchronous (urllib); run it off the
+            # event loop so a slow broker probe cannot stall the scheduler.
+            result = await asyncio.to_thread(self._recon.reconcile, scope="startup")
             if result.freeze_raised:
                 await self._alert_sink.emit(
                     severity="critical",
                     source="scheduler",
                     message="startup reconciliation raised freeze; scheduler exiting",
                     task_name="reconcile",
-                    payload={"snapshot_id": result.snapshot.snapshot_id},
+                    payload={"cursor": result.cursor},
                 )
                 raise SchedulerStartupBlockedError(
                     "startup reconciliation raised a freeze; manual unfreeze required"
@@ -535,7 +545,7 @@ def build_default_tasks(
     """Return the default task list (Phase 18 reconcile + Phase 26 AI).
 
     ``on_reconcile(scope)`` is supplied by the application; it should
-    call ``ReconciliationRunner.reconcile(scope=scope)``.
+    call ``LiveReconciler.reconcile(scope=scope)``.
 
     ``on_ai_cycle`` is optional. When supplied, the scheduler registers
     a disabled-by-default ``ai_daily_cycle`` task — the operator enables

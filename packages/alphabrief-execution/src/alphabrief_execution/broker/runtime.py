@@ -126,17 +126,24 @@ def resolve_data_dir(environ: dict[str, str] | None = None) -> Path:
     return _paths.data_dir(environ)
 
 
-def build_oanda_paper_adapter(
+def build_oanda_paper_client(
     *,
     config_path: Path | str | None = None,
-) -> BrokerAdapter:
-    """Build one OANDA practice adapter, fail-closed on missing credentials.
+) -> OandaHttpClient:
+    """Build the OANDA practice HTTP client, fail-closed on missing credentials.
 
-    A live base URL override may be supplied via
-    :data:`ENV_BASE_URL_OVERRIDE` for tests pointing at mock servers; an
-    ``http://`` scheme is permitted there (``allow_insecure_base_url``)
-    and must not point at live trading.
+    Raises :class:`BrokerAuthError` when credentials are absent, so
+    callers that need the raw client (reconciliation, market sync) fail
+    closed instead of silently working against nothing.
     """
+    return OandaHttpClient(config=oanda_paper_transport_config(config_path=config_path))
+
+
+def oanda_paper_transport_config(
+    *,
+    config_path: Path | str | None = None,
+) -> OandaPaperConfig:
+    """Resolve the practice transport configuration (paper hosts only)."""
     override = os.environ.get(ENV_BASE_URL_OVERRIDE)
     if override:
         config = OandaPaperConfig(
@@ -157,8 +164,16 @@ def build_oanda_paper_adapter(
                 max_retries=DEFAULT_MAX_RETRIES,
                 retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
             )
+    return config
+
+
+def build_oanda_paper_adapter(
+    *,
+    config_path: Path | str | None = None,
+) -> BrokerAdapter:
+    """Build one OANDA practice adapter, fail-closed on missing credentials."""
     try:
-        client = OandaHttpClient(config=config)
+        client = build_oanda_paper_client(config_path=config_path)
     except BrokerAuthError:
         return NullBrokerAdapter()
     return OandaPaperAdapter(client=client)
