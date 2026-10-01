@@ -9,11 +9,11 @@
 | 字段 | 值 |
 |---|---|
 | 当前阶段 | **S3 打通一单（垂直切片）** |
-| 状态 | `WAITING_OWNER_LOGIN` |
-| 下一项任务 | S3-4/S3-5 垂直切片（下单 + 平仓 + 对账）——需要 S2-5 完成一次 ChatGPT 授权 |
+| 状态 | `IN_PROGRESS` |
+| 下一项任务 | S3-4/S3-5 垂直切片：`cycle run --once --instrument EUR_USD --units 1000 --trading on` → 对账 → 平仓 → 再对账 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-09-30，S3-1 完成；S2-5 等待用户授权（不阻塞 S3-2/S3-3） |
+| 最近更新 | 2026-10-01，S2 全部完成（主通道真实可用）；开始 S3-4/S3-5 垂直切片 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -73,6 +73,22 @@
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
+#### S2 完成证据（2026-10-01）
+
+- S2-5 用户完成授权后实测：`alphabrief model status --compact` → `{"primary": {"authorized": true, "inference_scope": true, "refresh_token_present": true, "expires_at": "2026-10-01T07:50:35Z", "scopes": ["chatgpt.tokens.use.direct","email","offline_access","openid","profile","resource.invoke"], "default_model": "gpt-6-astra", ...}}`；`alphabrief model test --compact` → `{"ok": true, "channel": "chatgpt_plan", "model": "gpt-6-astra", "text": "{\"ok\": true}", "parsed_ok": true, "parsed": {"ok": true}, "input_tokens": 18, "output_tokens": 9, "latency_ms": 2297}`，调用记录已落库（`ModelCallStore.list_calls` → 1 条，provider=chatgpt_plan、model=gpt-6-astra、status=succeeded、latency_ms=3270、tokens 18/9）。`pytest -m practice` → 5 passed（行情入库、下单序列化、对账、通道登录态、通道真实调用）。
+- 真实响应与文档不一致处（按 GUIDE 8.6 以真实响应为准）：订阅通道的模型目录实际返回 `{"models": [{"slug", "visibility", "display_name", ...}]}`（`visibility` 取值 `list`/`hide`），而公开文档描述的是 OpenAI 风格的 `data[].id` + `visibility == "list"`。`fetch_model_slugs` 现在同时接受两种形状并仍按 `visibility == "list"` 过滤；实测该账号可见模型 5 个（gpt-6-astra、gpt-5.6-sol、gpt-5.6-terra、gpt-5.6-luna、gpt-5.5），逐个用文档化的 Responses 调用（`store=false`、`stream=true`）探测均返回 HTTP 200 且含 `response.completed`；默认模型取目录中第一个可见项 `gpt-6-astra`（可用 `config/alphabrief.yaml: model.primary_model` 覆盖）。
+- 同时修掉一个真实流解析缺陷：真实流会同时发送 `response.output_text.delta` 与 `response.output_item.done`，旧实现把两者都拼接导致文本重复（`{"ok": true}{"ok": true}`），现已改为"优先 deltas，仅在无 deltas 时用完成项/完成响应的文本"，并补了回归测试。`model test` 现在把调用记录持久化到 `ModelCallStore`（此前只留在内存）。
+
+#### S4 证据（进行中）
+
+- S4-1 第二部分（进行中，提交见下）：新增 `alphabrief_execution.broker.oanda.risk_sources.OandaRiskContextSources`，从真实 practice 端点取风控上下文所需事实：`/summary`（balance/NAV/marginUsed/marginAvailable/币种）、`/positions`（多空分开 + 均价）、`/orders?state=PENDING`、`/trades`、`/pricing`（bid/ask + 本币换算因子）、`/instruments`（目录版本）、对账状态改读持久化 recon store（frozen/clean/unknown，不再恒为 unknown）、健康状态由账户摘要探测；报价覆盖"配置品种 ∪ 当前持仓 ∪ 挂单品种"。`OandaPaperAdapter` 增加只读 `client` 访问器以便构造这些来源。**该模块尚未接入执行后端默认路径**（当前仅新增模块与访问器，运行时行为未变），接入与测试是 S4-1 的下一步。命令与结果：`pytest -q -m "not practice"` → 2417 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (408 files)。
+
+- S4-1 第一部分（本提交）：新增 `alphabrief_trader.data_quality`（版本化规则：报价必须为正、`data_version` 非空、`captured_at` 必须带时区且不晚于当前时间、年龄超过 2 小时判为过期；任何缺陷都失败闭合并给出稳定原因串），`DailyTradingCycle` 的三处风控调用不再写死 `data_quality_passed=True`，改为传入真实判定结果（过期/不完整输入会被 RiskGate 规则 5 拒绝并记录原因，绝不假定通过）。同时删除两处冗余的 `require_data_quality_passed=True`（`RiskLimitConfig` 的字段默认值本就是 True，策略只保留在一处）。命令与结果：`grep -rn "data_quality_passed=True" packages apps` → 无输出；`pytest -q -m "not practice"` → 2417 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (407 files)；新增 `tests/test_data_quality.py` 7 个用例（新鲜通过、过期带年龄、临界值通过、未来时间失败、verdict JSON 安全、过期输入被风控拒绝且不下单、新鲜输入成交）。为保持既有用例语义，`tests/test_ai_trader_daily_cycle.py` 与 `tests/test_ai_trader_idempotency.py` 注入与快照时间一致的时钟（它们验证的是执行路径，不是新鲜度）。
+
+#### 环境修复（2026-09-30，S3 期间）
+
+- 本地 `.env`（未跟踪）里的 `ALPHABRIEF_DATA_DIR=data/local` 是相对路径，S1-5 之后 `alphabrief_core.paths` 按 GUIDE 4.3 对相对路径直接报错，导致所有 CLI 命令都会抛 traceback。已把该行改成绝对路径 `/Users/jeremyliu/Library/Application Support/AlphaBrief`（备份在 /tmp），并在 CLI 增加环境守卫：`--help` 不受影响，路径不合法时输出一行 `error: ... must be an absolute path` 并退出码 2（不再打印 traceback）。新增 `tests/test_cli_environment_guard.py` 4 个用例（相对路径退出码 2 且无 traceback、绝对路径可用、`--help` 可用、`ALPHABRIEF_HOME` 同样要求绝对路径）。命令与结果：`pytest -q -m "not practice"` → 2410 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (405 files)。
+
 #### S3 证据（进行中）
 
 - S3-4/S3-5 命令面（本提交）：新增 `alphabrief cycle run --once --instrument --units --trading on|off [--force-direction long|short --reason TEXT]` 与 `alphabrief cycle close --instrument [--trading]`。`DailyTradingCycle` 新增三项安全机制：`trading_mode`（默认 off，off 时跑完委员会与风控后在下单前停下并记录 `blocked_trading_off` + `NO_TRADE_TRADING_OFF`）、`quantity_override`（首单固定 1000 units，覆盖仓位计算）、`direction_override`（垂直切片例外：必须带 reason，只改方向，委员会原始输出照常落库，reason 写进 intent rationale）。scheduler 的无人值守轮次改读 `ALPHABRIEF_TRADING_MODE`（默认 off）。CLI 拒绝不在受审universe内的品种、拒绝无 reason 的 `--force-direction`。测试 `tests/test_cycle_commands.py` 15 个：trading off 不下单、trading on 下单、固定 units 覆盖仓位、无覆盖时用委员会仓位、方向覆盖需 reason、方向覆盖只改方向且委员会输出不变、CLI 参数校验。命令与结果：`pytest -q -m "not practice"` → 2406 passed / 5 deselected；`mypy` → Success (404 files)；`ruff` → All checks passed；`secret_scan` → exit 0。真实下单与平仓仍待 S2-5 授权后执行（S3-4/S3-5 未勾选）。
@@ -120,7 +136,7 @@
 - [x] S2-3 完整的调用记录；委员会构建时传入记录器
 - [x] S2-4 确定性测试，加一个 practice 测试（practice 待登录后通过）
 - [ ] S2-5 用户完成 ChatGPT 授权
-- [ ] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库（等 S2-5）
+- [x] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库（2026-10-01 实测）
 
 ### S3 打通一单
 - [x] S3-1 OANDA K 线和报价入库
@@ -131,7 +147,7 @@
 - [ ] 退出标准：`lastTransactionID` 增加并有 `ORDER_FILL` 和止损止盈单；全链路可追溯；对账干净
 
 ### S4 风控与决策补全
-- [ ] S4-1 真实风控上下文；删除伪造上下文和写死的 `data_quality_passed=True`
+- [~] S4-1 真实风控上下文：已删除写死的 `data_quality_passed=True`（改为真实输入质量判定）；伪造账户上下文的删除仍在进行
 - [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch
 - [ ] S4-3 真实的策略版本哈希和输入哈希
 - [ ] S4-4 影子评估、日报、预算

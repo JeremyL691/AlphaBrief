@@ -42,12 +42,15 @@ _BULLISH_PAYLOAD: dict[str, object] = {
 }
 
 
+SNAPSHOT_NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+
 def _snapshot(symbol: str) -> MarketSnapshot:
     return MarketSnapshot(
         symbol=symbol,
         reference_price=Decimal("100"),
         data_version="test-v1",
-        captured_at=datetime(2026, 1, 1, tzinfo=UTC),
+        captured_at=SNAPSHOT_NOW,
     )
 
 
@@ -106,8 +109,8 @@ def _cycle(
         store=store,
         snapshot_loader=lambda s: _snapshot(s),
         enabled=True,
-            trading_mode="on",
-        clock=lambda: datetime(2026, 8, 13, 12, 0, tzinfo=UTC),
+        trading_mode="on",
+        clock=lambda: SNAPSHOT_NOW,
     )
 
 
@@ -140,7 +143,7 @@ class TestCycleIdempotency:
                 symbol="SPY",
                 reference_price=Decimal("150"),
                 data_version="test-v1",
-                captured_at=datetime(2026, 1, 1, tzinfo=UTC),
+                captured_at=SNAPSHOT_NOW,
             ),
             enabled=True,
             clock=lambda: datetime(2026, 8, 13, 12, 0, tzinfo=UTC),
@@ -157,7 +160,7 @@ class TestCycleIdempotency:
             symbol="SPY",
             reference_price=Decimal("150"),
             data_version="test-v1",
-            captured_at=datetime(2026, 1, 1, tzinfo=UTC),
+            captured_at=SNAPSHOT_NOW,
         )
         assert _snapshot_fingerprint({"SPY": snap_a}) == _snapshot_fingerprint(
             {"SPY": snap_b}

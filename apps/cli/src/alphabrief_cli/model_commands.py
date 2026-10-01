@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import typer
+from alphabrief_core import paths as _paths
 from alphabrief_core import redact
 from alphabrief_models.channels import (
     build_channel_gateway,
@@ -162,12 +163,19 @@ def test_cmd(
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Run one real call and print the parsed result plus the call record."""
+    from alphabrief_api.db.model_call import ModelCallStore
     from alphabrief_models.gateway import ModelCallRecord, ModelRequest
     from alphabrief_models.structured_output import parse_structured_output
 
     records: list[ModelCallRecord] = []
+    call_store = ModelCallStore(db_path=_paths.db_path())
+
+    def _persist(record: ModelCallRecord) -> None:
+        records.append(record)
+        call_store.save_call(record)
+
     channels = build_channel_gateway(
-        record_sink=records.append,
+        record_sink=_persist,
         credentials=load_credentials(),
     )
     credentials = load_credentials()
@@ -185,7 +193,10 @@ def test_cmd(
         input_text=prompt,
         required_capabilities=["text_generation"],
     )
-    result = channels.invoke(request)
+    try:
+        result = channels.invoke(request)
+    finally:
+        call_store.close()
     if result.response is None:
         _dump(
             _error_payload(

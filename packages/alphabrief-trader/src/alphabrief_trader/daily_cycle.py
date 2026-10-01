@@ -55,6 +55,7 @@ from alphabrief_trader.cycle_execution import (
 )
 from alphabrief_trader.cycle_schedule import CatchUpPolicy, CatchUpVerdict
 from alphabrief_trader.cycle_state import CYCLE_PHASE_ORDER, CycleStateMachine
+from alphabrief_trader.data_quality import evaluate_snapshot_quality
 from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
 from alphabrief_trader.execution_backend import (
     ExecutionBackend,
@@ -367,11 +368,14 @@ class DailyTradingCycle:
         except ExecutionBackendError:
             estimated_quantity = None
 
+        quality = evaluate_snapshot_quality(snapshot, now=now)
         decision: RiskDecision = self._risk_gate.evaluate(
             intent,
             estimated_price=price,
             estimated_quantity=estimated_quantity,
-            data_quality_passed=True,
+            # The real input-quality verdict (PROJECT_GUIDE 5.7 rule 5):
+            # stale or incomplete inputs are rejected, never assumed.
+            data_quality_passed=quality.passed,
         )
 
         if not decision.approved:
@@ -855,11 +859,14 @@ class DurableDailyCycle:
                 intent_id=f"ai_{uuid4().hex[:12]}",
                 now=self._clock(),
             )
+            quality = evaluate_snapshot_quality(
+                snapshot, now=self._clock()
+            )
             decision = self._trading._risk_gate.evaluate(
                 intent,
                 estimated_price=snapshot.reference_price,
                 estimated_quantity=None,
-                data_quality_passed=True,
+                data_quality_passed=quality.passed,
             )
             decision_ids.append(decision.decision_id)
         self._state_machine.advance(
@@ -933,11 +940,14 @@ class DurableDailyCycle:
                 now=self._clock(),
             )
             chain.intent_ids.append(intent.intent_id)
+            quality = evaluate_snapshot_quality(
+                snapshot, now=self._clock()
+            )
             decision = self._trading._risk_gate.evaluate(
                 intent,
                 estimated_price=snapshot.reference_price,
                 estimated_quantity=None,
-                data_quality_passed=True,
+                data_quality_passed=quality.passed,
             )
             chain.decision_ids.append(decision.decision_id)
             if not decision.approved:

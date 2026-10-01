@@ -7,6 +7,8 @@ together.
 from __future__ import annotations
 
 import typer
+from alphabrief_core import paths as _paths
+from alphabrief_core.paths import PathConfigError
 
 from alphabrief_cli.ai_commands import ai_app
 from alphabrief_cli.audit_commands import audit_app
@@ -44,6 +46,25 @@ app.add_typer(broker_app, name="broker")
 app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(serve_app, name="serve")
 app.add_typer(ai_app, name="ai")
+
+
+@app.callback()
+def _validate_environment() -> None:
+    """Fail with an actionable message when the environment is unusable.
+
+    The data directory must be an absolute path (PROJECT_GUIDE 4.3). A
+    relative value is a configuration error the operator must fix, so it
+    is reported as a one-line message instead of a traceback.
+    """
+    import sys
+
+    if any(argument in {"--help", "-h"} for argument in sys.argv[1:]):
+        return
+    try:
+        _paths.data_dir()
+    except PathConfigError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
 
 
 __all__ = ["app"]
