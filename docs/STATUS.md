@@ -9,11 +9,11 @@
 | 字段 | 值 |
 |---|---|
 | 当前阶段 | **S5 常驻运行时** |
-| 状态 | `IN_PROGRESS` |
+| 状态 | `IN_PROGRESS`（用户要求暂停，见最近更新） |
 | 下一项任务 | S5 余下：LaunchAgent `ai.alphabrief.backend`（`service install|uninstall|status`）、macOS 通知、备份与恢复命令、行情/点差样本的 HTTP 端点；随后 S5 退出标准的 `kill -9` 重启实测（需 practice 环境） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S5 第三批：CLI-over-HTTP（后台在线时写命令拒绝、只读走 HTTP，修掉 is_api_running 生产误判） |
+| 最近更新 | 2026-10-01，S5 第三批：CLI-over-HTTP 完成；**用户要求暂停任务**（工作区干净、无残留后台进程、单实例锁空闲；下一项为 S5 余下的 LaunchAgent/macOS 通知/备份恢复命令） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
