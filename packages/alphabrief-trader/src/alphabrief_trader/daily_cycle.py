@@ -90,11 +90,18 @@ from alphabrief_trader.schemas import (
     OrderAttempt,
     TradePlan,
 )
+from alphabrief_trader.shadow import (
+    ShadowDecision,
+    ShadowSide,
+    build_shadow_decisions,
+    committee_side,
+)
 from alphabrief_trader.sizing import SizingError, SizingInputs, size_entry
 from alphabrief_trader.stops import StopComputationError, protective_prices
 
 SnapshotLoader = Callable[[str], MarketSnapshot | None]
 SizingProvider = Callable[[str], "SizingInputs | None"]
+ShadowRecorder = Callable[[list[ShadowDecision]], None]
 
 
 def _snapshot_fingerprint(snapshots: dict[str, MarketSnapshot]) -> str:
@@ -172,6 +179,7 @@ class DailyTradingCycle:
         sizing_provider: SizingProvider | None = None,
         model_budget: ModelBudgetGuard | None = None,
         model_channel: str = CHATGPT_PLAN_CHANNEL,
+        shadow_recorder: ShadowRecorder | None = None,
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -216,6 +224,9 @@ class DailyTradingCycle:
         # calling the model instead of burning the remaining quota.
         self._model_budget = model_budget
         self._model_channel = model_channel
+        # Shadow evaluation (PROJECT_GUIDE 5.11): every round records the
+        # five benchmarks side by side. Recording never places an order.
+        self._shadow_recorder = shadow_recorder
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -319,6 +330,17 @@ class DailyTradingCycle:
                 blocked_outcome, blocked_reason = budget_block
                 overall_outcome = blocked_outcome
                 committee_role_errors.append(blocked_reason)
+                # The deterministic benchmarks (momentum, random, no_trade)
+                # and the skipped committee entry are still recorded: the
+                # shadow series must not have holes on days the model
+                # channel is unavailable (PROJECT_GUIDE 5.11).
+                self._record_shadow(
+                    cycle_id=cycle_id,
+                    snapshot=snapshot,
+                    now=now,
+                    plan=None,
+                    detail=f"skipped: {blocked_reason}",
+                )
                 continue
 
             payload = CommitteeInput(snapshot=snapshot, time_horizon=time_horizon)
@@ -327,9 +349,26 @@ class DailyTradingCycle:
             if not result.ok or result.plan is None:
                 committee_role_errors.extend(result.role_errors)
                 self._record_channel_unavailability(result.role_errors)
+                self._record_shadow(
+                    cycle_id=cycle_id,
+                    snapshot=snapshot,
+                    now=now,
+                    plan=None,
+                    detail="committee produced no plan",
+                )
                 continue
             plan = result.plan
             all_plans.append(plan)
+            self._record_shadow(
+                cycle_id=cycle_id,
+                snapshot=snapshot,
+                now=now,
+                plan=plan,
+                detail=(
+                    f"side={plan.side} target={plan.target_position_pct} "
+                    f"confidence={plan.confidence}"
+                ),
+            )
 
             if plan.blocked_by_ethics:
                 # Ethics veto is absolute: no override applies.
@@ -504,6 +543,53 @@ class DailyTradingCycle:
             execution_result=execution_result,
             now=now,
         )
+
+    def _record_shadow(
+        self,
+        *,
+        cycle_id: str,
+        snapshot: MarketSnapshot,
+        now: datetime,
+        plan: TradePlan | None,
+        detail: str,
+    ) -> None:
+        """Record the five shadow decisions for one symbol (5.11).
+
+        Nothing here can place an order: the benchmarks are recorded for
+        later scoring only, and a benchmark without usable inputs is
+        recorded as skipped rather than guessed.
+        """
+        if self._shadow_recorder is None:
+            return
+        momentum: ShadowSide | None = None
+        momentum_detail = "skipped: no 20-day history"
+        if snapshot.momentum_20d_pct is not None:
+            if snapshot.momentum_20d_pct > 0:
+                momentum = "long"
+            elif snapshot.momentum_20d_pct < 0:
+                momentum = "short"
+            else:
+                momentum = "flat"
+            momentum_detail = f"20d return {snapshot.momentum_20d_pct}%"
+        decisions = build_shadow_decisions(
+            cycle_id=cycle_id,
+            symbol=snapshot.symbol,
+            decided_at=now,
+            entry_mid=snapshot.reference_price,
+            committee=committee_side(
+                side=None if plan is None else plan.side,
+                target_position_pct=(
+                    None if plan is None else plan.target_position_pct
+                ),
+            ),
+            committee_detail=detail,
+            momentum=momentum,
+            momentum_detail=momentum_detail,
+            single_call=None,
+            single_call_detail="skipped: the single-call benchmark needs a "
+            "budgeted model call",
+        )
+        self._shadow_recorder(list(decisions))
 
     def _budget_block(self) -> tuple[CycleOutcome, str] | None:
         """The outcome/reason when the model channel may not be called now."""

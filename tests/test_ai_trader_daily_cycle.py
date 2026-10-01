@@ -410,6 +410,91 @@ class TestModelBudgetGate:
         assert record.outcome == "executed"
 
 
+class TestShadowRecording:
+    """PROJECT_GUIDE 5.11: five benchmarks recorded per symbol, no orders."""
+
+    def _cycle(self, store: AiTradingStore, recorder: object) -> DailyTradingCycle:
+        return DailyTradingCycle(
+            committee=_build_committee(_BULLISH_PAYLOAD),
+            risk_gate=_build_risk_gate(["SPY"]),
+            execution_backend=_build_execution_backend(),
+            store=store,
+            snapshot_loader=lambda s: _snapshot(s),
+            enabled=True,
+            trading_mode="off",
+            clock=lambda: SNAPSHOT_NOW,
+            shadow_recorder=recorder,  # type: ignore[arg-type]
+        )
+
+    def test_five_benchmarks_are_recorded_per_symbol(
+        self, store: AiTradingStore
+    ) -> None:
+        recorded: list[object] = []
+        self._cycle(store, recorded.extend).run(["SPY"])
+
+        assert len(recorded) == 5
+        benchmarks = [decision.benchmark for decision in recorded]  # type: ignore[attr-defined]
+        assert benchmarks == [
+            "committee",
+            "single_call",
+            "momentum",
+            "random",
+            "no_trade",
+        ]
+        committee = recorded[0]
+        assert committee.side == "long"  # type: ignore[attr-defined]
+        # Recording never submits: trading is off and nothing was attempted.
+        assert recorded[0].entry_mid == Decimal("100")  # type: ignore[attr-defined]
+
+    def test_no_plan_still_records_the_benchmarks(
+        self, store: AiTradingStore
+    ) -> None:
+        recorded: list[object] = []
+        cycle = DailyTradingCycle(
+            committee=_build_committee(_HOLD_PAYLOAD),
+            risk_gate=_build_risk_gate(["SPY"]),
+            execution_backend=_build_execution_backend(),
+            store=store,
+            snapshot_loader=lambda s: _snapshot(s),
+            enabled=True,
+            trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
+            shadow_recorder=recorded.extend,
+        )
+        record = cycle.run(["SPY"])
+
+        assert record.outcome == "skipped_no_intent"
+        assert len(recorded) == 5
+        committee = recorded[0]
+        # A hold plan carries a zero target, so the committee benchmark is
+        # flat — the shadow record never invents a direction.
+        assert committee.side == "flat"  # type: ignore[attr-defined]
+        assert "target=0" in committee.detail  # type: ignore[attr-defined]
+
+    def test_momentum_uses_the_20_day_return(self, store: AiTradingStore) -> None:
+        recorded: list[object] = []
+        snapshot = _snapshot("SPY").model_copy(
+            update={"momentum_20d_pct": Decimal("-1.5")}
+        )
+        cycle = DailyTradingCycle(
+            committee=_build_committee(_BULLISH_PAYLOAD),
+            risk_gate=_build_risk_gate(["SPY"]),
+            execution_backend=_build_execution_backend(),
+            store=store,
+            snapshot_loader=lambda s: snapshot,
+            enabled=True,
+            trading_mode="off",
+            clock=lambda: SNAPSHOT_NOW,
+            shadow_recorder=recorded.extend,
+        )
+        cycle.run(["SPY"])
+
+        momentum = next(
+            decision for decision in recorded if decision.benchmark == "momentum"  # type: ignore[attr-defined]
+        )
+        assert momentum.side == "short"  # type: ignore[attr-defined]
+
+
 class TestEnvHelpers:
     def test_ai_trading_enabled_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ALPHABRIEF_AI_TRADING_ENABLED", raising=False)

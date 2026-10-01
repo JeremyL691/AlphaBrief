@@ -115,6 +115,10 @@ class MarketSnapshot(_CommitteeSchema):
     atr: Decimal | None = None
     recent_return_pct: Decimal | None = None
     recent_volume: Decimal | None = None
+    #: 20-day return, used by the momentum shadow benchmark (5.11). It is
+    #: None when the stored history is too short — the benchmark is then
+    #: recorded as skipped instead of guessing a direction.
+    momentum_20d_pct: Decimal | None = None
     news_context: str | None = None
     macro_context: str | None = None
     data_version: str = Field(default="ai-trader-v1", min_length=1)
@@ -130,6 +134,7 @@ class MarketSnapshot(_CommitteeSchema):
         "atr",
         "recent_return_pct",
         "recent_volume",
+        "momentum_20d_pct",
         mode="before",
     )
     @classmethod
