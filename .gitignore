@@ -29,6 +29,8 @@ _reference_sources/
 .claude/
 .codegraph/
 .codebase-memory/
+.mimosa/
+.mimocode/
 
 # Autonomous loop checkpoints and command artifacts stay local.
 .agent-state/
