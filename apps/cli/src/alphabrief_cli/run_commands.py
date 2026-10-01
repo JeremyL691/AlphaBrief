@@ -37,8 +37,6 @@ from alphabrief_core import (
     DEFAULT_CATCH_UP_MINUTES,
     DEFAULT_SCHEDULE,
     PlannedEvent,
-    RuntimeLock,
-    RuntimeLockError,
     due_events,
 )
 from alphabrief_core import paths as _paths
@@ -321,9 +319,14 @@ def close_out_once(*, reason: str) -> int:
         _close_through_the_cycle,
         _risk_sources,
     )
+    from alphabrief_cli.scheduler_commands import trading_mode
 
-    if not oanda_is_configured():
+    if trading_mode() != "on":
         return 0
+    if not oanda_is_configured():
+        from alphabrief_execution.broker.errors import BrokerAuthError
+
+        raise BrokerAuthError("OANDA credentials are required for scheduled close-out")
     client = build_oanda_paper_client()
     positions = PositionOpsClient(client).list_positions().positions
     closed = 0
@@ -589,6 +592,7 @@ def run_cmd(
 ) -> None:
     """Start the API and the scheduler in one locked process."""
     from alphabrief_cli.scheduler_commands import (
+        _acquire_runtime_ownership,
         _ai_scheduler_universe,
         _configure_logging,
         _refuse_if_live_trading_unlocked,
@@ -598,48 +602,42 @@ def run_cmd(
     _refuse_if_live_trading_unlocked()
     _configure_logging()
     universe = _ai_scheduler_universe()
-    lock = RuntimeLock()
-    try:
-        lock.acquire()
-    except RuntimeLockError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(2)
-
-    runtime = Runtime(
-        host=host,
-        port=port,
-        universe=universe,
-        catch_up_minutes=catch_up_minutes,
-    )
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(runtime.start())
-
-        def _on_signal(signum: int, frame: object) -> None:
-            _LOGGER.info("runtime: stop requested (signal %s)", signum)
-            runtime.request_stop()
-
-        signal.signal(signal.SIGINT, _on_signal)
-        signal.signal(signal.SIGTERM, _on_signal)
-        _dump(
-            {
-                "status": "running",
-                "api": f"http://{host}:{port}",
-                "lock": str(lock.path),
-                "trading_mode": trading_mode(),
-                "universe": list(universe),
-                "catch_up_minutes": catch_up_minutes,
-                "pid": os.getpid(),
-            },
-            pretty=pretty,
+    ownership, lock = _acquire_runtime_ownership()
+    with ownership:
+        runtime = Runtime(
+            host=host,
+            port=port,
+            universe=universe,
+            catch_up_minutes=catch_up_minutes,
         )
-        loop.run_until_complete(runtime.run_forever())
-    finally:
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
-        lock.release()
-        _dump({"status": "stopped"}, pretty=pretty)
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(runtime.start())
+
+            def _on_signal(signum: int, frame: object) -> None:
+                _LOGGER.info("runtime: stop requested (signal %s)", signum)
+                runtime.request_stop()
+
+            signal.signal(signal.SIGINT, _on_signal)
+            signal.signal(signal.SIGTERM, _on_signal)
+            _dump(
+                {
+                    "status": "running",
+                    "api": f"http://{host}:{port}",
+                    "lock": str(lock.path),
+                    "trading_mode": trading_mode(),
+                    "universe": list(universe),
+                    "catch_up_minutes": catch_up_minutes,
+                    "pid": os.getpid(),
+                },
+                pretty=pretty,
+            )
+            loop.run_until_complete(runtime.run_forever())
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+            _dump({"status": "stopped"}, pretty=pretty)
 
 
 __all__ = [

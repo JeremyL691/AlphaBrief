@@ -22,6 +22,7 @@ accepted as a development/test alias with the same absolute-path rule.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -81,6 +82,18 @@ def runtime_lock_path(environ: Mapping[str, str] | None = None) -> Path:
     return data_dir(environ) / RUNTIME_LOCK_NAME
 
 
+def account_runtime_lock_path(account_id: str) -> Path:
+    """A per-user account lock independent of all data-directory overrides.
+
+    Account identifiers never appear in filenames or holder metadata.
+    """
+    normalized = account_id.strip()
+    if not normalized:
+        raise PathConfigError("an OANDA account is required for trading ownership")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return _DEFAULT_HOME / "account-locks" / f"{digest}.lock"
+
+
 def secrets_dir(environ: Mapping[str, str] | None = None) -> Path:
     """Return the directory holding credential files (mode 0600)."""
     path = data_dir(environ) / "secrets"
@@ -129,6 +142,7 @@ __all__ = [
     "ENV_HOME",
     "RUNTIME_LOCK_NAME",
     "PathConfigError",
+    "account_runtime_lock_path",
     "backups_dir",
     "cache_dir",
     "daily_reports_dir",

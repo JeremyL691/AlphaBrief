@@ -1012,7 +1012,8 @@ ChatGPT 订阅凭证不走环境变量，只通过 `alphabrief model login` 写�
 ```
 ~/Library/Application Support/AlphaBrief/
   alphabrief.duckdb          唯一数据库
-  runtime.lock               单实例锁
+  runtime.lock               数据目录单实例锁
+  account-locks/             账户哈希锁，固定在默认应用支持目录，不随 ALPHABRIEF_HOME/ALPHABRIEF_DATA_DIR 覆盖迁移
   secrets/                   0600：oanda.json、llm_fallback.json、chatgpt_oauth.json
   logs/                      结构化 JSON 日志（按天）
   reports/daily/             日报 .md / .json

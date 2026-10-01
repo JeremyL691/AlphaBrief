@@ -2,7 +2,8 @@
 
 Only one backend may run per data directory at a time, and only one
 backend may hold an OANDA account in ``trading_mode=on``. The lock is an
-advisory ``flock`` on ``runtime.lock`` in the data directory:
+advisory ``flock`` on ``runtime.lock`` in the data directory, plus an
+account lock in a fixed application-support directory for trading owners:
 
 * the holder writes its pid and start time into the file for diagnostics;
 * a second process fails immediately with ``Could not set lock`` rather
@@ -19,6 +20,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TextIO
 
 from alphabrief_core import paths as _paths
 
@@ -32,7 +34,7 @@ class RuntimeLock:
 
     def __init__(self, path: Path | None = None) -> None:
         self._path = Path(path) if path is not None else _paths.runtime_lock_path()
-        self._handle: object | None = None
+        self._handle: TextIO | None = None
 
     @property
     def path(self) -> Path:
@@ -76,9 +78,9 @@ class RuntimeLock:
         if handle is None:
             return
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
-            handle.close()  # type: ignore[attr-defined]
+            handle.close()
             self._handle = None
 
     def __enter__(self) -> RuntimeLock:
@@ -87,6 +89,11 @@ class RuntimeLock:
 
     def __exit__(self, *exc_info: object) -> None:
         self.release()
+
+
+def account_runtime_lock(account_id: str) -> RuntimeLock:
+    """Reuse the same crash-safe lock for account-level trading ownership."""
+    return RuntimeLock(_paths.account_runtime_lock_path(account_id))
 
 
 def lock_status(path: Path | None = None) -> dict[str, str] | None:
@@ -120,4 +127,4 @@ def lock_status(path: Path | None = None) -> dict[str, str] | None:
     return None
 
 
-__all__ = ["RuntimeLock", "RuntimeLockError", "lock_status"]
+__all__ = ["RuntimeLock", "RuntimeLockError", "account_runtime_lock", "lock_status"]

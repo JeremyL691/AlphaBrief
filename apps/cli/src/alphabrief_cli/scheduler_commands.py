@@ -27,6 +27,7 @@ import os
 import signal
 import sys
 from collections.abc import Awaitable, Callable
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +36,9 @@ from typing import Any, cast
 import typer
 from alphabrief_core import (
     PaperExecutionPolicy,
+    RuntimeLock,
+    RuntimeLockError,
+    account_runtime_lock,
     load_paper_execution_policy,
     load_settings,
 )
@@ -399,6 +403,24 @@ def trading_mode() -> str:
     """
     raw = os.environ.get("ALPHABRIEF_TRADING_MODE", "").strip().lower()
     return "on" if raw == "on" else "off"
+
+
+def _acquire_runtime_ownership() -> tuple[ExitStack, RuntimeLock]:
+    """Acquire directory and trading-account ownership before any runtime work."""
+    from alphabrief_execution.broker.errors import BrokerAuthError
+    from alphabrief_execution.broker.oanda.config import read_oanda_credentials
+
+    ownership = ExitStack()
+    try:
+        lock = ownership.enter_context(RuntimeLock())
+        if trading_mode() == "on":
+            _, account_id = read_oanda_credentials()
+            ownership.enter_context(account_runtime_lock(account_id))
+    except (RuntimeLockError, BrokerAuthError, OSError) as exc:
+        ownership.close()
+        print(f"error: {exc}", file=sys.stderr)
+        raise typer.Exit(code=2) from exc
+    return ownership, lock
 
 
 def _build_ai_committee(database: Path | None = None) -> TradingCommittee:
@@ -843,9 +865,12 @@ def run_cmd(
         ",".join(_ai_scheduler_universe()),
     )
 
-    heartbeats = _open_heartbeat_store()
-    recon_store = _open_recon_store()
-    try:
+    ownership, _ = _acquire_runtime_ownership()
+    with ownership:
+        heartbeats = _open_heartbeat_store()
+        ownership.callback(heartbeats.close)
+        recon_store = _open_recon_store()
+        ownership.callback(recon_store.close)
         alert_sink = AlertSink(heartbeat_store=heartbeats)
 
         _reconcile_once = _reconcile_runner(recon_store)
@@ -916,9 +941,6 @@ def run_cmd(
         except KeyboardInterrupt:
             scheduler.request_stop()
             print("scheduler: stopped")
-    finally:
-        heartbeats.close()
-        recon_store.close()
 
 
 __all__ = ["scheduler_app"]
