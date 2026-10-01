@@ -361,6 +361,110 @@ class _DisabledBackend:
         )
 
 
+@cycle_app.command("close-due")
+def close_due_cmd(
+    trading: TradingMode = typer.Option(  # noqa: B008
+        "on",
+        "--trading",
+        help="'on' submits the reduce-only orders; 'off' only reports.",
+    ),
+    pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
+) -> None:
+    """Close every position the policy says must close now (5.10).
+
+    Two time-based triggers: the weekend close-out (Friday 19:00 UTC
+    onward) and the maximum holding time. Protective orders filling at the
+    broker are handled by the broker itself.
+    """
+    if not oanda_is_configured():
+        _exit_error(
+            "OANDA practice credentials are required "
+            "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
+        )
+    from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
+    from alphabrief_trader.close_policy import positions_due_for_close
+
+    client = build_oanda_paper_client()
+    trades = TradeOpsClient(client).list_trades().trades
+    # Only open trades can be closed; the broker also reports closed ones.
+    open_trades = [trade for trade in trades if str(trade.state) == "OPEN"]
+    decisions = positions_due_for_close(
+        [(trade.instrument, trade.open_time) for trade in open_trades],
+        now=datetime.now(UTC),
+    )
+    due = [decision for decision in decisions if decision.should_close]
+    if not due:
+        _dump(
+            {
+                "due": [],
+                "detail": "no position is due for close",
+                "checked": len(decisions),
+            },
+            pretty=pretty,
+        )
+        return
+    if trading == "off":
+        _dump(
+            {
+                "due": [decision.to_dict() for decision in due],
+                "closed": [],
+                "detail": "NO_TRADE_TRADING_OFF: trading is off",
+            },
+            pretty=pretty,
+        )
+        return
+
+    results: list[dict[str, Any]] = []
+    for decision in due:
+        results.append(_close_instrument(decision.instrument, decision.reason))
+    _dump({"due": [d.to_dict() for d in due], "closed": results}, pretty=pretty)
+
+
+def _close_instrument(instrument: str, reason: str) -> dict[str, Any]:
+    """Submit one reduce-only market order and report the outcome."""
+    from alphabrief_execution.broker.oanda.order_ops import (
+        OrderOperationError,
+        OrderOpsClient,
+    )
+    from alphabrief_execution.broker.oanda.orders import OandaOrderRequest
+    from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
+    from alphabrief_execution.broker.runtime import get_broker_runtime
+
+    client = build_oanda_paper_client()
+    positions = PositionOpsClient(client).list_positions().positions
+    position = next((p for p in positions if p.instrument == instrument), None)
+    if position is None or (position.long_units == 0 and position.short_units == 0):
+        return {"instrument": instrument, "closed": False, "detail": "no position"}
+    units = position.long_units - position.short_units
+    adapter = get_broker_runtime().adapter
+    metadata = adapter.instrument_metadata(instrument)  # type: ignore[attr-defined]
+    cycle_id = f"close_due_{instrument}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    try:
+        created = OrderOpsClient(client).create_order(
+            OandaOrderRequest(
+                type="MARKET",
+                instrument=instrument,
+                units=-units,
+                time_in_force="FOK",
+                position_fill="DEFAULT",
+            ),
+            metadata,
+            client_order_id=f"{cycle_id}:{instrument}",
+            tag="alphabrief",
+            comment=cycle_id,
+        )
+    except OrderOperationError as exc:
+        return {"instrument": instrument, "closed": False, "detail": str(exc)}
+    return {
+        "instrument": instrument,
+        "closed": True,
+        "reason": reason,
+        "broker_order_id": created.broker_order_id,
+        "state": created.state,
+        "cycle_id": cycle_id,
+    }
+
+
 @cycle_app.command("close")
 def close_cmd(
     instrument: str = typer.Option(  # noqa: B008
