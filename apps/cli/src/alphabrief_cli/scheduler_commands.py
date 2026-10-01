@@ -714,6 +714,7 @@ def _ai_cycle_factory(
             execution_backend = ExternalPaperExecutionBackend(
                 _build_adapter(),
                 max_order_value=policy.max_order_notional,
+                risk_symbols=universe,
             )
             cycle = DailyTradingCycle(
                 committee=committee,

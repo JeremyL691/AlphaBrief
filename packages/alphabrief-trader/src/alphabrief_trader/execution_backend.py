@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -30,6 +30,7 @@ from alphabrief_execution.broker.port import (
 from alphabrief_execution.broker.risk_context import (
     BrokerRiskContextBuilder,
     RiskContextError,
+    RiskContextSources,
     adapter_risk_sources,
 )
 from alphabrief_risk.broker_context import DEFAULT_POLICY_VERSION
@@ -92,9 +93,10 @@ class ExternalPaperExecutionBackend:
     """Execution backend that submits to a configured external paper adapter.
 
     M08-W01: every external submit first builds a broker-fresh risk
-    context through the shared context service (the default composition
-    derives its venue sources from this backend's adapter; an explicit
-    builder can be injected for tests or richer OANDA compositions). A
+    context through the shared context service. For the OANDA practice
+    adapter the default composition uses the live broker sources
+    (account money, positions, pending orders, trades, bid/ask and
+    home-currency conversions), so the gate sees the real account. A
     missing, stale, account-mismatched, partially covered, frozen, or
     internally inconsistent context rejects the order before any submit
     — no synthesized defaults, no fallback account, no review bypass.
@@ -107,12 +109,15 @@ class ExternalPaperExecutionBackend:
         max_order_value: Decimal | None = None,
         risk_context_builder: BrokerRiskContextBuilder | None = None,
         decision_binding: DecisionBindingService | None = None,
+        risk_symbols: Sequence[str] = (),
     ) -> None:
         self._adapter = adapter
         self._max_order_value = max_order_value
         self._risk_context_builder: BrokerRiskContextBuilder = (
             risk_context_builder
-            or BrokerRiskContextBuilder(adapter_risk_sources(adapter))
+            or BrokerRiskContextBuilder(
+                _default_risk_sources(adapter, symbols=tuple(risk_symbols))
+            )
         )
         # The persisted decision is the only executable contract: by
         # default the backend validates against the durable store in the
@@ -282,6 +287,30 @@ class ExternalPaperExecutionBackend:
             fill_json=None,
             risk_context_version=context.context_version,
         )
+
+
+def _default_risk_sources(
+    adapter: BrokerAdapter, *, symbols: tuple[str, ...]
+) -> RiskContextSources:
+    """Compose the venue sources the risk context is built from.
+
+    For the OANDA practice adapter the sources are the live broker
+    endpoints (real money fields, positions, prices and conversions);
+    any other adapter keeps the port-only composition.
+    """
+    from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+    from alphabrief_execution.broker.oanda.risk_sources import (
+        OandaRiskContextSources,
+    )
+    from alphabrief_execution.broker.recon_store import BrokerReconStore
+
+    if isinstance(adapter, OandaPaperAdapter):
+        return OandaRiskContextSources(
+            adapter.client,
+            symbols=symbols,
+            recon_store=BrokerReconStore(db_path=_paths.db_path()),
+        )
+    return adapter_risk_sources(adapter)
 
 
 def _resolve_external_quantity(

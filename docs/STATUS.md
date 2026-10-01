@@ -81,7 +81,7 @@
 
 #### S4 证据（进行中）
 
-- S4-1 第二部分（进行中，提交见下）：新增 `alphabrief_execution.broker.oanda.risk_sources.OandaRiskContextSources`，从真实 practice 端点取风控上下文所需事实：`/summary`（balance/NAV/marginUsed/marginAvailable/币种）、`/positions`（多空分开 + 均价）、`/orders?state=PENDING`、`/trades`、`/pricing`（bid/ask + 本币换算因子）、`/instruments`（目录版本）、对账状态改读持久化 recon store（frozen/clean/unknown，不再恒为 unknown）、健康状态由账户摘要探测；报价覆盖"配置品种 ∪ 当前持仓 ∪ 挂单品种"。`OandaPaperAdapter` 增加只读 `client` 访问器以便构造这些来源。**该模块尚未接入执行后端默认路径**（当前仅新增模块与访问器，运行时行为未变），接入与测试是 S4-1 的下一步。命令与结果：`pytest -q -m "not practice"` → 2417 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (408 files)。
+- S4-1 第二部分（本提交）：新增 `alphabrief_execution.broker.oanda.risk_sources.OandaRiskContextSources`，从真实 practice 端点取风控上下文所需事实：`/summary`（balance/NAV/marginUsed/marginAvailable/币种）、`/positions`（多空分开 + 均价）、`/orders?state=PENDING`、`/trades`、`/pricing`（bid/ask + 本币换算因子）、`/instruments`（目录版本）、对账状态改读持久化 recon store（frozen/clean/unknown，不再恒为 unknown）、健康状态由账户摘要探测；报价覆盖"配置品种 ∪ 当前持仓 ∪ 挂单品种"。`OandaPaperAdapter` 增加只读 `client` 访问器以便构造这些来源。接入已完成：`ExternalPaperExecutionBackend` 在适配器为 `OandaPaperAdapter` 时默认使用这些真实来源（并接收 `risk_symbols` 以覆盖配置品种；cycle CLI 传当前品种、scheduler 传配置 universe），其它适配器仍走端口组合；对账状态来自持久化 recon store，健康状态来自账户摘要探测。命令与结果：`pytest -q -m "not practice"` → 2418 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (408 files)。
 
 - S4-1 第一部分（本提交）：新增 `alphabrief_trader.data_quality`（版本化规则：报价必须为正、`data_version` 非空、`captured_at` 必须带时区且不晚于当前时间、年龄超过 2 小时判为过期；任何缺陷都失败闭合并给出稳定原因串），`DailyTradingCycle` 的三处风控调用不再写死 `data_quality_passed=True`，改为传入真实判定结果（过期/不完整输入会被 RiskGate 规则 5 拒绝并记录原因，绝不假定通过）。同时删除两处冗余的 `require_data_quality_passed=True`（`RiskLimitConfig` 的字段默认值本就是 True，策略只保留在一处）。命令与结果：`grep -rn "data_quality_passed=True" packages apps` → 无输出；`pytest -q -m "not practice"` → 2417 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (407 files)；新增 `tests/test_data_quality.py` 7 个用例（新鲜通过、过期带年龄、临界值通过、未来时间失败、verdict JSON 安全、过期输入被风控拒绝且不下单、新鲜输入成交）。为保持既有用例语义，`tests/test_ai_trader_daily_cycle.py` 与 `tests/test_ai_trader_idempotency.py` 注入与快照时间一致的时钟（它们验证的是执行路径，不是新鲜度）。
 
@@ -147,7 +147,7 @@
 - [ ] 退出标准：`lastTransactionID` 增加并有 `ORDER_FILL` 和止损止盈单；全链路可追溯；对账干净
 
 ### S4 风控与决策补全
-- [~] S4-1 真实风控上下文：已删除写死的 `data_quality_passed=True`（改为真实输入质量判定）；伪造账户上下文的删除仍在进行
+- [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
 - [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch
 - [ ] S4-3 真实的策略版本哈希和输入哈希
 - [ ] S4-4 影子评估、日报、预算

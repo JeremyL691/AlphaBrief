@@ -108,13 +108,18 @@ def _require_instrument(instrument: str) -> str:
     return normalized
 
 
-def _execution_backend() -> ExternalPaperExecutionBackend:
+def _execution_backend(
+    *, symbols: tuple[str, ...] = DEFAULT_UNIVERSE
+) -> ExternalPaperExecutionBackend:
     if not oanda_is_configured():
         _exit_error(
             "OANDA practice credentials are required "
             "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
         )
-    return ExternalPaperExecutionBackend(get_broker_runtime().adapter)
+    return ExternalPaperExecutionBackend(
+        get_broker_runtime().adapter,
+        risk_symbols=symbols,
+    )
 
 
 @cycle_app.command("run")
@@ -183,7 +188,9 @@ def run_cmd(
             committee=build_ai_trading_committee(),
             risk_gate=_risk_gate(symbol),
             execution_backend=(
-                _execution_backend() if trading == "on" else _DisabledBackend()
+                _execution_backend(symbols=(symbol,))
+                if trading == "on"
+                else _DisabledBackend()
             ),
             store=store,
             snapshot_loader=loader,
