@@ -28,7 +28,7 @@ Commands
 - ``strategy count-signals <strategy_id>``
   Print the number of stored signals for a strategy.
 
-The CLI never imports RiskGate, PaperBroker, broker code, or
+The CLI never imports RiskGate, broker code, or
 ``_reference_sources``. It only persists and reads registry rows.
 """
 

@@ -15,14 +15,8 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from _helpers import FakeExecutionBackend
 from alphabrief_core import OrderIntent, RiskDecision
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
-from alphabrief_execution.broker.legacy import PaperBrokerResult
 from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
@@ -30,6 +24,7 @@ from alphabrief_trader.cycle_execution import IdempotencyMap
 from alphabrief_trader.cycle_state import CycleStateMachine
 from alphabrief_trader.daily_cycle import DurableDailyCycle
 from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
+from alphabrief_trader.execution_backend import ExecutionBackendResult
 from alphabrief_trader.execution_gate import PreflightFacts
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.runtime_truth import RuntimeTruthStore
@@ -63,26 +58,29 @@ def _committee(payload: dict[str, object]) -> TradingCommittee:
     )
 
 
-class _CountingBroker(PaperBroker):
+class _CountingBackend(FakeExecutionBackend):
+    """Deterministic backend that counts submit calls."""
+
     def __init__(self) -> None:
-        super().__init__(
-            portfolio=PortfolioState(cash=Decimal("100000")),
-            router=OrderRouter(),
-            fill_simulator=FillSimulator(),
-        )
+        super().__init__()
         self.submit_calls = 0
 
     def submit(
         self,
         intent: OrderIntent,
-        decision: RiskDecision | None,
-        reference_price: Decimal,
+        decision: RiskDecision,
         *,
-        risk_context: object | None = None,
-    ) -> PaperBrokerResult:
+        reference_price: Decimal,
+        now: datetime,
+        estimated_quantity: Decimal | None,
+    ) -> ExecutionBackendResult:
         self.submit_calls += 1
         return super().submit(
-            intent, decision, reference_price=reference_price
+            intent,
+            decision,
+            reference_price=reference_price,
+            now=now,
+            estimated_quantity=estimated_quantity,
         )
 
 
@@ -91,7 +89,7 @@ def _build_cycle(
     state_store: CycleStateStore,
     runtime_store: RuntimeTruthStore,
     idempotency_map: IdempotencyMap,
-    broker: _CountingBroker,
+    backend: _CountingBackend,
     *,
     committee: TradingCommittee,
     facts: PreflightFacts | None = None,
@@ -103,10 +101,10 @@ def _build_cycle(
                 trading_enabled=True, symbol_allowlist=frozenset({"SPY"})
             )
         ),
-        broker=broker,
         store=store,
         state_store=state_store,
         runtime_store=runtime_store,
+        execution_backend=backend,
         snapshot_loader=lambda s: MarketSnapshot(
             symbol=s,
             reference_price=Decimal("100"),
@@ -165,19 +163,19 @@ class TestExecutionChain:
         idem: IdempotencyMap,
     ) -> None:
         store, state_store, runtime_store = stores
-        broker = _CountingBroker()
+        backend = _CountingBackend()
         cycle = _build_cycle(
             store,
             state_store,
             runtime_store,
             idem,
-            broker,
+            backend,
             committee=_committee(_BULLISH_PAYLOAD),
         )
         record = cycle.run(["SPY"], cycle_key="cyc-approved")
 
         assert record.outcome == "executed"
-        assert broker.submit_calls == 1
+        assert backend.submit_calls == 1
         chain = _chain(state_store, record.cycle_id)
         assert chain["proposal_ids"]
         assert chain["intent_ids"]
@@ -191,13 +189,13 @@ class TestExecutionChain:
         idem: IdempotencyMap,
     ) -> None:
         store, state_store, runtime_store = stores
-        broker = _CountingBroker()
+        backend = _CountingBackend()
         cycle = _build_cycle(
             store,
             state_store,
             runtime_store,
             idem,
-            broker,
+            backend,
             committee=_committee(_BULLISH_PAYLOAD),
         )
         # A kill-switched risk gate rejects every intent.
@@ -205,7 +203,7 @@ class TestExecutionChain:
         record = cycle.run(["SPY"], cycle_key="cyc-rejected")
 
         assert record.outcome == "blocked_risk_gate"
-        assert broker.submit_calls == 0
+        assert backend.submit_calls == 0
 
     def test_no_trade_fixture_never_submits(
         self,
@@ -213,13 +211,13 @@ class TestExecutionChain:
         idem: IdempotencyMap,
     ) -> None:
         store, state_store, runtime_store = stores
-        broker = _CountingBroker()
+        backend = _CountingBackend()
         cycle = _build_cycle(
             store,
             state_store,
             runtime_store,
             idem,
-            broker,
+            backend,
             committee=_committee(
                 {
                     **_BULLISH_PAYLOAD,
@@ -231,7 +229,7 @@ class TestExecutionChain:
         record = cycle.run(["SPY"], cycle_key="cyc-no-trade")
 
         assert record.outcome == "skipped_no_intent"
-        assert broker.submit_calls == 0
+        assert backend.submit_calls == 0
 
     def test_broker_rejected_fixture_submits_once_and_terminates(
         self,
@@ -240,21 +238,22 @@ class TestExecutionChain:
     ) -> None:
         store, state_store, runtime_store = stores
 
-        class _RejectingBroker(_CountingBroker):
+        class _RejectingBroker(_CountingBackend):
             def submit(
                 self,
                 intent: OrderIntent,
-                decision: RiskDecision | None,
-                reference_price: Decimal,
+                decision: RiskDecision,
                 *,
-                risk_context: object | None = None,
-            ) -> PaperBrokerResult:
-                super().submit(
-                    intent, decision, reference_price=reference_price
+                reference_price: Decimal,
+                now: datetime,
+                estimated_quantity: Decimal | None,
+            ) -> ExecutionBackendResult:
+                from alphabrief_trader.execution_backend import (
+                    ExecutionBackendError,
                 )
-                from alphabrief_execution.broker.legacy import PaperBrokerError
 
-                raise PaperBrokerError("broker rejected the order")
+                self.submit_calls += 1
+                raise ExecutionBackendError("broker rejected the order")
 
         rejecting = _RejectingBroker()
         cycle = _build_cycle(
@@ -276,17 +275,17 @@ class TestExecutionChain:
         idem: IdempotencyMap,
     ) -> None:
         store, state_store, runtime_store = stores
-        broker = _CountingBroker()
+        backend = _CountingBackend()
         cycle = _build_cycle(
             store,
             state_store,
             runtime_store,
             idem,
-            broker,
+            backend,
             committee=_committee(_BULLISH_PAYLOAD),
         )
         first = cycle.run(["SPY"], cycle_key="cyc-once")
-        assert broker.submit_calls == 1
+        assert backend.submit_calls == 1
 
         # A restarted cycle with the same key reuses the idempotency
         # mapping: the completed cycle is returned, zero new submits.
@@ -295,12 +294,12 @@ class TestExecutionChain:
             state_store,
             runtime_store,
             idem,
-            broker,
+            backend,
             committee=_committee(_BULLISH_PAYLOAD),
         )
         resumed = second.run(["SPY"], cycle_key="cyc-once")
         assert resumed.cycle_id == first.cycle_id
-        assert broker.submit_calls == 1
+        assert backend.submit_calls == 1
 
     def test_blocked_execution_never_submits(
         self,
@@ -308,17 +307,17 @@ class TestExecutionChain:
         idem: IdempotencyMap,
     ) -> None:
         store, state_store, runtime_store = stores
-        broker = _CountingBroker()
+        backend = _CountingBackend()
         cycle = _build_cycle(
             store,
             state_store,
             runtime_store,
             idem,
-            broker,
+            backend,
             committee=_committee(_BULLISH_PAYLOAD),
             facts=PreflightFacts(credentials_present=False),
         )
         record = cycle.run(["SPY"], cycle_key="cyc-gate-blocked")
 
         assert record.outcome == "blocked_risk_gate"
-        assert broker.submit_calls == 0
+        assert backend.submit_calls == 0

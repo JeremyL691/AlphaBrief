@@ -8,18 +8,14 @@ from typing import Literal
 import typer
 from alphabrief_api.db import NewsStore
 from alphabrief_news.providers import (
-    MockNewsProvider,
     NewsProviderError,
     RssNewsProvider,
-    SecEdgarNewsProvider,
-    SocialSentimentNewsProvider,
-    build_default_mock_news,
 )
 from alphabrief_news.types import NewsFetchQuery
 
 news_app = typer.Typer(help="Fetch and inspect news headlines.")
 
-NewsSource = Literal["mock", "rss", "sec", "sentiment"]
+NewsSource = Literal["rss"]
 
 
 def _parse_iso_date(value: str) -> datetime:
@@ -35,21 +31,11 @@ def _parse_iso_date(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 def _build_provider(
-    source: NewsSource, symbols: list[str],
-) -> (
-    MockNewsProvider
-    | RssNewsProvider
-    | SecEdgarNewsProvider
-    | SocialSentimentNewsProvider
-):
-    if source == "mock":
-        return MockNewsProvider(seed_headlines=build_default_mock_news(symbols))
+    source: NewsSource,
+    symbols: list[str],
+) -> RssNewsProvider:
     if source == "rss":
         return RssNewsProvider()
-    if source == "sec":
-        return SecEdgarNewsProvider()
-    if source == "sentiment":
-        return SocialSentimentNewsProvider()
     raise typer.BadParameter(f"unknown news source: {source}")
 
 

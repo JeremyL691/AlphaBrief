@@ -13,7 +13,9 @@ from decimal import Decimal
 
 import pytest
 from alphabrief_news import MacroIndicator, NewsHeadline
-from alphabrief_research import build_structured_summary
+from alphabrief_news.context_summary import (
+    build_news_macro_summary as build_structured_summary,
+)
 from alphabrief_risk import (
     MACRO_HIGH_RISK_INDICATOR_COUNT,
     MACRO_HIGH_RISK_POSITION_MULTIPLIER,

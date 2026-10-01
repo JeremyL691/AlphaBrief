@@ -1,9 +1,8 @@
 """Execution backends for AI-approved paper orders.
 
 The AI trading cycle decides *whether* an order candidate may proceed.
-This module owns the final paper execution hop. The default backend is
-the local in-memory ``PaperBroker``. The external backend is an explicit
-paper-only bridge to the broker-neutral ``BrokerAdapter`` port.
+This module owns the final paper execution hop: an explicit paper-only
+bridge to the broker-neutral ``BrokerAdapter`` port (OANDA practice).
 """
 
 from __future__ import annotations
@@ -18,11 +17,6 @@ from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 from alphabrief_core import OrderIntent, RiskDecision
-from alphabrief_execution import (
-    PaperBroker,
-    PaperBrokerError,
-    PaperBrokerResult,
-)
 from alphabrief_execution.broker.errors import BrokerAdapterError
 from alphabrief_execution.broker.port import (
     BrokerAdapter,
@@ -51,12 +45,12 @@ class ExecutionBackendError(ValueError):
     """Raised when a paper execution backend refuses or fails an order."""
 
 
-ExecutionBackendName = Literal["local_paper", "external_paper"]
+ExecutionBackendName = Literal["external_paper"]
 
 
 @dataclass(frozen=True)
 class ExecutionBackendResult:
-    """Normalized result from a local or external paper backend."""
+    """Normalized result from an external paper backend."""
 
     execution_backend: ExecutionBackendName
     order_id: str
@@ -92,73 +86,6 @@ class ExecutionBackend(Protocol):
         estimated_quantity: Decimal | None,
     ) -> ExecutionBackendResult:
         """Submit an approved, non-human-review order candidate."""
-
-
-class LocalPaperExecutionBackend:
-    """Execution backend that delegates to the local ``PaperBroker``."""
-
-    def __init__(
-        self,
-        broker: PaperBroker,
-        *,
-        max_order_value: Decimal | None = None,
-    ) -> None:
-        self._broker = broker
-        self._max_order_value = max_order_value
-
-    def estimate_quantity(
-        self,
-        intent: OrderIntent,
-        *,
-        reference_price: Decimal,
-    ) -> Decimal | None:
-        if reference_price <= 0:
-            raise ExecutionBackendError("reference_price must be positive")
-        if intent.quantity is not None:
-            return _clamp_quantity(
-                intent.quantity,
-                reference_price=reference_price,
-                max_order_value=self._max_order_value,
-            )
-        if intent.target_position_pct is None:
-            return None
-        if intent.side == "buy":
-            estimated = (self._broker.portfolio.cash * intent.target_position_pct) / (
-                reference_price
-            )
-            return _clamp_quantity(
-                estimated,
-                reference_price=reference_price,
-                max_order_value=self._max_order_value,
-            )
-        if intent.target_position_pct == 0:
-            return self._broker.portfolio.position_quantity(intent.symbol)
-        return None
-
-    def submit(
-        self,
-        intent: OrderIntent,
-        decision: RiskDecision,
-        *,
-        reference_price: Decimal,
-        now: datetime,
-        estimated_quantity: Decimal | None,
-    ) -> ExecutionBackendResult:
-        try:
-            fill: PaperBrokerResult = self._broker.submit(
-                intent, decision, reference_price=reference_price
-            )
-        except PaperBrokerError as exc:
-            raise ExecutionBackendError(str(exc)) from exc
-
-        return ExecutionBackendResult(
-            execution_backend="local_paper",
-            order_id=fill.order.order_id,
-            filled=True,
-            fill_price=fill.fill.price,
-            fill_quantity=fill.fill.quantity,
-            fill_json=fill.fill.model_dump(mode="json"),
-        )
 
 
 class ExternalPaperExecutionBackend:
@@ -426,6 +353,5 @@ __all__ = [
     "ExecutionBackendError",
     "ExecutionBackendResult",
     "ExternalPaperExecutionBackend",
-    "LocalPaperExecutionBackend",
     "is_ai_external_paper_enabled",
 ]

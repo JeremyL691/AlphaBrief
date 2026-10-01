@@ -3,7 +3,7 @@
 The routes in this module are strictly **read-only**. They never
 modify the risk gate, never place orders, and never call
 ModelGateway. The news/macro context endpoint surfaces a
-:class:`alphabrief_research.ResearchContextSummary` together with the
+:class:`alphabrief_news.context_summary.NewsMacroSummary` together with the
 corresponding :class:`alphabrief_risk.RiskContextDecision` so the user
 can see how external evidence would tighten (never relax) risk
 treatment, but the actual risk limits remain owned by
@@ -17,10 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 from alphabrief_core import OrderIntent, load_paper_execution_policy, load_settings
-from alphabrief_research import (
-    ResearchContextSummary,
-    build_structured_summary,
-)
+from alphabrief_news.context_summary import build_news_macro_summary
 from alphabrief_risk import (
     AccountExposureContext,
     KillSwitch,
@@ -143,7 +140,7 @@ class RiskContextResponse(BaseModel):
 
     summary: dict[str, Any] = Field(
         description=(
-            "JSON-safe view of the ResearchContextSummary; the "
+            "JSON-safe view of the NewsMacroSummary; the "
             "untrusted-data invariant is included for audit."
         ),
     )
@@ -322,7 +319,8 @@ def get_risk_context(
 ) -> RiskContextResponse:
     """Read-only news/macro risk context.
 
-    The endpoint composes a :class:`ResearchContextSummary` from the
+    The endpoint composes a
+    :class:`alphabrief_news.context_summary.NewsMacroSummary` from the
     persistent news and macro stores, then derives the corresponding
     :class:`RiskContextDecision`. The response is **strictly
     read-only** — it never modifies the risk gate, never disables
@@ -375,10 +373,7 @@ def get_risk_context(
         wanted_macro = set(macro_list)
         indicators = [i for i in indicators if i.indicator_id in wanted_macro]
 
-    summary: ResearchContextSummary = build_structured_summary(
-        headlines,
-        indicators,
-    )
+    summary = build_news_macro_summary(headlines, indicators)
 
     decision: RiskContextDecision = evaluate_news_macro_risk(
         summary,

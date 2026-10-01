@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from email.message import Message
-from typing import cast
 from urllib.error import HTTPError
 from urllib.request import Request
 
@@ -19,20 +18,20 @@ from alphabrief_news import (
 from alphabrief_news.providers import (
     FredMacroProvider,
     MacroProvider,
-    MockMacroProvider,
-    MockNewsProvider,
     NewsProvider,
     NewsProviderError,
     NewsProviderErrorCode,
     RssNewsProvider,
-    SecEdgarNewsProvider,
-    SocialSentimentNewsProvider,
-    build_default_mock_macro,
-    build_default_mock_news,
 )
 from alphabrief_news.quality import (
     check_headline_quality,
     check_indicator_quality,
+)
+from news_mock_provider import (
+    MockMacroProvider,
+    MockNewsProvider,
+    build_default_mock_macro,
+    build_default_mock_news,
 )
 
 
@@ -505,262 +504,6 @@ def json_response() -> bytes:
         b'{"date": "2024-06-01", "value": "3.7"}'
         b"]}"
     )
-
-
-def test_sec_edgar_provider_parses_atom_feed() -> None:
-    xml = b"""<?xml version="1.0"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <title>SEC EDGAR filings</title>
-  <entry>
-    <id>urn:sec:1</id>
-    <title>10-K - Annual report</title>
-    <link href="https://www.sec.gov/Archives/edgar/data/1/10k.htm"/>
-    <updated>2024-06-01T12:00:00Z</updated>
-    <summary>Annual report for fiscal year 2023.</summary>
-  </entry>
-  <entry>
-    <id>urn:sec:2</id>
-    <title>8-K - Material event</title>
-    <link href="https://www.sec.gov/Archives/edgar/data/1/8k.htm"/>
-    <updated>2024-06-02T12:00:00Z</updated>
-    <summary>Material event disclosure.</summary>
-  </entry>
-</feed>
-"""
-    captured: dict[str, object] = {}
-
-    def fake_get(request: Request, timeout: float) -> bytes:
-        captured["url"] = request.full_url
-        captured["headers"] = dict(request.header_items())
-        return xml
-
-    provider = SecEdgarNewsProvider(http_get=fake_get)
-    query = NewsFetchQuery(
-        symbols=["AAPL"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    results = provider.fetch_headlines(query)
-
-    assert len(results) == 2
-    assert all(h.category == "earnings" for h in results)
-    assert all(h.symbols == ["AAPL"] for h in results)
-    assert all(h.source == "sec-edgar" for h in results)
-    assert "AAPL" in str(captured["url"])
-    assert "atom" in str(captured["url"])
-    headers = cast("dict[str, str]", captured["headers"])
-    assert any("AlphaBrief" in v for v in headers.values())
-
-
-def test_sec_edgar_provider_filters_by_window() -> None:
-    xml = b"""<?xml version="1.0"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <entry>
-    <id>urn:sec:1</id>
-    <title>10-K - Annual report</title>
-    <link href="https://www.sec.gov/1"/>
-    <updated>2024-06-01T12:00:00Z</updated>
-    <summary>Annual.</summary>
-  </entry>
-  <entry>
-    <id>urn:sec:2</id>
-    <title>8-K - Material event</title>
-    <link href="https://www.sec.gov/2"/>
-    <updated>2024-07-01T12:00:00Z</updated>
-    <summary>Event.</summary>
-  </entry>
-</feed>
-"""
-
-    def fake_get(request: Request, timeout: float) -> bytes:
-        return xml
-
-    provider = SecEdgarNewsProvider(http_get=fake_get)
-    query = NewsFetchQuery(
-        symbols=["AAPL"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 30, tzinfo=UTC),
-    )
-    results = provider.fetch_headlines(query)
-    assert len(results) == 1
-    assert "10-K" in results[0].title
-
-
-def test_sec_edgar_provider_rejects_invalid_ticker() -> None:
-    provider = SecEdgarNewsProvider()
-    query = NewsFetchQuery(
-        symbols=["AAPL$"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    with pytest.raises(NewsProviderError) as exc_info:
-        provider.fetch_headlines(query)
-    assert exc_info.value.code == NewsProviderErrorCode.INVALID_SYMBOL
-
-
-def test_sec_edgar_provider_rejects_too_long_ticker() -> None:
-    provider = SecEdgarNewsProvider()
-    query = NewsFetchQuery(
-        symbols=["TOOLONGTICKER"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    with pytest.raises(NewsProviderError) as exc_info:
-        provider.fetch_headlines(query)
-    assert exc_info.value.code == NewsProviderErrorCode.INVALID_SYMBOL
-
-
-def test_sec_edgar_provider_returns_empty_list_when_no_entries() -> None:
-    xml = b"""<?xml version="1.0"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <title>Empty feed</title>
-</feed>
-"""
-
-    def fake_get(request: Request, timeout: float) -> bytes:
-        return xml
-
-    provider = SecEdgarNewsProvider(http_get=fake_get)
-    query = NewsFetchQuery(
-        symbols=["AAPL"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    results = provider.fetch_headlines(query)
-    assert results == []
-
-
-def test_sec_edgar_provider_raises_parse_error_on_bad_xml() -> None:
-    def fake_get(request: Request, timeout: float) -> bytes:
-        return b"not xml"
-
-    provider = SecEdgarNewsProvider(http_get=fake_get)
-    query = NewsFetchQuery(
-        symbols=["AAPL"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    with pytest.raises(NewsProviderError) as exc_info:
-        provider.fetch_headlines(query)
-    assert exc_info.value.code == NewsProviderErrorCode.PARSE_ERROR
-
-
-def test_sec_edgar_provider_raises_http_error_on_4xx() -> None:
-    from urllib.error import HTTPError
-
-    def fake_get(request: Request, timeout: float) -> bytes:
-        raise HTTPError(
-            "https://www.sec.gov", 404, "Not Found", _empty_headers(), None,
-        )
-
-    provider = SecEdgarNewsProvider(http_get=fake_get)
-    query = NewsFetchQuery(
-        symbols=["AAPL"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    with pytest.raises(NewsProviderError) as exc_info:
-        provider.fetch_headlines(query)
-    assert exc_info.value.code == NewsProviderErrorCode.HTTP_ERROR
-
-
-def test_sec_edgar_provider_retries_5xx() -> None:
-    from urllib.error import HTTPError
-
-    xml = b"""<?xml version="1.0"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <entry>
-    <id>urn:sec:1</id>
-    <title>10-K</title>
-    <link href="https://www.sec.gov/1"/>
-    <updated>2024-06-01T12:00:00Z</updated>
-    <summary>Annual.</summary>
-  </entry>
-</feed>
-"""
-    calls: list[int] = []
-
-    def fake_get(request: Request, timeout: float) -> bytes:
-        calls.append(1)
-        if len(calls) == 1:
-            raise HTTPError(
-                "https://www.sec.gov", 503, "Service Unavailable",
-                _empty_headers(), None,
-            )
-        return xml
-
-    provider = SecEdgarNewsProvider(http_get=fake_get)
-    query = NewsFetchQuery(
-        symbols=["AAPL"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    results = provider.fetch_headlines(query)
-    assert len(calls) == 2
-    assert len(results) == 1
-
-
-def test_sec_edgar_provider_uses_custom_user_agent() -> None:
-    captured: dict[str, object] = {}
-
-    def fake_get(request: Request, timeout: float) -> bytes:
-        captured["headers"] = dict(request.header_items())
-        return b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
-
-    provider = SecEdgarNewsProvider(
-        user_agent="AlphaBrief test@example.com",
-        http_get=fake_get,
-    )
-    query = NewsFetchQuery(
-        symbols=["AAPL"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    provider.fetch_headlines(query)
-    headers = cast("dict[str, str]", captured["headers"])
-    assert "AlphaBrief test@example.com" in headers.values()
-
-
-def test_social_sentiment_provider_returns_deterministic_data() -> None:
-    provider = SocialSentimentNewsProvider()
-    query = NewsFetchQuery(
-        symbols=["AAPL", "TSLA"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    results = provider.fetch_headlines(query)
-    assert len(results) == 2
-    assert all(h.sentiment in {"positive", "negative", "neutral"} for h in results)
-    assert all(h.source == "social-sentiment-stub" for h in results)
-    assert all(h.category == "other" for h in results)
-
-
-def test_social_sentiment_provider_respects_limit() -> None:
-    provider = SocialSentimentNewsProvider()
-    query = NewsFetchQuery(
-        symbols=["AAPL", "TSLA", "NVDA"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-        limit=2,
-    )
-    results = provider.fetch_headlines(query)
-    assert len(results) == 2
-
-
-def test_social_sentiment_provider_returns_one_per_symbol() -> None:
-    provider = SocialSentimentNewsProvider()
-    query = NewsFetchQuery(
-        symbols=["AAPL"],
-        start=datetime(2024, 6, 1, tzinfo=UTC),
-        end=datetime(2024, 6, 5, tzinfo=UTC),
-    )
-    results = provider.fetch_headlines(query)
-    assert len(results) == 1
-    assert results[0].symbols == ["AAPL"]
-
-
-def test_social_sentiment_provider_satisfies_protocol() -> None:
-    assert isinstance(SocialSentimentNewsProvider(), NewsProvider)
 
 
 # ---------------------------------------------------------------------------

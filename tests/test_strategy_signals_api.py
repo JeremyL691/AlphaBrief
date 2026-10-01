@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from alphabrief_api.main import app
-from alphabrief_api.routes.paper import _reset_broker
 from alphabrief_api.routes.risk import _reset_risk_gate
 from alphabrief_api.routes.strategies import _clear_strategy_store
 from alphabrief_api.routes.strategy_signals import _clear_signal_store
@@ -22,7 +21,6 @@ def _isolate(tmp_path: Path) -> Generator[None, None, None]:
     os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
     _clear_strategy_store()
     _clear_signal_store()
-    _reset_broker()
     _reset_risk_gate()
     yield
     _clear_strategy_store()
@@ -308,7 +306,7 @@ def test_signal_history_does_not_affect_risk_decisions() -> None:
     """Recording a signal must not change the risk gate's decision.
 
     The signal history is a write-only log of strategy output. The
-    risk gate, paper broker, and live-trading lock remain
+    risk gate, broker, and live-trading lock remain
     completely independent. This is the same safety property as
     the registry ``enabled`` flag.
     """

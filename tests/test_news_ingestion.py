@@ -25,8 +25,8 @@ from alphabrief_news.providers.base import (
     NewsProvider,
     NewsProviderError,
 )
-from alphabrief_news.providers.mock import MockNewsProvider
 from alphabrief_news.types import NewsFetchQuery, NewsHeadline
+from news_mock_provider import MockNewsProvider
 
 NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 SOURCE = "fixture-news"

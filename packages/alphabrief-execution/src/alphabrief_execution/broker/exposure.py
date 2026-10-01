@@ -7,26 +7,15 @@ account snapshot into an :class:`AccountExposureContext` — a plain
 data carrier owned by the risk layer — so the dependency arrow stays
 one-way (execution -> risk) and :class:`RiskGate` never imports the
 execution layer.
-
-Two variants:
-
-* :func:`build_account_exposure_context` — async, reads from an
-  external :class:`BrokerAdapter` (the Alpaca paper path).
-* :func:`build_account_exposure_context_from_portfolio` — sync, reads
-  from the in-memory legacy :class:`PortfolioState` used by the API's
-  paper route (no external adapter required).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from alphabrief_risk import AccountExposureContext
 
 from alphabrief_execution.broker.port import BrokerAdapter
-from alphabrief_execution.portfolio import PortfolioState
 
 
 def _exposure_from_positions(
@@ -94,41 +83,6 @@ async def build_account_exposure_context(
     )
 
 
-def build_account_exposure_context_from_portfolio(
-    portfolio: PortfolioState,
-    *,
-    account_id: str = "paper_local",
-    mark_prices: dict[str, Decimal] | None = None,
-    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-) -> AccountExposureContext:
-    """Project an in-memory :class:`PortfolioState` into an
-    :class:`AccountExposureContext`.
-
-    Used by the API paper route, which runs the legacy
-    :class:`PaperBroker` (no external adapter). The legacy
-    :class:`PortfolioState` only holds non-negative quantities, so
-    ``abs()`` is a no-op there but kept for parity with the adapter
-    variant. ``equity`` is ``cash + sum(qty * mark)`` and
-    ``reference_mark_prices`` carries the supplied marks through.
-    """
-    pos_tuples = [
-        (p.symbol, p.quantity, p.average_price) for p in portfolio.positions.values()
-    ]
-    total, by_symbol = _exposure_from_positions(pos_tuples, mark_prices=mark_prices)
-    equity = portfolio.cash + sum(
-        _signed_notional(sym, qty, avg, mark_prices) for sym, qty, avg in pos_tuples
-    )
-    return AccountExposureContext(
-        current_total_exposure=total,
-        exposure_by_symbol=by_symbol,
-        cash=portfolio.cash,
-        account_id=account_id,
-        captured_at=clock(),
-        equity=equity,
-        reference_mark_prices=dict(mark_prices) if mark_prices else {},
-    )
-
-
 def _signed_notional(
     symbol: str,
     quantity: Decimal,
@@ -148,5 +102,4 @@ def _signed_notional(
 
 __all__ = [
     "build_account_exposure_context",
-    "build_account_exposure_context_from_portfolio",
 ]
