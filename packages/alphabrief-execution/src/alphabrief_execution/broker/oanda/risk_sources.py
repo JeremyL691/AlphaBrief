@@ -280,6 +280,7 @@ class OandaRiskContextSources:
         recent_high_impact_events: dict[str, str] | None = None,
         current_spread: Decimal | None = None,
         recent_spreads: tuple[Decimal, ...] = (),
+        symbol_types: dict[str, str] | None = None,
         equity_high_water_mark: Decimal | None = None,
         day_start_equity: Decimal | None = None,
         day_realized_pnl: Decimal | None = None,
@@ -343,6 +344,10 @@ class OandaRiskContextSources:
             recent_high_impact_events=dict(recent_high_impact_events or {}),
             current_spread=current_spread,
             recent_spreads=tuple(recent_spreads),
+            # Rule 1 reads the durable reconciliation state; a frozen
+            # account opens no new exposure.
+            reconciliation_state=self.fetch_reconciliation_state(),
+            symbol_types=dict(symbol_types or {}),
         )
 
     # ------------------------------------------------------------------

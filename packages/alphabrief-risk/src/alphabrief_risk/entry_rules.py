@@ -65,6 +65,10 @@ class EntryRulePolicy:
     #: Rule 11: block entries while the drawdown state machine says so.
     #: ``False`` leaves the rule unenforced.
     block_on_drawdown: bool = False
+    #: Rule 1 (freeze part): reject entries while the account is frozen.
+    require_unfrozen: bool = False
+    #: Rule 2: the instrument must be classified as a currency.
+    require_currency_type: bool = False
     #: Rule 4: reject when the live spread exceeds this multiple of the
     #: same-period median. ``None`` leaves the rule unenforced.
     max_spread_median_multiplier: Decimal | None = None
@@ -159,6 +163,44 @@ def evaluate_entry_rules(
         return tuple(rejections)
 
     context = account_context
+
+    # Rule 1 (freeze part) — a frozen account opens no new exposure. The
+    # trading-mode and kill-switch parts live in the gate itself.
+    if policy.require_unfrozen:
+        if context is None or context.reconciliation_state is None:
+            rejections.append(
+                RuleRejection("FROZEN", "no reconciliation state supplied")
+            )
+        elif context.reconciliation_state == "frozen":
+            rejections.append(
+                RuleRejection(
+                    "FROZEN",
+                    "the account is frozen; new exposure is blocked while "
+                    "closing and reconciliation continue",
+                )
+            )
+
+    # Rule 2 — the instrument must be classified as a currency (the
+    # allowlist half lives in the gate).
+    if policy.require_currency_type:
+        instrument_type = (
+            None if context is None else context.symbol_types.get(intent.symbol)
+        )
+        if instrument_type is None:
+            rejections.append(
+                RuleRejection(
+                    "INSTRUMENT_NOT_ALLOWED",
+                    f"{intent.symbol} has no instrument classification",
+                )
+            )
+        elif instrument_type.upper() != "CURRENCY":
+            rejections.append(
+                RuleRejection(
+                    "INSTRUMENT_NOT_ALLOWED",
+                    f"{intent.symbol} is classified {instrument_type}, "
+                    "not CURRENCY",
+                )
+            )
 
     # Rule 4 — the spread against its own recent same-period median.
     if policy.max_spread_median_multiplier is not None:
