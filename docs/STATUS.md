@@ -10,7 +10,7 @@
 |---|---|
 | 当前阶段 | **S2 模型通道** |
 | 状态 | `WAITING_OWNER_LOGIN` |
-| 下一项任务 | S2-5 用户在终端运行 `alphabrief model login` 完成一次 ChatGPT 授权（之后可继续 S3） |
+| 下一项任务 | S3-2 `order_ops` + `orders` 下单路径（S3-4 的委员会垂直切片仍需 S2-5 授权） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
 | 最近更新 | 2026-09-30，S2-1 至 S2-4 完成，等待用户完成一次 ChatGPT 授权 |
@@ -73,6 +73,10 @@
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
+#### S3 证据（进行中）
+
+- S3-1（本提交）：新增 `alphabrief_execution.broker.oanda.market_sync`（K 线与报价同步：M15 96 / H1 120 / H4 60 / D 60 根完整 K 线，`source=oanda_practice`，按 `oanda-candles-v1:M:{granularity}` 分版本入库；报价取 bid/ask 中价并按批次 coverage 报告缺失与失败，不做替代）；新增 CLI `alphabrief data sync-oanda`（只读访问 practice，缺凭证即停并退出非零）。命令与结果（真实 practice 账户）：`alphabrief data sync-oanda --instrument EUR_USD --compact` → `{"bars_by_granularity": {"EUR_USD:M15": 95, "EUR_USD:H1": 119, "EUR_USD:H4": 59, "EUR_USD:D": 59}, "total_bars": 332, "quotes": 1, "errors": {}}`；数据库校验 `MarketDataStore.get_bar_count("EUR_USD")` → 271，`get_bar_models` 返回 4 个 data_version（M15/H1/H4/D），全部 `source=oanda_practice` 且时间带 UTC 时区。未完成的最新一根 K 线被排除（95/119/59/59 而非 96/120/60/60）。测试：`tests/test_market_sync.py`（8 个确定性用例：K 线转换、按品种/周期写入、单品种失败不中断、报价中价、缺失与失败按 coverage 报告、报告汇总）与 `tests/test_market_sync_practice.py`（`@pytest.mark.practice`，真实账户，1 passed）。
+
 #### S2 证据（进行中）
 
 - S2-1/S2-2（提交见下）：新增 `alphabrief_models.chatgpt_plan`（授权 URL 构造、PKCE S256、凭证记录与 0600 原子存储、Responses SSE 解析、错误码映射、模型目录发现、`ChatGptPlanAdapter`）与 `alphabrief_models.chatgpt_oauth`（回环回调服务、code 换 token、JWKS 校验 ID token、refresh、`login()`）；`alphabrief_core.jwt_verify` 用纯标准库实现 RS256/JWKS 校验。实现严格对齐官方文档（授权端点、token 端点、scope、`resource`、`store=false`/`stream=true`、只有 `response.completed` 才算成功），并已用线上 discovery 文档核对 `issuer`/`jwks_uri`/`grant_types`。新增 `openai_compatible` 适配器与 `model.fallback_enabled`（默认 false；只有显式开启才允许切通道，切换逐条记录），主机含 `opencode.ai` 直接报错拒绝。`config/alphabrief.yaml` 首次创建（`model.fallback_enabled: false`）。
@@ -113,7 +117,7 @@
 - [ ] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库（等 S2-5）
 
 ### S3 打通一单
-- [ ] S3-1 OANDA K 线和报价入库
+- [x] S3-1 OANDA K 线和报价入库
 - [ ] S3-2 `order_ops` + `orders` 下单（止损止盈、带符号整数 units、clientExtensions）；删除旧下单路径
 - [ ] S3-3 流水游标与新对账逻辑
 - [ ] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`
