@@ -9,11 +9,11 @@
 | 字段 | 值 |
 |---|---|
 | 当前阶段 | **S5 常驻运行时** |
-| 状态 | `IN_PROGRESS`（用户要求暂停，见最近更新） |
-| 下一项任务 | S5 余下：LaunchAgent `ai.alphabrief.backend`（`service install|uninstall|status`）、macOS 通知、备份与恢复命令、行情/点差样本的 HTTP 端点；随后 S5 退出标准的 `kill -9` 重启实测（需 practice 环境） |
+| 状态 | `IN_PROGRESS` |
+| 下一项任务 | 接管整改：统一后台与单轮 CLI 的交易构建、阶段持久化与恢复；补齐账户级单实例、practice 主机白名单、HTTP 写路径，再完成 S5 余项和真实退出验证 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S5 第三批：CLI-over-HTTP 完成；**用户要求暂停任务**（工作区干净、无残留后台进程、单实例锁空闲；下一项为 S5 余下的 LaunchAgent/macOS 通知/备份恢复命令） |
+| 最近更新 | 2026-10-01，用户授权新 Agent 接手完成整个项目；恢复开发，先修复接管审查发现的质量与安全缺口。14 天试运行尚未开始，历史记录保留，未验证的完成项撤回 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,10 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- 接管质量整改（2026-10-01，本提交）：修复 3 个数据库 fixture 的生成器返回类型、风控矩阵的真实 RiskDecision/Callable 类型、事件窗口测试中未使用的宽泛 kwargs；删除随正确类型变得无效的 ignore，保留所有用例和原断言。恢复 STATUS 的唯一状态格式，记录用户的新接管授权；S2 授权遗漏勾选纠正，S5 不符合当前代码的完成标记撤回。
+  - 验证：`.venv/bin/mypy --no-incremental` → exit 0，446 个文件无错误；`.venv/bin/ruff check .` → exit 0；`.venv/bin/python -m pytest -q -m "not practice"`（允许本地回环端口）→ exit 0，2709 passed / 5 deselected；`.venv/bin/python scripts/secret_scan.py` → exit 0；`git diff --check` → exit 0。没有缩小验证范围或修改断言。
+  - 当前缺口仍未宣称完成：后台工厂缺账户上下文/完整入场规则/风险仓位/模型预算/影子记录；提交后未落库中断的隔离复现产生两个意图；practice 主机校验及账户级互斥未落实；S3 指定的 vertical_slice practice 选择器没有测试；S4/S5 真实退出门禁待补验。OANDA 只读复核与历史首单证据一致（流水 4–11，空仓，NAV 99999.92 USD），未追加交易。
 
 - S5 第三批（本提交）：**CLI-over-HTTP（5.3）**：后台在线时 CLI 不再直连数据库，只读走 HTTP。
   - 新增 `api_client.require_local_write(command)`：后台在线时，会直写数据库的命令立即以退出码 3 拒绝并说明原因（DuckDB 单进程独占文件，第二个写者会与常驻进程竞争）。已接入 `cycle run` / `cycle close` / `cycle close-due` / `broker reconcile` / `broker freeze` / `broker unfreeze` / `risk kill-switch` / `data sync-oanda`；后台不在线时照常本地执行（无旁路开关，安全不变量 12 不允许第二个写者）。
@@ -267,7 +271,7 @@
 - [x] S2-2 `openai_compatible` 备用适配器、拒绝 `opencode.ai`、`fallback_enabled` 开关
 - [x] S2-3 完整的调用记录；委员会构建时传入记录器
 - [x] S2-4 确定性测试，加一个 practice 测试（practice 待登录后通过）
-- [ ] S2-5 用户完成 ChatGPT 授权
+- [x] S2-5 用户完成 ChatGPT 授权（2026-10-01，见 S2 完成证据；此项纠正遗漏勾选，通道当前可用性仍需复验）
 - [x] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库（2026-10-01 实测）
 
 ### S3 打通一单
@@ -288,10 +292,10 @@
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
 
 ### S5 常驻运行时
-- [x] S5-0 单实例锁（`RuntimeLock`/`lock_status`）与 `alphabrief doctor`（GUIDE 4.9 全项，真实实测 7 PASS/3 WARN/0 FAIL）
-- [x] S5-1 `alphabrief run`（单进程、单实例锁、`to_thread`、超时；2026-10-01 本提交，含 5.1 时钟表/补跑/报价轮询/影子计分）
-- [x] S5-2 按时钟的时间表、补跑窗口、阶段持久化（2026-10-01 本提交：`schedule_plan` + 持久化产物判定已跑过；轮次阶段持久化沿用 DurableDailyCycle/cycle key）
-- [x] S5-3 CLI 走 HTTP；后台不在线时只读（2026-10-01 本提交：写命令在线时退出码 3 拒绝、只读经 HTTP、doctor 经 `/api/v1/broker/status`）
+- [ ] S5-0 账户级单实例锁与 `alphabrief doctor`（数据目录级锁已实现；同账户跨目录互斥未实现，2026-10-01 接管复核撤回完成标记）
+- [ ] S5-1 `alphabrief run`（现有后台未接完整风控/预算/仓位；决策轮同步阻塞事件循环，2026-10-01 接管复核撤回完成标记）
+- [ ] S5-2 时钟表、补跑窗口与阶段持久化（时钟表已实现；后台实际用普通 DailyTradingCycle，提交后中断重跑能产生新意图，待修复和真实重启验证）
+- [ ] S5-3 CLI 走 HTTP；后台不在线时只读（只读 HTTP 已有；写操作只是在线拒绝、离线直写，待实现计划规定的路径）
 - [ ] S5-4 `alphabrief service install|uninstall|status`
 - [ ] S5-5 macOS 通知（doctor 已完成，见 S5-0）
 - [ ] S5-6 备份和恢复（复用 `db/backup.py`）
@@ -338,6 +342,8 @@
 
 ## 需要用户做的事
 
+- 2026-10-01 接管补充：下方历史登录要求已由 S2 完成证据满足，目前不要求重复授权；只有当前凭证被真实判定失效时才重新请求。用户本次授权已恢复开发。
+
 - **（现在需要，只此一次）** 在项目目录下运行 `.venv/bin/alphabrief model login`，浏览器会自动打开 OpenAI 授权页，点一次同意即可。完成后把终端输出贴给我，或直接让我继续（我会用 `alphabrief model status` 自查）。若浏览器没有自动打开，终端会打印授权 URL，手动打开同样可以。
 - （长期）试运行期间保持 Mac 接电源、不休眠（目前由 Amphetamine 保证）。
 - （可选）如果想启用备用模型通道：提供一个按量付费的 OpenAI 兼容 key（例如 DeepSeek 官方），写入 `.env` 的 `ALPHABRIEF_LLM_BASE_URL`、`ALPHABRIEF_LLM_API_KEY`、`ALPHABRIEF_LLM_MODEL`，并在配置中开启 `model.fallback_enabled`。
@@ -347,6 +353,7 @@
 
 | 日期 | 问题 | 选择 | 理由 |
 |---|---|---|---|
+| 2026-10-01 | 接管后是否沿用历史完成勾选 | 当前代码与真实检查优先；撤回 S5 不成立的勾选，先恢复完整质量门禁，再修复交易运行时集成 | 用户要求按项目验收接手完成；审查复现表明阶段持久化、完整风控接线、HTTP 写路径和安全边界尚不满足规格，不能以旧记录替代当前证据 |
 | 2026-09-30 | 上架形态 | GitHub 开源发布 + 未签名的 arm64 `.dmg` | 用户决定；不上 App Store，签名流程留开关 |
 | 2026-09-30 | 发布权限 | 允许 Agent 在 S11 自动 push 并创建 Release；S9 起允许推送 `main` 和 RC tag | 用户决定 |
 | 2026-09-30 | 交易品种 | 只交易外汇（账户实测只开放外汇）；`XAU_USD`、`SPX500_USD`、`BCO_USD` 作为只读信号 | 用户决定 |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -119,7 +120,7 @@ class TestSpreadRule:
 
 class TestQuoteSampleStore:
     @pytest.fixture
-    def store(self, tmp_path: Path):
+    def store(self, tmp_path: Path) -> Iterator[QuoteSampleStore]:
         s = QuoteSampleStore(db_path=tmp_path / "quotes.duckdb")
         try:
             yield s
