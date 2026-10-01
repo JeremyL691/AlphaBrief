@@ -46,6 +46,9 @@ class OrderStateResult(BaseModel):
 
     broker_order_id: str = Field(min_length=1)
     client_order_id: str | None = None
+    #: ``clientExtensions.tag`` as reported by the broker; ``alphabrief``
+    #: marks an order as this system's own (reconciliation evidence).
+    client_tag: str | None = None
     symbol: str = Field(min_length=1)
     state: OrderStateValue
     units: Decimal
@@ -190,6 +193,7 @@ class OrderOpsClient:
             return OrderStateResult(
                 broker_order_id=str(order.get("id", "")).strip(),
                 client_order_id=_client_extensions_id(order),
+                client_tag=_client_extensions_tag(order),
                 symbol=str(order.get("instrument", "")).strip(),
                 state=state,
                 units=units,
@@ -306,6 +310,7 @@ class OrderOpsClient:
             return OrderStateResult(
                 broker_order_id=str(row.get("id", "")).strip(),
                 client_order_id=_client_extensions_id(row),
+                client_tag=_client_extensions_tag(row),
                 symbol=str(row.get("instrument", "")).strip(),
                 state=_parse_state(str(row.get("state", ""))),
                 units=Decimal(str(row.get("units", "0"))),
@@ -333,6 +338,16 @@ def _parse_state(raw: str) -> OrderStateValue:
     if normalized not in _ORDER_STATES:
         raise OrderOperationError("protocol_error", f"unknown order state {raw!r}")
     return normalized  # type: ignore[return-value]
+
+
+def _client_extensions_tag(order: dict[str, Any]) -> str | None:
+    """Return ``clientExtensions.tag`` when the broker reports one."""
+    extensions = order.get("clientExtensions")
+    if isinstance(extensions, dict):
+        tag = str(extensions.get("tag", "")).strip()
+        if tag:
+            return tag
+    return None
 
 
 def _client_extensions_id(order: dict[str, Any]) -> str | None:

@@ -19,14 +19,13 @@ Commands
   Clear an open freeze by id.
 
 The CLI proxies through the API when the server is running and runs
-the identical durable :class:`ReconciliationRunner` against the OANDA
+the identical durable :class:`LiveReconciler` against the OANDA
 practice runtime otherwise.
 """
 
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -35,12 +34,12 @@ from typing import Any
 
 import typer
 from alphabrief_core import paths as _paths
-from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import (
+from alphabrief_execution.broker.oanda.live_reconciliation import (
     ALLOWED_SCOPES,
-    ReconciliationRunner,
+    LiveReconciler,
+    record_broker_not_configured,
 )
-from alphabrief_execution.broker.runtime import get_broker_runtime
+from alphabrief_execution.broker.recon_store import BrokerReconStore
 
 from alphabrief_cli.api_client import is_api_running, print_api_unavailable_hint
 
@@ -144,7 +143,7 @@ def reconcile_cmd(
 ) -> None:
     """Run one reconciliation pass through the shared durable service.
 
-    Uses the same :class:`ReconciliationRunner` as the API and the
+    Uses the same :class:`LiveReconciler` as the API and the
     scheduler (AC-M07-W06-03): with the API running the pass is proxied
     to it; otherwise the local process runs the identical durable
     service against the OANDA practice runtime. Missing OANDA practice
@@ -185,20 +184,46 @@ def reconcile_cmd(
 
     store = _open_store()
     try:
-        runner = ReconciliationRunner(
-            adapter=get_broker_runtime().adapter, store=store
-        )
-        result = asyncio.run(runner.reconcile(scope=scope))
+        result = _run_live_reconcile(store, scope=scope)
+        snapshot = store.latest_snapshot(scope=scope)
     finally:
         store.close()
     payload = {
-        "snapshot_id": result.snapshot.snapshot_id,
-        "captured_at": result.snapshot.captured_at,
-        "scope": result.snapshot.scope,
-        "all_match": result.snapshot.all_match,
+        "scope": scope,
+        "cursor": result.cursor,
+        "clean": result.clean,
+        "facts_applied": result.facts_applied,
+        "gap_count": result.gap_count,
         "freeze_raised": result.freeze_raised,
+        "diffs": [diff.model_dump(mode="json") for diff in result.report.diffs],
+        "snapshot_id": snapshot.snapshot_id if snapshot is not None else None,
+        "captured_at": (
+            str(snapshot.captured_at) if snapshot is not None else None
+        ),
+        "all_match": snapshot.all_match if snapshot is not None else False,
     }
     _dump(payload, pretty=pretty)
+
+
+def _run_live_reconcile(
+    store: BrokerReconStore, *, scope: str
+) -> Any:
+    """Reconcile against the live practice account, fail-closed when unset."""
+    from alphabrief_execution.broker.runtime import (
+        build_oanda_paper_client,
+        oanda_is_configured,
+    )
+
+    if not oanda_is_configured():
+        return record_broker_not_configured(store, scope=scope)
+    reconciler = LiveReconciler(
+        client=build_oanda_paper_client(),
+        store=store,
+    )
+    try:
+        return reconciler.reconcile(scope=scope)
+    finally:
+        reconciler.close()
 
 
 # ---------------------------------------------------------------------------

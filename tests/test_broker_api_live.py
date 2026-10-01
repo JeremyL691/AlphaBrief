@@ -210,7 +210,7 @@ def test_broker_reconcile_runs_real_pass_with_live_adapter(
         # read must surface it as a mismatch.
         server.on(
             "GET",
-            "/v3/accounts/test-account/orders?state=ALL",
+            "/v3/accounts/test-account/orders?state=ALL&count=50",
             status=200,
             body={
                 "orders": [
@@ -227,24 +227,47 @@ def test_broker_reconcile_runs_real_pass_with_live_adapter(
         )
         server.on(
             "GET",
-            "/v3/accounts/test-account/openPositions",
+            "/v3/accounts/test-account/positions",
             status=200,
             body={"positions": []},
         )
         server.on(
             "GET",
-            "/v3/accounts/test-account",
+            "/v3/accounts/test-account/summary",
             status=200,
             body={
                 "account": {
                     "id": "101-004-1234567-001",
                     "balance": "1000.00",
                     "NAV": "1000.00",
+                    "unrealizedPL": "0.00",
+                    "marginUsed": "0.00",
                     "marginAvailable": "1000.00",
+                    "openOrderCount": 1,
+                    "openTradeCount": 0,
+                    "openPositionCount": 0,
                     "currency": "USD",
-                    "status": "ACTIVE",
+                    "lastTransactionID": "11",
                 }
             },
+        )
+        server.on(
+            "GET",
+            "/v3/accounts/test-account/trades?state=ALL&count=50",
+            status=200,
+            body={"trades": []},
+        )
+        server.on(
+            "GET",
+            "/v3/accounts/test-account/transactions/sinceid?id=0",
+            status=200,
+            body={"transactions": [], "lastTransactionID": "11"},
+        )
+        server.on(
+            "GET",
+            "/v3/accounts/test-account/transactions/idrange?from=1&to=11&pageSize=100",
+            status=200,
+            body={"transactions": [], "lastTransactionID": "11"},
         )
 
         response = live_client.post("/api/v1/broker/reconcile?scope=eod")

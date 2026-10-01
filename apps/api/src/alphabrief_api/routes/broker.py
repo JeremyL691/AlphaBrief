@@ -30,11 +30,13 @@ from typing import Any
 
 from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.errors import BrokerAdapterError
-from alphabrief_execution.broker.recon_store import BrokerReconStore
-from alphabrief_execution.broker.reconciliation import (
+from alphabrief_execution.broker.oanda.live_reconciliation import (
     ALLOWED_SCOPES,
-    ReconciliationRunner,
+    LiveReconciler,
+    record_broker_not_configured,
 )
+from alphabrief_execution.broker.recon_store import BrokerReconStore
+from alphabrief_execution.broker.runtime import build_oanda_paper_client
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -192,7 +194,7 @@ def broker_status() -> dict[str, Any]:
 def broker_reconcile(scope: str = Query("cycle")) -> dict[str, Any]:
     """Run one real reconciliation pass through the shared durable service.
 
-    Uses the same :class:`ReconciliationRunner` as the CLI and the
+    Uses the same :class:`LiveReconciler` as the CLI and the
     scheduler startup (AC-M07-W06-03). With no OANDA practice
     credentials the runner records a fail-closed non-matching snapshot —
     never an unconditional all-match placeholder. Upstream broker
@@ -205,26 +207,42 @@ def broker_reconcile(scope: str = Query("cycle")) -> dict[str, Any]:
         )
     store = _store()
     try:
-        runner = ReconciliationRunner(adapter=get_broker_adapter(), store=store)
-        try:
-            result = asyncio.run(runner.reconcile(scope=scope))
-        except BrokerAdapterError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": "broker_adapter_unavailable",
-                    "kind": type(exc).__name__,
-                    "message": str(exc),
-                },
-            ) from exc
+        if not has_live_broker():
+            result = record_broker_not_configured(store, scope=scope)
+        else:
+            reconciler = LiveReconciler(
+                client=build_oanda_paper_client(),
+                store=store,
+            )
+            try:
+                result = reconciler.reconcile(scope=scope)
+            except BrokerAdapterError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": "broker_adapter_unavailable",
+                        "kind": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                ) from exc
+            finally:
+                reconciler.close()
+        snapshot = store.latest_snapshot(scope=scope)
     finally:
         store.close()
     return {
-        "snapshot_id": result.snapshot.snapshot_id,
-        "captured_at": result.snapshot.captured_at,
-        "scope": result.snapshot.scope,
-        "all_match": result.snapshot.all_match,
+        "scope": scope,
+        "cursor": result.cursor,
+        "clean": result.clean,
+        "facts_applied": result.facts_applied,
+        "gap_count": result.gap_count,
         "freeze_raised": result.freeze_raised,
+        "diffs": [diff.model_dump(mode="json") for diff in result.report.diffs],
+        "snapshot_id": snapshot.snapshot_id if snapshot is not None else None,
+        "captured_at": (
+            str(snapshot.captured_at) if snapshot is not None else None
+        ),
+        "all_match": snapshot.all_match if snapshot is not None else False,
     }
 
 
