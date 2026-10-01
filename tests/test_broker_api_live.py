@@ -17,12 +17,12 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from _helpers.mock_oanda_server import MockOandaServer
+from _helpers.mock_oanda_server import MockOandaServer, loopback_http_sender
 from alphabrief_api.broker_adapter import (
-    ENV_OANDA_BASE_URL,
     _reset_broker_adapter,
 )
 from alphabrief_api.main import create_app
+from alphabrief_execution.broker.oanda import client as oanda_http
 from fastapi.testclient import TestClient
 
 
@@ -37,6 +37,7 @@ def live_client(
     via the returned ``server`` (see individual tests). Credentials are
     injected through env so the factory builds a live adapter.
     """
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
     monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
@@ -89,7 +90,9 @@ def test_positions_returns_live_data(
     server.start()
     try:
         # Point the adapter at the mock before the first live read.
-        monkeypatch.setenv(ENV_OANDA_BASE_URL, server.base_url)
+        monkeypatch.setattr(
+            oanda_http, "_default_http_send", loopback_http_sender(server.base_url)
+        )
         _reset_broker_adapter()
         _seed_positions_and_account(server)
 
@@ -113,7 +116,9 @@ def test_account_returns_live_snapshot(
     server = MockOandaServer()
     server.start()
     try:
-        monkeypatch.setenv(ENV_OANDA_BASE_URL, server.base_url)
+        monkeypatch.setattr(
+            oanda_http, "_default_http_send", loopback_http_sender(server.base_url)
+        )
         _reset_broker_adapter()
         _seed_positions_and_account(server)
 
@@ -135,7 +140,9 @@ def test_live_adapter_failure_returns_503(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Point the adapter at an unreachable port (no server listening).
-    monkeypatch.setenv(ENV_OANDA_BASE_URL, "http://127.0.0.1:1")
+    monkeypatch.setattr(
+        oanda_http, "_default_http_send", loopback_http_sender("http://127.0.0.1:1")
+    )
     _reset_broker_adapter()
 
     response = live_client.get("/api/v1/broker/account")
@@ -151,6 +158,7 @@ def test_no_credentials_returns_null_shapes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     # The auto-load step in ``alphabrief_api.__init__`` may have populated
     # OANDA creds from the developer's local ``.env``; clear them so the
@@ -180,7 +188,9 @@ def test_recon_routes_unchanged_with_live_adapter(
     server = MockOandaServer()
     server.start()
     try:
-        monkeypatch.setenv(ENV_OANDA_BASE_URL, server.base_url)
+        monkeypatch.setattr(
+            oanda_http, "_default_http_send", loopback_http_sender(server.base_url)
+        )
         _reset_broker_adapter()
 
         status = live_client.get("/api/v1/broker/status")
@@ -204,7 +214,9 @@ def test_broker_reconcile_runs_real_pass_with_live_adapter(
     server = MockOandaServer()
     server.start()
     try:
-        monkeypatch.setenv(ENV_OANDA_BASE_URL, server.base_url)
+        monkeypatch.setattr(
+            oanda_http, "_default_http_send", loopback_http_sender(server.base_url)
+        )
         _reset_broker_adapter()
         # A remote order with a client identity unknown locally: a real
         # read must surface it as a mismatch.

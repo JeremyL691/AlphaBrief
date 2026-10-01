@@ -36,11 +36,10 @@ def _http_client(captured: list[dict[str, Any]]) -> OandaHttpClient:
 
     return OandaHttpClient(
         config=OandaPaperConfig(
-            base_url="http://oanda.test",
+            base_url="https://api-fxpractice.oanda.com",
             timeout_seconds=1.0,
             max_retries=0,
             retry_backoff_seconds=0.001,
-            allow_insecure_base_url=True,
         ),
         http_send=_send,
         token=TOKEN,
@@ -245,6 +244,6 @@ def test_endpoint_template_and_url_scrub() -> None:
     assert endpoint_template_for(path) == (
         "/v3/accounts/{account_id}/trades/{id}/close"
     )
-    url = f"http://oanda.test/v3/accounts/{ACCOUNT_ID}/orders?count=50"
+    url = f"https://api-fxpractice.oanda.com/v3/accounts/{ACCOUNT_ID}/orders?count=50"
     assert ACCOUNT_ID not in scrub_url_account_segment(url)
     assert "{account_id}" in scrub_url_account_segment(url)

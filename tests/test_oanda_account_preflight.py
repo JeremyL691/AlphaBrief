@@ -45,7 +45,6 @@ def _config(**overrides: object) -> OandaPaperConfig:
         timeout_seconds=float(payload["timeout_seconds"]),
         max_retries=int(payload["max_retries"]),
         retry_backoff_seconds=float(payload["retry_backoff_seconds"]),
-        allow_insecure_base_url=bool(payload.get("allow_insecure_base_url", False)),
     )
 
 
@@ -159,7 +158,6 @@ def test_live_host_fails_closed() -> None:
     object.__setattr__(live_config, "timeout_seconds", 1.0)
     object.__setattr__(live_config, "max_retries", 0)
     object.__setattr__(live_config, "retry_backoff_seconds", 0.001)
-    object.__setattr__(live_config, "allow_insecure_base_url", False)
     with pytest.raises(AccountPreflightError) as excinfo:
         run_account_preflight(
             live_config,
