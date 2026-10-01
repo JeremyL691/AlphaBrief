@@ -102,6 +102,20 @@ class _CommitteeSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class NewsInputEvidence(_CommitteeSchema):
+    """Times of real source successes and the bounded related input headlines."""
+
+    family_fetched_at: dict[str, datetime] = Field(default_factory=dict)
+    related_published_at: dict[str, datetime] = Field(
+        default_factory=dict, max_length=20
+    )
+
+    @field_validator("family_fetched_at", "related_published_at")
+    @classmethod
+    def _times(cls, values: dict[str, datetime]) -> dict[str, datetime]:
+        return {key: _validate_timezone_aware(value) for key, value in values.items()}
+
+
 class MarketSnapshot(_CommitteeSchema):
     """A compact market snapshot fed into the committee.
 
@@ -121,6 +135,7 @@ class MarketSnapshot(_CommitteeSchema):
     #: recorded as skipped instead of guessing a direction.
     momentum_20d_pct: Decimal | None = None
     news_context: str | None = None
+    news_evidence: NewsInputEvidence | None = None
     macro_context: str | None = None
     data_version: str = Field(default="ai-trader-v1", min_length=1)
     captured_at: datetime
@@ -469,6 +484,7 @@ class InputQualityRecord(_CommitteeSchema):
     no_trade_reason: Literal["NO_TRADE_DATA_STALE"] | None = None
     snapshot_captured_at: datetime | None = None
     data_version: str | None = None
+    news_evidence: NewsInputEvidence | None = None
     evaluated_at: datetime
 
     @field_validator("snapshot_captured_at", "evaluated_at")

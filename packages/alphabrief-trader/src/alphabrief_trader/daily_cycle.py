@@ -141,6 +141,9 @@ def _snapshot_fingerprint(snapshots: dict[str, MarketSnapshot]) -> str:
                     ),
                     snapshot.news_context or "",
                     snapshot.macro_context or "",
+                    *([] if snapshot.news_evidence is None else [json.dumps(
+                        snapshot.news_evidence.model_dump(mode="json"), sort_keys=True
+                    )]),
                 ]
             )
         )
@@ -337,6 +340,7 @@ class DailyTradingCycle:
                 no_trade_reason=None if quality.passed else NO_TRADE_DATA_STALE,
                 snapshot_captured_at=None if snapshot is None else snapshot.captured_at,
                 data_version=None if snapshot is None else snapshot.data_version,
+                news_evidence=None if snapshot is None else snapshot.news_evidence,
                 evaluated_at=checked_at,
             ))
             if not quality.passed or snapshot is None:

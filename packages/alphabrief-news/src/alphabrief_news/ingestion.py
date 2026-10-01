@@ -376,6 +376,13 @@ class NewsIngestionStore:
     def successful_source_families(
         self, *, now: datetime, max_age_seconds: int = 6 * 60 * 60
     ) -> frozenset[str]:
+        return frozenset(self.successful_source_family_times(
+            now=now, max_age_seconds=max_age_seconds
+        ))
+
+    def successful_source_family_times(
+        self, *, now: datetime, max_age_seconds: int = 6 * 60 * 60
+    ) -> dict[str, datetime]:
         """Count fresh latest successes using the canonical publisher registry.
 
         Older successes never conceal a later failure. Empty, unknown,
@@ -386,7 +393,7 @@ class NewsIngestionStore:
         if now.tzinfo is None or now.utcoffset() is None or max_age_seconds < 0:
             raise ValueError("health query requires an aware time and non-negative age")
         latest = {str(row["source"]): row for row in self.fetch_records()}
-        families: set[str] = set()
+        families: dict[str, datetime] = {}
         oldest = now - timedelta(seconds=max_age_seconds)
         for source, row in latest.items():
             if row["fetch_outcome"] != "success" or row["item_count"] <= 0:
@@ -394,10 +401,13 @@ class NewsIngestionStore:
             if not oldest <= row["fetched_at"] <= now:
                 continue
             try:
-                families.add(feed_source(source).family)
+                family = feed_source(source).family
+                previous = families.get(family)
+                if previous is None or row["fetched_at"] > previous:
+                    families[family] = row["fetched_at"]
             except NewsProviderError:
                 continue
-        return frozenset(families)
+        return families
 
     def records(self, source: str | None = None) -> list[dict[str, Any]]:
         where = "WHERE source = ?" if source else ""
