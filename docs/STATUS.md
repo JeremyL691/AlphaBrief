@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S4 风控与决策补全** |
-| 状态 | `IN_PROGRESS` |
-| 下一项任务 | S5 常驻运行时（单进程 FastAPI+调度器、单实例锁、LaunchAgent、doctor、备份恢复、CLI-over-HTTP、报价轮询与影子计分）；S4 退出标准的全 universe 跑待模型额度恢复 |
+| 当前阶段 | **S5 常驻运行时** |
+| 状态 | `IN_PROGRESS`（用户要求暂停，见最近更新） |
+| 下一项任务 | S5 余下：LaunchAgent `ai.alphabrief.backend`（`service install|uninstall|status`）、macOS 通知、备份与恢复命令、行情/点差样本的 HTTP 端点；随后 S5 退出标准的 `kill -9` 重启实测（需 practice 环境） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-6：14 条规则矩阵 + 补齐规则 1 冻结/规则 2 分类 + 清理 3 个过期冻结（对账恢复 clean） |
+| 最近更新 | 2026-10-01，S5 第三批：CLI-over-HTTP 完成；**用户要求暂停任务**（工作区干净、无残留后台进程、单实例锁空闲；下一项为 S5 余下的 LaunchAgent/macOS 通知/备份恢复命令） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,31 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S5 第三批（本提交）：**CLI-over-HTTP（5.3）**：后台在线时 CLI 不再直连数据库，只读走 HTTP。
+  - 新增 `api_client.require_local_write(command)`：后台在线时，会直写数据库的命令立即以退出码 3 拒绝并说明原因（DuckDB 单进程独占文件，第二个写者会与常驻进程竞争）。已接入 `cycle run` / `cycle close` / `cycle close-due` / `broker reconcile` / `broker freeze` / `broker unfreeze` / `risk kill-switch` / `data sync-oanda`；后台不在线时照常本地执行（无旁路开关，安全不变量 12 不允许第二个写者）。
+  - **修掉一个真实缺陷**：`is_api_running()` 原先在设置 `ALPHABRIEF_DATA_DIR` 时直接返回 False（本意是测试隔离），但生产 `.env` 也设这个变量，导致后台在线时 CLI 仍走本地连接并在 DuckDB 锁上抛 traceback。现在探测 `/health` 是唯一权威；测试改由 `tests/conftest.py` 的 autouse fixture 把 `ALPHABRIEF_API_URL` 指向 discard 端口，保证开发者本机跑着后台也不会改变测试行为。
+  - **doctor 适配单进程约束**：DuckDB 只允许一个进程持有文件（连只读连接也会被写者挡住），所以后台在线时 doctor 从后台的 HTTP 端点取对账事实（`/api/v1/broker/status` → 真实快照与冻结列表），行情新鲜度与点差样本深度因尚无 HTTP 端点而如实记 WARN 并写明"dashboard endpoint pending"，模型通道的调用历史/预算同样如此；数据库文件不存在（全新安装）时三项检查给出"no data yet"而不是崩溃。四个 store（recon / quote samples / model call / market data）新增 `read_only=True` 连接支持（只读时不建表），供后台不在线时的只读路径使用。
+  - 真实实测（本机 practice）：后台在线（`:8000`）时 `alphabrief cycle run` → `exit=3`、`error: the backend is running ... would race the daemon`；`alphabrief broker reconcile` → `exit=3` 同样拒绝；只读命令正常走 HTTP：`scheduler status` 返回真实 heartbeat/冻结计数、`broker account` 返回真实账户、`doctor run` → `5 PASS, 5 WARN, 0 FAIL`（对账经后台 HTTP 得到 `all_match=True`，锁报出持锁 pid）。停止后台后 `broker reconcile` 本地执行恢复 `clean/all_match=true`，锁回到空闲。
+  - 测试：`tests/test_runtime_lock_and_doctor.py` 更新为"全新安装无数据库"的语义；新增 conftest 的 API 隔离 fixture。命令与结果：`pytest -q -m "not practice"` → 2709 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (237 source files)；`secret_scan` → OK。
+  - S5 余下：LaunchAgent `ai.alphabrief.backend`（`service install|uninstall|status`）、macOS 通知、备份/恢复 CLI 命令、行情与点差样本的 HTTP 端点（S6 看板需要）、`kill -9` 重启实测（需 practice 环境）。
+
+- S5 第二批（本提交）：**`alphabrief run` 单进程运行时 + 时钟时间表（5.1）**。
+  - 新增 `alphabrief_core.schedule_plan`（纯函数）：5.1 的时钟表（决策轮 00:30/07:30/13:00、周五 19:00 全平、21:30 日报、22:00 备份）+ 补跑规则（**90 分钟内可补跑**；超过即 `missed_window`，"never run late"；周末决策轮记 `market_closed` 而日报/备份照常；已跑过的事件不再触发）。`cycle_key_for()` 给出"事件+UTC 日期"的幂等键。
+  - 新增 CLI `alphabrief run run [--host --port --catch-up-minutes]`：一个进程里跑 **uvicorn（FastAPI）+ OperationsScheduler + 时钟规划器**；启动即取单实例锁（第二个进程退出码 2 且打印 `Could not set lock ... (held by pid N)`）；SIGINT/SIGTERM 优雅停止并释放锁；拒绝 live-trading 解锁。任务都带超时：对账 60s/60s、报价轮询 60s/60s、影子计分 900s/300s、日报 300s、备份 600s、周五全平 600s。阻塞工作走 `asyncio.to_thread`（对账、报价、计分、日报、备份、全平）。
+  - **重启安全的"已跑过"判定来自持久化产物**（不是内存）：决策轮看 cycle store 里当天该轮 cycle key 的轮次、日报看当天报告文件、备份看当天 manifest；`scheduler_commands._ai_cycle_factory` 改为接受 `cycle_key` 并把键传给 `DailyTradingCycle.run(cycle_key=...)`（同一轮重跑返回已持久化记录，不重复跑委员会）；对账 runner 抽成模块级 `_reconcile_runner(store)`，`scheduler run` 与 `alphabrief run` 共用一份实现。
+  - 任务实现：报价轮询把真实 bid/ask 写成规则 4 的样本；影子计分对到期的 4h/24h 决策用真实中间价与点差计分（无报价的品种跳过而不是编造价格）；日报与备份在进程内直接生成（复用 S4-4 的渲染与 `db/backup.py`）；周五全平走 `cycle close` 的同一条 reduce-only 风控链。
+  - 真实实测（本机 practice，trading_mode=off）：`alphabrief run run --port 8123` → uvicorn 起在 8123、`/health` 返回 `{"status":"healthy","version":"0.0.0"}`、规划器记录三个真实错过的决策轮（"missed by 1240m/820m/490m (window 90m); never run late"）、报价轮询写入真实点差样本（累计 11 条，EUR_USD 0.00044 / GBP_USD 0.00132 / USD_JPY 0.086）、heartbeat 出现 reconcile/quote_poll/shadow_score 三行；第二个实例 `exit=2` 且明确报出持锁 pid；`kill -TERM` → `{"status": "stopped"}`，`lock_status()` 回到 None，无残留进程。
+  - 测试：新增 `tests/test_runtime_schedule.py` 15 个（准点触发、补跑窗口内/外、90 分钟边界含端点、已跑过不再触发、周末只跑日报备份、周五全平仅周五、日报/备份每日、非法窗口拒绝、cycle key 按轮次与日期、规划器派发决策轮/日报/备份、错过不派发、停止事件结束循环）。命令与结果：`pytest -q -m "not practice"` → 2709 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (237 source files)；`secret_scan` → OK。
+  - S5 余下：CLI-over-HTTP（后台不在线时只读）、LaunchAgent `ai.alphabrief.backend`（`service install|uninstall|status`）、备份/恢复的 CLI 命令、macOS 通知；S5 退出标准里的 `kill -9` 重启实测（`ALPHABRIEF_TEST_CRASH_AT=after_submit`，仅 practice）留待进入试运行前做。
+
+- S5 第一批（本提交）：**单实例锁 + `alphabrief doctor` + 日报接入 doctor 摘要**。
+  - 新增 `alphabrief_core.runtime_lock`：`RuntimeLock` 用 `flock(runtime.lock)` 实现单实例（第二个进程立即 `Could not set lock`，文件里记录 pid 与启动时间；进程退出/崩溃时内核自动释放，陈旧锁文件不会挡住重启），`lock_status()` 供 doctor 非阻塞探测持有者。
+  - 新增 CLI `alphabrief doctor run [--expect-daemon] [--offline]`（GUIDE 4.9）：数据目录可写、单实例锁（`--expect-daemon` 时"无人运行"记 WARN）、最近对账快照与冻结状态、行情新鲜度（>6h 记 WARN）、规则 4 的同小时样本厚度、磁盘空间（<512MiB FAIL / <2GiB WARN）、防休眠断言（**只读 pmset，绝不修改系统设置**，开启睡眠记 WARN）、OANDA 只读连通（账户币种/可交易品种数/NAV）、模型通道（凭证 + 24h 调用记录 + 每日预算是否允许，**不发真实调用**以免消耗额度）、新闻源可用性（逐 feed 真实 HTTP 且校验 RSS/Atom 根元素）。输出 JSON + 一行摘要，仅 FAIL 时退出非零。
+  - 真实实测（本机 practice）：`alphabrief doctor run` → `7 PASS, 3 WARN, 0 FAIL`：数据目录可写、锁空闲、对账 `all_match=True`（清理冻结后）、行情最新 2026-10-01T20:15Z、磁盘 36 GiB、OANDA 只读 PASS（USD、68 个可交易品种、NAV 99999.92）、新闻 6/6 feed 可达；WARN 为 quote_samples（4 个品种同小时样本不足，规则 4 因此失败闭合——真实状态）、sleep_assertion（本机睡眠未禁用，属用户控制项）、model_channel（额度窗口用尽，见阻塞）。
+  - 日报接入：`alphabrief report daily` 现在嵌入 doctor 的离线摘要（`doctor: 5 PASS, 2 WARN, 0 FAIL; warn=[...] (offline checks; network checks skipped)`），不再写"要等 S5"。
+  - 测试：新增 `tests/test_runtime_lock_and_doctor.py` 14 个（第二个进程立即被拒、持有者元数据、释放后可再取、缺文件视为空闲、数据目录可写、锁状态与 `--expect-daemon` 语义、磁盘/睡眠/行情/样本/对账各检查的判定与失败闭合、报告摘要与"仅 FAIL 不健康"、离线运行不含网络检查）。命令与结果：`pytest -q -m "not practice"` → 2694 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (235 source files)；`secret_scan` → OK。
+  - S5 余下：单进程 FastAPI+调度器（`alphabrief run`，含报价轮询与影子 T+4h/24h 计分任务）、时间表与补跑、CLI-over-HTTP、LaunchAgent `ai.alphabrief.backend`、备份/恢复命令（复用 `apps/api` 的 `create_backup`/`verify_backup`/`restore_backup`/`apply_retention`）。
 
 - S4-6（本提交）：**规则矩阵 + 补齐规则 1 冻结与规则 2 分类，并清理过期冻结**。
   - 补齐两处此前未被 gate 强制的规则半边：① **规则 1 的冻结**（`EntryRulePolicy.require_unfrozen`）——`AccountExposureContext.reconciliation_state`（clean/frozen/unknown，来自持久化对账状态），frozen 时拒绝新开仓（`FROZEN`），缺上下文失败闭合，平仓照常；② **规则 2 的品种分类**（`require_currency_type`）——`AccountExposureContext.symbol_types`（来自券商 instrument catalog 的 `raw_type`），非 `CURRENCY` 或未知即 `INSTRUMENT_NOT_ALLOWED`。CLI 的受审 policy 两项都开启，账户上下文提供者填入真实对账状态与真实品种分类。
@@ -263,11 +288,12 @@
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
 
 ### S5 常驻运行时
-- [ ] S5-1 `alphabrief run`（单进程、单实例锁、`to_thread`、超时）
-- [ ] S5-2 按时钟的时间表、补跑窗口、阶段持久化
-- [ ] S5-3 CLI 走 HTTP；后台不在线时只读
+- [x] S5-0 单实例锁（`RuntimeLock`/`lock_status`）与 `alphabrief doctor`（GUIDE 4.9 全项，真实实测 7 PASS/3 WARN/0 FAIL）
+- [x] S5-1 `alphabrief run`（单进程、单实例锁、`to_thread`、超时；2026-10-01 本提交，含 5.1 时钟表/补跑/报价轮询/影子计分）
+- [x] S5-2 按时钟的时间表、补跑窗口、阶段持久化（2026-10-01 本提交：`schedule_plan` + 持久化产物判定已跑过；轮次阶段持久化沿用 DurableDailyCycle/cycle key）
+- [x] S5-3 CLI 走 HTTP；后台不在线时只读（2026-10-01 本提交：写命令在线时退出码 3 拒绝、只读经 HTTP、doctor 经 `/api/v1/broker/status`）
 - [ ] S5-4 `alphabrief service install|uninstall|status`
-- [ ] S5-5 `alphabrief doctor`、macOS 通知
+- [ ] S5-5 macOS 通知（doctor 已完成，见 S5-0）
 - [ ] S5-6 备份和恢复（复用 `db/backup.py`）
 - [ ] 退出标准：第二个实例被拒；`kill -9` 重启实测没有重复订单；没有锁冲突；`doctor` 通过
 

@@ -153,6 +153,10 @@ def kill_switch_cmd(
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Show or change the persisted kill switch."""
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("risk kill-switch")
+
     from alphabrief_core import paths as _paths
     from alphabrief_risk import KillSwitchStore
 

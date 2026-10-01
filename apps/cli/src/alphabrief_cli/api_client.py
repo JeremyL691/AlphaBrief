@@ -26,8 +26,6 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from alphabrief_core import paths as _paths
-
 # ---------------------------------------------------------------------------
 # Defaults & helpers
 # ---------------------------------------------------------------------------
@@ -43,18 +41,39 @@ def _base_url() -> str:
 def is_api_running() -> bool:
     """Return ``True`` if the API server responds on ``/health``.
 
-    When a data directory override is set (test isolation), always
-    return ``False`` so the CLI never proxies through an external API
-    server and uses the isolated test DB directly instead.
+    The probe is the authority. Tests point ``ALPHABRIEF_API_URL`` at a
+    port nothing listens on (see ``tests/conftest.py``) so they never
+    proxy; an earlier version skipped the probe whenever
+    ``ALPHABRIEF_DATA_DIR`` was set, which silently disabled the
+    backend-aware CLI in production too (the real environment sets that
+    variable).
     """
-    if os.environ.get(_paths.ENV_HOME) or os.environ.get(_paths.ENV_DATA_DIR):
-        return False
     url = f"{_base_url()}/health"
     try:
         resp = urllib.request.urlopen(url, timeout=2.0)
         return bool(resp.status == 200)
     except (urllib.error.URLError, OSError, TimeoutError):
         return False
+
+
+def require_local_write(command: str) -> None:
+    """Refuse a direct database write while the backend is running.
+
+    The daemon owns the DuckDB writer; a CLI command that opened its own
+    read-write connection would race it (single-writer database). When the
+    backend answers on ``/health`` the operator must use the HTTP path or
+    stop the backend first — there is no bypass flag, because a second
+    writer is exactly what invariant 12 forbids.
+    """
+    if not is_api_running():
+        return
+    print(
+        f"error: the backend is running ({_base_url()}); '{command}' writes "
+        "the database directly and would race the daemon. Stop the backend "
+        "(`alphabrief service stop` or Ctrl-C) or use the HTTP path.",
+        file=sys.stderr,
+    )
+    sys.exit(3)
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +415,7 @@ __all__ = [
     "api_strategy_list",
     "api_strategy_set_enabled",
     "is_api_running",
+    "require_local_write",
     "print_api_unavailable_hint",
 ]
 

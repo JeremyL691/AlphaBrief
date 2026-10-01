@@ -89,13 +89,16 @@ class ModelCallStore:
         store.close()
     """
 
-    def __init__(self, db_path: Path | str | None = None) -> None:
+    def __init__(
+        self, db_path: Path | str | None = None, *, read_only: bool = False
+    ) -> None:
         if db_path is None:
             db_path = _paths.db_path()
         self._db_path = Path(db_path)
-        self._conn = duckdb.connect(str(self._db_path))
-        self._conn.execute(_CREATE_TABLE_SQL)
-        self._conn.execute(_CREATE_CHANNEL_STATE_SQL)
+        self._conn = duckdb.connect(str(self._db_path), read_only=read_only)
+        if not read_only:
+            self._conn.execute(_CREATE_TABLE_SQL)
+            self._conn.execute(_CREATE_CHANNEL_STATE_SQL)
 
     def save_call(self, record: ModelCallRecord) -> str:
         """Persist one terminal call record idempotently and return its ID.

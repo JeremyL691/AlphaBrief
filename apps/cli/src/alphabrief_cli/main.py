@@ -16,12 +16,14 @@ from alphabrief_cli.backtest_commands import backtest_app
 from alphabrief_cli.broker_commands import broker_app
 from alphabrief_cli.cycle_commands import cycle_app
 from alphabrief_cli.data_commands import data_app
+from alphabrief_cli.doctor_commands import doctor_app
 from alphabrief_cli.macro_commands import macro_app
 from alphabrief_cli.model_commands import model_app
 from alphabrief_cli.news_commands import news_app
 from alphabrief_cli.report_commands import report_app
 from alphabrief_cli.review_commands import review_app
 from alphabrief_cli.risk_commands import risk_app
+from alphabrief_cli.run_commands import run_app
 from alphabrief_cli.scheduler_commands import scheduler_app
 from alphabrief_cli.serve_commands import serve_app
 from alphabrief_cli.strategy_commands import strategy_app
@@ -41,6 +43,8 @@ app.add_typer(model_app, name="model")
 app.add_typer(backtest_app, name="backtest")
 app.add_typer(risk_app, name="risk")
 app.add_typer(report_app, name="report")
+app.add_typer(doctor_app, name="doctor")
+app.add_typer(run_app, name="run")
 app.add_typer(audit_app, name="audit")
 app.add_typer(review_app, name="review")
 app.add_typer(strategy_app, name="strategy")
