@@ -101,6 +101,10 @@ class AccountExposureContext(BaseModel):
         Set when the rule-11 drawdown state machine currently blocks new
         exposure (3% for 48 hours, or 5% for the rest of the soak). The
         caller advances the persisted state; the gate only reads it.
+    current_spread / recent_spreads
+        The live spread and the same-period sample history rule 4 compares
+        it against. The caller reads the samples from the durable quote
+        store; the gate only applies the median rule.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -123,6 +127,8 @@ class AccountExposureContext(BaseModel):
     frozen_symbols: dict[str, str] = Field(default_factory=dict)
     recent_high_impact_events: dict[str, str] = Field(default_factory=dict)
     drawdown_block_reason: str | None = None
+    current_spread: Decimal | None = Field(default=None, ge=0)
+    recent_spreads: tuple[Decimal, ...] = ()
 
     @field_validator(
         "current_total_exposure",

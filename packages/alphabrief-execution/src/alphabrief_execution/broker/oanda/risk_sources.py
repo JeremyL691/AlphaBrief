@@ -215,6 +215,20 @@ class OandaRiskContextSources:
             return None
         return price.conversion_factor
 
+    def live_spread(self, symbol: str) -> Decimal | None:
+        """The broker's current spread (ask - bid) for one instrument."""
+        price: OandaPrice | None = self._prices_by_symbol().get(symbol)
+        if price is None or not price.bids or not price.asks:
+            return None
+        return price.asks[0].price - price.bids[0].price
+
+    def live_quote(self, symbol: str) -> tuple[Decimal, Decimal] | None:
+        """The broker's current (bid, ask) for one instrument."""
+        price: OandaPrice | None = self._prices_by_symbol().get(symbol)
+        if price is None or not price.bids or not price.asks:
+            return None
+        return price.bids[0].price, price.asks[0].price
+
     def mid_price(self, symbol: str) -> Decimal | None:
         """The broker's current mid price for one instrument (touch)."""
         price: OandaPrice | None = self._prices_by_symbol().get(symbol)
@@ -264,6 +278,8 @@ class OandaRiskContextSources:
         daily_symbol_open_count: int | None = None,
         frozen_symbols: dict[str, str] | None = None,
         recent_high_impact_events: dict[str, str] | None = None,
+        current_spread: Decimal | None = None,
+        recent_spreads: tuple[Decimal, ...] = (),
         equity_high_water_mark: Decimal | None = None,
         day_start_equity: Decimal | None = None,
         day_realized_pnl: Decimal | None = None,
@@ -325,6 +341,8 @@ class OandaRiskContextSources:
             quote_tradeable=(quote.tradeable if quote is not None else None),
             frozen_symbols=dict(frozen_symbols or {}),
             recent_high_impact_events=dict(recent_high_impact_events or {}),
+            current_spread=current_spread,
+            recent_spreads=tuple(recent_spreads),
         )
 
     # ------------------------------------------------------------------

@@ -169,6 +169,10 @@ def _risk_gate(
                 # Rule 11: the soak drawdown state machine (3% blocks
                 # 48h, 5% halts the soak) blocks new exposure.
                 block_on_drawdown=True,
+                # Rule 4: the spread must stay within 2x the median of the
+                # same-period samples (5 samples minimum).
+                max_spread_median_multiplier=Decimal("2"),
+                min_spread_samples=5,
                 # Rule 13: close-only from Friday 13:00 UTC and all weekend.
                 block_weekend_and_late_friday=True,
                 # Rule 14: an entry must carry usable protective orders.
@@ -216,14 +220,62 @@ def _account_context_provider(
             else {}
         )
         verdict = _drawdown_verdict(sources)
+        current_spread, recent_spreads = _spread_facts(sources, symbol)
         return sources.account_exposure_context(
             daily_open_count=total,
             daily_symbol_open_count=per_symbol.get(symbol, 0),
             recent_high_impact_events=events,
             drawdown_block_reason=verdict.reason if verdict.blocked else None,
+            current_spread=current_spread,
+            recent_spreads=recent_spreads,
         )
 
     return _build
+
+
+def _spread_facts(
+    sources: Any, symbol: str
+) -> tuple[Decimal | None, tuple[Decimal, ...]]:
+    """Sample the live spread and read the same-hour history for rule 4.
+
+    Every evaluation appends the current quote to the durable sample store
+    (idempotent per timestamp), so the median the rule compares against is
+    built from real observations. A missing quote yields no spread, which
+    the rule treats as fail-closed.
+    """
+    from alphabrief_data.quote_samples import (
+        SPREAD_MEDIAN_SAMPLE_LIMIT,
+        QuoteSample,
+        QuoteSampleStore,
+    )
+
+    quote = sources.live_quote(symbol)
+    if quote is None:
+        return None, ()
+    bid, ask = quote
+    now = datetime.now(UTC)
+    store = QuoteSampleStore(db_path=_paths.db_path())
+    try:
+        store.record(
+            QuoteSample(
+                symbol=symbol,
+                captured_at=now,
+                bid=bid,
+                ask=ask,
+                spread=ask - bid,
+                mid=(bid + ask) / Decimal(2),
+            )
+        )
+        history = tuple(
+            store.recent_spreads(
+                symbol,
+                hour=now.hour,
+                limit=SPREAD_MEDIAN_SAMPLE_LIMIT,
+            )
+        )
+    finally:
+        store.close()
+    return ask - bid, history
 
 
 def _drawdown_verdict(sources: Any) -> Any:

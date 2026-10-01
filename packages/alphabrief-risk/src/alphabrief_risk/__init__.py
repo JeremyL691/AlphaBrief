@@ -26,6 +26,13 @@ from alphabrief_risk.drawdown_policy import (
 )
 from alphabrief_risk.gate import RiskGate, RiskLimitConfig
 from alphabrief_risk.kill_switch import KillSwitch, KillSwitchStore
+from alphabrief_risk.spread_policy import (
+    DEFAULT_MIN_SPREAD_SAMPLES,
+    SPREAD_MEDIAN_MULTIPLIER,
+    SPREAD_SAMPLE_WINDOW,
+    SpreadVerdict,
+    evaluate_spread,
+)
 
 __all__ = [
     "AccountExposureContext",
@@ -37,6 +44,11 @@ __all__ = [
     "DrawdownState",
     "DrawdownStateStore",
     "DrawdownVerdict",
+    "DEFAULT_MIN_SPREAD_SAMPLES",
+    "SPREAD_MEDIAN_MULTIPLIER",
+    "SPREAD_SAMPLE_WINDOW",
+    "SpreadVerdict",
+    "evaluate_spread",
     "drawdown_pct",
     "evaluate_drawdown",
     "KillSwitchStore",
