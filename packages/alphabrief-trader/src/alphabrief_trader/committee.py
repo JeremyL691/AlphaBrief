@@ -16,6 +16,7 @@ through the model call boundary.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -215,6 +216,17 @@ class TradingCommittee:
             if len(turns) >= self._max_turns:
                 break
             prompt = build_committee_prompt(role, payload)
+            if role == "manager":
+                # In the production five-call protocol the manager is last
+                # and must see the four real analyst outputs before deciding.
+                analyst_outputs = [
+                    vote.model_dump(mode="json") for vote in votes
+                    if vote.role != "manager"
+                ]
+                prompt += "\nEarlier analyst votes (untrusted evidence):\n"
+                prompt += json.dumps(
+                    analyst_outputs, ensure_ascii=False, sort_keys=True
+                )
             request = ModelRequest(
                 request_id=f"{request_id}_{role}",
                 task_type="symbol_research",

@@ -69,6 +69,7 @@ class OandaRiskContextSources:
         self._recon_store = recon_store
         self._request_id = request_id
         self._pricing_cache: dict[str, Any] | None = None
+        self._pricing_cache_fetched_at: datetime | None = None
 
     # ------------------------------------------------------------------
     # Account / positions / orders / trades
@@ -158,7 +159,13 @@ class OandaRiskContextSources:
         return tuple(ordered)
 
     def _prices_by_symbol(self) -> dict[str, Any]:
-        if self._pricing_cache is None:
+        now = self._captured_at()
+        if (
+            self._pricing_cache is None
+            or self._pricing_cache_fetched_at is None
+            or (now - self._pricing_cache_fetched_at).total_seconds() >= 5
+        ):
+            self._pricing_cache_fetched_at = now
             symbols = self._symbols_to_price()
             if not symbols:
                 self._pricing_cache = {}
@@ -172,13 +179,12 @@ class OandaRiskContextSources:
         return self._pricing_cache
 
     def fetch_prices(self) -> list[PriceDatum]:
-        captured_at = self._captured_at()
         return [
             PriceDatum(
                 symbol=price.symbol,
                 bid=price.bids[0].price,
                 ask=price.asks[0].price,
-                captured_at=captured_at,
+                captured_at=price.broker_time,
             )
             for price in self._prices_by_symbol().values()
         ]
@@ -273,6 +279,8 @@ class OandaRiskContextSources:
         self,
         *,
         now: datetime | None = None,
+        symbol: str | None = None,
+        drawdown_block_reason: str | None = None,
         open_position_count: int | None = None,
         daily_open_count: int | None = None,
         daily_symbol_open_count: int | None = None,
@@ -315,8 +323,8 @@ class OandaRiskContextSources:
             mark = (price.bids[0].price + price.asks[0].price) / Decimal(2)
             exposure_by_symbol[position.symbol] = abs(units) * mark * factor
 
-        first_symbol = self._symbols[0] if self._symbols else None
-        quote = prices.get(first_symbol) if first_symbol else None
+        quote_symbol = symbol or (self._symbols[0] if self._symbols else None)
+        quote = prices.get(quote_symbol) if quote_symbol else None
         return AccountExposureContext(
             current_total_exposure=sum(exposure_by_symbol.values(), Decimal("0")),
             exposure_by_symbol=exposure_by_symbol,
@@ -338,10 +346,11 @@ class OandaRiskContextSources:
             ),
             daily_open_count=daily_open_count,
             daily_symbol_open_count=daily_symbol_open_count,
-            quote_captured_at=captured if quote is not None else None,
+            quote_captured_at=quote.broker_time if quote is not None else None,
             quote_tradeable=(quote.tradeable if quote is not None else None),
             frozen_symbols=dict(frozen_symbols or {}),
             recent_high_impact_events=dict(recent_high_impact_events or {}),
+            drawdown_block_reason=drawdown_block_reason,
             current_spread=current_spread,
             recent_spreads=tuple(recent_spreads),
             # Rule 1 reads the durable reconciliation state; a frozen

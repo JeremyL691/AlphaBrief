@@ -132,6 +132,12 @@ def _cycle(
     )
 
 
+@pytest.fixture(autouse=True)
+def isolated_runtime_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ALPHABRIEF_HOME", raising=False)
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> Iterator[AiTradingStore]:
     trading_store = AiTradingStore(db_path=tmp_path / "trader.duckdb")
