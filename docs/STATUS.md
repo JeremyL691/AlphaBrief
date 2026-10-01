@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-6：14 条规则的显式通过/拒绝矩阵测试 + EUR_USD/USD_JPY 仓位矩阵；随后 S4 退出标准全 universe 跑（需模型额度） |
+| 下一项任务 | S5 常驻运行时（单进程 FastAPI+调度器、单实例锁、LaunchAgent、doctor、备份恢复、CLI-over-HTTP、报价轮询与影子计分）；S4 退出标准的全 universe 跑待模型额度恢复 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-2 第八批：规则 4 点差（同品种同时段中位数 2 倍）落地并实测，14 条规则全部实现 |
+| 最近更新 | 2026-10-01，S4-6：14 条规则矩阵 + 补齐规则 1 冻结/规则 2 分类 + 清理 3 个过期冻结（对账恢复 clean） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,13 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-6（本提交）：**规则矩阵 + 补齐规则 1 冻结与规则 2 分类，并清理过期冻结**。
+  - 补齐两处此前未被 gate 强制的规则半边：① **规则 1 的冻结**（`EntryRulePolicy.require_unfrozen`）——`AccountExposureContext.reconciliation_state`（clean/frozen/unknown，来自持久化对账状态），frozen 时拒绝新开仓（`FROZEN`），缺上下文失败闭合，平仓照常；② **规则 2 的品种分类**（`require_currency_type`）——`AccountExposureContext.symbol_types`（来自券商 instrument catalog 的 `raw_type`），非 `CURRENCY` 或未知即 `INSTRUMENT_NOT_ALLOWED`。CLI 的受审 policy 两项都开启，账户上下文提供者填入真实对账状态与真实品种分类。
+  - 新增 `tests/test_risk_rule_matrix.py`（表驱动矩阵，29 个）：14 条规则每条都有"违规 → 期望拒绝码"与"健康上下文 → 放行"的用例（规则 1 三个子项 trading-off/kill-switch/frozen，规则 2 两个子项 分类/白名单，规则 3 两个子项 过期/不可交易，规则 7 两个子项 总量/单品种，规则 9 两个子项 单笔/总敞口），并单独钉住"平仓豁免除规则 1 kill switch 与规则 3 之外的全部入场规则"与"平仓仍需新鲜报价"；仓位矩阵覆盖 EUR_USD（本币报价，无换算）与 USD_JPY（JPY 报价，需换算 + 名义价值上限生效与不生效两种情形）。
+  - **过期冻结清理（GUIDE 5.9 要求的人工调查）**：实测发现账户上仍挂着 3 个 2026-10-01 00:15–00:17 的 open freeze（原因串为 `position is not from this system` / `trade state mismatch` / NAV 与 margin 差异），它们是 S3 已修的三个缺陷（依赖单解析、`tradesClosed` 关联、投影重建）在当时造成的。调查证据：账户真实状态为 EUR_USD 持仓 0/0、唯一一笔交易 `CLOSED`、NAV 99999.92 与本地投影一致、修复后连续 3 次对账 `all_match=true`。按 5.9 由 Agent 执行 `alphabrief broker unfreeze <event_id> --reason "S4-2 investigation: ..."`（3 个事件全部清理，理由写入事件记录），随后 `alphabrief broker reconcile --scope cycle` → `clean: true, all_match: true, freeze_raised: false`，仅剩两条 INFO（保护单无 client identity）；风控上下文的对账状态已从 `frozen` 变为 `clean`。
+  - 命令与结果：`pytest -q -m "not practice"` → 2680 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (233 source files)；`secret_scan` → OK。
+  - S4-6 剩余：S4 退出标准里的"trading off 跑完 5 个品种 + 日报"需要模型额度（当前通道 `usage_limit_exceeded`，见阻塞）；日报本身已可用（S4-4 第三批）。S4 其余任务全部完成。
 
 - S4-2 第八批（本提交）：**规则 4 点差（5.7）——14 条规则全部实现**。
   - 新增 `alphabrief_data.quote_samples`（数据层，自带 DDL）：`quote_spread_samples`（symbol/captured_at/bid/ask/spread/mid/source，按 `(symbol, captured_at)` 幂等），`recent_spreads(symbol, hour, limit=20)` 取**同一 UTC 小时**内最近 20 个样本（"同时段"的操作化定义：02:00 的点差不该拿伦敦开盘时段当基准），`QuoteSample` 校验 ask ≥ bid、spread ≥ 0。
@@ -252,7 +259,7 @@
 - [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
 - [x] S4-4 影子评估、日报、预算（2026-10-01，本提交：5.11 影子评估、5.12 日报、5.13 预算；遗留 T+4h/24h 自动计分待 S5 调度器）
 - [x] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗（2026-10-01，本提交：6 个家族、货币标签、pipeline 去重清洗 + 真实 37 条入库溯源）
-- [ ] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试
+- [x] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试（2026-10-01，本提交：表驱动矩阵 29 个，含 14 条规则的通过/拒绝与两个品种的仓位矩阵）
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
 
 ### S5 常驻运行时

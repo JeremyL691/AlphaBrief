@@ -173,6 +173,9 @@ def _risk_gate(
                 # same-period samples (5 samples minimum).
                 max_spread_median_multiplier=Decimal("2"),
                 min_spread_samples=5,
+                # Rule 1 (freeze part) and rule 2 (CURRENCY classification).
+                require_unfrozen=True,
+                require_currency_type=True,
                 # Rule 13: close-only from Friday 13:00 UTC and all weekend.
                 block_weekend_and_late_friday=True,
                 # Rule 14: an entry must carry usable protective orders.
@@ -203,6 +206,7 @@ def _account_context_provider(
     trading_day: str,
     store: AiTradingStore,
     news_store: Any | None = None,
+    universe: tuple[str, ...] = (),
 ) -> Any:
     """Fetch the broker-fresh account context for each risk evaluation.
 
@@ -222,6 +226,7 @@ def _account_context_provider(
         verdict = _drawdown_verdict(sources)
         current_spread, recent_spreads = _spread_facts(sources, symbol)
         return sources.account_exposure_context(
+            symbol_types=_instrument_types(universe),
             daily_open_count=total,
             daily_symbol_open_count=per_symbol.get(symbol, 0),
             recent_high_impact_events=events,
@@ -232,6 +237,26 @@ def _account_context_provider(
 
     return _build
 
+
+def _instrument_types(symbols: tuple[str, ...]) -> dict[str, str]:
+    """The broker's instrument classification per symbol (rule 2).
+
+    Read from the account's own instrument catalog; a symbol the broker
+    does not classify is left out, which the rule treats as fail-closed.
+    """
+    from alphabrief_execution.broker.runtime import get_broker_runtime
+
+    adapter = get_broker_runtime().adapter
+    types: dict[str, str] = {}
+    for symbol in symbols:
+        try:
+            metadata = adapter.instrument_metadata(symbol)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - an unclassified symbol stays unknown
+            continue
+        raw_type = getattr(metadata, "raw_type", None)
+        if isinstance(raw_type, str) and raw_type:
+            types[symbol] = raw_type
+    return types
 
 def _spread_facts(
     sources: Any, symbol: str
@@ -573,6 +598,7 @@ def run_cmd(
                 sources,
                 trading_day=datetime.now(UTC).date().isoformat(),
                 store=store,
+                universe=tuple(symbols),
             ),
             # 5.6 sizing: NAV, home-currency factor and instrument
             # precision all come from the broker, so an entry is sized
@@ -687,6 +713,7 @@ def _close_through_the_cycle(
                 sources,
                 trading_day=datetime.now(UTC).date().isoformat(),
                 store=store,
+                universe=(instrument,),
             ),
         )
         cycle_id = f"close_{instrument}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -105,6 +105,12 @@ class AccountExposureContext(BaseModel):
         The live spread and the same-period sample history rule 4 compares
         it against. The caller reads the samples from the durable quote
         store; the gate only applies the median rule.
+    reconciliation_state
+        The durable reconciliation state (``clean`` / ``frozen`` /
+        ``unknown``) rule 1 reads: a frozen account opens no new exposure.
+    symbol_types
+        The broker's instrument classification per symbol (for example
+        ``CURRENCY``), which rule 2 requires before an entry.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -129,6 +135,8 @@ class AccountExposureContext(BaseModel):
     drawdown_block_reason: str | None = None
     current_spread: Decimal | None = Field(default=None, ge=0)
     recent_spreads: tuple[Decimal, ...] = ()
+    reconciliation_state: Literal["clean", "frozen", "unknown"] | None = None
+    symbol_types: dict[str, str] = Field(default_factory=dict)
 
     @field_validator(
         "current_total_exposure",
