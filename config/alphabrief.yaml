@@ -1,0 +1,17 @@
+# AlphaBrief non-secret configuration.
+#
+# Schema version 1. Unknown keys are rejected by the loader so a typo can
+# never silently disable a safety-relevant setting.
+schema_version: 1
+
+model:
+  # The main channel is always the ChatGPT subscription sign-in. The
+  # fallback channel is used only when this is explicitly true, so a
+  # billing channel can never switch silently.
+  fallback_enabled: false
+  # Leave empty to use the default model discovered from the account.
+  primary_model: ""
+
+trading:
+  # off | on. `off` runs the whole cycle but stops before submitting.
+  trading_mode: off

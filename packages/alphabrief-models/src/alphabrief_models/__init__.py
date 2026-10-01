@@ -1,6 +1,27 @@
 """Model gateway contracts for AlphaBrief."""
 
 from alphabrief_models.adapters import OllamaProviderAdapter
+from alphabrief_models.channels import (
+    ChannelGateway,
+    ChannelState,
+    ChannelSwitch,
+    ModelSettings,
+    build_channel_gateway,
+    load_model_settings,
+)
+from alphabrief_models.chatgpt_oauth import (
+    refresh_credentials,
+    scope_summary,
+)
+from alphabrief_models.chatgpt_plan import (
+    ChatGptCredentials,
+    ChatGptPlanAdapter,
+    ChatGptPlanError,
+    clear_credentials,
+    fetch_model_slugs,
+    load_credentials,
+    save_credentials,
+)
 from alphabrief_models.gateway import (
     FakeProviderAdapter,
     ModelCallBudget,
@@ -19,6 +40,11 @@ from alphabrief_models.gateway import (
     classify_provider_error,
 )
 from alphabrief_models.openai_adapter import OpenAIProviderAdapter
+from alphabrief_models.openai_compatible import (
+    FallbackConfig,
+    OpenAiCompatibleAdapter,
+    load_fallback_config,
+)
 from alphabrief_models.repair import (
     RepairVerdict,
     StructuredRepairResult,
@@ -32,6 +58,24 @@ from alphabrief_models.structured_output import (
 )
 
 __all__ = [
+    "ChannelGateway",
+    "ChannelState",
+    "ChannelSwitch",
+    "ChatGptCredentials",
+    "ChatGptPlanAdapter",
+    "ChatGptPlanError",
+    "FallbackConfig",
+    "ModelSettings",
+    "OpenAiCompatibleAdapter",
+    "build_channel_gateway",
+    "clear_credentials",
+    "fetch_model_slugs",
+    "load_credentials",
+    "load_fallback_config",
+    "load_model_settings",
+    "refresh_credentials",
+    "save_credentials",
+    "scope_summary",
     "FakeProviderAdapter",
     "ModelCallBudget",
     "ModelCallClassification",

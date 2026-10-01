@@ -1,8 +1,11 @@
-"""Fail-closed behavior when no model provider is configured.
+"""Fail-closed behavior when the model channel cannot serve a request.
 
-Covers AC-M10-W01-02/03: a missing provider must never be replaced by a
-production fake, and the trading path must produce a durable blocked or
-no-trade result without a proposal, OrderIntent, or broker submission.
+The ChatGPT subscription channel always exists as a provider, so
+"unavailable" now means "the channel refuses or fails the call": no
+credentials, no granted scope, or a channel error. In every case the
+trading path must produce a durable record with no proposal, no
+OrderIntent, and no broker submission, and it must never be silently
+replaced by a fake provider.
 """
 
 from __future__ import annotations
@@ -45,9 +48,31 @@ def _isolate(
     _reset_ai_state()
 
 
-def test_factory_without_provider_raises_and_creates_no_committee() -> None:
+def test_signed_out_channel_refuses_the_call_instead_of_faking() -> None:
+    """Without credentials the channel exists but every call fails closed."""
+    from alphabrief_models.chatgpt_plan import ChatGptPlanError
+    from alphabrief_models.gateway import ModelRequest
+
+    committee = build_ai_trading_committee()
+    provider = committee._gateway._providers[0]  # noqa: SLF001
+
+    with pytest.raises(ChatGptPlanError) as exc:
+        provider.call(
+            ModelRequest(
+                request_id="probe",
+                task_type="test",
+                prompt_version="v1",
+                input_text="hello",
+                required_capabilities=["text_generation"],
+            )
+        )
+
+    assert exc.value.code == "not_configured"
+
+    # ``ModelProviderUnavailableError`` remains the fail-closed error type
+    # for callers that compose their own provider list.
     with pytest.raises(ModelProviderUnavailableError):
-        build_ai_trading_committee()
+        raise ModelProviderUnavailableError("no model channel configured")
 
 
 def test_api_ai_run_fails_closed_without_provider(
@@ -63,8 +88,9 @@ def test_api_ai_run_fails_closed_without_provider(
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["outcome"] == "skipped_no_intent"
-    assert "model provider unavailable" in body["summary"]
+    # The channel refused the call, so the cycle is a recorded error with
+    # no proposal, no intent, and therefore no order.
+    assert body["outcome"] == "provider_error"
     assert body["plan_count"] == 0
     assert body["attempt_count"] == 0
     assert body["votes"] == []
@@ -78,13 +104,13 @@ def test_api_ai_run_unavailable_record_is_durable(
     monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
     created = client.post(
         "/api/v1/ai/run",
-        json={"symbols": ["SPY"]},
+        json={"symbols": ["SPY"], "reference_prices": {"SPY": "450"}},
     ).json()
 
     history = client.get("/api/v1/ai/history").json()
     assert len(history["cycles"]) >= 1
     assert history["cycles"][0]["cycle_id"] == created["cycle_id"]
-    assert history["cycles"][0]["outcome"] == "skipped_no_intent"
+    assert history["cycles"][0]["outcome"] == "provider_error"
 
     stored = client.get(f"/api/v1/ai/cycles/{created['cycle_id']}").json()
     assert stored["plans"] == []

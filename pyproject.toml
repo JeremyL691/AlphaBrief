@@ -33,6 +33,9 @@ alphabrief = "alphabrief_cli.main:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "practice: needs real credentials and network (OANDA practice / model channels); CI runs -m \"not practice\"",
+]
 python_files = ["test_*.py"]
 pythonpath = [
     "apps/api/src",
