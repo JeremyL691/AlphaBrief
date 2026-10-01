@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-4 余下：5.12 日报生成器（reports/daily/*.md + *.json）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
+| 下一项任务 | S4-5 新闻（3+ 来源家族、按货币打标签、去重与清洗）与 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-4 第二批：影子评估（5.11）落地并实测（五基准落库，未计分不编造） |
+| 最近更新 | 2026-10-01，S4-4 第三批：日报生成器（5.12）落地并实测（真实 16 轮/6 attempt/对账/冻结/模型/影子数据） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,13 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-4 第三批（本提交）：**日报生成器（5.12）**。
+  - 新增 `alphabrief_trader.daily_report`（纯渲染）：`DailyReportData`（全部字段来自存储查询）+ `render_markdown` + `to_payload` + `write_daily_report`，同时写出 `reports/daily/YYYY-MM-DD.md` 与 `.json`（写在数据目录，可用 `--out-dir` 覆盖）。段落：当日各轮决策、订单/成交/平仓、风控拒绝统计（按 tag 计数，已成交不计）、P&L/NAV/回撤、对账与冻结事件、模型调用（通道/失败数/token/估算成本）、数据新鲜度、影子评估增量、doctor 摘要。没有证据的段落写"no rows"/明确说明，不编造数字；doctor 段写明"要到 S5 实现 `alphabrief doctor` 才有"。
+  - 新增 CLI `alphabrief report daily [--date YYYY-MM-DD] [--out-dir DIR]`：从 `AiTradingStore`（轮次与 attempt）、`ModelCallStore`（当日调用）、`ShadowStore`（当日决策与 scoreboard）、`BrokerReconStore`（快照与冻结事件）、`PaperStore`（日内起始/最新 NAV 与 HWM，凭证缺失或无快照时写明原因）、`MarketDataStore`（各品种最新 K 线与版本）汇总；账户 ID 只用于本地查询，从不打印。
+  - 真实实测（practice 账户，2026-10-01）：`alphabrief report daily --date 2026-10-01` → 写出 `~/Library/Application Support/AlphaBrief/reports/daily/2026-10-01.md` 与 `.json`；内容为真实数据：16 轮（含 `executed` 1 轮、`blocked_risk_gate` 5 轮、`skipped_model_unavailable` 4 轮、`provider_error` 2 轮、`skipped_no_intent` 4 轮）、6 条 attempt（含真实 broker order 4）、风控拒绝统计 `DAILY_INTENT_CAP 5 / data_quality 2 / max_order_value 2 / max_total_exposure 2 / kill_switch 1`、当日对账快照 6 个（clean 3 / unclean 3，最后一次 all_match=true）、当日冻结事件 3 条（真实原因字符串）、模型调用 1 条、5 条影子决策、5 个品种的最新 K 线时间与 `data_version`。
+  - 测试：新增 `tests/test_daily_report.py` 7 个（拒绝统计跳过已成交、执行结果统计、模型用量汇总、Markdown 含全部段落、空段落如实标注、payload 可 JSON 序列化、双文件写入）。命令与结果：`pytest -q -m "not practice"` → 2570 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (226 source files)；`secret_scan` → OK。
+  - S4-4 完成；S4-4 遗留：影子评估的 T+4h/T+24h 自动计分任务（需要调度器，S5）、单次调用基准的真实模型调用（需要额度）。
 
 - S4-4 第二批（本提交）：**影子评估（5.11）**。
   - 新增 `alphabrief_trader.shadow`（纯函数）：五个基准 `committee` / `single_call` / `momentum` / `random` / `no_trade`；`momentum_side` 用真实 20 日收益（不足 21 根收盘价则记 skipped，不猜方向）；`random_side` 种子 = `hash(cycle_id)`（同一轮可复现）；`committee_side` 读委员会 plan（target=0 或 side 非买卖即 flat）；`directional_return_pct` 用中间价计方向收益并扣除计分时点差（flat 恒为 0，点差大于波动时正确方向也会为负）；`summarize` 给出样本数、均值、胜率、95% bootstrap 置信区间，bootstrap 用样本内容的哈希做种子（同一份证据永远得到同一个区间），并强制带上"14 天样本不足以判断有效性"的 caveat。
@@ -212,7 +219,7 @@
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
 - [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（已完成：5.4 委员会协议、5.5 意图、5.6 仓位、规则 3/5/7/8/12/13/14、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；未完成：规则 4 点差、规则 6 事件窗口、规则 11 回撤状态机，见下方证据与依赖）
 - [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
-- [ ] S4-4 影子评估、日报、预算
+- [x] S4-4 影子评估、日报、预算（2026-10-01，本提交：5.11 影子评估、5.12 日报、5.13 预算；遗留 T+4h/24h 自动计分待 S5 调度器）
 - [ ] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗
 - [ ] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
