@@ -100,13 +100,15 @@ class TestChecks:
         result = check_quote_samples(("EUR_USD",))
 
         assert result.status == "WARN"
-        assert "rule 4 fails closed" in result.detail
+        # A fresh installation has no database at all: the check says so
+        # instead of crashing on a read-only open.
+        assert "no spread samples" in result.detail
 
     def test_reconciliation_warns_without_a_snapshot(self) -> None:
         result = check_reconciliation()
 
         assert result.status == "WARN"
-        assert "no reconciliation snapshot" in result.detail
+        assert "no reconciliation has run" in result.detail
 
 
 class TestReport:

@@ -150,6 +150,10 @@ def reconcile_cmd(
     credentials record a fail-closed non-matching snapshot — never a
     placeholder all-match.
     """
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("broker reconcile")
+
     if scope not in ALLOWED_SCOPES:
         print(
             f"error: --scope must be one of {sorted(ALLOWED_SCOPES)}",
@@ -309,6 +313,10 @@ def freeze_cmd(
     ),
 ) -> None:
     """Raise a manual freeze. Auto-ordering will block until unfreeze."""
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("broker freeze")
+
     store = _open_store()
     try:
         event = store.raise_freeze(reason=reason, source="manual")
@@ -332,6 +340,10 @@ def unfreeze_cmd(
     ),
 ) -> None:
     """Clear an open freeze by id."""
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("broker unfreeze")
+
     store = _open_store()
     try:
         event = store.clear_freeze(event_id=event_id, reason=reason)

@@ -231,6 +231,10 @@ def sync_oanda_cmd(
     Read-only against the practice account. Missing credentials fail
     closed: nothing is written and the command exits non-zero.
     """
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("data sync-oanda")
+
     import json
 
     from alphabrief_api.db.market_data import MarketDataStore

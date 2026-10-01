@@ -218,6 +218,10 @@ def daily_cmd(
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Write the daily report for one UTC day."""
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("report daily")
+
     from alphabrief_cli.cycle_commands import DEFAULT_UNIVERSE
 
     day = _day(report_date)

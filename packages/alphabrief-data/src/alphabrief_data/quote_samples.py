@@ -72,11 +72,14 @@ class QuoteSample:
 class QuoteSampleStore:
     """Append-only quote samples plus the same-hour median query."""
 
-    def __init__(self, db_path: Path | str | None = None) -> None:
+    def __init__(
+        self, db_path: Path | str | None = None, *, read_only: bool = False
+    ) -> None:
         self._db_path = Path(db_path) if db_path is not None else _paths.db_path()
-        self._conn = duckdb.connect(str(self._db_path))
-        self._conn.execute(_CREATE_TABLE_SQL)
-        self._conn.execute(_CREATE_INDEX_SQL)
+        self._conn = duckdb.connect(str(self._db_path), read_only=read_only)
+        if not read_only:
+            self._conn.execute(_CREATE_TABLE_SQL)
+            self._conn.execute(_CREATE_INDEX_SQL)
 
     def record(self, sample: QuoteSample) -> bool:
         """Append one sample; returns False when that instant already exists."""
