@@ -163,6 +163,19 @@ def _risk_gate(
                 max_daily_symbol_opens=1,
                 # Rule 8: at most 3 instruments at once.
                 max_open_positions=3,
+                # Rule 6: no new exposure within 30 minutes of a
+                # high-impact macro/news event for the instrument.
+                event_window_minutes=30,
+                # Rule 11: the soak drawdown state machine (3% blocks
+                # 48h, 5% halts the soak) blocks new exposure.
+                block_on_drawdown=True,
+                # Rule 4: the spread must stay within 2x the median of the
+                # same-period samples (5 samples minimum).
+                max_spread_median_multiplier=Decimal("2"),
+                min_spread_samples=5,
+                # Rule 1 (freeze part) and rule 2 (CURRENCY classification).
+                require_unfrozen=True,
+                require_currency_type=True,
                 # Rule 13: close-only from Friday 13:00 UTC and all weekend.
                 block_weekend_and_late_friday=True,
                 # Rule 14: an entry must carry usable protective orders.
@@ -192,22 +205,170 @@ def _account_context_provider(
     *,
     trading_day: str,
     store: AiTradingStore,
+    news_store: Any | None = None,
+    universe: tuple[str, ...] = (),
 ) -> Any:
     """Fetch the broker-fresh account context for each risk evaluation.
 
     The daily intent counters come from the durable attempt history, so the
     daily caps are enforced against what this system actually opened today
-    rather than against a process-local counter.
+    rather than against a process-local counter. The rule-6 event window is
+    resolved from the stored headlines (real news, currency-tagged).
     """
 
     def _build(symbol: str) -> Any:
         total, per_symbol = store.count_daily_opens(trading_day=trading_day)
+        events = (
+            _high_impact_event_map(news_store)
+            if news_store is not None
+            else {}
+        )
+        verdict = _drawdown_verdict(sources)
+        current_spread, recent_spreads = _spread_facts(sources, symbol)
         return sources.account_exposure_context(
+            symbol_types=_instrument_types(universe),
             daily_open_count=total,
             daily_symbol_open_count=per_symbol.get(symbol, 0),
+            recent_high_impact_events=events,
+            drawdown_block_reason=verdict.reason if verdict.blocked else None,
+            current_spread=current_spread,
+            recent_spreads=recent_spreads,
         )
 
     return _build
+
+
+def _instrument_types(symbols: tuple[str, ...]) -> dict[str, str]:
+    """The broker's instrument classification per symbol (rule 2).
+
+    Read from the account's own instrument catalog; a symbol the broker
+    does not classify is left out, which the rule treats as fail-closed.
+    """
+    from alphabrief_execution.broker.runtime import get_broker_runtime
+
+    adapter = get_broker_runtime().adapter
+    types: dict[str, str] = {}
+    for symbol in symbols:
+        try:
+            metadata = adapter.instrument_metadata(symbol)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - an unclassified symbol stays unknown
+            continue
+        raw_type = getattr(metadata, "raw_type", None)
+        if isinstance(raw_type, str) and raw_type:
+            types[symbol] = raw_type
+    return types
+
+def _spread_facts(
+    sources: Any, symbol: str
+) -> tuple[Decimal | None, tuple[Decimal, ...]]:
+    """Sample the live spread and read the same-hour history for rule 4.
+
+    Every evaluation appends the current quote to the durable sample store
+    (idempotent per timestamp), so the median the rule compares against is
+    built from real observations. A missing quote yields no spread, which
+    the rule treats as fail-closed.
+    """
+    from alphabrief_data.quote_samples import (
+        SPREAD_MEDIAN_SAMPLE_LIMIT,
+        QuoteSample,
+        QuoteSampleStore,
+    )
+
+    quote = sources.live_quote(symbol)
+    if quote is None:
+        return None, ()
+    bid, ask = quote
+    now = datetime.now(UTC)
+    store = QuoteSampleStore(db_path=_paths.db_path())
+    try:
+        store.record(
+            QuoteSample(
+                symbol=symbol,
+                captured_at=now,
+                bid=bid,
+                ask=ask,
+                spread=ask - bid,
+                mid=(bid + ask) / Decimal(2),
+            )
+        )
+        history = tuple(
+            store.recent_spreads(
+                symbol,
+                hour=now.hour,
+                limit=SPREAD_MEDIAN_SAMPLE_LIMIT,
+            )
+        )
+    finally:
+        store.close()
+    return ask - bid, history
+
+
+def _drawdown_verdict(sources: Any) -> Any:
+    """Advance the persisted rule-11 state from the broker's real NAV.
+
+    The high-water mark and the state live in DuckDB, so a restart cannot
+    reset a drawdown block. The account id is used only as the state key.
+    """
+    from alphabrief_execution.broker.oanda.config import read_oanda_credentials
+    from alphabrief_risk import DrawdownStateStore, evaluate_drawdown
+
+    context = sources.account_exposure_context()
+    nav = context.equity if context.equity is not None else context.cash
+    try:
+        _, account_id = read_oanda_credentials()
+    except Exception:  # noqa: BLE001 - no credentials means no state key
+        account_id = "unknown"
+    store = DrawdownStateStore(db_path=_paths.db_path())
+    try:
+        previous = store.load(account_id)
+        high_water = previous.high_water if previous and previous.high_water else nav
+        verdict = evaluate_drawdown(
+            equity=nav, high_water=high_water, now=datetime.now(UTC), previous=previous
+        )
+        store.save(account_id, verdict.state)
+    finally:
+        store.close()
+    return verdict
+
+
+def _high_impact_event_map(news_store: Any) -> dict[str, str]:
+    """The ``symbol -> reason`` map of high-impact events inside the window.
+
+    Headlines come from the durable news store (the same rows the
+    scheduler ingested); the news layer does the classification, the risk
+    rule only reads the map.
+    """
+    from datetime import timedelta
+
+    from alphabrief_news.high_impact import HeadlineLike, high_impact_events
+    from alphabrief_risk.event_window import window_reason_map
+
+    now = datetime.now(UTC)
+    window_minutes = 30
+    try:
+        headlines = news_store.list_headlines(
+            start=now - timedelta(minutes=window_minutes),
+            end=now + timedelta(minutes=1),
+            limit=200,
+        )
+    except Exception:  # noqa: BLE001 - a news read failure must not invent events
+        return {}
+    events = high_impact_events(
+        [
+            HeadlineLike(
+                headline_id=headline.headline_id,
+                title=headline.title,
+                summary=headline.summary,
+                source=headline.source,
+                published_at=headline.published_at,
+                symbols=tuple(headline.symbols),
+            )
+            for headline in headlines
+        ],
+        now=now,
+        window_minutes=window_minutes,
+    )
+    return window_reason_map(events, now=now, window_minutes=window_minutes)
 
 
 def _nav(sources: Any) -> Decimal:
@@ -240,11 +401,20 @@ def _sizing_provider(sources: Any) -> Any:
         if factor is None:
             return None
         metadata = adapter.instrument_metadata(symbol)  # type: ignore[attr-defined]
+        # Rule 11: after a 3% drawdown block expires the system resumes at
+        # half risk until the drawdown recovers.
+        verdict = _drawdown_verdict(sources)
+        multiplier = verdict.risk_multiplier
+        if multiplier <= 0:
+            # A blocked state never reaches sizing (the gate rejects the
+            # entry first); sizing itself always uses a positive risk.
+            multiplier = Decimal("1")
         return SizingInputs(
             nav=nav,
             quote_to_home=factor,
             trade_units_precision=int(metadata.trade_units_precision),
             minimum_trade_size=metadata.minimum_trade_size,
+            risk_multiplier=multiplier,
             # The soak-day risk halving is wired when the 14-day run starts
             # (S10); until then the full 0.25% risk applies.
             soak_day=None,
@@ -428,6 +598,7 @@ def run_cmd(
                 sources,
                 trading_day=datetime.now(UTC).date().isoformat(),
                 store=store,
+                universe=tuple(symbols),
             ),
             # 5.6 sizing: NAV, home-currency factor and instrument
             # precision all come from the broker, so an entry is sized
@@ -542,6 +713,7 @@ def _close_through_the_cycle(
                 sources,
                 trading_day=datetime.now(UTC).date().isoformat(),
                 store=store,
+                universe=(instrument,),
             ),
         )
         cycle_id = f"close_{instrument}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"

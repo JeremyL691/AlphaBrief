@@ -27,6 +27,7 @@ from decimal import Decimal
 from alphabrief_core import OrderIntent
 
 from alphabrief_risk.account_context import AccountExposureContext
+from alphabrief_risk.spread_policy import evaluate_spread
 
 #: Rejection codes, exactly as named in PROJECT_GUIDE 5.7.
 RuleCode = str
@@ -58,6 +59,21 @@ class EntryRulePolicy:
     require_protective_orders: bool = False
     block_weekend_and_late_friday: bool = False
     stop_price_tolerance: Decimal = Decimal("0")
+    #: Rule 6: block entries while a high-impact event is inside this
+    #: window. ``None`` leaves the rule unenforced.
+    event_window_minutes: int | None = None
+    #: Rule 11: block entries while the drawdown state machine says so.
+    #: ``False`` leaves the rule unenforced.
+    block_on_drawdown: bool = False
+    #: Rule 1 (freeze part): reject entries while the account is frozen.
+    require_unfrozen: bool = False
+    #: Rule 2: the instrument must be classified as a currency.
+    require_currency_type: bool = False
+    #: Rule 4: reject when the live spread exceeds this multiple of the
+    #: same-period median. ``None`` leaves the rule unenforced.
+    max_spread_median_multiplier: Decimal | None = None
+    #: Minimum same-period samples before rule 4 can judge a spread.
+    min_spread_samples: int = 5
 
 
 def _is_open_intent(intent: OrderIntent) -> bool:
@@ -148,6 +164,63 @@ def evaluate_entry_rules(
 
     context = account_context
 
+    # Rule 1 (freeze part) — a frozen account opens no new exposure. The
+    # trading-mode and kill-switch parts live in the gate itself.
+    if policy.require_unfrozen:
+        if context is None or context.reconciliation_state is None:
+            rejections.append(
+                RuleRejection("FROZEN", "no reconciliation state supplied")
+            )
+        elif context.reconciliation_state == "frozen":
+            rejections.append(
+                RuleRejection(
+                    "FROZEN",
+                    "the account is frozen; new exposure is blocked while "
+                    "closing and reconciliation continue",
+                )
+            )
+
+    # Rule 2 — the instrument must be classified as a currency (the
+    # allowlist half lives in the gate).
+    if policy.require_currency_type:
+        instrument_type = (
+            None if context is None else context.symbol_types.get(intent.symbol)
+        )
+        if instrument_type is None:
+            rejections.append(
+                RuleRejection(
+                    "INSTRUMENT_NOT_ALLOWED",
+                    f"{intent.symbol} has no instrument classification",
+                )
+            )
+        elif instrument_type.upper() != "CURRENCY":
+            rejections.append(
+                RuleRejection(
+                    "INSTRUMENT_NOT_ALLOWED",
+                    f"{intent.symbol} is classified {instrument_type}, "
+                    "not CURRENCY",
+                )
+            )
+
+    # Rule 4 — the spread against its own recent same-period median.
+    if policy.max_spread_median_multiplier is not None:
+        if context is None or context.current_spread is None:
+            rejections.append(
+                RuleRejection(
+                    "SPREAD_WIDE",
+                    "no live spread supplied for the instrument",
+                )
+            )
+        else:
+            verdict = evaluate_spread(
+                current_spread=context.current_spread,
+                recent_spreads=context.recent_spreads,
+                multiplier=policy.max_spread_median_multiplier,
+                min_samples=policy.min_spread_samples,
+            )
+            if not verdict.allowed:
+                rejections.append(RuleRejection("SPREAD_WIDE", verdict.reason))
+
     # Rule 7 — daily intent caps.
     if policy.max_daily_opens is not None:
         count = context.daily_open_count if context else None
@@ -205,6 +278,40 @@ def evaluate_entry_rules(
         if reason is not None:
             rejections.append(
                 RuleRejection("LOSS_STREAK", f"{intent.symbol} is frozen: {reason}")
+            )
+
+    # Rule 6 — macro/news event window.
+    if policy.event_window_minutes is not None:
+        if context is None:
+            rejections.append(
+                RuleRejection(
+                    "EVENT_WINDOW",
+                    "no event-window context supplied",
+                )
+            )
+        else:
+            event_reason = context.recent_high_impact_events.get(intent.symbol)
+            if event_reason is not None:
+                rejections.append(
+                    RuleRejection(
+                        "EVENT_WINDOW",
+                        f"high-impact event within {policy.event_window_minutes}m: "
+                        f"{event_reason}",
+                    )
+                )
+
+    # Rule 11 — soak drawdown state (3% blocks 48h, 5% halts the soak).
+    if policy.block_on_drawdown:
+        if context is None:
+            rejections.append(
+                RuleRejection(
+                    "DRAWDOWN",
+                    "no drawdown state supplied",
+                )
+            )
+        elif context.drawdown_block_reason is not None:
+            rejections.append(
+                RuleRejection("DRAWDOWN", context.drawdown_block_reason)
             )
 
     # Rule 13 — Friday 13:00 UTC onward and weekends.

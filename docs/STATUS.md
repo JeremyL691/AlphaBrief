@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 规则 6 事件窗口（已具备真实新闻输入）与规则 11 回撤状态机；随后 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
+| 下一项任务 | S5 常驻运行时（单进程 FastAPI+调度器、单实例锁、LaunchAgent、doctor、备份恢复、CLI-over-HTTP、报价轮询与影子计分）；S4 退出标准的全 universe 跑待模型额度恢复 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-5：新闻六来源家族 + 按货币打标签 + 去重清洗接入并实测（真实 37 条入库带溯源） |
+| 最近更新 | 2026-10-01，S4-6：14 条规则矩阵 + 补齐规则 1 冻结/规则 2 分类 + 清理 3 个过期冻结（对账恢复 clean） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,34 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-6（本提交）：**规则矩阵 + 补齐规则 1 冻结与规则 2 分类，并清理过期冻结**。
+  - 补齐两处此前未被 gate 强制的规则半边：① **规则 1 的冻结**（`EntryRulePolicy.require_unfrozen`）——`AccountExposureContext.reconciliation_state`（clean/frozen/unknown，来自持久化对账状态），frozen 时拒绝新开仓（`FROZEN`），缺上下文失败闭合，平仓照常；② **规则 2 的品种分类**（`require_currency_type`）——`AccountExposureContext.symbol_types`（来自券商 instrument catalog 的 `raw_type`），非 `CURRENCY` 或未知即 `INSTRUMENT_NOT_ALLOWED`。CLI 的受审 policy 两项都开启，账户上下文提供者填入真实对账状态与真实品种分类。
+  - 新增 `tests/test_risk_rule_matrix.py`（表驱动矩阵，29 个）：14 条规则每条都有"违规 → 期望拒绝码"与"健康上下文 → 放行"的用例（规则 1 三个子项 trading-off/kill-switch/frozen，规则 2 两个子项 分类/白名单，规则 3 两个子项 过期/不可交易，规则 7 两个子项 总量/单品种，规则 9 两个子项 单笔/总敞口），并单独钉住"平仓豁免除规则 1 kill switch 与规则 3 之外的全部入场规则"与"平仓仍需新鲜报价"；仓位矩阵覆盖 EUR_USD（本币报价，无换算）与 USD_JPY（JPY 报价，需换算 + 名义价值上限生效与不生效两种情形）。
+  - **过期冻结清理（GUIDE 5.9 要求的人工调查）**：实测发现账户上仍挂着 3 个 2026-10-01 00:15–00:17 的 open freeze（原因串为 `position is not from this system` / `trade state mismatch` / NAV 与 margin 差异），它们是 S3 已修的三个缺陷（依赖单解析、`tradesClosed` 关联、投影重建）在当时造成的。调查证据：账户真实状态为 EUR_USD 持仓 0/0、唯一一笔交易 `CLOSED`、NAV 99999.92 与本地投影一致、修复后连续 3 次对账 `all_match=true`。按 5.9 由 Agent 执行 `alphabrief broker unfreeze <event_id> --reason "S4-2 investigation: ..."`（3 个事件全部清理，理由写入事件记录），随后 `alphabrief broker reconcile --scope cycle` → `clean: true, all_match: true, freeze_raised: false`，仅剩两条 INFO（保护单无 client identity）；风控上下文的对账状态已从 `frozen` 变为 `clean`。
+  - 命令与结果：`pytest -q -m "not practice"` → 2680 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (233 source files)；`secret_scan` → OK。
+  - S4-6 剩余：S4 退出标准里的"trading off 跑完 5 个品种 + 日报"需要模型额度（当前通道 `usage_limit_exceeded`，见阻塞）；日报本身已可用（S4-4 第三批）。S4 其余任务全部完成。
+
+- S4-2 第八批（本提交）：**规则 4 点差（5.7）——14 条规则全部实现**。
+  - 新增 `alphabrief_data.quote_samples`（数据层，自带 DDL）：`quote_spread_samples`（symbol/captured_at/bid/ask/spread/mid/source，按 `(symbol, captured_at)` 幂等），`recent_spreads(symbol, hour, limit=20)` 取**同一 UTC 小时**内最近 20 个样本（"同时段"的操作化定义：02:00 的点差不该拿伦敦开盘时段当基准），`QuoteSample` 校验 ask ≥ bid、spread ≥ 0。
+  - 新增 `alphabrief_risk.spread_policy`（纯规则）：`median`（偶数取中间两值均值）、`evaluate_spread`——当前点差 > 2 × 同品种同时段最近样本中位数即 `SPREAD_WIDE`；**历史不足 `min_samples`（默认 5）或无样本时失败闭合**（没有基准可比较时不假设安全，理由串写明样本数）；用中位数而非均值，单个尖峰不会放宽所有人的容忍度。
+  - 接入：`AccountExposureContext.current_spread/recent_spreads`（调用方读样本，gate 只应用规则）；`EntryRulePolicy.max_spread_median_multiplier/min_spread_samples`（未配置不启用），仅约束入场、平仓豁免；`OandaRiskContextSources` 新增 `live_spread`/`live_quote`；CLI 的账户上下文提供者在每次评估时把当前报价写入样本表（幂等）并读取同时段历史，受审 policy 设 2 倍/最少 5 个样本；`alphabrief data sync-oanda` 每次同步也记录样本（输出新增 `spread_samples_recorded`）。
+  - 真实实测（practice 账户，真实报价）：`data sync-oanda --instrument EUR_USD --instrument USD_JPY` → 写入 2 个样本；再连续同步 6 次后，当前 UTC 小时内有 7 个真实 EUR_USD 样本（0.00016–0.00017，即 1.6–1.7 pips）。规则判定：真实点差 → 允许（"within 2 x the median 0.00017 of the last 7 samples"）；把点差放大 5 倍（0.00080）→ `SPREAD_WIDE` 拒绝；空历史 → `SPREAD_WIDE` 失败闭合。
+  - 测试：新增 `tests/test_spread_rule.py` 21 个（中位数奇偶与空序列、恰好 2 倍放行、超过 2 倍拒绝、单个尖峰不抬高容忍度、样本不足/无样本失败闭合、参数校验、verdict 序列化、样本表幂等、同时段过滤、按品种与 limit 过滤、ask<bid 拒绝、非法小时拒绝、规则拒绝/放行/缺样本失败闭合/默认不启用/平仓豁免、gate 报 `SPREAD_WIDE`）。命令与结果：`pytest -q -m "not practice"` → 2651 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (233 source files)；`secret_scan` → OK。
+  - 至此 GUIDE 5.7 的 14 条规则全部有实现与确定性测试；S4-2 可勾选。下一批 S4-6：把 14 条规则整理成显式的"通过+拒绝"矩阵测试（防止后续改动悄悄漏掉某条规则），并补 EUR_USD/USD_JPY 仓位测试的矩阵断言。
+
+- S4-2 第七批（本提交）：**规则 11 回撤状态机（5.7）**。
+  - 新增 `alphabrief_risk.drawdown_policy`（纯状态机 + DuckDB 持久化）：以**试运行期最高 NAV** 为基准，回撤 <3% 正常全仓；≥3% 立即禁止新开仓 48 小时，48 小时后自动恢复为**半仓**（风险 ×0.5）直到回撤回到 3% 以下；≥5% 直接 `soak_halted`，试运行剩余期间禁止新开仓且**不会**因 NAV 回升而解除（状态只会收紧）。高水位只升不降；平仓与对账不受影响。`DrawdownStateStore`（表 `ai_drawdown_state`，按账户单行）保证重启不会重置封禁。
+  - 接入：`AccountExposureContext.drawdown_block_reason`（由调用方推进状态，gate 只读结论）；`EntryRulePolicy.block_on_drawdown`（未配置不启用），规则 11 只约束入场、缺上下文失败闭合、平仓豁免；`SizingInputs.risk_multiplier` 让半仓状态真实减半风险（`size_entry` 里 `risk_pct × multiplier`）。CLI 的账户上下文提供者与 sizing 提供者都用真实 NAV 推进并读取该状态（账户 ID 仅作状态键，不打印），受审 policy 设 `block_on_drawdown=True`。
+  - 真实实测（practice 账户）：真实 NAV 99999.9200（S3 那笔交易后）→ 高水位以 NAV 播种，状态 `normal`、回撤 0.00%、倍数 1；对同一高水位做一次**未落库**的合成 −3.5% 评估 → `blocked`、48 小时封禁至 2026-10-03T20:35Z、拒绝码 `DRAWDOWN`（探针只打印不写入，随后以真实 NAV 复评仍为 `normal`，持久化状态与事实一致）。
+  - 测试：新增 `tests/test_drawdown_state.py` 17 个（3% 边界封禁 48h、到期转半仓、回到 3% 以下清除、5% 熔断且粘滞、高水位只升、跨进程持久、未知账户无状态、规则拒绝/放行/缺上下文失败闭合/默认不启用/平仓豁免、半仓 sizing 精确减半与非法倍数拒绝）。命令与结果：`pytest -q -m "not practice"` → 2630 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (231 source files)；`secret_scan` → OK。
+
+- S4-2 第六批（本提交）：**规则 6 事件窗口（5.7）**。
+  - 规则放在 risk（`alphabrief_risk.event_window`，无 news 依赖，延续 `NewsMacroSource` 协议约定）：`HIGH_IMPACT_KEYWORDS`（CPI、consumer price、inflation report、NFP/nonfarm/non-farm、payrolls、FOMC、rate decision、interest rate decision、ECB、BoE、BoJ、RBA、BoC、SNB）、`KEYWORD_CURRENCIES`（FOMC→USD、ECB→EUR、BoE→GBP、BoJ→JPY、RBA→AUD、BoC→CAD、SNB→CHF）、`events_within_window`（窗口边界含端点，未来时间戳丢弃）、`window_reason_map`、`event_window_reason`。
+  - 分类放在 news（`alphabrief_news.high_impact.high_impact_events`）：关键词命中标题或摘要；命名央行的关键词按货币定品种（即使条目本身无标签）；通用关键词（CPI/NFP/rate decision）用条目自带的货币标签；无标签的通用关键词对全部品种失败闭合（不假设无关）。GENERAL 条目不会因此被当成"无事件"。
+  - 接入：`AccountExposureContext` 新增 `recent_high_impact_events: dict[symbol, reason]`，`EntryRulePolicy.event_window_minutes`（未配置则不启用）；规则 6 在入场规则里执行、**平仓照常豁免**；缺上下文时失败闭合（`EVENT_WINDOW`）。`OandaRiskContextSources.account_exposure_context` 透传该 map；CLI 的账户上下文提供者从**真实新闻库**取最近 30 分钟条目并用 news 分类（读新闻失败返回空 map 而不是编造事件），受审 policy 设 `event_window_minutes=30`。FRED 日历分支未启用（本机未配置 `FRED_API_KEY`），按规格走关键词分支。
+  - 真实实测（practice 库里的真实新闻，37 条已入库）：24 小时内命中 6 条高影响新闻并分类正确——`boe/GBP`（BoE's Mann 谈加息）、`boj/JPY`×2（USD/JPY 与 BoJ 相关）、`nfp/MULTI`、`cpi/MULTI`×2；以最新高影响条目时间为"现在"评估时，恰好 1 条落在 30 分钟窗口内 → `GBP_USD` 被 `EVENT_WINDOW` 拦截（reason 含关键词、来源与时间）；按本机当前时刻评估为 0 条（最新高影响条目已 59 分钟前，属真实"无事件"状态而非漏判）。
+  - 测试：新增 `tests/test_event_window.py` 18 个（关键词表覆盖、央行关键词货币映射、通用关键词用条目标签、无标签失败闭合、窗口边界含端点、未来时间戳丢弃、窗口参数校验、reason 含来源与时间、规则拒绝/放行/缺上下文失败闭合/默认不启用/它品种不误伤、gate 集成拒绝且平仓豁免）。命令与结果：`pytest -q -m "not practice"` → 2613 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (230 source files)；`secret_scan` → OK。
 
 - S4-5（本提交）：**新闻来源家族、按货币打标签、去重与清洗**。
   - **来源标签修正**：`rss.py` 原先的 `reuters-rss` 键实际指向 Bloomberg URL（来源标签与实际发布方不符），Bloomberg 的 feed 现在也不再返回 RSS；两处误导性键已删除。feed 表改为 `FeedSource`（key / url / publisher / family / default_currency），`source` 一律取表里配置的**真实发布方**，不再用 feed 自己的 `<channel><title>`（可能写着别的媒体名）。六个 feed 均已用真实 HTTP 校验（2026-10-01，本机）：MarketWatch、FXStreet、ForexLive、Federal Reserve、European Central Bank、Bank of England，覆盖 6 个独立来源家族（规格要求 ≥3）。
@@ -227,11 +255,11 @@
 
 ### S4 风控与决策补全
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
-- [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（已完成：5.4 委员会协议、5.5 意图、5.6 仓位、规则 3/5/7/8/12/13/14、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；未完成：规则 4 点差、规则 6 事件窗口、规则 11 回撤状态机，见下方证据与依赖）
+- [x] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（2026-10-01 完成：5.4 委员会协议、5.5 意图、5.6 仓位、5.7 全部 14 条规则、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；证据见下方 S4-2 八批记录）
 - [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
 - [x] S4-4 影子评估、日报、预算（2026-10-01，本提交：5.11 影子评估、5.12 日报、5.13 预算；遗留 T+4h/24h 自动计分待 S5 调度器）
 - [x] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗（2026-10-01，本提交：6 个家族、货币标签、pipeline 去重清洗 + 真实 37 条入库溯源）
-- [ ] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试
+- [x] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试（2026-10-01，本提交：表驱动矩阵 29 个，含 14 条规则的通过/拒绝与两个品种的仓位矩阵）
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
 
 ### S5 常驻运行时

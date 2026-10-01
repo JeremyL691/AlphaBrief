@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 import sys
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import typer
 from alphabrief_core import Bar
@@ -178,6 +179,44 @@ def check_cmd(
 __all__ = ["data_app"]
 
 
+def _record_quote_samples(client: Any, instruments: tuple[str, ...]) -> int:
+    """Append one spread sample per instrument from a live pricing call."""
+    from alphabrief_data.quote_samples import QuoteSample, QuoteSampleStore
+    from alphabrief_execution.broker.oanda.pricing import (
+        PricingRequest,
+        fetch_pricing,
+    )
+
+    batch = fetch_pricing(
+        client,
+        request=PricingRequest(symbols=instruments),
+        request_id="quote-samples",
+    )
+    now = datetime.now(UTC)
+    store = QuoteSampleStore()
+    recorded = 0
+    try:
+        for price in batch.prices:
+            if not price.bids or not price.asks:
+                continue
+            bid = price.bids[0].price
+            ask = price.asks[0].price
+            if store.record(
+                QuoteSample(
+                    symbol=price.symbol,
+                    captured_at=now,
+                    bid=bid,
+                    ask=ask,
+                    spread=ask - bid,
+                    mid=(bid + ask) / Decimal(2),
+                )
+            ):
+                recorded += 1
+    finally:
+        store.close()
+    return recorded
+
+
 @data_app.command("sync-oanda")
 def sync_oanda_cmd(
     instrument: list[str] | None = typer.Option(  # noqa: B008
@@ -230,12 +269,18 @@ def sync_oanda_cmd(
         sys.exit(1)
 
     store = MarketDataStore()
+    samples = 0
     try:
         report = sync_market_data(client, instruments=instruments, store=store)
+        # Every sync also records real quote samples: rule 4 compares the
+        # live spread against the same-period median of these rows.
+        samples = _record_quote_samples(client, instruments)
     finally:
         store.close()
 
-    json.dump(report.to_dict(), sys.stdout, indent=2 if pretty else None, default=str)
+    payload = report.to_dict()
+    payload["spread_samples_recorded"] = samples
+    json.dump(payload, sys.stdout, indent=2 if pretty else None, default=str)
     sys.stdout.write("\n")
     if report.errors:
         sys.exit(1)

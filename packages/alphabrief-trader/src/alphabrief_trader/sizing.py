@@ -111,6 +111,9 @@ class SizingInputs:
     trade_units_precision: int = 0
     minimum_trade_size: Decimal = Decimal("1")
     soak_day: int | None = None
+    #: Applied on top of the soak risk (0.5 after a 3% drawdown block
+    #: expires, per PROJECT_GUIDE 5.7 rule 11).
+    risk_multiplier: Decimal = Decimal("1")
 
 
 def size_entry(
@@ -131,17 +134,18 @@ def size_entry(
     stop_distance = abs(reference_price - stop_loss)
     if stop_distance <= 0:
         raise SizingError("the stop sits on the reference price")
+    if inputs.risk_multiplier <= 0:
+        raise SizingError("risk_multiplier must be positive")
+    base_risk = (
+        soak_risk_pct(soak_day=inputs.soak_day) if risk_pct is None else risk_pct
+    )
     return compute_units(
         nav=inputs.nav,
         stop_distance=stop_distance,
         quote_to_home=inputs.quote_to_home,
         trade_units_precision=inputs.trade_units_precision,
         minimum_trade_size=inputs.minimum_trade_size,
-        risk_pct=(
-            soak_risk_pct(soak_day=inputs.soak_day)
-            if risk_pct is None
-            else risk_pct
-        ),
+        risk_pct=base_risk * inputs.risk_multiplier,
         price=reference_price,
     )
 
