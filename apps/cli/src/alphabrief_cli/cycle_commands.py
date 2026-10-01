@@ -163,6 +163,9 @@ def _risk_gate(
                 max_daily_symbol_opens=1,
                 # Rule 8: at most 3 instruments at once.
                 max_open_positions=3,
+                # Rule 6: no new exposure within 30 minutes of a
+                # high-impact macro/news event for the instrument.
+                event_window_minutes=30,
                 # Rule 13: close-only from Friday 13:00 UTC and all weekend.
                 block_weekend_and_late_friday=True,
                 # Rule 14: an entry must carry usable protective orders.
@@ -192,22 +195,70 @@ def _account_context_provider(
     *,
     trading_day: str,
     store: AiTradingStore,
+    news_store: Any | None = None,
 ) -> Any:
     """Fetch the broker-fresh account context for each risk evaluation.
 
     The daily intent counters come from the durable attempt history, so the
     daily caps are enforced against what this system actually opened today
-    rather than against a process-local counter.
+    rather than against a process-local counter. The rule-6 event window is
+    resolved from the stored headlines (real news, currency-tagged).
     """
 
     def _build(symbol: str) -> Any:
         total, per_symbol = store.count_daily_opens(trading_day=trading_day)
+        events = (
+            _high_impact_event_map(news_store)
+            if news_store is not None
+            else {}
+        )
         return sources.account_exposure_context(
             daily_open_count=total,
             daily_symbol_open_count=per_symbol.get(symbol, 0),
+            recent_high_impact_events=events,
         )
 
     return _build
+
+
+def _high_impact_event_map(news_store: Any) -> dict[str, str]:
+    """The ``symbol -> reason`` map of high-impact events inside the window.
+
+    Headlines come from the durable news store (the same rows the
+    scheduler ingested); the news layer does the classification, the risk
+    rule only reads the map.
+    """
+    from datetime import timedelta
+
+    from alphabrief_news.high_impact import HeadlineLike, high_impact_events
+    from alphabrief_risk.event_window import window_reason_map
+
+    now = datetime.now(UTC)
+    window_minutes = 30
+    try:
+        headlines = news_store.list_headlines(
+            start=now - timedelta(minutes=window_minutes),
+            end=now + timedelta(minutes=1),
+            limit=200,
+        )
+    except Exception:  # noqa: BLE001 - a news read failure must not invent events
+        return {}
+    events = high_impact_events(
+        [
+            HeadlineLike(
+                headline_id=headline.headline_id,
+                title=headline.title,
+                summary=headline.summary,
+                source=headline.source,
+                published_at=headline.published_at,
+                symbols=tuple(headline.symbols),
+            )
+            for headline in headlines
+        ],
+        now=now,
+        window_minutes=window_minutes,
+    )
+    return window_reason_map(events, now=now, window_minutes=window_minutes)
 
 
 def _nav(sources: Any) -> Decimal:

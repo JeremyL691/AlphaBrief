@@ -263,6 +263,7 @@ class OandaRiskContextSources:
         daily_open_count: int | None = None,
         daily_symbol_open_count: int | None = None,
         frozen_symbols: dict[str, str] | None = None,
+        recent_high_impact_events: dict[str, str] | None = None,
         equity_high_water_mark: Decimal | None = None,
         day_start_equity: Decimal | None = None,
         day_realized_pnl: Decimal | None = None,
@@ -323,6 +324,7 @@ class OandaRiskContextSources:
             quote_captured_at=captured if quote is not None else None,
             quote_tradeable=(quote.tradeable if quote is not None else None),
             frozen_symbols=dict(frozen_symbols or {}),
+            recent_high_impact_events=dict(recent_high_impact_events or {}),
         )
 
     # ------------------------------------------------------------------

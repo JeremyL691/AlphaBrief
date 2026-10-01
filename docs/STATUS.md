@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 规则 6 事件窗口（已具备真实新闻输入）与规则 11 回撤状态机；随后 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
+| 下一项任务 | S4-2 规则 11 回撤状态机（需持久化窗口状态）与规则 4 点差（需 S5 报价历史）；随后 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-5：新闻六来源家族 + 按货币打标签 + 去重清洗接入并实测（真实 37 条入库带溯源） |
+| 最近更新 | 2026-10-01，S4-2 第六批：规则 6 事件窗口接入真实新闻并实测（BoE/BoJ/NFP/CPI 分类正确，窗口边界含端点） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,13 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-2 第六批（本提交）：**规则 6 事件窗口（5.7）**。
+  - 规则放在 risk（`alphabrief_risk.event_window`，无 news 依赖，延续 `NewsMacroSource` 协议约定）：`HIGH_IMPACT_KEYWORDS`（CPI、consumer price、inflation report、NFP/nonfarm/non-farm、payrolls、FOMC、rate decision、interest rate decision、ECB、BoE、BoJ、RBA、BoC、SNB）、`KEYWORD_CURRENCIES`（FOMC→USD、ECB→EUR、BoE→GBP、BoJ→JPY、RBA→AUD、BoC→CAD、SNB→CHF）、`events_within_window`（窗口边界含端点，未来时间戳丢弃）、`window_reason_map`、`event_window_reason`。
+  - 分类放在 news（`alphabrief_news.high_impact.high_impact_events`）：关键词命中标题或摘要；命名央行的关键词按货币定品种（即使条目本身无标签）；通用关键词（CPI/NFP/rate decision）用条目自带的货币标签；无标签的通用关键词对全部品种失败闭合（不假设无关）。GENERAL 条目不会因此被当成"无事件"。
+  - 接入：`AccountExposureContext` 新增 `recent_high_impact_events: dict[symbol, reason]`，`EntryRulePolicy.event_window_minutes`（未配置则不启用）；规则 6 在入场规则里执行、**平仓照常豁免**；缺上下文时失败闭合（`EVENT_WINDOW`）。`OandaRiskContextSources.account_exposure_context` 透传该 map；CLI 的账户上下文提供者从**真实新闻库**取最近 30 分钟条目并用 news 分类（读新闻失败返回空 map 而不是编造事件），受审 policy 设 `event_window_minutes=30`。FRED 日历分支未启用（本机未配置 `FRED_API_KEY`），按规格走关键词分支。
+  - 真实实测（practice 库里的真实新闻，37 条已入库）：24 小时内命中 6 条高影响新闻并分类正确——`boe/GBP`（BoE's Mann 谈加息）、`boj/JPY`×2（USD/JPY 与 BoJ 相关）、`nfp/MULTI`、`cpi/MULTI`×2；以最新高影响条目时间为"现在"评估时，恰好 1 条落在 30 分钟窗口内 → `GBP_USD` 被 `EVENT_WINDOW` 拦截（reason 含关键词、来源与时间）；按本机当前时刻评估为 0 条（最新高影响条目已 59 分钟前，属真实"无事件"状态而非漏判）。
+  - 测试：新增 `tests/test_event_window.py` 18 个（关键词表覆盖、央行关键词货币映射、通用关键词用条目标签、无标签失败闭合、窗口边界含端点、未来时间戳丢弃、窗口参数校验、reason 含来源与时间、规则拒绝/放行/缺上下文失败闭合/默认不启用/它品种不误伤、gate 集成拒绝且平仓豁免）。命令与结果：`pytest -q -m "not practice"` → 2613 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (230 source files)；`secret_scan` → OK。
 
 - S4-5（本提交）：**新闻来源家族、按货币打标签、去重与清洗**。
   - **来源标签修正**：`rss.py` 原先的 `reuters-rss` 键实际指向 Bloomberg URL（来源标签与实际发布方不符），Bloomberg 的 feed 现在也不再返回 RSS；两处误导性键已删除。feed 表改为 `FeedSource`（key / url / publisher / family / default_currency），`source` 一律取表里配置的**真实发布方**，不再用 feed 自己的 `<channel><title>`（可能写着别的媒体名）。六个 feed 均已用真实 HTTP 校验（2026-10-01，本机）：MarketWatch、FXStreet、ForexLive、Federal Reserve、European Central Bank、Bank of England，覆盖 6 个独立来源家族（规格要求 ≥3）。

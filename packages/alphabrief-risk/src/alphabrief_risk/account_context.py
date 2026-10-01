@@ -93,6 +93,10 @@ class AccountExposureContext(BaseModel):
     frozen_symbols
         Symbols temporarily barred from new exposure (for example after a
         losing streak), with the reason kept for the decision record.
+    recent_high_impact_events
+        Symbols with a high-impact macro/news event inside the rule-6
+        window, mapped to the human-readable reason. The news layer
+        classifies the headlines; the gate only reads this map.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -113,6 +117,7 @@ class AccountExposureContext(BaseModel):
     quote_captured_at: datetime | None = None
     quote_tradeable: bool | None = None
     frozen_symbols: dict[str, str] = Field(default_factory=dict)
+    recent_high_impact_events: dict[str, str] = Field(default_factory=dict)
 
     @field_validator(
         "current_total_exposure",

@@ -58,6 +58,9 @@ class EntryRulePolicy:
     require_protective_orders: bool = False
     block_weekend_and_late_friday: bool = False
     stop_price_tolerance: Decimal = Decimal("0")
+    #: Rule 6: block entries while a high-impact event is inside this
+    #: window. ``None`` leaves the rule unenforced.
+    event_window_minutes: int | None = None
 
 
 def _is_open_intent(intent: OrderIntent) -> bool:
@@ -206,6 +209,26 @@ def evaluate_entry_rules(
             rejections.append(
                 RuleRejection("LOSS_STREAK", f"{intent.symbol} is frozen: {reason}")
             )
+
+    # Rule 6 — macro/news event window.
+    if policy.event_window_minutes is not None:
+        if context is None:
+            rejections.append(
+                RuleRejection(
+                    "EVENT_WINDOW",
+                    "no event-window context supplied",
+                )
+            )
+        else:
+            event_reason = context.recent_high_impact_events.get(intent.symbol)
+            if event_reason is not None:
+                rejections.append(
+                    RuleRejection(
+                        "EVENT_WINDOW",
+                        f"high-impact event within {policy.event_window_minutes}m: "
+                        f"{event_reason}",
+                    )
+                )
 
     # Rule 13 — Friday 13:00 UTC onward and weekends.
     if policy.block_weekend_and_late_friday:
