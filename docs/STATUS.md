@@ -271,12 +271,12 @@
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
 
 ### S5 常驻运行时
-- [x] S5-1 单实例锁（`RuntimeLock`/`lock_status`）与 `alphabrief doctor`（GUIDE 4.9 全项，真实实测 7 PASS/3 WARN/0 FAIL）
+- [x] S5-0 单实例锁（`RuntimeLock`/`lock_status`）与 `alphabrief doctor`（GUIDE 4.9 全项，真实实测 7 PASS/3 WARN/0 FAIL）
 - [ ] S5-1 `alphabrief run`（单进程、单实例锁、`to_thread`、超时）
 - [ ] S5-2 按时钟的时间表、补跑窗口、阶段持久化
 - [ ] S5-3 CLI 走 HTTP；后台不在线时只读
 - [ ] S5-4 `alphabrief service install|uninstall|status`
-- [ ] S5-5 `alphabrief doctor`、macOS 通知
+- [ ] S5-5 macOS 通知（doctor 已完成，见 S5-0）
 - [ ] S5-6 备份和恢复（复用 `db/backup.py`）
 - [ ] 退出标准：第二个实例被拒；`kill -9` 重启实测没有重复订单；没有锁冲突；`doctor` 通过
 
