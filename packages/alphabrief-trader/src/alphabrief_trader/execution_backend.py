@@ -8,7 +8,6 @@ bridge to the broker-neutral ``BrokerAdapter`` port (OANDA practice).
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 from collections.abc import Coroutine
 from dataclasses import dataclass
@@ -284,13 +283,6 @@ class ExternalPaperExecutionBackend:
         )
 
 
-def is_ai_external_paper_enabled() -> bool:
-    """Return True when AI-approved orders may reach the external paper broker."""
-
-    raw = os.environ.get("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "").lower().strip()
-    return raw in {"1", "true", "yes", "on"}
-
-
 def _resolve_external_quantity(
     *,
     decision: RiskDecision,
@@ -353,5 +345,4 @@ __all__ = [
     "ExecutionBackendError",
     "ExecutionBackendResult",
     "ExternalPaperExecutionBackend",
-    "is_ai_external_paper_enabled",
 ]

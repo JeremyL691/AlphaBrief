@@ -117,7 +117,7 @@ def _run_live_read(coro: Any) -> Any:
     """Await an adapter coroutine from a sync route handler.
 
     The adapter methods are ``async def`` but their bodies are synchronous
-    (the Alpaca client is a sync urllib client). Mirrors the scheduler's
+    (the OANDA client is a sync urllib client). Mirrors the scheduler's
     ``asyncio.run(scheduler.run())`` bridge idiom. Maps broker errors to
     HTTP 503 (upstream broker unreachable / refused) with a structured
     ``{"error","kind"}`` detail; never returns a 500 and never silently
@@ -245,11 +245,10 @@ def broker_orders() -> dict[str, Any]:
 def broker_positions() -> dict[str, Any]:
     """List broker positions via the API-side adapter singleton (live read).
 
-    Phase 20: when a live ``BrokerAdapter`` is wired (Alpaca Paper
-    credentials present) this performs a read-only ``get_positions()``
-    probe and returns the parsed positions. When no credentials are
-    configured the null adapter returns an empty list, preserving the
-    pre-Phase-20 stub shape so the API still boots in dev / CI.
+    When the OANDA practice credentials are present this performs a
+    read-only ``get_positions()`` probe and returns the parsed
+    positions. When no credentials are configured the null adapter
+    returns an empty list so the API still boots in dev / CI.
 
     The runtime account-exposure *enforcement* (Phase 19) is delivered
     by :class:`alphabrief_risk.RiskGate` against an

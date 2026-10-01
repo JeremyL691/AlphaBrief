@@ -53,10 +53,7 @@ def isolated_data_dir(tmp_path: Path) -> dict[str, str]:
     for name in (
         "ALPHABRIEF_OANDA_TOKEN",
         "ALPHABRIEF_OANDA_ACCOUNT_ID",
-        "ALPHABRIEF_ALPACA_KEY",
-        "ALPHABRIEF_ALPACA_SECRET",
         "ALPHABRIEF_AI_TRADING_ENABLED",
-        "ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED",
     ):
         env[name] = ""
     return env

@@ -5,7 +5,7 @@ These tests cover:
 - broker reconcile records a snapshot
 - broker freeze / unfreeze round-trip
 - broker /positions and /account null-adapter shape (live reads are
-  covered by tests/test_broker_api_live.py against a mock Alpaca server)
+  covered by tests/test_broker_api_live.py against a mock OANDA server)
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def test_broker_orders_returns_mapping(client: TestClient) -> None:
 def test_broker_positions_returns_empty_without_credentials(
     client: TestClient,
 ) -> None:
-    # Null adapter (no Alpaca credentials) -> empty positions list.
+    # Null adapter (no OANDA credentials) -> empty positions list.
     response = client.get("/api/v1/broker/positions")
     assert response.status_code == 200
     assert response.json() == {"positions": []}

@@ -154,15 +154,10 @@ def test_approval_record_cannot_grant_execution_authority() -> None:
     config = client.get("/api/v1/risk/config")
     assert config.status_code == 200
     assert config.json()["enabled_strategies"] == []
-    # Round 0065: default allowlist is the 35-symbol routed multi-asset
-    # universe; caps are USD notional; auto-execution is enabled.
+    # The reviewed boundary is the five FX majors; caps are USD notional
+    # and auto-execution is enabled.
     assert config.json()["symbol_allowlist"] == sorted([
-        "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD",
-        "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CHF_JPY",
-        "XAU_USD", "XAG_USD",
-        "US30_USD", "SPX500_USD", "NAS100_USD", "DE30_EUR", "JP225_USD",
-        "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "SPY", "QQQ",
-        "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
+        "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD",
     ])
     assert config.json()["max_order_value"] == "2000"
     assert config.json()["require_human_review"] is False

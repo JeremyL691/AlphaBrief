@@ -16,10 +16,13 @@ def test_load_settings_defaults_live_trading_to_false() -> None:
     assert settings.audit_log_dir == Path("reports/audit")
 
 
-def test_env_example_keeps_live_trading_disabled_by_default() -> None:
+def test_env_example_has_no_live_trading_switch() -> None:
+    """There is no live-trading mode, so it must not appear in the template."""
     env_example = Path(".env.example").read_text(encoding="utf-8")
 
-    assert "ALPHABRIEF_LIVE_TRADING_ENABLED=false" in env_example
+    assert "LIVE_TRADING" not in env_example
+    assert "ALPHABRIEF_OANDA_TOKEN" in env_example
+    assert "ALPHABRIEF_TRADING_MODE=off" in env_example
 
 
 def test_load_settings_accepts_explicit_environment_values() -> None:
