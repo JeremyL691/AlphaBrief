@@ -207,6 +207,10 @@ class ExternalPaperExecutionBackend:
             quantity=quantity,
             limit_price=intent.limit_price,
             time_in_force=BrokerTimeInForce.DAY,
+            # Protective orders ride along with the entry (5.6/5.8).
+            stop_loss=intent.stop_loss,
+            take_profit=intent.take_profit,
+            cycle_id=intent.intent_id,
         )
 
         # M08-W07: the approved decision is bound to the immutable

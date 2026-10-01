@@ -59,16 +59,33 @@ def _exit_error(message: str) -> None:
 
 
 def _snapshot_loader(market_store: MarketDataStore) -> SnapshotLoader:
-    """Build snapshots from stored OANDA bars (no synthetic prices)."""
+    """Build snapshots from stored OANDA bars (no synthetic prices).
+
+    The ATR(14) of the H1 series is computed from the same stored candles
+    and attached to the snapshot: the stop distance depends on it, and a
+    missing ATR means no protective order (never a guessed one).
+    """
+    from alphabrief_trader.stops import atr_from_bars
 
     def _loader(symbol: str) -> MarketSnapshot | None:
         bars = market_store.get_bar_models(symbol)
         if not bars:
             return None
         latest = bars[-1]
+        h1 = [
+            bar
+            for bar in bars
+            if bar.data_version.endswith(":H1")
+        ]
+        atr = atr_from_bars(
+            [bar.high for bar in h1],
+            [bar.low for bar in h1],
+            [bar.close for bar in h1],
+        )
         return MarketSnapshot(
             symbol=symbol,
             reference_price=latest.close,
+            atr=atr,
             data_version=latest.data_version,
             captured_at=latest.timestamp,
         )

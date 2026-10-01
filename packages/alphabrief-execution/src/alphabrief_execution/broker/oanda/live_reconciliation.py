@@ -169,6 +169,7 @@ def facts_from_transactions(
         if transaction_type not in PROJECTABLE_KINDS:
             unprojected.add(transaction_type)
             continue
+        trade_id = getattr(transaction, "trade_id", None)
         facts.append(
             ProjectionFact(
                 fact_id=str(transaction.transaction_id),
@@ -178,6 +179,7 @@ def facts_from_transactions(
                     if transaction_type.startswith("ORDER_")
                     else None
                 ),
+                trade_id=str(trade_id) if trade_id else None,
                 instrument=transaction.instrument,
                 units=transaction.units or Decimal("0"),
                 price=transaction.price,
@@ -199,6 +201,38 @@ def explainable_facts(transactions: Sequence[Any]) -> tuple[str, ...]:
                 if str(transaction.transaction_type) in _EXPLAINABLE_TYPES
             }
         )
+    )
+
+
+def rebuild_projection(
+    client: OandaHttpClient,
+    *,
+    projection_store: AccountProjectionStore,
+) -> AccountSnapshot:
+    """Rebuild the local projection from the account's full history.
+
+    The seed is the *opening* balance: the current balance minus every
+    realised P&L and financing amount in the history. Seeding with the
+    current balance would double-count that history. Used when the
+    projection must be replayed (for example after a parser fix), because
+    the projection is derived data and the broker is the authority.
+    """
+    summary = AccountOpsClient(client).account_summary(request_id="rebuild")
+    window = TransactionOpsClient(client).transaction_range(
+        from_id="1",
+        to_id=summary.last_transaction_id,
+        request_id="rebuild",
+    )
+    facts, _unprojected = facts_from_transactions(window.transactions)
+    movement = sum(
+        (fact.realized_pl + fact.financing for fact in facts),
+        Decimal("0"),
+    )
+    opening_balance = summary.balance - movement
+    return projection_store.rebuild(
+        summary.account_id,
+        facts,
+        initial_balance=opening_balance,
     )
 
 

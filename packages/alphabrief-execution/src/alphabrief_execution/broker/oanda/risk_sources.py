@@ -115,6 +115,10 @@ class OandaRiskContextSources:
                 state=str(order.state),
             )
             for order in orders.orders
+            # Dependent orders (stop loss / take profit) carry no symbol and
+            # no units of their own: they ride on their trade, which the
+            # positions and trades sources already cover.
+            if order.symbol is not None
         ]
 
     def fetch_trades(self) -> list[TradeDatum]:

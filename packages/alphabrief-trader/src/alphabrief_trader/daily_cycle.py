@@ -77,6 +77,7 @@ from alphabrief_trader.schemas import (
     OrderAttempt,
     TradePlan,
 )
+from alphabrief_trader.stops import StopComputationError, protective_prices
 
 SnapshotLoader = Callable[[str], MarketSnapshot | None]
 
@@ -286,14 +287,18 @@ class DailyTradingCycle:
             plan = result.plan
             all_plans.append(plan)
 
-            if plan.blocked_by_ethics or plan.target_position_pct <= 0:
-                # No order candidate at all — just record the plan.
+            if plan.blocked_by_ethics:
+                # Ethics veto is absolute: no override applies.
+                continue
+            if plan.target_position_pct <= 0 and self._direction_override is None:
+                # The committee saw no position: record the plan, no order.
                 continue
 
             attempt = self._attempt_execution(
                 plan=plan,
                 snapshot=snapshot,
                 now=now,
+                cycle_id=cycle_id,
                 reference_price_resolver=reference_price_resolver,
             )
             all_attempts.append(attempt)
@@ -348,12 +353,17 @@ class DailyTradingCycle:
         plan: TradePlan,
         snapshot: MarketSnapshot,
         now: datetime,
+        cycle_id: str | None = None,
         reference_price_resolver: Callable[[str, MarketSnapshot], Decimal]
         | None = None,
     ) -> OrderAttempt:
         intent_id = f"ai_{uuid4().hex[:12]}"
         intent = self._materialize_intent(
-            plan=plan, snapshot=snapshot, intent_id=intent_id, now=now
+            plan=plan,
+            snapshot=snapshot,
+            intent_id=intent_id,
+            now=now,
+            cycle_id=cycle_id,
         )
         price = (
             reference_price_resolver(plan.symbol, snapshot)
@@ -441,6 +451,7 @@ class DailyTradingCycle:
         snapshot: MarketSnapshot,
         intent_id: str,
         now: datetime,
+        cycle_id: str | None = None,
     ) -> OrderIntent:
         side: OrderSide = "buy" if plan.side == "buy" else "sell"
         rationale = plan.rationale
@@ -454,6 +465,26 @@ class DailyTradingCycle:
                 f"{plan.rationale} [direction overridden: "
                 f"{self._override_reason}]"
             )
+        stop_loss: Decimal | None = None
+        take_profit: Decimal | None = None
+        try:
+            protective = protective_prices(
+                side=side,
+                reference_price=snapshot.reference_price,
+                atr=snapshot.atr,
+            )
+        except StopComputationError:
+            # No ATR means no protective order: the risk gate rejects the
+            # intent (rule 14) rather than submitting an unprotected trade.
+            protective = None
+        if protective is not None:
+            stop_loss = protective.stop_loss
+            take_profit = protective.take_profit
+            rationale = (
+                f"{rationale} [stop {protective.stop_loss} / "
+                f"target {protective.take_profit} from ATR {protective.atr}]"
+            )
+
         if self._quantity_override is not None:
             return OrderIntent(
                 intent_id=intent_id,
@@ -462,6 +493,9 @@ class DailyTradingCycle:
                 side=side,
                 order_type="market",
                 quantity=self._quantity_override,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                cycle_id=cycle_id,
                 rationale=rationale,
                 created_at=now,
             )
@@ -472,6 +506,9 @@ class DailyTradingCycle:
             side=side,
             order_type="market",
             target_position_pct=plan.target_position_pct,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            cycle_id=cycle_id,
             rationale=rationale,
             created_at=now,
         )
@@ -931,13 +968,19 @@ class DurableDailyCycle:
             snapshot = snapshots.get(plan.symbol)
             if snapshot is None:
                 continue
-            if plan.blocked_by_ethics or plan.target_position_pct <= 0:
+            if plan.blocked_by_ethics:
+                continue
+            if (
+                plan.target_position_pct <= 0
+                and self._trading._direction_override is None
+            ):
                 continue
             intent = self._trading._materialize_intent(
                 plan=plan,
                 snapshot=snapshot,
                 intent_id=f"ai_{sha256(f'{cycle_id}:{plan.symbol}'.encode()).hexdigest()[:12]}",
                 now=self._clock(),
+                cycle_id=cycle_id,
             )
             chain.intent_ids.append(intent.intent_id)
             quality = evaluate_snapshot_quality(

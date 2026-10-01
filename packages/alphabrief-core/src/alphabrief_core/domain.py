@@ -140,6 +140,11 @@ class OrderIntent(AlphaBriefModel):
     quantity: Decimal | None = None
     target_position_pct: Decimal | None = None
     limit_price: Decimal | None = None
+    #: Protective prices attached to the order on fill (PROJECT_GUIDE 5.6).
+    stop_loss: Decimal | None = None
+    take_profit: Decimal | None = None
+    #: The committee round that produced this intent (order provenance).
+    cycle_id: str | None = None
     rationale: str = Field(min_length=1)
     created_at: datetime
 
@@ -148,7 +153,14 @@ class OrderIntent(AlphaBriefModel):
     def created_at_must_be_timezone_aware(cls, value: datetime) -> datetime:
         return _validate_timezone_aware(value)
 
-    @field_validator("quantity", "target_position_pct", "limit_price", mode="before")
+    @field_validator(
+        "quantity",
+        "target_position_pct",
+        "limit_price",
+        "stop_loss",
+        "take_profit",
+        mode="before",
+    )
     @classmethod
     def decimal_fields_must_not_be_float(cls, value: Any) -> Any:
         return _reject_float_decimal(value)

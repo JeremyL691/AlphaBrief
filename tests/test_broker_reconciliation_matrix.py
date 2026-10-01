@@ -442,8 +442,16 @@ def test_quantity_tolerance_never_hides_exposure(tmp_path: Path) -> None:
     assert report.clean is False
 
 
-def test_margin_diff_is_material_in_both_directions(tmp_path: Path) -> None:
-    # Remote margin higher than local (we understate risk) is CRITICAL.
+def test_margin_diff_is_recorded_as_evidence_not_a_freeze(tmp_path: Path) -> None:
+    """Margin is a broker-computed mark, not a locally derivable value.
+
+    The local projection is built from broker facts (fills, closes,
+    financing); it cannot derive an account's margin requirement or a
+    mark-to-market NAV. Those differences are therefore surfaced as INFO
+    evidence. Freezing on them would freeze the runtime on every ordinary
+    fill, while the checks that prove a real problem (balance, realized
+    P&L, unexplained orders/trades/positions) stay strict.
+    """
     remote = _matching_remote().model_copy(update={"margin_used": Decimal("100.00")})
     report = _reconcile(tmp_path, remote)
     margin_diffs = [
@@ -451,7 +459,20 @@ def test_margin_diff_is_material_in_both_directions(tmp_path: Path) -> None:
         for d in report.diffs
         if d.kind == "money_diff" and d.source_id == "margin_used"
     ]
-    assert margin_diffs and margin_diffs[0].severity == "CRITICAL"
+    assert margin_diffs and margin_diffs[0].severity == "INFO"
+    assert "broker-computed mark" in margin_diffs[0].detail
+
+
+def test_balance_diff_is_still_critical(tmp_path: Path) -> None:
+    """Balance is projection-authoritative, so drift there freezes."""
+    remote = _matching_remote().model_copy(update={"balance": Decimal("500.00")})
+    report = _reconcile(tmp_path, remote)
+    balance_diffs = [
+        d
+        for d in report.diffs
+        if d.kind == "money_diff" and d.source_id == "balance"
+    ]
+    assert balance_diffs and balance_diffs[0].severity == "CRITICAL"
     assert report.clean is False
 
 

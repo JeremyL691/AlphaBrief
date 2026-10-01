@@ -49,9 +49,15 @@ class OrderStateResult(BaseModel):
     #: ``clientExtensions.tag`` as reported by the broker; ``alphabrief``
     #: marks an order as this system's own (reconciliation evidence).
     client_tag: str | None = None
-    symbol: str = Field(min_length=1)
+    #: ``None`` for dependent orders (stop loss / take profit), which the
+    #: broker reports against their trade rather than an instrument.
+    symbol: str | None = None
     state: OrderStateValue
-    units: Decimal
+    #: Zero for dependent orders: they close the parent trade instead of
+    #: carrying units of their own.
+    units: Decimal = Decimal("0")
+    #: The trade a dependent order belongs to, when the broker reports one.
+    trade_id: str | None = None
     price: Decimal | None = None
     submitted_at: datetime | None = None
     request_id: str = Field(min_length=1)
@@ -311,9 +317,10 @@ class OrderOpsClient:
                 broker_order_id=str(row.get("id", "")).strip(),
                 client_order_id=_client_extensions_id(row),
                 client_tag=_client_extensions_tag(row),
-                symbol=str(row.get("instrument", "")).strip(),
+                symbol=str(row.get("instrument") or "").strip() or None,
                 state=_parse_state(str(row.get("state", ""))),
-                units=Decimal(str(row.get("units", "0"))),
+                units=Decimal(str(row.get("units") or "0")),
+                trade_id=str(row.get("tradeID") or "").strip() or None,
                 price=(
                     Decimal(str(row["price"]))
                     if row.get("price") not in (None, "")
