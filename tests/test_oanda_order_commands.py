@@ -30,7 +30,7 @@ from alphabrief_execution.broker.oanda.unknown_outcome import (
 )
 
 ACCOUNT_ID = "101-004-1234567-001"
-BASE = f"http://oanda.test/v3/accounts/{ACCOUNT_ID}"
+BASE = f"https://api-fxpractice.oanda.com/v3/accounts/{ACCOUNT_ID}"
 
 
 class _FakeCommandBroker:
@@ -108,11 +108,10 @@ def _make(broker: _FakeCommandBroker) -> tuple[OandaHttpClient, OrderOpsClient]:
 
     http = OandaHttpClient(
         config=OandaPaperConfig(
-            base_url="http://oanda.test",
+            base_url="https://api-fxpractice.oanda.com",
             timeout_seconds=1.0,
             max_retries=0,
             retry_backoff_seconds=0.001,
-            allow_insecure_base_url=True,
         ),
         http_send=_send,
         token="t",

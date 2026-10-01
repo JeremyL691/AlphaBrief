@@ -73,11 +73,10 @@ def _reconciler(
 
 def _config() -> OandaPaperConfig:
     return OandaPaperConfig(
-        base_url="http://oanda.test",
+        base_url="https://api-fxpractice.oanda.com",
         timeout_seconds=1.0,
         max_retries=0,
         retry_backoff_seconds=0.001,
-        allow_insecure_base_url=True,
     )
 
 

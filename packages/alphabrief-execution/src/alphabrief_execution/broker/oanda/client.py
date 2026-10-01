@@ -1,8 +1,7 @@
 """urllib-based HTTP client for the OANDA v20 Paper API.
 
-Only the practice endpoint is supported by default. The base URL is
-validated at construction time (must be https:// and must not point at
-OANDA live trading).
+Only the fixed HTTPS practice REST origin is supported. Configuration and
+each authenticated request are checked; redirects are never followed.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from alphabrief_execution.broker.errors import (
     BrokerAuthError,
@@ -28,6 +27,7 @@ from alphabrief_execution.broker.errors import (
 from alphabrief_execution.broker.oanda.config import (
     OandaPaperConfig,
     read_oanda_credentials,
+    validate_practice_url,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,6 +83,7 @@ class OandaHttpClient:
         token: str | None = None,
         account_id: str | None = None,
     ) -> None:
+        validate_practice_url(config.base_url, base_only=True)
         self._config = config
         self._http_send = http_send or _default_http_send
         if token is None or account_id is None:
@@ -214,6 +215,7 @@ class OandaHttpClient:
         *,
         json_body: dict[str, Any] | None,
     ) -> Request:
+        validate_practice_url(url)
         data: bytes | None = None
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -269,10 +271,20 @@ async def run_async(
 # ---------------------------------------------------------------------------
 
 
-def _default_http_send(request: Request, timeout_seconds: float) -> bytes:
-    from urllib.request import urlopen
+class _NoRedirect(HTTPRedirectHandler):
+    """Never forward authenticated OANDA requests to a redirect destination."""
 
-    with urlopen(request, timeout=timeout_seconds) as response:
+    def redirect_request(
+        self, req: Request, fp: Any, code: int, msg: str,
+        headers: Any, newurl: str,
+    ) -> None:
+        raise BrokerProtocolError("OANDA redirects are forbidden")
+
+
+def _default_http_send(request: Request, timeout_seconds: float) -> bytes:
+    validate_practice_url(request.full_url)
+    opener = build_opener(_NoRedirect())
+    with opener.open(request, timeout=timeout_seconds) as response:
         return bytes(response.read())
 
 

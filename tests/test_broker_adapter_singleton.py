@@ -42,11 +42,10 @@ def test_no_credentials_returns_null_adapter(
 def test_oanda_credentials_return_live_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A mock base URL is required so the client does not dial the real
-    # OANDA endpoint; allow_insecure_base_url is applied by the factory.
+    # Adapter construction performs no network I/O.
     monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
     monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
-    monkeypatch.setenv("ALPHABRIEF_OANDA_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     adapter = broker_adapter.get_broker_adapter()
     assert isinstance(adapter, OandaPaperAdapter)
     assert broker_adapter.has_live_broker() is True
@@ -57,7 +56,7 @@ def test_reset_clears_cached_singleton(
 ) -> None:
     monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
     monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
-    monkeypatch.setenv("ALPHABRIEF_OANDA_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
     live = broker_adapter.get_broker_adapter()
     assert isinstance(live, OandaPaperAdapter)
 

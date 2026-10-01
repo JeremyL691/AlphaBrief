@@ -24,9 +24,6 @@ from __future__ import annotations
 
 from alphabrief_execution.broker.port import BrokerAdapter
 from alphabrief_execution.broker.runtime import (
-    ENV_BASE_URL_OVERRIDE as ENV_OANDA_BASE_URL,
-)
-from alphabrief_execution.broker.runtime import (
     NullBrokerAdapter,
     get_broker_runtime,
     reset_broker_runtime,
@@ -67,7 +64,6 @@ def _reset_broker_adapter() -> None:
 
 
 __all__ = [
-    "ENV_OANDA_BASE_URL",
     "get_broker_adapter",
     "has_live_broker",
 ]

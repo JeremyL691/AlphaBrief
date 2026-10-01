@@ -16,6 +16,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -49,6 +50,28 @@ _FORBIDDEN_SECRET_KEYS: frozenset[str] = frozenset(
 )
 
 
+def validate_practice_url(url: str, *, base_only: bool = False) -> None:
+    """Reject every origin except the fixed HTTPS practice REST origin.
+
+    Never include the rejected URL in an error: it may carry credentials.
+    """
+    try:
+        parsed = urlsplit(url)
+    except ValueError as exc:
+        raise ValueError("invalid OANDA practice URL") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "api-fxpractice.oanda.com"
+        or any(ord(char) <= 32 or ord(char) == 127 for char in url)
+        or parsed.fragment
+        or (base_only and (parsed.path not in {"", "/"} or parsed.query))
+    ):
+        raise ValueError(
+            "OANDA practice HTTPS origin required; live trading and other hosts "
+            "are forbidden"
+        )
+
+
 @dataclass(frozen=True)
 class OandaPaperConfig:
     """Loaded non-secret configuration for the OANDA Paper adapter."""
@@ -57,24 +80,10 @@ class OandaPaperConfig:
     timeout_seconds: float
     max_retries: int
     retry_backoff_seconds: float
-    allow_insecure_base_url: bool = False
 
     def __post_init__(self) -> None:
         """Validate paper-only transport settings."""
-        if not self.base_url.startswith("https://"):
-            if not self.allow_insecure_base_url:
-                raise ValueError(
-                    "oanda_paper.base_url must use https:// scheme, "
-                    f"got {self.base_url!r}"
-                )
-            if "fxtrade" in self.base_url.lower() or "live" in self.base_url.lower():
-                raise ValueError(
-                    "oanda_paper.base_url must not point at live trading — paper only"
-                )
-        if "fxtrade" in self.base_url.lower() or "live" in self.base_url.lower():
-            raise ValueError(
-                "oanda_paper.base_url must not point at live trading — paper only"
-            )
+        validate_practice_url(self.base_url, base_only=True)
         if self.timeout_seconds <= 0:
             raise ValueError("oanda_paper.timeout_seconds must be positive")
         if self.max_retries < 0:
@@ -162,4 +171,5 @@ __all__ = [
     "OandaPaperConfig",
     "load_oanda_paper_config",
     "read_oanda_credentials",
+    "validate_practice_url",
 ]

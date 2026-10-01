@@ -944,7 +944,7 @@ electron/       桌面外壳与打包配置
 
 ## 9. 安全不变量
 
-1. **只用 OANDA 模拟盘**：执行代码只能访问 `api-fxpractice.oanda.com` 和 `stream-fxpractice.oanda.com`。
+1. **只用 OANDA 模拟盘**：执行代码只能访问 `api-fxpractice.oanda.com` 和 `stream-fxpractice.oanda.com`。REST 客户端固定使用 `https://api-fxpractice.oanda.com`，拒绝用户信息、非标准端口、其他主机、地址覆盖和重定向；本地测试服务器只通过测试代码中的注入传输使用，生产没有例外开关。
 2. **没有实盘路径**：没有实盘 URL、实盘模式、账户环境切换开关，也没有"以后接实盘"的占位代码。
 3. **只用 OANDA**：没有 Alpaca、没有券商路由；确定性的假券商只能存在于测试中。
 4. **没有静默模拟回退**：凭证缺失时失败即停；产品绝不把内存成交当作 OANDA 成交展示。
