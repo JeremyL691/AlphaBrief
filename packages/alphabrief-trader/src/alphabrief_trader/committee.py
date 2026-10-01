@@ -23,6 +23,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from alphabrief_models import (
+    ModelCallRecord,
     ModelGateway,
     ModelRequest,
     parse_structured_output,
@@ -122,6 +123,30 @@ class CommitteeResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+
+#: Provider classifications that mean "this channel cannot serve the
+#: request right now" (PROJECT_GUIDE 5.13): a rate limit or a quota error
+#: disables the channel for the rest of the UTC day instead of retrying it.
+_UNAVAILABLE_CLASSIFICATIONS = frozenset({"rate_limit", "budget_exhausted"})
+
+
+def _failure_code(role: str, record: ModelCallRecord) -> str:
+    """A stable role-error code for one failed model call.
+
+    ``provider_unavailable:<code>`` marks the failures the daily budget
+    must act on; every other failure keeps the historical
+    ``provider_call_failed`` code so existing consumers do not change.
+    """
+    error_type = record.error_type or ""
+    channel_code = error_type.split(":", 1)[1] if ":" in error_type else ""
+    if record.classification in _UNAVAILABLE_CLASSIFICATIONS or channel_code in {
+        "usage_limit_exceeded",
+        "quota_exceeded",
+        "rate_limit_exceeded",
+    }:
+        return f"{role}: provider_unavailable:{channel_code or record.classification}"
+    return f"{role}: provider_call_failed"
+
 class TradingCommittee:
     """Multi-role trading committee.
 
@@ -203,7 +228,7 @@ class TradingCommittee:
             )
             result = self._gateway.invoke(request)
             if result.response is None or result.record.status != "succeeded":
-                role_errors.append(f"{role}: provider_call_failed")
+                role_errors.append(_failure_code(role, result.record))
                 continue
             opening_parsed: StructuredOutputResult[_PartialCommitteeVote] = (
                 parse_structured_output(

@@ -18,12 +18,15 @@ migration entry, which can adopt the same name with ``IF NOT EXISTS``.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import duckdb
 from alphabrief_core import paths as _paths
 from alphabrief_models.gateway import ModelCallRecord
+from alphabrief_models.model_budget import ChannelUsage
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS model_call_records (
@@ -52,6 +55,21 @@ CREATE TABLE IF NOT EXISTS model_call_records (
 
 _DROP_TABLE_SQL = "DROP TABLE IF EXISTS model_call_records"
 
+# PROJECT_GUIDE 5.13: a channel that answered with a rate limit or a quota
+# error is disabled for the rest of the UTC day. The state is durable so a
+# restart cannot re-enable a channel that already said no.
+_CREATE_CHANNEL_STATE_SQL = """
+CREATE TABLE IF NOT EXISTS model_channel_day_state (
+    channel    TEXT NOT NULL,
+    day        TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (channel, day)
+)
+"""
+
+_DROP_CHANNEL_STATE_SQL = "DROP TABLE IF EXISTS model_channel_day_state"
+
 _SELECT_COLUMNS = (
     "call_id, request_id, provider, model, task_type, prompt_version, "
     "input_hash, output_hash, latency_ms, cost_estimate, status, "
@@ -77,6 +95,7 @@ class ModelCallStore:
         self._db_path = Path(db_path)
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(_CREATE_TABLE_SQL)
+        self._conn.execute(_CREATE_CHANNEL_STATE_SQL)
 
     def save_call(self, record: ModelCallRecord) -> str:
         """Persist one terminal call record idempotently and return its ID.
@@ -192,10 +211,59 @@ class ModelCallStore:
         ).fetchone()
         return int(row[0]) if row else 0
 
+    # ------------------------------------------------------------------
+    # Daily budget support (PROJECT_GUIDE 5.13)
+    # ------------------------------------------------------------------
+
+    def daily_usage(self, since: Any) -> dict[str, ChannelUsage]:
+        """Recorded calls and estimated cost per channel since an instant."""
+        rows = self._conn.execute(
+            """
+            SELECT provider,
+                   COUNT(*),
+                   COALESCE(SUM(cost_estimate), 0)
+            FROM model_call_records
+            WHERE created_at >= ?
+            GROUP BY provider
+            """,
+            [since],
+        ).fetchall()
+        return {
+            str(provider): ChannelUsage(
+                calls=int(calls),
+                cost=Decimal(str(cost or 0)),
+            )
+            for provider, calls, cost in rows
+        }
+
+    def disabled_channel_reason(self, channel: str, day: str) -> str | None:
+        """The reason a channel is disabled for one UTC day, if any."""
+        row = self._conn.execute(
+            """
+            SELECT reason FROM model_channel_day_state
+            WHERE channel = ? AND day = ?
+            """,
+            [channel, day],
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def disable_channel(self, channel: str, day: str, reason: str) -> None:
+        """Disable one channel for one UTC day (idempotent)."""
+        self._conn.execute(
+            """
+            INSERT INTO model_channel_day_state (channel, day, reason, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (channel, day) DO NOTHING
+            """,
+            [channel, day, reason, datetime.now(UTC)],
+        )
+
     def clear(self) -> None:
-        """Drop only the model-call table (for test isolation)."""
+        """Drop only the model-call tables (for test isolation)."""
         self._conn.execute(_DROP_TABLE_SQL)
         self._conn.execute(_CREATE_TABLE_SQL)
+        self._conn.execute(_DROP_CHANNEL_STATE_SQL)
+        self._conn.execute(_CREATE_CHANNEL_STATE_SQL)
 
     def close(self) -> None:
         """Close the DuckDB connection."""

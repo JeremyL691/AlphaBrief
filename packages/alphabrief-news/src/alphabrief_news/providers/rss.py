@@ -1,9 +1,15 @@
 """RSS / Atom feed reader for AlphaBrief news headlines.
 
-This provider is intentionally minimal: it fetches a small hard-coded allowlist
-of feeds, extracts only title / summary / published_at / source / url, and
-ignores images, comments, and media enclosures. It uses only the standard
-library so the package stays SDK-free.
+This provider is intentionally minimal: it fetches a small hard-coded
+allowlist of feeds, extracts only title / summary / published_at / source /
+url, and ignores images, comments, and media enclosures. It uses only the
+standard library so the package stays SDK-free.
+
+Source identity (PROJECT_GUIDE S4-5): every feed carries the **publisher
+label of the outlet that actually publishes it** plus its source family, so
+a headline can never be attributed to the wrong outlet. Headlines are
+currency-tagged (see :mod:`alphabrief_news.currency_tags`) instead of being
+tagged with every traded symbol.
 """
 
 from __future__ import annotations
@@ -11,6 +17,7 @@ from __future__ import annotations
 import json
 import urllib.request
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 from urllib.error import HTTPError, URLError
@@ -22,6 +29,7 @@ from alphabrief_data.providers import (
     is_retryable_exception,
 )
 
+from alphabrief_news.currency_tags import tag_headline_symbols
 from alphabrief_news.providers.base import (
     HttpGet,
     NewsProviderError,
@@ -29,22 +37,88 @@ from alphabrief_news.providers.base import (
 )
 from alphabrief_news.types import NewsFetchQuery, NewsHeadline
 
+
+@dataclass(frozen=True)
+class FeedSource:
+    """One allowlisted feed: its publisher, family, and currency focus."""
+
+    key: str
+    url: str
+    publisher: str
+    family: str
+    default_currency: str | None = None
+
+
 # Small allowlist of canonical, key-less RSS/Atom feeds. The provider does not
 # accept arbitrary user URLs because untrusted external content must not change
-# system rules.
-#
-# Note on the "reuters-rss" key: the previous
-# https://www.reutersagency.com/feed/?taxonomy=markets URL has been returning
-# HTTP 404 for an extended period (reutersagency.com no longer hosts that
-# feed). The key is preserved for operator compatibility, but the URL is now
-# pointed at a working financial-markets feed so the default scheduler
-# ingestion does not log a 404 on every cycle.
-_ALLOWED_FEEDS: dict[str, str] = {
-    "marketwatch-rss": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
-    "reuters-rss": "https://feeds.bloomberg.com/markets/news.rss",
-    "bloomberg-atom": "https://feeds.bloomberg.com/news.rss",
-    "bloomberg-markets-rss": "https://feeds.bloomberg.com/markets/news.rss",
+# system rules. Each URL was verified to return a real RSS/Atom document
+# (2026-10-01); the previous "reuters-rss" key pointed at a Bloomberg URL and
+# the Bloomberg feeds themselves now redirect away from RSS, so they were
+# removed rather than kept under a misleading name.
+_FEED_SOURCES: dict[str, FeedSource] = {
+    "marketwatch-rss": FeedSource(
+        key="marketwatch-rss",
+        url="https://feeds.content.dowjones.io/public/rss/mw_topstories",
+        publisher="MarketWatch",
+        family="marketwatch",
+    ),
+    "fxstreet-rss": FeedSource(
+        key="fxstreet-rss",
+        url="https://www.fxstreet.com/rss/news",
+        publisher="FXStreet",
+        family="fxstreet",
+    ),
+    "forexlive-rss": FeedSource(
+        key="forexlive-rss",
+        url="https://www.forexlive.com/feed/news",
+        publisher="ForexLive",
+        family="forexlive",
+    ),
+    "fed-press-rss": FeedSource(
+        key="fed-press-rss",
+        url="https://www.federalreserve.gov/feeds/press_all.xml",
+        publisher="Federal Reserve",
+        family="federal_reserve",
+        default_currency="USD",
+    ),
+    "ecb-press-rss": FeedSource(
+        key="ecb-press-rss",
+        url="https://www.ecb.europa.eu/rss/press.html",
+        publisher="European Central Bank",
+        family="ecb",
+        default_currency="EUR",
+    ),
+    "boe-news-rss": FeedSource(
+        key="boe-news-rss",
+        url="https://www.bankofengland.co.uk/rss/news",
+        publisher="Bank of England",
+        family="bank_of_england",
+        default_currency="GBP",
+    ),
 }
+
+#: key -> url, derived from the source table (kept for CLI/operator use).
+_ALLOWED_FEEDS: dict[str, str] = {
+    key: source.url for key, source in _FEED_SOURCES.items()
+}
+
+#: The independent source families the provider covers. PROJECT_GUIDE S4-5
+#: requires at least three; the default table has six.
+SOURCE_FAMILIES: frozenset[str] = frozenset(
+    source.family for source in _FEED_SOURCES.values()
+)
+
+
+def feed_source(key: str) -> FeedSource:
+    """The allowlisted source for one feed key."""
+    source = _FEED_SOURCES.get(key)
+    if source is None:
+        allowed = ", ".join(sorted(_FEED_SOURCES))
+        raise NewsProviderError(
+            NewsProviderErrorCode.INVALID_SYMBOL,
+            f"symbol must be one of the allowed feeds: {allowed}",
+        )
+    return source
 
 _DEFAULT_TIMEOUT = 30.0
 
@@ -140,7 +214,7 @@ def _extract_atom_text(element: ET.Element | None, ns: str, tag: str) -> str | N
     return child.text.strip()
 
 
-def _parse_rss_feed(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
+def _parse_rss_feed(xml_bytes: bytes, source: FeedSource) -> list[NewsHeadline]:
     """Parse RSS 2.0 XML into a list of headlines."""
     try:
         root = ET.fromstring(xml_bytes)
@@ -157,7 +231,6 @@ def _parse_rss_feed(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
             "RSS feed missing <channel>",
         )
 
-    source = _extract_text(channel, "title") or source_name
     items = channel.findall("item")
     headlines: list[NewsHeadline] = []
 
@@ -174,11 +247,18 @@ def _parse_rss_feed(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
 
         headlines.append(
             NewsHeadline(
-                headline_id=f"{source_name}-{idx}",
+                headline_id=f"{source.key}-{idx}",
                 published_at=published_at,
-                symbols=["GENERAL"],
+                symbols=tag_headline_symbols(
+                    title,
+                    description,
+                    default_currency=source.default_currency,
+                ),
                 category="other",
-                source=source,
+                # The publisher label from the allowlist, never the feed's
+                # own <channel><title> (which can name a different outlet
+                # than the one publishing the document).
+                source=source.publisher,
                 title=title,
                 summary=description,
                 url=link,
@@ -190,7 +270,7 @@ def _parse_rss_feed(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
     return headlines
 
 
-def _parse_atom_feed(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
+def _parse_atom_feed(xml_bytes: bytes, source: FeedSource) -> list[NewsHeadline]:
     """Parse Atom 1.0 XML into a list of headlines."""
     ns = "http://www.w3.org/2005/Atom"
     try:
@@ -201,7 +281,6 @@ def _parse_atom_feed(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
             f"invalid Atom XML: {exc}",
         ) from exc
 
-    source = _extract_atom_text(root, ns, "title") or source_name
     entries = root.findall(f"{{{ns}}}entry")
     headlines: list[NewsHeadline] = []
 
@@ -223,11 +302,15 @@ def _parse_atom_feed(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
 
         headlines.append(
             NewsHeadline(
-                headline_id=f"{source_name}-{idx}",
+                headline_id=f"{source.key}-{idx}",
                 published_at=published_at,
-                symbols=["GENERAL"],
+                symbols=tag_headline_symbols(
+                    title,
+                    summary,
+                    default_currency=source.default_currency,
+                ),
                 category="other",
-                source=source,
+                source=source.publisher,
                 title=title,
                 summary=summary,
                 url=link,
@@ -239,7 +322,7 @@ def _parse_atom_feed(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
     return headlines
 
 
-def _detect_and_parse(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
+def _detect_and_parse(xml_bytes: bytes, source: FeedSource) -> list[NewsHeadline]:
     """Detect RSS vs Atom and parse accordingly."""
     try:
         root = ET.fromstring(xml_bytes)
@@ -251,9 +334,9 @@ def _detect_and_parse(xml_bytes: bytes, source_name: str) -> list[NewsHeadline]:
 
     tag = root.tag.split("}")[-1] if root.tag.startswith("{") else root.tag
     if tag == "rss":
-        return _parse_rss_feed(xml_bytes, source_name)
+        return _parse_rss_feed(xml_bytes, source)
     if tag == "feed":
-        return _parse_atom_feed(xml_bytes, source_name)
+        return _parse_atom_feed(xml_bytes, source)
     raise NewsProviderError(
         NewsProviderErrorCode.PARSE_ERROR,
         f"unsupported feed root element: {root.tag}",
@@ -274,16 +357,15 @@ class RssNewsProvider:
 
     def fetch_headlines(self, query: NewsFetchQuery) -> list[NewsHeadline]:
         """Fetch and parse allowed RSS feeds, filtering by query window."""
-        if len(query.symbols) != 1 or query.symbols[0] not in _ALLOWED_FEEDS:
-            allowed = ", ".join(sorted(_ALLOWED_FEEDS))
+        if len(query.symbols) != 1:
+            allowed = ", ".join(sorted(_FEED_SOURCES))
             raise NewsProviderError(
                 NewsProviderErrorCode.INVALID_SYMBOL,
                 f"symbol must be one of the allowed feeds: {allowed}",
             )
-
         feed_key = query.symbols[0]
-        url = _ALLOWED_FEEDS[feed_key]
-        request = Request(url, headers={"User-Agent": "AlphaBrief/0.0"})
+        source = feed_source(feed_key)
+        request = Request(source.url, headers={"User-Agent": "AlphaBrief/0.0"})
 
         try:
             body = _http_get_with_retry(self._http_get, request, _DEFAULT_TIMEOUT)
@@ -296,7 +378,7 @@ class RssNewsProvider:
                 "provider returned an empty response",
             )
 
-        headlines = _detect_and_parse(body, feed_key)
+        headlines = _detect_and_parse(body, source)
 
         if self._auto_sentiment:
             from alphabrief_news.sentiment import RuleBasedSentimentAnalyzer
@@ -322,8 +404,12 @@ def _decode_symbols(value: str) -> list[str]:
 
 
 __all__ = [
+    "SOURCE_FAMILIES",
+    "FeedSource",
     "RssNewsProvider",
     "_ALLOWED_FEEDS",
+    "_FEED_SOURCES",
     "_decode_symbols",
     "_encode_symbols",
+    "feed_source",
 ]

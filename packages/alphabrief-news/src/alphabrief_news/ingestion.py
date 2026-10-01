@@ -128,6 +128,34 @@ def _bounded_summary(headline: NewsHeadline, policy: SourceLicensePolicy) -> str
     return summary
 
 
+def ingested_item_from_headline(
+    headline: NewsHeadline,
+    *,
+    fetched_at: datetime,
+    correlation_id: str,
+    license_policy: SourceLicensePolicy | None = None,
+) -> IngestedNewsItem:
+    """Build the provenance record for one already-sanitized headline.
+
+    Public entry point for callers that sanitize and deduplicate their own
+    batch (see :mod:`alphabrief_news.pipeline`): it applies the retention
+    policy, so licensed full text is never persisted.
+    """
+    policy = license_policy or SourceLicensePolicy()
+    return IngestedNewsItem(
+        item_id=headline.headline_id,
+        source=headline.source,
+        canonical_url=_canonical_url(headline),
+        published_at=headline.published_at,
+        fetched_at=fetched_at,
+        content_hash=_content_hash(headline),
+        summary=_bounded_summary(headline, policy),
+        fetch_outcome="success",
+        correlation_id=correlation_id,
+        metadata_only=policy.metadata_only,
+    )
+
+
 class NewsIngestionService:
     """Fetches one source and records its durable outcome and items."""
 

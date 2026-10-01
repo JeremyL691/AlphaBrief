@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-4 影子评估/日报/预算（模型额度受限时先做 S4-5 新闻与不依赖模型的部分）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
+| 下一项任务 | S4-2 规则 6 事件窗口（已具备真实新闻输入）与规则 11 回撤状态机；随后 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-3：决策持久化改用真实配置/快照内容哈希（policy:e54ca5bfb209） |
+| 最近更新 | 2026-10-01，S4-5：新闻六来源家族 + 按货币打标签 + 去重清洗接入并实测（真实 37 条入库带溯源） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,40 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-5（本提交）：**新闻来源家族、按货币打标签、去重与清洗**。
+  - **来源标签修正**：`rss.py` 原先的 `reuters-rss` 键实际指向 Bloomberg URL（来源标签与实际发布方不符），Bloomberg 的 feed 现在也不再返回 RSS；两处误导性键已删除。feed 表改为 `FeedSource`（key / url / publisher / family / default_currency），`source` 一律取表里配置的**真实发布方**，不再用 feed 自己的 `<channel><title>`（可能写着别的媒体名）。六个 feed 均已用真实 HTTP 校验（2026-10-01，本机）：MarketWatch、FXStreet、ForexLive、Federal Reserve、European Central Bank、Bank of England，覆盖 6 个独立来源家族（规格要求 ≥3）。
+  - **按货币相关性打标签**：新增 `alphabrief_news.currency_tags`，用确定性词典把标题+摘要映射到货币（USD/EUR/GBP/JPY/AUD/CAD）再映射到受交易品种；短代码按词边界匹配（`cad` 不会命中 "decade"、`aud` 不会命中 "fraud"），通用 "dollar" 仅在无其它货币命中时算 USD（避免把 "Australian dollar" 误标成 USD）。无信号的条目标 `GENERAL`（记录但不声称与任何品种相关），央行官方 feed 自带默认货币（Fed→USD、ECB→EUR、BoE→GBP），且文本信号优先于来源默认。调度器的旧行为（每条新闻 `symbols=list(universe)`）已删除。
+  - **去重与清洗接入**：新增 `alphabrief_news.pipeline.prepare_headlines()`，一次确定性通过：`untrusted.py` 清洗（标记不可信、限长、中和指令式内容；检测到提示词注入的条目**不进入后续环节**，只保留 64 位内容哈希与中和计数）→ `ingestion.py` 记录溯源（`ingested_item_from_headline()`：规范化 URL、内容哈希、fetch outcome、metadata-only 保留策略，不落授权全文）→ `dedup.py` 聚类去重（URL 规范化、跟踪参数、内容哈希、标题相似度，同一批内折叠为一条）。调度器 `_ingest_ai_news` 改为走该管道，并把溯源记录写入 `news_ingestion_records`；被扣留的条目在 stderr 打印条数（只有哈希，不含正文）。
+  - 真实实测：直接用真实网络跑六个 feed（加载 `.env` 后，本机时钟比 feed 时间戳慢约 6 小时，MarketWatch 的条目落在 `end` 之后被窗口过滤，属环境时钟偏差不是代码缺陷）→ FXStreet 17 条、ForexLive 24 条、Fed 5 条、ECB 7 条、BoE 3 条，货币标签分布真实（ECB 全为 `EUR_USD`、BoE 全为 `GBP_USD`、Fed 全为 USD 对）。真实入库：`_ingest_ai_news`（六 feed，24h 窗口）→ 入库 37 条，发布方 FXStreet 13 / ForexLive 21 / ECB 2 / BoE 1；标签分布 16 条 USD 对（USD 在全部五个品种里，属货币相关性而非"打全部品种"）、8 条 `GENERAL`、13 条窄标签（EUR_USD 5、GBP_USD 4、EUR+GBP 1、EUR+CAD 1、AUD 1、JPY 1）；`news_ingestion_records` 落 37 条溯源（`metadata_only=True`、64 位内容哈希、真实 correlation id）。
+  - 测试：新增 `tests/test_news_source_families.py` 15 个（家族数量与发布方唯一性、误导键已删除、央行默认货币、货币标签窄化/USD 全对/双货币/无信号 GENERAL、通用 dollar 不抢别国货币、词边界防误命中、来源默认与文本信号优先级、provider 真实应用标签）、`tests/test_news_pipeline.py` 10 个（正常条目限长、注入条目只留哈希、摘要注入、URL/跟踪参数重复折叠、不同新闻保留、metadata-only 溯源、空批次、空来源拒绝、全文不落库）；`tests/test_news.py` 的 RSS/Atom 用例更新为"发布方来自白名单"与"ECB 默认欧元标签"；`tests/test_ai_trader_scheduler.py` 的预摄取用例扩展为 3 条抓取 → 1 条去重后入库 + 1 条注入扣留 + 溯源记录校验。
+  - 本机 `.env`（未跟踪）的 `ALPHABRIEF_AI_NEWS_FEEDS` 原先仍列旧键（`reuters-rss,bloomberg-atom`），已改为六个真实 feed（备份在 /tmp）。
+  - 命令与结果：`pytest -q -m "not practice"` → 2595 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (228 source files)；`secret_scan` → OK。
+  - 遗留（转 S4-2 余项）：规则 6 事件窗口（高影响新闻关键词 30 分钟窗口）现在具备真实新闻输入与货币标签，可在下一批实现。
+
+- S4-4 第三批（本提交）：**日报生成器（5.12）**。
+  - 新增 `alphabrief_trader.daily_report`（纯渲染）：`DailyReportData`（全部字段来自存储查询）+ `render_markdown` + `to_payload` + `write_daily_report`，同时写出 `reports/daily/YYYY-MM-DD.md` 与 `.json`（写在数据目录，可用 `--out-dir` 覆盖）。段落：当日各轮决策、订单/成交/平仓、风控拒绝统计（按 tag 计数，已成交不计）、P&L/NAV/回撤、对账与冻结事件、模型调用（通道/失败数/token/估算成本）、数据新鲜度、影子评估增量、doctor 摘要。没有证据的段落写"no rows"/明确说明，不编造数字；doctor 段写明"要到 S5 实现 `alphabrief doctor` 才有"。
+  - 新增 CLI `alphabrief report daily [--date YYYY-MM-DD] [--out-dir DIR]`：从 `AiTradingStore`（轮次与 attempt）、`ModelCallStore`（当日调用）、`ShadowStore`（当日决策与 scoreboard）、`BrokerReconStore`（快照与冻结事件）、`PaperStore`（日内起始/最新 NAV 与 HWM，凭证缺失或无快照时写明原因）、`MarketDataStore`（各品种最新 K 线与版本）汇总；账户 ID 只用于本地查询，从不打印。
+  - 真实实测（practice 账户，2026-10-01）：`alphabrief report daily --date 2026-10-01` → 写出 `~/Library/Application Support/AlphaBrief/reports/daily/2026-10-01.md` 与 `.json`；内容为真实数据：16 轮（含 `executed` 1 轮、`blocked_risk_gate` 5 轮、`skipped_model_unavailable` 4 轮、`provider_error` 2 轮、`skipped_no_intent` 4 轮）、6 条 attempt（含真实 broker order 4）、风控拒绝统计 `DAILY_INTENT_CAP 5 / data_quality 2 / max_order_value 2 / max_total_exposure 2 / kill_switch 1`、当日对账快照 6 个（clean 3 / unclean 3，最后一次 all_match=true）、当日冻结事件 3 条（真实原因字符串）、模型调用 1 条、5 条影子决策、5 个品种的最新 K 线时间与 `data_version`。
+  - 测试：新增 `tests/test_daily_report.py` 7 个（拒绝统计跳过已成交、执行结果统计、模型用量汇总、Markdown 含全部段落、空段落如实标注、payload 可 JSON 序列化、双文件写入）。命令与结果：`pytest -q -m "not practice"` → 2570 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (226 source files)；`secret_scan` → OK。 本批结束前另跑真实 practice 回归：`pytest -m practice tests/test_oanda_order_path_practice.py tests/test_live_reconciliation_practice.py tests/test_market_sync_practice.py` → 3 passed（下单序列化用真实 instrument 元数据、真实对账、真实 K 线入库），`tests/test_risk_oanda_practice_e2e.py` → 7 passed（含受控 practice 风控链）；模型通道的 practice 测试受额度阻塞未跑。
+  - S4-4 完成；S4-4 遗留：影子评估的 T+4h/T+24h 自动计分任务（需要调度器，S5）、单次调用基准的真实模型调用（需要额度）。
+
+- S4-4 第二批（本提交）：**影子评估（5.11）**。
+  - 新增 `alphabrief_trader.shadow`（纯函数）：五个基准 `committee` / `single_call` / `momentum` / `random` / `no_trade`；`momentum_side` 用真实 20 日收益（不足 21 根收盘价则记 skipped，不猜方向）；`random_side` 种子 = `hash(cycle_id)`（同一轮可复现）；`committee_side` 读委员会 plan（target=0 或 side 非买卖即 flat）；`directional_return_pct` 用中间价计方向收益并扣除计分时点差（flat 恒为 0，点差大于波动时正确方向也会为负）；`summarize` 给出样本数、均值、胜率、95% bootstrap 置信区间，bootstrap 用样本内容的哈希做种子（同一份证据永远得到同一个区间），并强制带上"14 天样本不足以判断有效性"的 caveat。
+  - 新增 `alphabrief_trader.shadow_store.ShadowStore`（DuckDB，自带 DDL）：`ai_shadow_decisions`（按 `(cycle_id, symbol, benchmark)` 幂等）、`ai_shadow_scores`（按 `(cycle_id, symbol, benchmark, horizon)` 只写一次）、`due_for_scoring(now)`（4h/24h 到期且未计分）、`stats` / `scoreboard`。
+  - cycle 接入：`DailyTradingCycle` 新增 `shadow_recorder`；每轮每个品种记录 5 条，**模型通道不可用时也照常记录**（committee 记为 skipped + 原因，momentum/random/no_trade 仍用真实数据），影子序列不留空洞。`MarketSnapshot` 新增 `momentum_20d_pct`，CLI 的快照加载器用存储的 D 线真实计算 20 日收益。记录路径不可能下单。
+  - 真实实测（practice 账户）：`data sync-oanda --instrument EUR_USD` → 成功；`cycle run --once --instrument EUR_USD --trading off` → 数据库 `ai_shadow_decisions` 落 5 条：committee=flat（`skipped: NO_TRADE_MODEL_UNAVAILABLE...`）、momentum=short（20 日收益 −1.7348%）、random=long（hash 种子）、no_trade=flat、single_call=skipped（需要预算内的单次调用）；`scoreboard()["4h"]` 五个基准 samples 均为 0（尚未到 4h，未计分——不编造分数）。
+  - 测试：新增 `tests/test_shadow_evaluation.py` 17 个（20 日动量边界、随机可复现、委员会方向、五基准组成、点差扣减、flat 恒零、宽点差转负、bootstrap 确定性与区间包夹、空样本、存储幂等、到期判定、只计分一次、聚合含 caveat），`tests/test_ai_trader_daily_cycle.py` 新增 3 个（每品种 5 条、hold plan 记 flat、20 日收益驱动 momentum）。
+  - 尚未做：单次调用基准的真实模型调用（需要额度，已记阻塞）；T+4h/T+24h 的自动计分任务（属于 S5 调度器，届时用 `due_for_scoring` + OANDA 中间价与点差写入 `ai_shadow_scores`）。
+
+- S4-4 第一批（本提交）：**模型每日预算（5.13）**。
+  - 新增 `alphabrief_models.model_budget`：`ModelBudgetPolicy`（`chatgpt_plan` 每日调用上限，默认 150；`openai_compatible` 每日成本上限，默认 $2.00）、`ModelBudgetGuard.admit(channel)` 按**已记录的真实调用**判定，`record_channel_unavailable()` 在收到 429/额度错误时把该通道禁用当天。理由码用规格原文 `NO_TRADE_MODEL_BUDGET` / `NO_TRADE_MODEL_UNAVAILABLE`。
+  - 持久化在 `ModelCallStore`：新增 `daily_usage(since)`（按通道汇总调用数与估算成本）与 `model_channel_day_state` 表（`disabled_channel_reason` / `disable_channel`），跨进程、跨重启生效。
+  - 委员会把失败分类为 `provider_unavailable:<code>`（rate_limit / budget_exhausted / usage_limit_exceeded / quota_exceeded / rate_limit_exceeded），其它失败仍是 `provider_call_failed`，既有消费者不受影响。
+  - cycle 接入：新增 `skipped_model_budget` / `skipped_model_unavailable` 两个 `CycleOutcome`，summary 里带 `reasons=[...]`；预算判定优先于通用 provider_error，不会把"额度用尽"混成"模型故障"。CLI 的 `cycle run` 现在把 `ModelCallStore` 接到委员会的 `record_sink`（此前委员会调用根本不落库，预算和日报都会少算），并用 `config/alphabrief.yaml` 的 `model.daily_call_limit` / `model.daily_cost_limit_usd` 配置上限。
+  - 真实实测（当前通道额度确实已用尽）：`alphabrief cycle run --once --trading off`（全 universe）→ 第 1 个品种 5 次真实调用全部 `usage_limit_exceeded`，被分类为 `provider_unavailable:usage_limit_exceeded` 并禁用当天；其余 4 个品种**一次调用都没发**，记录 `NO_TRADE_MODEL_UNAVAILABLE: chatgpt_plan is disabled for 2026-10-01: usage_limit_exceeded`（此前同类运行会烧掉 25 次调用）。随后单独再跑一次 `--instrument EUR_USD`：`outcome=skipped_model_unavailable`，落库调用数仍为 2（未新增），证明禁用状态跨进程持久。
+  - 测试：新增 `tests/test_model_budget.py` 9 个（阈值边界、成本上限、无限制通道、按天禁用、策略参数校验、真实存储汇总只算当天、跨实例持久、真实记录触发上限），`tests/test_ai_trader_daily_cycle.py` 新增 3 个（预算用尽记 `skipped_model_budget` 且不发模型调用、通道禁用记 `skipped_model_unavailable`、无预算时行为不变）。命令与结果：`pytest -q -m "not practice"` → 2543 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (222 source files)；`secret_scan` → OK。
+  - 本批未做（S4-4 余下）：5.11 影子评估（委员会/单次调用/动量/随机/不交易五个基准 + 4h/24h 计分 + bootstrap 置信区间）与 5.12 日报生成器。
 
 - S4-3（本提交）：**决策持久化改用真实哈希**（PROJECT_GUIDE 5.7）。此前 `ExternalPaperExecutionBackend` 落库的 `policy_hash` 是常量 `DEFAULT_POLICY_VERSION` 的哈希、`snapshot_hash` 是 `captured_at` 时间戳，两者都不是"配置内容/快照内容"的哈希，配置改动后旧决策仍会被认为合法。现在：
   - 新增 `alphabrief_core.policy_version`：`policy_version_hash()` 对受审配置文件（`config/paper_execution_policy.yaml`、`config/alphabrief.yaml`）的真实字节按路径排序后逐条 `路径:sha256` 再哈希；文件缺失或为空时抛 `PolicyVersionError` 失败闭合，绝不悄悄少算一个文件。`policy_version_label()` 给出 `policy:<12 位>` 短标签。
@@ -195,8 +229,8 @@
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
 - [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（已完成：5.4 委员会协议、5.5 意图、5.6 仓位、规则 3/5/7/8/12/13/14、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；未完成：规则 4 点差、规则 6 事件窗口、规则 11 回撤状态机，见下方证据与依赖）
 - [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
-- [ ] S4-4 影子评估、日报、预算
-- [ ] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗
+- [x] S4-4 影子评估、日报、预算（2026-10-01，本提交：5.11 影子评估、5.12 日报、5.13 预算；遗留 T+4h/24h 自动计分待 S5 调度器）
+- [x] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗（2026-10-01，本提交：6 个家族、货币标签、pipeline 去重清洗 + 真实 37 条入库溯源）
 - [ ] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
 
@@ -274,7 +308,7 @@
 
 ## 阻塞
 
-- 2026-10-01：模型通道返回 `usage_limit_exceeded`（`alphabrief model test` → `ChatGptPlanError:usage_limit_exceeded`）。ChatGPT 计划的本窗口调用额度已用尽（本轮为取 S4-2 真实证据跑了多次 5 角色委员会）。额度按窗口自动恢复，不需要用户操作；恢复前所有需要委员会的验证（S4-2 余项真实复验、S4-4 影子评估、S4-6 全 universe 退出标准）暂停，先做不依赖模型的工作（S4-3 哈希、S4-5 新闻、S5 运行时）。额度长期不足时改用"需要用户做的事"里的备用付费通道。
+- 2026-10-01：模型通道返回 `usage_limit_exceeded`（`alphabrief model test` → `ChatGptPlanError:usage_limit_exceeded`）。ChatGPT 计划的本窗口调用额度已用尽（本轮为取 S4-2/S4-3 真实证据跑了多次 5 角色委员会）。S4-4 的每日预算（5.13）已上线并实测：额度错误被分类为 `provider_unavailable:usage_limit_exceeded`，该通道当天被禁用，后续轮次记录 `NO_TRADE_MODEL_UNAVAILABLE` 而不再调用。额度按窗口自动恢复，不需要用户操作；恢复前所有需要委员会的验证（S4-2 余项真实复验、S4-4 影子评估的单次调用基准、S4-6 全 universe 退出标准）暂停，先做不依赖模型的工作（S4-5 新闻、S5 运行时）。额度长期不足时改用"需要用户做的事"里的备用付费通道。
 
 ## 试运行日志
 
