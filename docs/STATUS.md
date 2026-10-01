@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S4 风控与决策补全** |
+| 当前阶段 | **S5 常驻运行时** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S5 常驻运行时（单进程 FastAPI+调度器、单实例锁、LaunchAgent、doctor、备份恢复、CLI-over-HTTP、报价轮询与影子计分）；S4 退出标准的全 universe 跑待模型额度恢复 |
+| 下一项任务 | S5 余下：`alphabrief run` 单进程 FastAPI+调度器（时间表/补跑/报价轮询/影子计分）、CLI-over-HTTP、LaunchAgent `ai.alphabrief.backend`、备份与恢复命令；S4 退出标准的全 universe 跑待模型额度恢复 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-6：14 条规则矩阵 + 补齐规则 1 冻结/规则 2 分类 + 清理 3 个过期冻结（对账恢复 clean） |
+| 最近更新 | 2026-10-01，S5 第一批：单实例锁 + `alphabrief doctor`（真实 7 PASS/3 WARN/0 FAIL）+ 日报接入 doctor 摘要 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,14 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S5 第一批（本提交）：**单实例锁 + `alphabrief doctor` + 日报接入 doctor 摘要**。
+  - 新增 `alphabrief_core.runtime_lock`：`RuntimeLock` 用 `flock(runtime.lock)` 实现单实例（第二个进程立即 `Could not set lock`，文件里记录 pid 与启动时间；进程退出/崩溃时内核自动释放，陈旧锁文件不会挡住重启），`lock_status()` 供 doctor 非阻塞探测持有者。
+  - 新增 CLI `alphabrief doctor run [--expect-daemon] [--offline]`（GUIDE 4.9）：数据目录可写、单实例锁（`--expect-daemon` 时"无人运行"记 WARN）、最近对账快照与冻结状态、行情新鲜度（>6h 记 WARN）、规则 4 的同小时样本厚度、磁盘空间（<512MiB FAIL / <2GiB WARN）、防休眠断言（**只读 pmset，绝不修改系统设置**，开启睡眠记 WARN）、OANDA 只读连通（账户币种/可交易品种数/NAV）、模型通道（凭证 + 24h 调用记录 + 每日预算是否允许，**不发真实调用**以免消耗额度）、新闻源可用性（逐 feed 真实 HTTP 且校验 RSS/Atom 根元素）。输出 JSON + 一行摘要，仅 FAIL 时退出非零。
+  - 真实实测（本机 practice）：`alphabrief doctor run` → `7 PASS, 3 WARN, 0 FAIL`：数据目录可写、锁空闲、对账 `all_match=True`（清理冻结后）、行情最新 2026-10-01T20:15Z、磁盘 36 GiB、OANDA 只读 PASS（USD、68 个可交易品种、NAV 99999.92）、新闻 6/6 feed 可达；WARN 为 quote_samples（4 个品种同小时样本不足，规则 4 因此失败闭合——真实状态）、sleep_assertion（本机睡眠未禁用，属用户控制项）、model_channel（额度窗口用尽，见阻塞）。
+  - 日报接入：`alphabrief report daily` 现在嵌入 doctor 的离线摘要（`doctor: 5 PASS, 2 WARN, 0 FAIL; warn=[...] (offline checks; network checks skipped)`），不再写"要等 S5"。
+  - 测试：新增 `tests/test_runtime_lock_and_doctor.py` 14 个（第二个进程立即被拒、持有者元数据、释放后可再取、缺文件视为空闲、数据目录可写、锁状态与 `--expect-daemon` 语义、磁盘/睡眠/行情/样本/对账各检查的判定与失败闭合、报告摘要与"仅 FAIL 不健康"、离线运行不含网络检查）。命令与结果：`pytest -q -m "not practice"` → 2694 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (235 source files)；`secret_scan` → OK。
+  - S5 余下：单进程 FastAPI+调度器（`alphabrief run`，含报价轮询与影子 T+4h/24h 计分任务）、时间表与补跑、CLI-over-HTTP、LaunchAgent `ai.alphabrief.backend`、备份/恢复命令（复用 `apps/api` 的 `create_backup`/`verify_backup`/`restore_backup`/`apply_retention`）。
 
 - S4-6（本提交）：**规则矩阵 + 补齐规则 1 冻结与规则 2 分类，并清理过期冻结**。
   - 补齐两处此前未被 gate 强制的规则半边：① **规则 1 的冻结**（`EntryRulePolicy.require_unfrozen`）——`AccountExposureContext.reconciliation_state`（clean/frozen/unknown，来自持久化对账状态），frozen 时拒绝新开仓（`FROZEN`），缺上下文失败闭合，平仓照常；② **规则 2 的品种分类**（`require_currency_type`）——`AccountExposureContext.symbol_types`（来自券商 instrument catalog 的 `raw_type`），非 `CURRENCY` 或未知即 `INSTRUMENT_NOT_ALLOWED`。CLI 的受审 policy 两项都开启，账户上下文提供者填入真实对账状态与真实品种分类。
@@ -263,6 +271,7 @@
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
 
 ### S5 常驻运行时
+- [x] S5-1 单实例锁（`RuntimeLock`/`lock_status`）与 `alphabrief doctor`（GUIDE 4.9 全项，真实实测 7 PASS/3 WARN/0 FAIL）
 - [ ] S5-1 `alphabrief run`（单进程、单实例锁、`to_thread`、超时）
 - [ ] S5-2 按时钟的时间表、补跑窗口、阶段持久化
 - [ ] S5-3 CLI 走 HTTP；后台不在线时只读

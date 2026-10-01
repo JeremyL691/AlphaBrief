@@ -186,6 +186,23 @@ def _market_freshness(symbols: tuple[str, ...]) -> list[dict[str, Any]]:
     return rows
 
 
+def _doctor_summary() -> str:
+    """The doctor's one-line summary for the report (offline checks only).
+
+    The daily report must not spend network calls or model budget, so it
+    embeds the offline half of ``alphabrief doctor`` and names the checks
+    it skipped.
+    """
+    from alphabrief_cli.cycle_commands import DEFAULT_UNIVERSE
+    from alphabrief_cli.doctor_commands import run_checks
+
+    try:
+        report = run_checks(symbols=DEFAULT_UNIVERSE, include_network=False)
+    except Exception as exc:  # noqa: BLE001 - a doctor failure is reported
+        return f"doctor unavailable: {type(exc).__name__}: {exc}"
+    return f"{report.summary()} (offline checks; network checks skipped)"
+
+
 @report_app.command("daily")
 def daily_cmd(
     report_date: str | None = typer.Option(  # noqa: B008
@@ -208,6 +225,7 @@ def daily_cmd(
     model_calls = ModelCallStore(db_path=_paths.db_path())
     shadow = ShadowStore(db_path=_paths.db_path())
     try:
+        doctor_summary = _doctor_summary()
         data = DailyReportData(
             trading_day=day,
             generated_at=datetime.now(UTC),
@@ -220,6 +238,7 @@ def daily_cmd(
             freezes=_reconciliation(day)[1],
             equity=_equity_snapshot(day),
             market_freshness=_market_freshness(DEFAULT_UNIVERSE),
+            doctor_summary=doctor_summary,
         )
         markdown_path, json_path = write_daily_report(data, directory=out_dir)
     finally:
