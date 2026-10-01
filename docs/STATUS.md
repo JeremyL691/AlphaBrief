@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-4 余下：5.11 影子评估与 5.12 日报（影子评估的单次调用基准需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
+| 下一项任务 | S4-4 余下：5.12 日报生成器（reports/daily/*.md + *.json）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-4 第一批：模型每日预算（5.13）上线并实测（额度错误即禁用当天通道） |
+| 最近更新 | 2026-10-01，S4-4 第二批：影子评估（5.11）落地并实测（五基准落库，未计分不编造） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,14 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-4 第二批（本提交）：**影子评估（5.11）**。
+  - 新增 `alphabrief_trader.shadow`（纯函数）：五个基准 `committee` / `single_call` / `momentum` / `random` / `no_trade`；`momentum_side` 用真实 20 日收益（不足 21 根收盘价则记 skipped，不猜方向）；`random_side` 种子 = `hash(cycle_id)`（同一轮可复现）；`committee_side` 读委员会 plan（target=0 或 side 非买卖即 flat）；`directional_return_pct` 用中间价计方向收益并扣除计分时点差（flat 恒为 0，点差大于波动时正确方向也会为负）；`summarize` 给出样本数、均值、胜率、95% bootstrap 置信区间，bootstrap 用样本内容的哈希做种子（同一份证据永远得到同一个区间），并强制带上"14 天样本不足以判断有效性"的 caveat。
+  - 新增 `alphabrief_trader.shadow_store.ShadowStore`（DuckDB，自带 DDL）：`ai_shadow_decisions`（按 `(cycle_id, symbol, benchmark)` 幂等）、`ai_shadow_scores`（按 `(cycle_id, symbol, benchmark, horizon)` 只写一次）、`due_for_scoring(now)`（4h/24h 到期且未计分）、`stats` / `scoreboard`。
+  - cycle 接入：`DailyTradingCycle` 新增 `shadow_recorder`；每轮每个品种记录 5 条，**模型通道不可用时也照常记录**（committee 记为 skipped + 原因，momentum/random/no_trade 仍用真实数据），影子序列不留空洞。`MarketSnapshot` 新增 `momentum_20d_pct`，CLI 的快照加载器用存储的 D 线真实计算 20 日收益。记录路径不可能下单。
+  - 真实实测（practice 账户）：`data sync-oanda --instrument EUR_USD` → 成功；`cycle run --once --instrument EUR_USD --trading off` → 数据库 `ai_shadow_decisions` 落 5 条：committee=flat（`skipped: NO_TRADE_MODEL_UNAVAILABLE...`）、momentum=short（20 日收益 −1.7348%）、random=long（hash 种子）、no_trade=flat、single_call=skipped（需要预算内的单次调用）；`scoreboard()["4h"]` 五个基准 samples 均为 0（尚未到 4h，未计分——不编造分数）。
+  - 测试：新增 `tests/test_shadow_evaluation.py` 17 个（20 日动量边界、随机可复现、委员会方向、五基准组成、点差扣减、flat 恒零、宽点差转负、bootstrap 确定性与区间包夹、空样本、存储幂等、到期判定、只计分一次、聚合含 caveat），`tests/test_ai_trader_daily_cycle.py` 新增 3 个（每品种 5 条、hold plan 记 flat、20 日收益驱动 momentum）。
+  - 尚未做：单次调用基准的真实模型调用（需要额度，已记阻塞）；T+4h/T+24h 的自动计分任务（属于 S5 调度器，届时用 `due_for_scoring` + OANDA 中间价与点差写入 `ai_shadow_scores`）。
 
 - S4-4 第一批（本提交）：**模型每日预算（5.13）**。
   - 新增 `alphabrief_models.model_budget`：`ModelBudgetPolicy`（`chatgpt_plan` 每日调用上限，默认 150；`openai_compatible` 每日成本上限，默认 $2.00）、`ModelBudgetGuard.admit(channel)` 按**已记录的真实调用**判定，`record_channel_unavailable()` 在收到 429/额度错误时把该通道禁用当天。理由码用规格原文 `NO_TRADE_MODEL_BUDGET` / `NO_TRADE_MODEL_UNAVAILABLE`。
