@@ -124,6 +124,11 @@ def list_cmd(
         )
 
 
+def _now() -> datetime:
+    """Current UTC time (replaceable so tests can inject a fixed clock)."""
+    return datetime.now(UTC)
+
+
 @macro_app.command("releases")
 def releases_cmd(
     pretty: bool = typer.Option(  # noqa: B008
@@ -138,7 +143,7 @@ def releases_cmd(
     store = MacroReleaseStore()
     try:
         releases = store.releases()
-        now = datetime.now(UTC)
+        now = _now()
         events = [
             release.with_state(release_state(release, now=now).state)
             for release in releases

@@ -104,6 +104,10 @@ class _FakeAdapter(BrokerAdapter):
             cash=Decimal("10000"),
             equity=Decimal("10000"),
             buying_power=Decimal("10000"),
+            # This fake stands in for a live broker snapshot: the
+            # default builder judges freshness against the wall clock,
+            # so the snapshot must be captured now (tests that need
+            # determinism inject a clock into the builder instead).
             currency="USD",
             captured_at=datetime.now(UTC),
         )
