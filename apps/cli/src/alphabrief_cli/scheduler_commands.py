@@ -438,7 +438,15 @@ _AI_NEWS_SOURCE_ENV = "ALPHABRIEF_AI_NEWS_SOURCE"
 _AI_NEWS_FEEDS_ENV = "ALPHABRIEF_AI_NEWS_FEEDS"
 _AI_NEWS_LOOKBACK_HOURS_ENV = "ALPHABRIEF_AI_NEWS_LOOKBACK_HOURS"
 _AI_NEWS_LIMIT_ENV = "ALPHABRIEF_AI_NEWS_LIMIT"
-_AI_NEWS_DEFAULT_FEEDS = ("marketwatch-rss", "reuters-rss", "bloomberg-atom")
+#: The default feed set: six independent families (PROJECT_GUIDE S4-5).
+_AI_NEWS_DEFAULT_FEEDS = (
+    "marketwatch-rss",
+    "fxstreet-rss",
+    "forexlive-rss",
+    "fed-press-rss",
+    "ecb-press-rss",
+    "boe-news-rss",
+)
 
 
 def _env_bool(name: str, *, default: bool) -> bool:
@@ -546,6 +554,7 @@ def _ingest_ai_news(
     start = now - timedelta(hours=lookback_hours)
     data_version = f"ai-precycle-{source}-v1"
 
+    from alphabrief_news.pipeline import prepare_headlines
     from alphabrief_news.providers import NewsProviderError
     from alphabrief_news.types import NewsFetchQuery
 
@@ -555,6 +564,7 @@ def _ingest_ai_news(
         print(f"scheduler: news pre-cycle ingest disabled: {exc}", file=sys.stderr)
         return 0
 
+    ingestion_store = _news_ingestion_store()
     inserted_total = 0
     for feed in feeds:
         query = NewsFetchQuery(
@@ -573,16 +583,33 @@ def _ingest_ai_news(
                 file=sys.stderr,
             )
             continue
+        # One deterministic pass: sanitize untrusted text, record
+        # provenance, and deduplicate (PROJECT_GUIDE S4-5). Headlines keep
+        # their currency-relevance tags from the provider — they are never
+        # re-tagged with every traded symbol.
+        prepared = prepare_headlines(
+            headlines,
+            source=feed,
+            correlation_id=f"precycle-{feed}-{now.strftime('%Y%m%dT%H%M%SZ')}",
+            clock=lambda: now,
+        )
         tagged = [
             _tag_ai_news_headline(
                 headline,
                 feed=feed,
-                symbols=symbols,
                 data_version=data_version,
             )
-            for headline in headlines
+            for headline in prepared.headlines
         ]
         inserted_total += int(news_store.insert_headlines(tagged))
+        if prepared.ingestion is not None:
+            ingestion_store.persist(prepared.ingestion)
+        if prepared.dropped:
+            print(
+                f"scheduler: withheld {len(prepared.dropped)} headline(s) "
+                f"from {feed} for prompt-injection patterns (hashes kept)",
+                file=sys.stderr,
+            )
     return inserted_total
 
 
@@ -598,9 +625,13 @@ def _tag_ai_news_headline(
     headline: Any,
     *,
     feed: str,
-    symbols: tuple[str, ...],
     data_version: str,
 ) -> Any:
+    """Give one headline a stable id and the pre-cycle data version.
+
+    The symbol tags are left exactly as the provider produced them
+    (currency relevance), so no headline is ever tagged with every symbol.
+    """
     from alphabrief_news.types import NewsHeadline
 
     typed = cast(NewsHeadline, headline)
@@ -616,10 +647,16 @@ def _tag_ai_news_headline(
     return typed.model_copy(
         update={
             "headline_id": f"ai-precycle-{feed}-{digest}",
-            "symbols": list(symbols),
             "data_version": data_version,
         }
     )
+
+
+def _news_ingestion_store() -> Any:
+    """The durable ingestion-provenance store for the pre-cycle fetch."""
+    from alphabrief_news.ingestion import NewsIngestionStore
+
+    return NewsIngestionStore(db_path=_paths.db_path())
 
 
 def _configured_broker_provider_name() -> str | None:

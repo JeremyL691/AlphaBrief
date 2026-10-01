@@ -181,8 +181,12 @@ def test_rss_provider_parses_rss_feed() -> None:
 
     assert len(results) == 1
     assert results[0].title == "Market rises on tech rally"
-    assert results[0].source == "Test Feed"
+    # The publisher comes from the allowlist, never from the feed's own
+    # <channel><title> (which could name a different outlet).
+    assert results[0].source == "MarketWatch"
     assert results[0].url == "https://example.com/1"
+    # No currency signal in the text and no source default: GENERAL.
+    assert results[0].symbols == ["GENERAL"]
 
 
 def test_rss_provider_parses_atom_feed() -> None:
@@ -190,8 +194,8 @@ def test_rss_provider_parses_atom_feed() -> None:
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Atom Feed</title>
   <entry>
-    <title>Fed holds rates steady</title>
-    <summary>Policy unchanged.</summary>
+    <title>Policy unchanged at the central bank</title>
+    <summary>Rates were left on hold.</summary>
     <link href="https://example.com/2"/>
     <published>2024-06-03T12:00:00+00:00</published>
   </entry>
@@ -203,15 +207,18 @@ def test_rss_provider_parses_atom_feed() -> None:
 
     provider = RssNewsProvider(http_get=fake_get)
     query = NewsFetchQuery(
-        symbols=["reuters-rss"],
+        symbols=["ecb-press-rss"],
         start=datetime(2024, 6, 1, tzinfo=UTC),
         end=datetime(2024, 6, 5, tzinfo=UTC),
     )
     results = provider.fetch_headlines(query)
 
     assert len(results) == 1
-    assert results[0].title == "Fed holds rates steady"
-    assert results[0].source == "Atom Feed"
+    assert results[0].title == "Policy unchanged at the central bank"
+    assert results[0].source == "European Central Bank"
+    # The ECB feed is euro-specific by construction: with no currency in
+    # the text, its default currency tags only the euro pair.
+    assert results[0].symbols == ["EUR_USD"]
 
 
 def test_rss_provider_skips_items_without_title() -> None:

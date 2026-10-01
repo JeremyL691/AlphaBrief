@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-5 新闻（3+ 来源家族、按货币打标签、去重与清洗）与 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
+| 下一项任务 | S4-2 规则 6 事件窗口（已具备真实新闻输入）与规则 11 回撤状态机；随后 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-4 第三批：日报生成器（5.12）落地并实测（真实 16 轮/6 attempt/对账/冻结/模型/影子数据） |
+| 最近更新 | 2026-10-01，S4-5：新闻六来源家族 + 按货币打标签 + 去重清洗接入并实测（真实 37 条入库带溯源） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,16 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-5（本提交）：**新闻来源家族、按货币打标签、去重与清洗**。
+  - **来源标签修正**：`rss.py` 原先的 `reuters-rss` 键实际指向 Bloomberg URL（来源标签与实际发布方不符），Bloomberg 的 feed 现在也不再返回 RSS；两处误导性键已删除。feed 表改为 `FeedSource`（key / url / publisher / family / default_currency），`source` 一律取表里配置的**真实发布方**，不再用 feed 自己的 `<channel><title>`（可能写着别的媒体名）。六个 feed 均已用真实 HTTP 校验（2026-10-01，本机）：MarketWatch、FXStreet、ForexLive、Federal Reserve、European Central Bank、Bank of England，覆盖 6 个独立来源家族（规格要求 ≥3）。
+  - **按货币相关性打标签**：新增 `alphabrief_news.currency_tags`，用确定性词典把标题+摘要映射到货币（USD/EUR/GBP/JPY/AUD/CAD）再映射到受交易品种；短代码按词边界匹配（`cad` 不会命中 "decade"、`aud` 不会命中 "fraud"），通用 "dollar" 仅在无其它货币命中时算 USD（避免把 "Australian dollar" 误标成 USD）。无信号的条目标 `GENERAL`（记录但不声称与任何品种相关），央行官方 feed 自带默认货币（Fed→USD、ECB→EUR、BoE→GBP），且文本信号优先于来源默认。调度器的旧行为（每条新闻 `symbols=list(universe)`）已删除。
+  - **去重与清洗接入**：新增 `alphabrief_news.pipeline.prepare_headlines()`，一次确定性通过：`untrusted.py` 清洗（标记不可信、限长、中和指令式内容；检测到提示词注入的条目**不进入后续环节**，只保留 64 位内容哈希与中和计数）→ `ingestion.py` 记录溯源（`ingested_item_from_headline()`：规范化 URL、内容哈希、fetch outcome、metadata-only 保留策略，不落授权全文）→ `dedup.py` 聚类去重（URL 规范化、跟踪参数、内容哈希、标题相似度，同一批内折叠为一条）。调度器 `_ingest_ai_news` 改为走该管道，并把溯源记录写入 `news_ingestion_records`；被扣留的条目在 stderr 打印条数（只有哈希，不含正文）。
+  - 真实实测：直接用真实网络跑六个 feed（加载 `.env` 后，本机时钟比 feed 时间戳慢约 6 小时，MarketWatch 的条目落在 `end` 之后被窗口过滤，属环境时钟偏差不是代码缺陷）→ FXStreet 17 条、ForexLive 24 条、Fed 5 条、ECB 7 条、BoE 3 条，货币标签分布真实（ECB 全为 `EUR_USD`、BoE 全为 `GBP_USD`、Fed 全为 USD 对）。真实入库：`_ingest_ai_news`（六 feed，24h 窗口）→ 入库 37 条，发布方 FXStreet 13 / ForexLive 21 / ECB 2 / BoE 1；标签分布 16 条 USD 对（USD 在全部五个品种里，属货币相关性而非"打全部品种"）、8 条 `GENERAL`、13 条窄标签（EUR_USD 5、GBP_USD 4、EUR+GBP 1、EUR+CAD 1、AUD 1、JPY 1）；`news_ingestion_records` 落 37 条溯源（`metadata_only=True`、64 位内容哈希、真实 correlation id）。
+  - 测试：新增 `tests/test_news_source_families.py` 15 个（家族数量与发布方唯一性、误导键已删除、央行默认货币、货币标签窄化/USD 全对/双货币/无信号 GENERAL、通用 dollar 不抢别国货币、词边界防误命中、来源默认与文本信号优先级、provider 真实应用标签）、`tests/test_news_pipeline.py` 10 个（正常条目限长、注入条目只留哈希、摘要注入、URL/跟踪参数重复折叠、不同新闻保留、metadata-only 溯源、空批次、空来源拒绝、全文不落库）；`tests/test_news.py` 的 RSS/Atom 用例更新为"发布方来自白名单"与"ECB 默认欧元标签"；`tests/test_ai_trader_scheduler.py` 的预摄取用例扩展为 3 条抓取 → 1 条去重后入库 + 1 条注入扣留 + 溯源记录校验。
+  - 本机 `.env`（未跟踪）的 `ALPHABRIEF_AI_NEWS_FEEDS` 原先仍列旧键（`reuters-rss,bloomberg-atom`），已改为六个真实 feed（备份在 /tmp）。
+  - 命令与结果：`pytest -q -m "not practice"` → 2595 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (228 source files)；`secret_scan` → OK。
+  - 遗留（转 S4-2 余项）：规则 6 事件窗口（高影响新闻关键词 30 分钟窗口）现在具备真实新闻输入与货币标签，可在下一批实现。
 
 - S4-4 第三批（本提交）：**日报生成器（5.12）**。
   - 新增 `alphabrief_trader.daily_report`（纯渲染）：`DailyReportData`（全部字段来自存储查询）+ `render_markdown` + `to_payload` + `write_daily_report`，同时写出 `reports/daily/YYYY-MM-DD.md` 与 `.json`（写在数据目录，可用 `--out-dir` 覆盖）。段落：当日各轮决策、订单/成交/平仓、风控拒绝统计（按 tag 计数，已成交不计）、P&L/NAV/回撤、对账与冻结事件、模型调用（通道/失败数/token/估算成本）、数据新鲜度、影子评估增量、doctor 摘要。没有证据的段落写"no rows"/明确说明，不编造数字；doctor 段写明"要到 S5 实现 `alphabrief doctor` 才有"。
@@ -220,7 +230,7 @@
 - [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（已完成：5.4 委员会协议、5.5 意图、5.6 仓位、规则 3/5/7/8/12/13/14、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；未完成：规则 4 点差、规则 6 事件窗口、规则 11 回撤状态机，见下方证据与依赖）
 - [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
 - [x] S4-4 影子评估、日报、预算（2026-10-01，本提交：5.11 影子评估、5.12 日报、5.13 预算；遗留 T+4h/24h 自动计分待 S5 调度器）
-- [ ] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗
+- [x] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗（2026-10-01，本提交：6 个家族、货币标签、pipeline 去重清洗 + 真实 37 条入库溯源）
 - [ ] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
 
