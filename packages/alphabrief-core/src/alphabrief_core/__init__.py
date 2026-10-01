@@ -82,6 +82,11 @@ from alphabrief_core.read_contracts import (
     unavailable_source_error,
     unknown_filter_error,
 )
+from alphabrief_core.runtime_lock import (
+    RuntimeLock,
+    RuntimeLockError,
+    lock_status,
+)
 from alphabrief_core.secrets import (
     SECRET_DIR_MODE,
     SECRET_FILE_MODE,
@@ -151,6 +156,9 @@ __all__ = [
     "read_secret",
     "redact",
     "runtime_lock_path",
+    "RuntimeLock",
+    "RuntimeLockError",
+    "lock_status",
     "secrets_dir",
     "write_secret",
     "Provenance",
