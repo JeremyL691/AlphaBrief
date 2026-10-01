@@ -2,7 +2,7 @@
 
 Every rule has at least one passing case and one rejecting case, and the
 closing exemption is pinned: a reduce-only intent is never blocked by an
-entry rule.
+entry rule other than rule 3, which still requires a fresh, tradeable quote.
 """
 
 from __future__ import annotations
@@ -210,7 +210,9 @@ class TestRule14OrderValidity:
         ) == ("ORDER_INVALID",)
 
 
-class TestClosesAreAlwaysAllowed:
+class TestClosesAreExemptExceptForTheQuote:
+    """PROJECT_GUIDE 5.7: a close checks only the kill switch and rule 3."""
+
     policy = EntryRulePolicy(
         max_quote_age_seconds=15,
         require_quote_tradeable=True,
@@ -221,7 +223,7 @@ class TestClosesAreAlwaysAllowed:
         block_weekend_and_late_friday=True,
     )
 
-    def test_reduce_only_close_passes_every_entry_rule(self) -> None:
+    def test_reduce_only_close_ignores_every_rule_but_the_quote(self) -> None:
         close = _intent(
             reduce_only=True,
             side="sell",
@@ -229,10 +231,22 @@ class TestClosesAreAlwaysAllowed:
             take_profit=None,
         )
         friday_evening = datetime(2026, 10, 2, 20, 0, tzinfo=UTC)
+        # Every entry-rule input is hostile: the caps are spent, the
+        # position limit is reached and the symbol is frozen. None of it
+        # may block a close that is priced from a fresh quote.
+        hostile = _context(
+            open_position_count=9,
+            daily_open_count=9,
+            daily_symbol_open_count=9,
+            frozen_symbols={"EUR_USD": "3 losing closes in a row"},
+            quote_captured_at=friday_evening,
+        )
 
-        assert _codes(close, self.policy, now=friday_evening) == ()
+        assert _codes(
+            close, self.policy, context=hostile, now=friday_evening
+        ) == ()
 
-    def test_flat_target_close_passes_every_entry_rule(self) -> None:
+    def test_flat_target_close_ignores_every_rule_but_the_quote(self) -> None:
         close = _intent(
             target_position_pct=Decimal("0"),
             quantity=None,
@@ -240,7 +254,30 @@ class TestClosesAreAlwaysAllowed:
             take_profit=None,
         )
 
-        assert _codes(close, self.policy) == ()
+        assert _codes(close, self.policy, context=_context()) == ()
+
+    def test_close_still_needs_a_fresh_tradeable_quote(self) -> None:
+        close = _intent(
+            reduce_only=True,
+            side="sell",
+            stop_loss=None,
+            take_profit=None,
+        )
+
+        # No quote at all: fail closed rather than submit at an unknown price.
+        assert _codes(close, self.policy, context=None) == (
+            "QUOTE_STALE",
+            "NOT_TRADEABLE",
+        )
+        # A stale quote is refused; a non-tradeable instrument too.
+        assert _codes(
+            close,
+            self.policy,
+            context=_context(quote_captured_at=NOW - timedelta(seconds=60)),
+        ) == ("QUOTE_STALE",)
+        assert _codes(
+            close, self.policy, context=_context(quote_tradeable=False)
+        ) == ("NOT_TRADEABLE",)
 
 
 class TestGateIntegration:

@@ -27,6 +27,16 @@ from alphabrief_trader.execution_backend import (
     ExecutionBackendResult,
     ExternalPaperExecutionBackend,
 )
+from alphabrief_trader.intents import (
+    ACTION_CLOSE,
+    ACTION_ENTRY,
+    IntentError,
+    IntentSizing,
+    build_close_intent,
+    build_entry_intent,
+    deterministic_intent_id,
+    intent_action,
+)
 from alphabrief_trader.model_factory import (
     ModelProviderUnavailableError,
     build_ai_trading_committee,
@@ -56,6 +66,8 @@ from alphabrief_trader.snapshot_builder import (
 )
 
 __all__ = [
+    "ACTION_CLOSE",
+    "ACTION_ENTRY",
     "AiTradingStore",
     "AnalystAction",
     "AnalystView",
@@ -76,6 +88,8 @@ __all__ = [
     "ExecutionBackendResult",
     "ExternalPaperExecutionBackend",
     "HeadlineLoader",
+    "IntentError",
+    "IntentSizing",
     "MarketSnapshot",
     "ModelProviderUnavailableError",
     "OrderAttempt",
@@ -85,11 +99,15 @@ __all__ = [
     "StoredMarketSnapshotBuilder",
     "TradePlan",
     "TradingCommittee",
+    "build_close_intent",
     "build_committee_prompt",
+    "build_entry_intent",
     "build_ai_trading_committee",
     "build_ai_trading_provider",
     "build_conservative_fake_provider",
     "default_roles",
+    "deterministic_intent_id",
+    "intent_action",
     "is_ai_trading_enabled",
     "is_live_trading_unlocked",
 ]

@@ -12,7 +12,8 @@ code matching the guide):
 
 The rules are pure functions over the intent, the account context, and the
 clock, so every one is deterministically testable. They only ever reject:
-closing (reduce-only) intents are exempt from the entry rules, because a
+closing (reduce-only) intents are exempt from every entry rule except rule 3
+(a close still needs a fresh, tradeable quote — PROJECT_GUIDE 5.7), because a
 position must always be closable.
 """
 
@@ -83,21 +84,21 @@ def _protective_order_issues(intent: OrderIntent) -> list[str]:
     return issues
 
 
-def evaluate_entry_rules(
+def evaluate_quote_rules(
     intent: OrderIntent,
     *,
     policy: EntryRulePolicy,
     now: datetime,
     account_context: AccountExposureContext | None = None,
 ) -> tuple[RuleRejection, ...]:
-    """Apply the entry rules in the guide's order and collect rejections."""
-    if not _is_open_intent(intent):
-        return ()
+    """Rule 3 alone: quote freshness and tradeability.
 
+    This is the one entry rule that also applies to closes (PROJECT_GUIDE
+    5.7): even a reduce-only order is submitted at a price, so it must be
+    priced from a fresh quote on a tradeable instrument.
+    """
     rejections: list[RuleRejection] = []
     context = account_context
-
-    # Rule 3 — quote freshness and tradeability.
     if policy.max_quote_age_seconds is not None:
         captured_at = context.quote_captured_at if context else None
         if captured_at is None:
@@ -121,6 +122,31 @@ def evaluate_entry_rules(
                     "the broker does not report the instrument as tradeable",
                 )
             )
+    return tuple(rejections)
+
+
+def evaluate_entry_rules(
+    intent: OrderIntent,
+    *,
+    policy: EntryRulePolicy,
+    now: datetime,
+    account_context: AccountExposureContext | None = None,
+) -> tuple[RuleRejection, ...]:
+    """Apply the entry rules in the guide's order and collect rejections.
+
+    Closes (reduce-only, or a flat target) are exempt from every rule that
+    guards new exposure but still must satisfy rule 3, exactly as
+    PROJECT_GUIDE 5.7 specifies.
+    """
+    rejections = list(
+        evaluate_quote_rules(
+            intent, policy=policy, now=now, account_context=account_context
+        )
+    )
+    if not _is_open_intent(intent):
+        return tuple(rejections)
+
+    context = account_context
 
     # Rule 7 — daily intent caps.
     if policy.max_daily_opens is not None:
@@ -216,5 +242,6 @@ __all__ = [
     "RuleCode",
     "RuleRejection",
     "evaluate_entry_rules",
+    "evaluate_quote_rules",
     "rejection_codes",
 ]

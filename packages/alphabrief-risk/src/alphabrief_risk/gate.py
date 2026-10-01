@@ -1,7 +1,7 @@
 """RiskGate MVP for AlphaBrief paper trading."""
 
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -14,10 +14,17 @@ from alphabrief_risk.account_context import AccountExposureContext
 from alphabrief_risk.context import RiskContextDecision
 from alphabrief_risk.entry_rules import (
     EntryRulePolicy,
+    RuleRejection,
     evaluate_entry_rules,
+    evaluate_quote_rules,
     rejection_codes,
 )
 from alphabrief_risk.kill_switch import KillSwitch
+
+
+def _is_close_intent(intent: OrderIntent) -> bool:
+    """An order that can only reduce exposure (PROJECT_GUIDE 5.7)."""
+    return bool(intent.reduce_only or intent.target_position_pct == 0)
 
 
 @dataclass(frozen=True)
@@ -213,13 +220,27 @@ class RiskGate:
             failures.append(self.kill_switch.reason)
             tags.append("kill_switch")
 
-        if not self.limits.trading_enabled:
-            failures.append("trading disabled")
-            tags.append("trading_disabled")
-
         if self.limits.live_trading_enabled:
             failures.append("live trading is not allowed in MVP")
             tags.append("live_trading_locked")
+
+        if _is_close_intent(intent):
+            # PROJECT_GUIDE 5.7: a reduce-only close is checked only against
+            # the kill switch (rule 1) and rule 3 (a fresh, tradeable quote).
+            # Trading off, a freeze, the daily caps or the weekend window
+            # never prevent a position from being closed, and no exposure or
+            # order-value limit can block a reduction.
+            self._check_close_quote_rules(
+                intent=intent,
+                account_context=account_context,
+                failures=failures,
+                tags=tags,
+            )
+            return self._finalize(intent, failures, tags, risk_context, ())
+
+        if not self.limits.trading_enabled:
+            failures.append("trading disabled")
+            tags.append("trading_disabled")
 
         if self.limits.require_data_quality_passed and not data_quality_passed:
             failures.append("data quality check failed")
@@ -334,6 +355,23 @@ class RiskGate:
             tags=tags,
         )
 
+        return self._finalize(
+            intent,
+            failures,
+            tags,
+            risk_context,
+            (account_qty_clamp, symbol_qty_clamp),
+        )
+
+    def _finalize(
+        self,
+        intent: OrderIntent,
+        failures: list[str],
+        tags: list[str],
+        risk_context: RiskContextDecision | None,
+        clamps: tuple[Decimal | None, ...],
+    ) -> RiskDecision:
+        """Build the RiskDecision from the collected failures and tags."""
         approved = not failures
         if approved:
             tags.append("approved")
@@ -363,7 +401,7 @@ class RiskGate:
         # per-order limit is unset, and never increase it. The stricter
         # (smaller) bound wins across all clamps and the risk_context
         # multiplier.
-        for clamp in (account_qty_clamp, symbol_qty_clamp):
+        for clamp in clamps:
             if clamp is not None and max_quantity is not None and clamp < max_quantity:
                 max_quantity = clamp
 
@@ -823,8 +861,8 @@ class RiskGate:
     ) -> None:
         """Apply the entry rules from PROJECT_GUIDE 5.7.
 
-        Closes are exempt: a position must always be closable, so these
-        rules only guard new exposure.
+        Only reached for orders that increase exposure; closes take the
+        reduced rule-1/rule-3 path instead.
         """
         policy = self.limits.entry_rules
         if policy is None:
@@ -835,6 +873,34 @@ class RiskGate:
             now=self.clock(),
             account_context=account_context,
         )
+        self._record_rule_rejections(rejections, failures, tags)
+
+    def _check_close_quote_rules(
+        self,
+        *,
+        intent: OrderIntent,
+        account_context: AccountExposureContext | None,
+        failures: list[str],
+        tags: list[str],
+    ) -> None:
+        """Rule 3 only, for a reduce-only close (PROJECT_GUIDE 5.7)."""
+        policy = self.limits.entry_rules
+        if policy is None:
+            return
+        rejections = evaluate_quote_rules(
+            intent,
+            policy=policy,
+            now=self.clock(),
+            account_context=account_context,
+        )
+        self._record_rule_rejections(rejections, failures, tags)
+
+    @staticmethod
+    def _record_rule_rejections(
+        rejections: Sequence[RuleRejection],
+        failures: list[str],
+        tags: list[str],
+    ) -> None:
         for rejection in rejections:
             failures.append(f"{rejection.code}: {rejection.detail}")
         for code in rejection_codes(rejections):
