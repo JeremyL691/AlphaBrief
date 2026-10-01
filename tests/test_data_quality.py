@@ -14,7 +14,8 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_core import OrderIntent, RiskDecision
+from alphabrief_models import FakeProviderAdapter, ModelCallRecord, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
@@ -26,8 +27,10 @@ from alphabrief_trader.data_quality import (
     DEFAULT_MAX_AGE_SECONDS,
     DataQualityVerdict,
     evaluate_snapshot_quality,
+    evaluate_snapshots,
 )
 from alphabrief_trader.db_store import AiTradingStore
+from alphabrief_trader.execution_backend import ExecutionBackendResult
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
 
@@ -99,22 +102,20 @@ class _RecordingBackend:
         self.submissions = 0
 
     def estimate_quantity(
-        self, intent: object, *, reference_price: Decimal
+        self, intent: OrderIntent, *, reference_price: Decimal
     ) -> Decimal | None:
         quantity = getattr(intent, "quantity", None)
         return quantity if isinstance(quantity, Decimal) else None
 
     def submit(
         self,
-        intent: object,
-        decision: object,
+        intent: OrderIntent,
+        decision: RiskDecision,
         *,
         reference_price: Decimal,
         now: datetime,
         estimated_quantity: Decimal | None,
-    ) -> object:
-        from alphabrief_trader.execution_backend import ExecutionBackendResult
-
+    ) -> ExecutionBackendResult:
         self.submissions += 1
         return ExecutionBackendResult(
             execution_backend="external_paper",
@@ -129,10 +130,12 @@ class _RecordingBackend:
 
 def _cycle(
     store: AiTradingStore,
-    backend: object,
+    backend: _RecordingBackend,
     *,
-    snapshot: MarketSnapshot,
+    snapshot: MarketSnapshot | None,
     clock: datetime = NOW,
+    calls: list[ModelCallRecord] | None = None,
+    snapshots: dict[str, MarketSnapshot] | None = None,
 ) -> DailyTradingCycle:
     provider = FakeProviderAdapter(
         provider_name="fake",
@@ -142,17 +145,25 @@ def _cycle(
     )
     return DailyTradingCycle(
         committee=TradingCommittee(
-            gateway=ModelGateway(providers=[provider]),
+            gateway=ModelGateway(
+                providers=[provider],
+                record_sink=None if calls is None else calls.append,
+            ),
             discipline=DisciplineConfig(),
         ),
         risk_gate=RiskGate(
             limits=RiskLimitConfig(
-                trading_enabled=True, symbol_allowlist=frozenset({"EUR_USD"})
+                trading_enabled=True,
+                symbol_allowlist=frozenset(
+                    {"EUR_USD"} if snapshots is None else snapshots
+                ),
             )
         ),
-        execution_backend=backend,  # type: ignore[arg-type]
+        execution_backend=backend,
         store=store,
-        snapshot_loader=lambda symbol: snapshot,
+        snapshot_loader=lambda symbol: (
+            snapshot if snapshots is None else snapshots.get(symbol)
+        ),
         enabled=True,
         clock=lambda: clock,
         trading_mode="on",
@@ -169,22 +180,36 @@ def store(tmp_path: Path) -> Iterator[AiTradingStore]:
 
 
 class TestCycleUsesTheRealVerdict:
-    def test_stale_inputs_are_rejected_by_the_gate(
+    def test_stale_inputs_are_rejected_before_the_model(
         self, store: AiTradingStore
     ) -> None:
         backend = _RecordingBackend()
+        calls: list[ModelCallRecord] = []
         cycle = _cycle(
             store,
             backend,
             snapshot=_snapshot(captured_at=NOW - timedelta(hours=5)),
+            calls=calls,
         )
 
         record = cycle.run(["EUR_USD"])
 
-        assert record.outcome == "blocked_risk_gate"
+        assert record.outcome == "skipped_data_stale"
         assert backend.submissions == 0
-        # The rejection names the real reason, not a hardcoded pass.
-        assert "data quality" in str(record.attempts[0].reason)
+        assert calls == []
+        assert record.plans == []
+        assert record.votes == []
+        assert record.attempts == []
+        quality = record.input_quality[0]
+        assert quality.passed is False
+        assert quality.no_trade_reason == "NO_TRADE_DATA_STALE"
+        assert quality.reasons == ["snapshot_stale_18000s"]
+        assert quality.evaluated_at == NOW
+        assert quality.snapshot_captured_at == NOW - timedelta(hours=5)
+        persisted = store.get_cycle(record.cycle_id)
+        assert persisted is not None
+        assert persisted["input_quality"] == [quality.model_dump(mode="json")]
+        assert "NO_TRADE_DATA_STALE" in persisted["summary"]
 
     def test_fresh_inputs_execute(self, store: AiTradingStore) -> None:
         backend = _RecordingBackend()
@@ -193,3 +218,95 @@ class TestCycleUsesTheRealVerdict:
 
         assert record.outcome == "executed"
         assert backend.submissions == 1
+
+    def test_input_expiring_during_model_calls_is_rejected_before_submit(
+        self, store: AiTradingStore
+    ) -> None:
+        current = NOW
+
+        def after_call(record: ModelCallRecord) -> None:
+            nonlocal current
+            current = NOW + timedelta(hours=3)
+
+        provider = FakeProviderAdapter(
+            provider_name="fake", model_name="fake-1",
+            capabilities=["structured_output"], structured_output=_BULLISH,
+        )
+        backend = _RecordingBackend()
+        cycle = DailyTradingCycle(
+            committee=TradingCommittee(
+                gateway=ModelGateway(providers=[provider], record_sink=after_call),
+                discipline=DisciplineConfig(),
+            ),
+            risk_gate=RiskGate(limits=RiskLimitConfig(
+                trading_enabled=True, symbol_allowlist=frozenset({"EUR_USD"}),
+            )),
+            execution_backend=backend, store=store,
+            snapshot_loader=lambda symbol: _snapshot(),
+            enabled=True, trading_mode="on", clock=lambda: current,
+        )
+        record = cycle.run(["EUR_USD"])
+        assert record.input_quality[0].passed
+        assert record.input_quality[0].evaluated_at == NOW
+        assert record.outcome == "blocked_risk_gate"
+        assert backend.submissions == 0
+        assert "data quality" in record.attempts[0].reason
+        assert record.attempts[0].created_at == NOW + timedelta(hours=3)
+
+    @pytest.mark.parametrize("kind", ["missing", "future", "wrong_symbol"])
+    def test_unusable_input_has_no_model_calls_or_intents(
+        self, store: AiTradingStore, kind: str
+    ) -> None:
+        snapshot = {
+            "missing": None,
+            "future": _snapshot(captured_at=NOW + timedelta(minutes=5)),
+            "wrong_symbol": _snapshot().model_copy(update={"symbol": "USD_JPY"}),
+        }[kind]
+        calls: list[ModelCallRecord] = []
+        backend = _RecordingBackend()
+        record = _cycle(store, backend, snapshot=snapshot, calls=calls).run(["EUR_USD"])
+        assert record.outcome == "skipped_data_stale"
+        assert calls == []
+        assert backend.submissions == 0
+        assert record.plans == []
+        assert record.votes == []
+        assert record.attempts == []
+        assert len(record.input_quality) == 1
+        assert record.input_quality[0].reasons == [{
+            "missing": "snapshot_missing",
+            "future": "captured_at_in_the_future",
+            "wrong_symbol": "snapshot_symbol_mismatch",
+        }[kind]]
+
+    def test_mixed_universe_preserves_every_verdict_and_only_calls_for_fresh_inputs(
+        self, store: AiTradingStore
+    ) -> None:
+        snapshots = {
+            "EUR_USD": _snapshot(),
+            "GBP_USD": _snapshot(captured_at=NOW - timedelta(hours=3)).model_copy(
+                update={"symbol": "GBP_USD"}
+            ),
+        }
+        calls: list[ModelCallRecord] = []
+        backend = _RecordingBackend()
+        record = _cycle(
+            store, backend, snapshot=None, snapshots=snapshots, calls=calls
+        ).run(["GBP_USD", "USD_JPY", "EUR_USD"])
+        assert record.outcome == "executed"
+        assert backend.submissions == 1
+        assert len(calls) == 10  # One default committee, not one per requested symbol.
+        assert [plan.symbol for plan in record.plans] == ["EUR_USD"]
+        assert [a.order_intent_json["symbol"] for a in record.attempts] == ["EUR_USD"]
+        assert [(q.symbol, q.passed) for q in record.input_quality] == [
+            ("GBP_USD", False), ("USD_JPY", False), ("EUR_USD", True)
+        ]
+        assert "GBP_USD:snapshot_stale_10800s" in record.summary
+        assert "USD_JPY:snapshot_missing" in record.summary
+
+
+def test_quality_evaluates_requested_missing_symbols() -> None:
+    verdicts = evaluate_snapshots(
+        {"EUR_USD": _snapshot()}, symbols=["EUR_USD", "USD_JPY"], now=NOW
+    )
+    assert verdicts["EUR_USD"].passed
+    assert verdicts["USD_JPY"].reasons == ("snapshot_missing",)
