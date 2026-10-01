@@ -54,12 +54,18 @@ _HOLD_PAYLOAD = {
 }
 
 
+#: Fixed capture time for the snapshots below. Cycles that expect an
+#: execution inject a matching clock so the real data-quality check
+#: (PROJECT_GUIDE 5.7 rule 5) sees fresh inputs.
+SNAPSHOT_NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+
 def _snapshot(symbol: str) -> MarketSnapshot:
     return MarketSnapshot(
         symbol=symbol,
         reference_price=Decimal("100"),
         data_version="test-v1",
-        captured_at=datetime(2026, 1, 1, tzinfo=UTC),
+        captured_at=SNAPSHOT_NOW,
     )
 
 
@@ -137,6 +143,7 @@ class TestDailyTradingCycle:
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
             trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "blocked_live_trading"
@@ -152,6 +159,7 @@ class TestDailyTradingCycle:
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
             trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "executed"
@@ -172,6 +180,7 @@ class TestDailyTradingCycle:
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
             trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY"])
         # Hold action synthesizes a zero-target plan → no intent → no attempt
@@ -189,6 +198,7 @@ class TestDailyTradingCycle:
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
             trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY"])
         # RiskGate rejects when kill switch is on → no fill
@@ -209,6 +219,7 @@ class TestDailyTradingCycle:
             snapshot_loader=lambda s: None,
             enabled=True,
             trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY", "QQQ"])
         # No snapshots → no votes → no plans → skipped_no_consensus
@@ -224,6 +235,7 @@ class TestDailyTradingCycle:
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
             trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY", "QQQ"])
         # Both symbols should have produced attempts.
@@ -257,6 +269,7 @@ class TestDailyTradingCycle:
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
             trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "provider_error"
@@ -300,6 +313,7 @@ class TestDailyTradingCycle:
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
             trading_mode="on",
+            clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY"])
         assert record.outcome == "executed"

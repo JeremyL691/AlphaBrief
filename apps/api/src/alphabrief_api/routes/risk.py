@@ -48,7 +48,8 @@ _default_limits = RiskLimitConfig(
     # reviewed PaperExecutionPolicy. This is the single point that turns
     # the static $300 boundary into a live RiskGate check.
     max_total_exposure=_execution_policy.max_total_exposure,
-    require_data_quality_passed=True,
+    # The data-quality requirement is the gate's default policy; only the
+    # human-review boundary is overridden here.
     require_human_review=_execution_policy.require_human_review,
     # R21.2: account-level stateless rules. Per-symbol exposure cap is
     # set above the per-order notional so a single symbol cannot

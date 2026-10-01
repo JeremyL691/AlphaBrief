@@ -109,7 +109,6 @@ class PracticeScenarioRunner:
                 # The gate cap is the fixed minimum risk by construction;
                 # the intent can never exceed it.
                 max_order_quantity=SCENARIO_MINIMUM_RISK_UNITS,
-                require_data_quality_passed=True,
                 require_human_review=False,
             )
         )
