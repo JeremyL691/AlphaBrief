@@ -278,11 +278,16 @@ class MacroReleaseReviseRequest(BaseModel):
     previous: Decimal | None = None
 
 
+def _now() -> datetime:
+    """Current UTC time (replaceable so tests can inject a fixed clock)."""
+    return datetime.now(UTC)
+
+
 @router.get("/releases")
 def macro_releases() -> dict[str, Any]:
     """Ordered macro release events with explicit states."""
     store = _get_release_store()
-    now = datetime.now(UTC)
+    now = _now()
     releases = store.releases()
     events = [
         release.with_state(release_state(release, now=now).state)

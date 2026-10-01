@@ -55,7 +55,12 @@ def _isolated_macro(
     _reset_release_store()
 
 
-def test_macro_releases_returns_ordered_events_with_states() -> None:
+def test_macro_releases_returns_ordered_events_with_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from alphabrief_api.routes import macro as macro_routes
+
+    monkeypatch.setattr(macro_routes, "_now", lambda: NOW)
     store = _get_release_store()
     store.ingest(_release())
     store.ingest(
@@ -65,7 +70,7 @@ def test_macro_releases_returns_ordered_events_with_states() -> None:
         _release(
             release_id="stale-cpi",
             actual=None,
-            release_time=datetime.now(UTC)
+            release_time=NOW
             - timedelta(seconds=DEFAULT_STALE_AFTER_SECONDS + 60),
         )
     )
