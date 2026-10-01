@@ -13,12 +13,32 @@ from alphabrief_risk.context import (
     RiskContextDecision,
     evaluate_news_macro_risk,
 )
+from alphabrief_risk.drawdown_policy import (
+    DRAWDOWN_BLOCK_HOURS,
+    DRAWDOWN_BLOCK_PCT,
+    DRAWDOWN_HALF_RISK_MULTIPLIER,
+    DRAWDOWN_HALT_PCT,
+    DrawdownState,
+    DrawdownStateStore,
+    DrawdownVerdict,
+    drawdown_pct,
+    evaluate_drawdown,
+)
 from alphabrief_risk.gate import RiskGate, RiskLimitConfig
 from alphabrief_risk.kill_switch import KillSwitch, KillSwitchStore
 
 __all__ = [
     "AccountExposureContext",
     "KillSwitch",
+    "DRAWDOWN_BLOCK_HOURS",
+    "DRAWDOWN_BLOCK_PCT",
+    "DRAWDOWN_HALT_PCT",
+    "DRAWDOWN_HALF_RISK_MULTIPLIER",
+    "DrawdownState",
+    "DrawdownStateStore",
+    "DrawdownVerdict",
+    "drawdown_pct",
+    "evaluate_drawdown",
     "KillSwitchStore",
     "MACRO_HIGH_RISK_INDICATOR_COUNT",
     "MACRO_HIGH_RISK_POSITION_MULTIPLIER",

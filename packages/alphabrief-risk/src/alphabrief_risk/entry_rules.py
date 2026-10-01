@@ -61,6 +61,9 @@ class EntryRulePolicy:
     #: Rule 6: block entries while a high-impact event is inside this
     #: window. ``None`` leaves the rule unenforced.
     event_window_minutes: int | None = None
+    #: Rule 11: block entries while the drawdown state machine says so.
+    #: ``False`` leaves the rule unenforced.
+    block_on_drawdown: bool = False
 
 
 def _is_open_intent(intent: OrderIntent) -> bool:
@@ -229,6 +232,20 @@ def evaluate_entry_rules(
                         f"{event_reason}",
                     )
                 )
+
+    # Rule 11 — soak drawdown state (3% blocks 48h, 5% halts the soak).
+    if policy.block_on_drawdown:
+        if context is None:
+            rejections.append(
+                RuleRejection(
+                    "DRAWDOWN",
+                    "no drawdown state supplied",
+                )
+            )
+        elif context.drawdown_block_reason is not None:
+            rejections.append(
+                RuleRejection("DRAWDOWN", context.drawdown_block_reason)
+            )
 
     # Rule 13 — Friday 13:00 UTC onward and weekends.
     if policy.block_weekend_and_late_friday:

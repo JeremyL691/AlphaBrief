@@ -166,6 +166,9 @@ def _risk_gate(
                 # Rule 6: no new exposure within 30 minutes of a
                 # high-impact macro/news event for the instrument.
                 event_window_minutes=30,
+                # Rule 11: the soak drawdown state machine (3% blocks
+                # 48h, 5% halts the soak) blocks new exposure.
+                block_on_drawdown=True,
                 # Rule 13: close-only from Friday 13:00 UTC and all weekend.
                 block_weekend_and_late_friday=True,
                 # Rule 14: an entry must carry usable protective orders.
@@ -212,13 +215,43 @@ def _account_context_provider(
             if news_store is not None
             else {}
         )
+        verdict = _drawdown_verdict(sources)
         return sources.account_exposure_context(
             daily_open_count=total,
             daily_symbol_open_count=per_symbol.get(symbol, 0),
             recent_high_impact_events=events,
+            drawdown_block_reason=verdict.reason if verdict.blocked else None,
         )
 
     return _build
+
+
+def _drawdown_verdict(sources: Any) -> Any:
+    """Advance the persisted rule-11 state from the broker's real NAV.
+
+    The high-water mark and the state live in DuckDB, so a restart cannot
+    reset a drawdown block. The account id is used only as the state key.
+    """
+    from alphabrief_execution.broker.oanda.config import read_oanda_credentials
+    from alphabrief_risk import DrawdownStateStore, evaluate_drawdown
+
+    context = sources.account_exposure_context()
+    nav = context.equity if context.equity is not None else context.cash
+    try:
+        _, account_id = read_oanda_credentials()
+    except Exception:  # noqa: BLE001 - no credentials means no state key
+        account_id = "unknown"
+    store = DrawdownStateStore(db_path=_paths.db_path())
+    try:
+        previous = store.load(account_id)
+        high_water = previous.high_water if previous and previous.high_water else nav
+        verdict = evaluate_drawdown(
+            equity=nav, high_water=high_water, now=datetime.now(UTC), previous=previous
+        )
+        store.save(account_id, verdict.state)
+    finally:
+        store.close()
+    return verdict
 
 
 def _high_impact_event_map(news_store: Any) -> dict[str, str]:
@@ -291,11 +324,20 @@ def _sizing_provider(sources: Any) -> Any:
         if factor is None:
             return None
         metadata = adapter.instrument_metadata(symbol)  # type: ignore[attr-defined]
+        # Rule 11: after a 3% drawdown block expires the system resumes at
+        # half risk until the drawdown recovers.
+        verdict = _drawdown_verdict(sources)
+        multiplier = verdict.risk_multiplier
+        if multiplier <= 0:
+            # A blocked state never reaches sizing (the gate rejects the
+            # entry first); sizing itself always uses a positive risk.
+            multiplier = Decimal("1")
         return SizingInputs(
             nav=nav,
             quote_to_home=factor,
             trade_units_precision=int(metadata.trade_units_precision),
             minimum_trade_size=metadata.minimum_trade_size,
+            risk_multiplier=multiplier,
             # The soak-day risk halving is wired when the 14-day run starts
             # (S10); until then the full 0.25% risk applies.
             soak_day=None,
