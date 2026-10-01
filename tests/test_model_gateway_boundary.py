@@ -1,9 +1,9 @@
 """Static boundary gate: production model calls resolve ModelGateway only.
 
-Covers AC-M10-W01-01: production research, brief, committee, and trading
-paths resolve the same ``ModelGateway`` boundary and contain no direct
-provider SDK call. This is a source-scan test: it inspects the checked-in
-runtime modules, not runtime behavior.
+Covers AC-M10-W01-01: production committee and trading paths resolve the
+same ``ModelGateway`` boundary and contain no direct provider SDK call.
+This is a source-scan test: it inspects the checked-in runtime modules,
+not runtime behavior.
 """
 
 from __future__ import annotations
@@ -12,21 +12,15 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Modules that implement the production research/brief/committee/trading
-# model paths. Every one must reference the ModelGateway boundary
+# Modules that implement the production committee/trading model paths.
+# Every one must reference the ModelGateway boundary
 # (directly or through the shared provider factory) and must never import
 # a provider SDK.
 _MODEL_PATH_MODULES = (
-    "apps/api/src/alphabrief_api/routes/research.py",
-    "apps/api/src/alphabrief_api/routes/brief.py",
-    "apps/api/src/alphabrief_api/routes/models.py",
     "apps/api/src/alphabrief_api/routes/ai_trading.py",
-    "apps/cli/src/alphabrief_cli/model_commands.py",
-    "apps/cli/src/alphabrief_cli/brief_commands.py",
     "packages/alphabrief-trader/src/alphabrief_trader/committee.py",
     "packages/alphabrief-trader/src/alphabrief_trader/daily_cycle.py",
     "packages/alphabrief-trader/src/alphabrief_trader/model_factory.py",
-    "packages/alphabrief-research/src/alphabrief_research/orchestrator.py",
 )
 
 # Provider SDK modules that must never be imported by runtime business

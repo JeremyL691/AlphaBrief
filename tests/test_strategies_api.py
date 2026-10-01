@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 from alphabrief_api.main import app
-from alphabrief_api.routes.paper import _reset_broker
 from alphabrief_api.routes.risk import _reset_risk_gate
 from alphabrief_api.routes.strategies import _clear_strategy_store
 from fastapi.testclient import TestClient
@@ -24,7 +23,6 @@ client = TestClient(app)
 def _isolate(tmp_path: Path) -> Generator[None, None, None]:
     os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
     _clear_strategy_store()
-    _reset_broker()
     _reset_risk_gate()
     yield
     _clear_strategy_store()

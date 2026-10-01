@@ -15,12 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
+from _helpers import FakeExecutionBackend
 from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
@@ -87,11 +82,7 @@ def _build_cycle(
     runtime_store: RuntimeTruthStore,
     idem: IdempotencyMap,
 ) -> DurableDailyCycle:
-    broker = PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
+    backend = FakeExecutionBackend()
     return DurableDailyCycle(
         committee=_committee(),
         risk_gate=RiskGate(
@@ -99,10 +90,10 @@ def _build_cycle(
                 trading_enabled=True, symbol_allowlist=frozenset({"SPY"})
             )
         ),
-        broker=broker,
         store=store,
         state_store=state_store,
         runtime_store=runtime_store,
+        execution_backend=backend,
         snapshot_loader=lambda s: MarketSnapshot(
             symbol=s,
             reference_price=Decimal("100"),

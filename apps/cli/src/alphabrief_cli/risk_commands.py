@@ -11,7 +11,7 @@ from typing import Any
 
 import typer
 from alphabrief_core import OrderIntent
-from alphabrief_research import build_structured_summary
+from alphabrief_news.context_summary import build_news_macro_summary
 from alphabrief_risk import (
     AccountExposureContext,
     RiskContextDecision,
@@ -400,7 +400,7 @@ def context_cmd(
             )
             sys.exit(1)
 
-    summary = build_structured_summary(headline_objs, indicator_objs)
+    summary = build_news_macro_summary(headline_objs, indicator_objs)
     decision: RiskContextDecision = evaluate_news_macro_risk(
         summary,
         decision_id=decision_id,

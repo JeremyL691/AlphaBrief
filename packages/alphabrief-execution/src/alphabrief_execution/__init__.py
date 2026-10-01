@@ -1,7 +1,7 @@
 """Paper execution components for AlphaBrief."""
 
 from alphabrief_execution.audit import ExecutionAuditEntry, ExecutionAuditLog
-from alphabrief_execution.broker import (  # legacy: top-level broker.py
+from alphabrief_execution.broker import (
     AccountSnapshot,
     BrokerAdapter,
     BrokerHealth,
@@ -11,9 +11,6 @@ from alphabrief_execution.broker import (  # legacy: top-level broker.py
     BrokerTimeInForce,
     CancelResult,
     OrderState,
-    PaperBroker,
-    PaperBrokerError,
-    PaperBrokerResult,
     Position,
     SubmitRequest,
     SubmitResult,
@@ -33,7 +30,6 @@ from alphabrief_execution.broker.reconciliation import (
     ReconciliationRunner,
     ReconResult,
 )
-from alphabrief_execution.fills import Fill, FillSimulator
 from alphabrief_execution.operations import (
     AlertSink,
     HeartbeatStore,
@@ -42,9 +38,6 @@ from alphabrief_execution.operations import (
     SchedulerConfig,
     SchedulerStartupBlockedError,
 )
-from alphabrief_execution.portfolio import PortfolioState
-from alphabrief_execution.portfolio import Position as InternalPosition
-from alphabrief_execution.router import OrderRouter, OrderRouterError
 
 __all__ = [
     "ALLOWED_SCOPES",
@@ -61,18 +54,10 @@ __all__ = [
     "CancelResult",
     "ExecutionAuditEntry",
     "ExecutionAuditLog",
-    "Fill",
-    "FillSimulator",
     "FreezeEvent",
     "HeartbeatStore",
     "OperationsScheduler",
-    "OrderRouter",
-    "OrderRouterError",
     "OrderState",
-    "PaperBroker",
-    "PaperBrokerError",
-    "PaperBrokerResult",
-    "PortfolioState",
     "Position",
     "ReconcilerConfig",
     "ReconciliationRunner",
@@ -84,5 +69,4 @@ __all__ = [
     "SubmitRequest",
     "SubmitResult",
     "broker_errors",
-    "InternalPosition",
 ]

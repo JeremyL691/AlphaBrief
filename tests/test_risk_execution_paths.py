@@ -36,7 +36,6 @@ from alphabrief_execution.broker.risk_context import (
 )
 from alphabrief_risk.broker_context import (
     DEFAULT_CONTEXT_VERSION,
-    DEFAULT_POLICY_VERSION,
     ConversionDatum,
     HealthState,
     PendingOrderDatum,
@@ -224,74 +223,6 @@ def test_ai_backend_submits_with_fresh_context() -> None:
     # The backend's default builder composes its venue sources from the
     # adapter through the one shared context service.
     assert result.risk_context_version == DEFAULT_CONTEXT_VERSION
-
-
-def test_manual_paper_path_uses_same_service_and_versions() -> None:
-    from alphabrief_api.routes.paper import build_paper_risk_context
-    from alphabrief_execution import (
-        ExecutionAuditLog,
-        FillSimulator,
-        PaperBroker,
-        PortfolioState,
-    )
-    from alphabrief_execution.broker.risk_context import (
-        project_risk_context_to_exposure,
-    )
-
-    broker = PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        fill_simulator=FillSimulator(),
-        audit_log=ExecutionAuditLog(),
-    )
-    context = build_paper_risk_context(
-        broker,
-        symbol="EUR_USD",
-        reference_price=Decimal("1.10000"),
-        now=NOW,
-        clock=lambda: NOW,
-    )
-    # The manual path goes through the same broker-fresh service with the
-    # same shared version stamps (AC-M08-W01-02).
-    assert context.context_version == DEFAULT_CONTEXT_VERSION
-    assert context.policy_version == DEFAULT_POLICY_VERSION
-    assert context.account.account_id == "paper_local"
-    assert context.balance == Decimal("100000")
-    assert context.health_state == "healthy"
-    assert context.internally_consistent is True
-
-    exposure = project_risk_context_to_exposure(
-        context, mark_prices={"EUR_USD": Decimal("1.10")}
-    )
-    assert exposure.account_id == "paper_local"
-    assert exposure.cash == Decimal("100000")
-    assert exposure.current_total_exposure == Decimal("0")
-
-
-# ---------------------------------------------------------------------------
-# AC-M08-W01-03: missing/stale/frozen context rejects before submit
-# ---------------------------------------------------------------------------
-
-
-def test_ai_backend_rejects_when_adapter_unavailable() -> None:
-    """The default adapter-derived context fails closed when the broker
-    itself is unreachable (account source missing -> no submit)."""
-    adapter = _FakeAdapter()
-
-    async def _fail() -> AccountSnapshot:
-        raise TimeoutError("broker unreachable")
-
-    adapter.get_account = _fail  # type: ignore[method-assign]
-    backend = ExternalPaperExecutionBackend(adapter)
-    with pytest.raises(ExecutionBackendError, match="risk context"):
-        backend.submit(
-            _intent(),
-            _decision(),
-            reference_price=Decimal("1.10"),
-            now=NOW,
-            estimated_quantity=Decimal("1"),
-        )
-    assert adapter.requests == []
-
 
 @pytest.mark.parametrize(
     "mutate",

@@ -10,12 +10,8 @@ from typing import Literal
 import typer
 from alphabrief_core import Bar
 from alphabrief_data import (
-    AlphaVantageProvider,
-    BinanceProvider,
     MarketDataLoadError,
-    MarketDataProvider,
     MarketDataProviderError,
-    YahooFinanceProvider,
     check_bar_quality,
     load_ohlcv_csv,
     load_ohlcv_parquet,
@@ -108,25 +104,6 @@ def _load_bars(
     )
 
 
-def _build_provider(source: str) -> MarketDataProvider:
-    """Build a market data provider for the given *source* name.
-
-    Exposed as a module-level helper so tests can verify provider
-    selection without invoking the full CLI command.
-    """
-    if source == "yahoo":
-        return YahooFinanceProvider()
-    if source == "binance":
-        return BinanceProvider()
-    if source == "alphavantage":
-        return AlphaVantageProvider()
-    raise MarketDataProviderError(
-        f"data fetch: unknown source {source!r}; expected 'yahoo', "
-        "'binance', or 'alphavantage'",
-        code="invalid_source",
-    )
-
-
 def _parse_iso_date(value: str, *, field_name: str) -> datetime:
     """Parse an ISO-8601 date or datetime string into a UTC datetime.
 
@@ -195,86 +172,6 @@ def check_cmd(
     else:
         print("Quality: FAILED")
 
-
-@data_app.command("fetch")
-def fetch_cmd(
-    source: str = typer.Option(
-        ...,
-        "--source",
-        help="Market data source: 'yahoo', 'binance', or 'alphavantage'.",
-    ),
-    symbol: str = typer.Option(..., "--symbol", help="Market symbol identifier."),
-    start: str = typer.Option(
-        ...,
-        "--start",
-        help="Start date or datetime (ISO-8601).",
-    ),
-    end: str = typer.Option(
-        ...,
-        "--end",
-        help="End date or datetime (ISO-8601, exclusive).",
-    ),
-    interval: str = typer.Option(
-        "1d",
-        "--interval",
-        help=(
-            "Bar interval. Yahoo: 1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo. "
-            "Binance: 1m, 3m, 5m, 15m, 30m, 1h, 1d, 1w, 1M."
-        ),
-    ),
-    data_version: str = typer.Option(
-        "fetch-v1",
-        "--data-version",
-        help="Data version tag stored alongside the bars.",
-    ),
-) -> None:
-    """Download OHLCV bars from a free public data provider and persist them.
-
-    Bars are written to the AlphaBrief DuckDB store under
-    ``ALPHABRIEF_DATA_DIR/alphabrief.db``. The same symbol can be
-    re-fetched; existing rows for ``(symbol, timestamp)`` pairs are
-    replaced in place.
-    """
-    from alphabrief_api.db.market_data import MarketDataStore
-
-    try:
-        provider = _build_provider(source)
-        start_dt = _parse_iso_date(start, field_name="--start")
-        end_dt = _parse_iso_date(end, field_name="--end")
-    except MarketDataProviderError as exc:
-        print(f"data fetch failed: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        bars = provider.fetch_ohlcv(
-            symbol=symbol, start=start_dt, end=end_dt, interval=interval
-        )
-    except MarketDataProviderError as exc:
-        print(f"data fetch failed: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    if not bars:
-        print(
-            f"data fetch: provider {provider.provider_name!r} returned "
-            f"0 bars for {symbol} in [{start}, {end}) at interval "
-            f"{interval!r}.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    store = MarketDataStore()
-    try:
-        inserted = store.insert_bars(
-            bars, source=provider.provider_name, data_version=data_version
-        )
-    finally:
-        store.close()
-
-    print(
-        f"Fetched and stored {inserted} bars for {symbol} from "
-        f"{provider.provider_name} (v{data_version}) "
-        f"interval={interval} range=[{start}, {end})"
-    )
 
 
 __all__ = ["data_app"]

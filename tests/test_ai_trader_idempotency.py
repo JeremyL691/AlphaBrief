@@ -14,12 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
+from _helpers import FakeExecutionBackend
 from alphabrief_models import (
     FakeProviderAdapter,
     ModelCallBudget,
@@ -76,12 +71,8 @@ def _committee(
     )
 
 
-def _broker() -> PaperBroker:
-    return PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
+def _backend() -> FakeExecutionBackend:
+    return FakeExecutionBackend()
 
 
 def _risk_gate(symbols: list[str]) -> RiskGate:
@@ -111,7 +102,7 @@ def _cycle(
     return DailyTradingCycle(
         committee=committee,
         risk_gate=_risk_gate([symbol]),
-        broker=_broker(),
+        execution_backend=_backend(),
         store=store,
         snapshot_loader=lambda s: _snapshot(s),
         enabled=True,
@@ -142,7 +133,7 @@ class TestCycleIdempotency:
         changed_cycle = DailyTradingCycle(
             committee=_committee(),
             risk_gate=_risk_gate(["SPY"]),
-            broker=_broker(),
+            execution_backend=_backend(),
             store=store,
             snapshot_loader=lambda s: MarketSnapshot(
                 symbol="SPY",
@@ -186,7 +177,7 @@ class TestCycleIdempotency:
         cycle = DailyTradingCycle(
             committee=_committee(),
             risk_gate=_risk_gate(["SPY"]),
-            broker=_broker(),
+            execution_backend=_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=False,

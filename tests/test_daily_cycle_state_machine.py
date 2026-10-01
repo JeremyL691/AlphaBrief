@@ -17,13 +17,8 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from _helpers import FakeExecutionBackend
 from alphabrief_core import OrderIntent, RiskDecision
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
 from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
@@ -36,7 +31,6 @@ from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
 from alphabrief_trader.execution_backend import (
     ExecutionBackend,
     ExecutionBackendResult,
-    LocalPaperExecutionBackend,
 )
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.schemas import MarketSnapshot
@@ -56,11 +50,12 @@ _BULLISH_PAYLOAD: dict[str, object] = {
 _FIXED_NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
 
-class _CountingExecutionBackend(ExecutionBackend):
+class _CountingExecutionBackend(FakeExecutionBackend):
     """Execution backend that counts submit calls."""
 
-    def __init__(self, inner: ExecutionBackend) -> None:
-        self._inner = inner
+    def __init__(self, inner: ExecutionBackend | None = None) -> None:
+        super().__init__()
+        self._inner = inner or FakeExecutionBackend()
         self.submit_count = 0
 
     def estimate_quantity(
@@ -127,16 +122,10 @@ def _build_cycle(
     submit_counter: _CountingExecutionBackend | None = None,
     committee: TradingCommittee | None = None,
 ) -> DurableDailyCycle:
-    broker = PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
-    backend = submit_counter or LocalPaperExecutionBackend(broker)
+    backend = submit_counter or FakeExecutionBackend()
     return DurableDailyCycle(
         committee=committee or _committee(),
         risk_gate=_risk_gate(),
-        broker=broker,
         store=store,
         state_store=state_store,
         snapshot_loader=lambda s: _snapshot(s),
@@ -313,9 +302,7 @@ class TestRestartResume:
         self, stores: tuple[AiTradingStore, CycleStateStore]
     ) -> None:
         store, state_store = stores
-        counter = _CountingExecutionBackend(
-            LocalPaperExecutionBackend(_broker())
-        )
+        counter = _CountingExecutionBackend(_broker())
         cycle = _build_cycle(store, state_store, submit_counter=counter)
         first = cycle.run(["SPY"], cycle_key="cyc-restart")
         submits_after_first = counter.submit_count
@@ -335,7 +322,7 @@ class TestRestartResume:
     ) -> None:
         store, state_store = stores
         counter = _CountingExecutionBackend(
-            LocalPaperExecutionBackend(_broker())
+            _broker()
         )
         machine = CycleStateMachine(state_store)
 
@@ -428,9 +415,5 @@ class TestRestartResume:
         assert phases == list(CYCLE_PHASE_ORDER)
 
 
-def _broker() -> PaperBroker:
-    return PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
+def _broker() -> FakeExecutionBackend:
+    return FakeExecutionBackend()

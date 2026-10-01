@@ -3,6 +3,9 @@
 All network-backed providers in this package use ``urllib`` only, expose an
 injectable ``http_get`` callable for tests, and reuse the retry helpers from
 ``alphabrief_data.providers``.
+
+Deterministic in-memory providers used by tests live in
+``tests/news_mock_provider.py`` so runtime code can never import a mock.
 """
 
 from __future__ import annotations
@@ -14,27 +17,13 @@ from alphabrief_news.providers.base import (
     NewsProviderErrorCode,
 )
 from alphabrief_news.providers.fred import FredMacroProvider
-from alphabrief_news.providers.mock import (
-    MockMacroProvider,
-    MockNewsProvider,
-    build_default_mock_macro,
-    build_default_mock_news,
-)
 from alphabrief_news.providers.rss import RssNewsProvider
-from alphabrief_news.providers.sec_edgar import SecEdgarNewsProvider
-from alphabrief_news.providers.social_sentiment import SocialSentimentNewsProvider
 
 __all__ = [
     "FredMacroProvider",
     "MacroProvider",
-    "MockMacroProvider",
-    "MockNewsProvider",
     "NewsProvider",
     "NewsProviderError",
     "NewsProviderErrorCode",
     "RssNewsProvider",
-    "SecEdgarNewsProvider",
-    "SocialSentimentNewsProvider",
-    "build_default_mock_macro",
-    "build_default_mock_news",
 ]

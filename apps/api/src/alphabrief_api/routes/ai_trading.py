@@ -3,7 +3,8 @@
 Read-only and run-only surface for the paper-trading AI committee. The
 ``/run`` endpoint materializes a cycle from the supplied universe (or
 the operator's saved watchlist when omitted), pushes each symbol
-through the deterministic ``RiskGate`` and ``PaperBroker`` exactly
+through the deterministic ``RiskGate`` and the OANDA practice
+execution backend exactly
 the way the scheduler task does, and persists the full
 ``DailyCycleRecord`` for replay.
 
@@ -15,26 +16,20 @@ the API is intentionally one-way with respect to feature flags.
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
 from alphabrief_models import ModelCallBudget, ModelCallRecord
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyCycleRecord,
     DailyTradingCycle,
     DisciplineConfig,
+    ExecutionBackend,
+    ExternalPaperExecutionBackend,
     MarketSnapshot,
     ModelProviderUnavailableError,
     SnapshotLoader,
@@ -87,68 +82,8 @@ def _reset_ai_state() -> None:
 # ---------------------------------------------------------------------------
 # Observation-dir reader (scheduler export fallback)
 # ---------------------------------------------------------------------------
-#
-# The scheduler holds the DuckDB write lock on its own database for its
-# lifetime, so the API cannot query it directly (DuckDB is single-writer).
-# The scheduler exports one ``ai_cycle_<trading_day>.json`` per cycle;
-# when ``ALPHABRIEF_AI_OBSERVATION_DIR`` is set, the read-only AI
-# endpoints serve those exports instead of the API's own (separate) DB.
-
-
-def _observation_dir() -> Path | None:
-    raw = os.environ.get("ALPHABRIEF_AI_OBSERVATION_DIR", "").strip()
-    return Path(raw) if raw else None
-
-
-def _observation_records() -> list[dict[str, Any]]:
-    obs_dir = _observation_dir()
-    if obs_dir is None or not obs_dir.is_dir():
-        return []
-    records: list[dict[str, Any]] = []
-    for path in sorted(obs_dir.glob("ai_cycle_*.json")):
-        if path.name.startswith("ai_cycle_error_"):
-            continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(data, dict) and data.get("cycle_id"):
-            records.append(data)
-    records.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
-    return records
-
-
-def _cycle_summary_from_record(record: dict[str, Any]) -> AiCycleSummary:
-    attempts = record.get("attempts") or []
-    plans = record.get("plans") or []
-    return AiCycleSummary(
-        cycle_id=str(record["cycle_id"]),
-        trading_day=str(record.get("trading_day") or ""),
-        symbols=[str(s) for s in (record.get("symbols") or [])],
-        plan_count=len(plans),
-        attempt_count=len(attempts),
-        executed_count=sum(
-            1 for a in attempts if a.get("outcome") == "executed"
-        ),
-        blocked_count=sum(
-            1
-            for a in attempts
-            if str(a.get("outcome") or "").startswith("blocked")
-        ),
-        outcome=str(record.get("outcome") or ""),
-        enabled=bool(record.get("enabled")),
-        live_trading_enabled=bool(record.get("live_trading_enabled")),
-        created_at=str(record.get("created_at") or ""),
-    )
-
-
 def _list_summaries(limit: int) -> list[AiCycleSummary]:
-    """Return recent cycle summaries from the best available source."""
-    if _observation_dir() is not None:
-        return [
-            _cycle_summary_from_record(record)
-            for record in _observation_records()[:limit]
-        ]
+    """Return recent cycle summaries from the stored cycle records."""
     store = _get_store()
     summaries = store.list_cycles(limit=limit)
     return [
@@ -261,15 +196,6 @@ def _persist_call_record(record: ModelCallRecord) -> None:
     _get_call_store().save_call(record)
 
 
-def _build_paper_broker() -> PaperBroker:
-    """Build an in-memory paper broker used by the API run path."""
-    return PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
-
-
 def _build_risk_gate(symbols: list[str]) -> RiskGate:
     """Build a permissive risk gate scoped to ``symbols``."""
     return RiskGate(
@@ -318,6 +244,17 @@ def _build_snapshot_loader(
     return _loader, _close
 
 
+def _build_execution_backend() -> ExecutionBackend:
+    """Return the OANDA practice execution backend.
+
+    Credentials are required: missing or invalid OANDA practice
+    credentials fail closed instead of filling orders in memory.
+    """
+    from alphabrief_execution.broker.runtime import get_broker_runtime
+
+    return ExternalPaperExecutionBackend(get_broker_runtime().adapter)
+
+
 def _build_cycle(
     *,
     snapshot_loader: SnapshotLoader,
@@ -327,7 +264,7 @@ def _build_cycle(
     return DailyTradingCycle(
         committee=_build_default_committee(),
         risk_gate=_build_risk_gate(symbols),
-        broker=_build_paper_broker(),
+        execution_backend=_build_execution_backend(),
         store=_get_store(),
         snapshot_loader=snapshot_loader,
         enabled=is_ai_trading_enabled(),
@@ -471,13 +408,6 @@ def list_history(limit: int = 20) -> AiHistoryResponse:
 @router.get("/cycles/{cycle_id}")
 def get_cycle(cycle_id: str) -> dict[str, Any]:
     """Return the full JSON record for a single cycle, or 404."""
-    if _observation_dir() is not None:
-        for record in _observation_records():
-            if record.get("cycle_id") == cycle_id:
-                return record
-        raise HTTPException(
-            status_code=404, detail=f"cycle {cycle_id!r} not found"
-        )
     store = _get_store()
     stored = store.get_cycle(cycle_id)
     if stored is None:
@@ -505,31 +435,6 @@ def list_attempts(limit: int = 50) -> dict[str, Any]:
         raise HTTPException(
             status_code=422, detail="limit must be in [1, 200]"
         )
-    if _observation_dir() is not None:
-        attempts: list[dict[str, Any]] = []
-        for record in _observation_records():
-            cycle_id = record.get("cycle_id")
-            for attempt in record.get("attempts") or []:
-                attempts.append(
-                    {
-                        "intent_id": str(attempt.get("intent_id") or ""),
-                        "cycle_id": str(cycle_id or ""),
-                        "outcome": str(attempt.get("outcome") or ""),
-                        "approved": bool(attempt.get("approved")),
-                        "requires_human_review": bool(
-                            attempt.get("requires_human_review")
-                        ),
-                        "filled": bool(attempt.get("filled")),
-                        "order_id": attempt.get("order_id"),
-                        "created_at": str(attempt.get("created_at") or ""),
-                        "attempt": attempt,
-                    }
-                )
-                if len(attempts) >= limit:
-                    break
-            if len(attempts) >= limit:
-                break
-        return {"attempts": attempts}
     store = _get_store()
     rows = store.list_attempts(limit=limit)
     return {"attempts": rows}

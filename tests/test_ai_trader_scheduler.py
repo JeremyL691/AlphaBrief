@@ -3,22 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import alphabrief_cli.scheduler_commands as scheduler_commands
 import pytest
+from _helpers import FakeExecutionBackend
 from alphabrief_api.db import AiTradingStore, MarketDataStore, NewsStore
 from alphabrief_cli.scheduler_commands import _ai_cycle_factory
 from alphabrief_core import Bar
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -208,11 +202,7 @@ class TestSchedulerRunsAiTask:
             gateway=ModelGateway(providers=[provider]),
             discipline=DisciplineConfig(),
         )
-        broker = PaperBroker(
-            portfolio=PortfolioState(cash=Decimal("100000")),
-            router=OrderRouter(),
-            fill_simulator=FillSimulator(),
-        )
+        backend = FakeExecutionBackend()
         risk_gate = RiskGate(
             limits=RiskLimitConfig(
                 trading_enabled=True,
@@ -225,7 +215,7 @@ class TestSchedulerRunsAiTask:
             cycle = DailyTradingCycle(
                 committee=committee,
                 risk_gate=risk_gate,
-                broker=broker,
+                execution_backend=backend,
                 store=store,
                 snapshot_loader=lambda s: MarketSnapshot(
                     symbol=s,
@@ -309,48 +299,54 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setenv("ALPHABRIEF_AI_MARKET_DATA_SOURCE", "yahoo")
         monkeypatch.setenv("ALPHABRIEF_AI_NEWS_SOURCE", "rss")
         monkeypatch.setenv("ALPHABRIEF_AI_NEWS_FEEDS", "marketwatch-rss")
-        # Pin a small universe so the test stays focused on the ingestion
-        # pipeline (the default universe now spans FX + equities + crypto).
+        # Pin a small FX universe so the test stays focused on the
+        # ingestion pipeline.
         monkeypatch.setenv(
             "ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD,GBP_USD,USD_JPY"
         )
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        monkeypatch.setattr(
+            scheduler_commands, "_build_adapter", lambda: _SubmittingAdapter()
+        )
 
-        class _MarketProvider:
-            provider_name = "test-market"
+        def _seed_bars(symbol: str, *, now: datetime) -> None:
+            """Persist two OANDA-shaped bars per symbol before the cycle."""
+            store = MarketDataStore(db_path=isolated_data_dir / "alphabrief.db")
+            try:
+                store.insert_bars(
+                    [
+                        Bar(
+                            symbol=symbol,
+                            timestamp=now - timedelta(days=2),
+                            open=Decimal("99"),
+                            high=Decimal("101"),
+                            low=Decimal("98"),
+                            close=Decimal("100"),
+                            volume=Decimal("1000"),
+                            source="oanda_practice",
+                            data_version="test",
+                        ),
+                        Bar(
+                            symbol=symbol,
+                            timestamp=now - timedelta(days=1),
+                            open=Decimal("100"),
+                            high=Decimal("102"),
+                            low=Decimal("99"),
+                            close=Decimal("101"),
+                            volume=Decimal("1100"),
+                            source="oanda_practice",
+                            data_version="test",
+                        ),
+                    ],
+                    source="oanda_practice",
+                    data_version="test",
+                )
+            finally:
+                store.close()
 
-            def fetch_ohlcv(
-                self,
-                *,
-                symbol: str,
-                start: datetime,
-                end: datetime,
-                interval: str,
-            ) -> list[Bar]:
-                del start, interval
-                return [
-                    Bar(
-                        symbol=symbol,
-                        timestamp=end - timedelta(days=2),
-                        open=Decimal("99"),
-                        high=Decimal("101"),
-                        low=Decimal("98"),
-                        close=Decimal("100"),
-                        volume=Decimal("1000"),
-                        source="test-market",
-                        data_version="test",
-                    ),
-                    Bar(
-                        symbol=symbol,
-                        timestamp=end - timedelta(days=1),
-                        open=Decimal("100"),
-                        high=Decimal("102"),
-                        low=Decimal("99"),
-                        close=Decimal("101"),
-                        volume=Decimal("1100"),
-                        source="test-market",
-                        data_version="test",
-                    ),
-                ]
+        for _symbol in ("EUR_USD", "GBP_USD", "USD_JPY"):
+            _seed_bars(_symbol, now=datetime.now(UTC))
 
         class _NewsProvider:
             def fetch_headlines(
@@ -371,11 +367,6 @@ class TestSchedulerRunsAiTask:
                     )
                 ]
 
-        monkeypatch.setattr(
-            scheduler_commands,
-            "_build_market_data_provider",
-            lambda source: _MarketProvider(),
-        )
         monkeypatch.setattr(
             scheduler_commands,
             "_build_news_provider",
@@ -415,6 +406,11 @@ class TestSchedulerRunsAiTask:
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        monkeypatch.setattr(
+            scheduler_commands, "_build_adapter", lambda: _SubmittingAdapter()
+        )
         handler = _ai_cycle_factory(db_path=isolated_data_dir)
 
         async def _run_handler() -> None:
@@ -432,63 +428,6 @@ class TestSchedulerRunsAiTask:
             assert latest["attempts"] == []
         finally:
             store.close()
-
-    def test_ai_cycle_factory_exports_latest_cycle_json(
-        self,
-        isolated_data_dir: Path,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
-        obs_dir = tmp_path / "observation"
-        handler = _ai_cycle_factory(db_path=isolated_data_dir)
-
-        async def _run_handler() -> None:
-            await handler()
-
-        asyncio.run(_run_handler())
-
-        store = AiTradingStore(db_path=isolated_data_dir / "alphabrief.db")
-        try:
-            latest = store.get_latest_cycle()
-            assert latest is not None
-        finally:
-            store.close()
-
-        exports = list(obs_dir.glob("ai_cycle_*.json"))
-        assert len(exports) == 1
-        data = json.loads(exports[0].read_text(encoding="utf-8"))
-        assert data["trading_day"] == latest["trading_day"]
-        assert data["outcome"] == "skipped_no_consensus"
-
-    def test_ai_cycle_factory_writes_error_json_on_failure(
-        self,
-        isolated_data_dir: Path,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
-        obs_dir = tmp_path / "observation"
-
-        def _boom() -> None:
-            raise RuntimeError("boom")
-
-        monkeypatch.setattr(
-            scheduler_commands, "_ai_scheduler_universe", _boom
-        )
-        handler = _ai_cycle_factory(db_path=isolated_data_dir)
-
-        async def _run_handler() -> None:
-            await handler()
-
-        with pytest.raises(RuntimeError, match="boom"):
-            asyncio.run(_run_handler())
-
-        errors = list(obs_dir.glob("ai_cycle_error_*.json"))
-        assert len(errors) == 1
-        data = json.loads(errors[0].read_text(encoding="utf-8"))
-        assert data["error"] == "boom"
-        assert "at" in data
 
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -574,16 +513,16 @@ class TestSchedulerRunsAiTask:
         finally:
             store.close()
 
-    def test_external_ai_cycle_refuses_missing_oanda_credentials(
+    def test_ai_cycle_refuses_missing_oanda_credentials(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """M01-W01: the policy can only claim OANDA practice, so the
-        expressible fail-closed case is an OANDA policy with no OANDA
-        credentials configured. The external paper path must raise instead
-        of running (missing credentials fail closed, no local fill).
+        """Missing OANDA credentials fail closed.
+
+        Every cycle now runs through the OANDA practice execution
+        backend, so a missing credential must raise instead of running
+        (no in-memory fill fallback exists).
         """
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
-        monkeypatch.setenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", "true")
         monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
         monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
         # An OANDA-only policy with no credentials must be refused.
@@ -613,7 +552,7 @@ class TestSchedulerRunsAiTask:
         async def _run_handler() -> None:
             await handler()
 
-        with pytest.raises(RuntimeError, match="requires OANDA"):
+        with pytest.raises(RuntimeError, match="requires OANDA practice credentials"):
             asyncio.run(_run_handler())
 
     def test_ai_scheduler_universe_can_be_overridden(
@@ -628,43 +567,3 @@ class TestSchedulerRunsAiTask:
             "EUR_USD",
             "GBP_USD",
         )
-
-
-class TestResearchContentFactory:
-    def test_generates_macro_and_evaluation(
-        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The content factory builds its ModelGateway through the
-        # production provider factory, which fails closed without a real
-        # provider. Explicit fake selection is test composition; macro
-        # indicators and model evaluations are deterministic and
-        # provider-independent, while briefs/debates need a real provider
-        # whose output matches the brief/debate schemas (the conservative
-        # fake returns committee-vote shaped output), so they are
-        # exercised in the deployed environment instead.
-        from alphabrief_api.db import MacroStore
-        from alphabrief_api.db.model_eval import ModelEvalStore
-        from alphabrief_cli.scheduler_commands import _research_content_factory
-
-        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
-        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
-        handler = _research_content_factory(db_path=isolated_data_dir)
-
-        async def _run() -> None:
-            await handler()
-
-        asyncio.run(_run())
-
-        database = isolated_data_dir / "alphabrief.db"
-        macro_store = MacroStore(db_path=database)
-        eval_store = ModelEvalStore(db_path=database)
-        try:
-            indicators = macro_store.list_indicators(limit=50)
-            assert any(i.indicator_id == "GDP" for i in indicators)
-            evaluations = eval_store.list_evaluations(limit=10)
-            assert len(evaluations) >= 1
-        finally:
-            macro_store.close()
-            eval_store.close()

@@ -8,7 +8,7 @@ The store is **purely advisory**:
 
 - It never blocks orders.
 - It never modifies ``RiskDecision`` semantics.
-- It is not consulted by ``RiskGate`` or ``PaperBroker``.
+- It is not consulted by ``RiskGate`` or the broker.
 
 Its purpose is to support post-hoc analysis: backtest replay, manual
 recording, and dashboard inspection. The table is keyed on

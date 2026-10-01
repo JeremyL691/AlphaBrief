@@ -28,8 +28,7 @@ import signal
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -38,12 +37,6 @@ from alphabrief_core import (
     PaperExecutionPolicy,
     load_paper_execution_policy,
     load_settings,
-)
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
 )
 from alphabrief_execution.broker.port import (
     BrokerAdapter,
@@ -54,7 +47,6 @@ from alphabrief_execution.operations.scheduler import (
     AlertSink,
     HeartbeatStore,
     OperationsScheduler,
-    ScheduledTask,
     SchedulerConfig,
     SchedulerStartupBlockedError,
     build_default_tasks,
@@ -66,7 +58,6 @@ from alphabrief_trader import (
     StoredMarketSnapshotBuilder,
     TradingCommittee,
     build_ai_trading_committee,
-    build_ai_trading_provider,
     is_ai_external_paper_enabled,
     is_ai_trading_enabled,
 )
@@ -412,21 +403,14 @@ def _build_ai_committee() -> TradingCommittee:
     return build_ai_trading_committee()
 
 
-# Default AI cycle universe: a liquid multi-asset mix across the routed
-# venues — FX majors (OANDA), crypto (Alpaca), and US equities (Alpaca).
-# Operators can expand or replace it via ALPHABRIEF_AI_SCHEDULER_UNIVERSE.
+# Default AI cycle universe: OANDA practice FX majors. Operators can
+# expand or replace it via ALPHABRIEF_AI_SCHEDULER_UNIVERSE.
 _AI_SCHEDULER_UNIVERSE = (
     "EUR_USD",
     "GBP_USD",
     "USD_JPY",
-    "BTC-USD",
-    "ETH-USD",
-    "SOL-USD",
-    "AAPL",
-    "NVDA",
-    "TSLA",
-    "SPY",
-    "QQQ",
+    "AUD_USD",
+    "USD_CAD",
 )
 _AI_SCHEDULER_UNIVERSE_ENV = "ALPHABRIEF_AI_SCHEDULER_UNIVERSE"
 _AI_PRE_CYCLE_INGEST_ENV = "ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED"
@@ -483,21 +467,6 @@ def _ai_scheduler_universe() -> tuple[str, ...]:
     return symbols
 
 
-def _build_market_data_provider(source: str) -> Any:
-    """Build the configured provider for scheduler market-data refreshes."""
-
-    from alphabrief_data import AlphaVantageProvider, YahooFinanceProvider
-
-    if source == "yahoo":
-        return YahooFinanceProvider()
-    if source == "alphavantage":
-        return AlphaVantageProvider()
-    raise ValueError(
-        "ALPHABRIEF_AI_MARKET_DATA_SOURCE must be one of yahoo, "
-        "alphavantage, none"
-    )
-
-
 def _build_news_provider(source: str) -> Any:
     """Build the configured provider for scheduler news refreshes."""
 
@@ -510,17 +479,17 @@ def _build_news_provider(source: str) -> Any:
 
 def _run_ai_pre_cycle_ingestion(
     *,
-    market_store: Any,
     news_store: Any,
     symbols: tuple[str, ...],
     now: datetime | None = None,
 ) -> dict[str, int]:
-    """Refresh local market/news stores before building AI snapshots.
+    """Refresh local news stores before building AI snapshots.
 
     Provider failures are logged and swallowed so the daily AI cycle can
-    still use any previously persisted bars/headlines. A total lack of
-    local bars remains handled by ``StoredMarketSnapshotBuilder`` as a
-    symbol skip rather than a synthetic price.
+    still use previously persisted headlines. Market data comes from
+    OANDA (see ``alphabrief cycle``); a total lack of local bars remains
+    handled by ``StoredMarketSnapshotBuilder`` as a symbol skip rather
+    than a synthetic price.
     """
 
     if not _is_ai_pre_cycle_ingest_enabled():
@@ -532,80 +501,12 @@ def _run_ai_pre_cycle_ingestion(
     else:
         captured_at = captured_at.astimezone(UTC)
 
-    bars = _ingest_ai_market_data(
-        market_store=market_store,
-        symbols=symbols,
-        now=captured_at,
-    )
     headlines = _ingest_ai_news(
         news_store=news_store,
         symbols=symbols,
         now=captured_at,
     )
-    return {"bars": bars, "headlines": headlines}
-
-
-def _ingest_ai_market_data(
-    *,
-    market_store: Any,
-    symbols: tuple[str, ...],
-    now: datetime,
-) -> int:
-    source = os.environ.get(_AI_MARKET_DATA_SOURCE_ENV, "yahoo").strip().lower()
-    if source in {"", "none", "off", "disabled"}:
-        return 0
-
-    interval = os.environ.get(_AI_MARKET_DATA_INTERVAL_ENV, "1d").strip() or "1d"
-    lookback_days = _env_int(
-        _AI_MARKET_DATA_LOOKBACK_DAYS_ENV,
-        default=10,
-        minimum=1,
-    )
-    start = now - timedelta(days=lookback_days)
-    data_version = f"ai-precycle-{source}-{interval}"
-
-    from alphabrief_data import MarketDataProviderError
-
-    try:
-        provider = _build_market_data_provider(source)
-    except (MarketDataProviderError, ValueError) as exc:
-        print(
-            f"scheduler: market data pre-cycle ingest disabled: {exc}",
-            file=sys.stderr,
-        )
-        return 0
-
-    inserted_total = 0
-    for symbol in symbols:
-        try:
-            bars = provider.fetch_ohlcv(
-                symbol=symbol,
-                start=start,
-                end=now,
-                interval=interval,
-            )
-        except MarketDataProviderError as exc:
-            print(
-                f"scheduler: market data pre-cycle ingest failed for "
-                f"{symbol}: [{exc.code}] {exc}",
-                file=sys.stderr,
-            )
-            continue
-        if not bars:
-            print(
-                f"scheduler: market data pre-cycle ingest returned 0 bars "
-                f"for {symbol}",
-                file=sys.stderr,
-            )
-            continue
-        inserted_total += int(
-            market_store.insert_bars(
-                bars,
-                source=getattr(provider, "provider_name", source),
-                data_version=data_version,
-            )
-        )
-    return inserted_total
+    return {"bars": 0, "headlines": headlines}
 
 
 def _ingest_ai_news(
@@ -722,8 +623,8 @@ def _assert_external_policy_matches_broker(
     configured = _configured_broker_provider_name()
     if configured is None:
         raise RuntimeError(
-            "ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED=true requires OANDA "
-            "practice credentials"
+            "the AI cycle requires OANDA practice credentials; missing "
+            "credentials fail closed instead of filling orders in memory"
         )
     if policy.provider != configured:
         raise RuntimeError(
@@ -731,230 +632,6 @@ def _assert_external_policy_matches_broker(
             f"policy provider is {policy.provider!r}, but configured broker "
             f"credentials select {configured!r}"
         )
-
-
-def _ai_observation_dir() -> Path:
-    """Directory where external processes read AI cycle exports.
-
-    The scheduler holds the DuckDB write lock on its own DB file for its
-    lifetime, so the paper observation must read these JSON snapshots
-    instead of querying the DB directly.
-    """
-    return Path(
-        os.environ.get(
-            "ALPHABRIEF_OBSERVATION_DIR",
-            str(Path.home() / ".alphabrief" / "reports" / "paper_observation"),
-        )
-    )
-
-
-def _write_ai_cycle_result(latest: dict[str, Any] | None) -> None:
-    """Export the latest cycle as JSON for the observation to read."""
-    if latest is None:
-        return
-    trading_day = latest.get("trading_day") or date.today().isoformat()
-    obs_dir = _ai_observation_dir()
-    obs_dir.mkdir(parents=True, exist_ok=True)
-    (obs_dir / f"ai_cycle_{trading_day}.json").write_text(
-        json.dumps(latest, default=str, indent=2),
-        encoding="utf-8",
-    )
-
-
-def _write_ai_cycle_error(exc: Exception) -> None:
-    """Export a failed cycle as an error JSON for the observation to read."""
-    obs_dir = _ai_observation_dir()
-    obs_dir.mkdir(parents=True, exist_ok=True)
-    (obs_dir / f"ai_cycle_error_{date.today().isoformat()}.json").write_text(
-        json.dumps(
-            {"error": str(exc), "at": datetime.now(UTC).isoformat()},
-            default=str,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-
-def _research_content_factory(
-    *, db_path: Path
-) -> Callable[[], Awaitable[None]]:
-    """Build the daily research-content generator bound to ``db_path``.
-
-    Produces macro indicators, a daily alpha brief, a multi-perspective
-    debate, and a model evaluation into the scheduler DB so the
-    dashboard's News/Macro/Briefs/Debates/Models pages have live,
-    auto-refreshing content. All model calls go through the same
-    ``ModelGateway`` provider wiring as the AI Trading Committee.
-    """
-
-    async def _handler() -> None:
-        from alphabrief_api.db import (
-            BriefStore as _BriefStore,
-        )
-        from alphabrief_api.db import (
-            MacroStore as _MacroStore,
-        )
-        from alphabrief_api.db import (
-            ModelEvalStore as _EvalStore,
-        )
-        from alphabrief_api.db.debates import (
-            DebateStore as _DebateStore,
-        )
-        from alphabrief_models import ModelGateway, ModelRequest
-        from alphabrief_models.briefs import DailyAlphaBrief
-        from alphabrief_models.daily import coerce_daily_brief
-        from alphabrief_models.evaluation import ModelEvaluator
-        from alphabrief_models.evaluation_datasets import get_dataset_by_id
-        from alphabrief_models.prompts import render_brief_prompt_v2
-        from alphabrief_models.structured_output import parse_structured_output
-        from alphabrief_news.providers import (
-            MockMacroProvider,
-            build_default_mock_macro,
-        )
-        from alphabrief_news.types import MacroFetchQuery
-        from alphabrief_research.orchestrator import DebateOrchestrator
-        from alphabrief_research.schemas import DebateQuestion
-
-        database = db_path / "alphabrief.db"
-        macro_store = _MacroStore(db_path=database)
-        brief_store = _BriefStore(db_path=database)
-        debate_store = _DebateStore(db_path=database)
-        eval_store = _EvalStore(db_path=database)
-        try:
-            trading_day = date.today().isoformat()
-            universe = _ai_scheduler_universe()
-            gateway = ModelGateway(providers=[build_ai_trading_provider()])
-
-            # 1. Macro indicators — mock provider (FRED requires a key).
-            provider = MockMacroProvider(
-                seed_indicators=build_default_mock_macro(
-                    ["GDP", "CPI", "UNEMPLOYMENT", "FEDFUNDS", "INDPRO"]
-                )
-            )
-            end = datetime.now(UTC)
-            start = end - timedelta(days=90)
-            indicators = provider.fetch_indicators(
-                MacroFetchQuery(
-                    indicators=["GDP", "CPI", "UNEMPLOYMENT", "FEDFUNDS", "INDPRO"],
-                    start=start,
-                    end=end,
-                    data_version="content-v1",
-                )
-            )
-            macro_store.insert_indicators(indicators)
-
-            # 2. Daily alpha brief through the real provider. The v2
-            # template embeds the exact DailyAlphaBrief JSON schema;
-            # real models occasionally deviate from it, so retry a few
-            # times and fall back to a lenient coercion of the raw JSON.
-            rendered = render_brief_prompt_v2(
-                "daily_alpha_brief",
-                "v2",
-                {
-                    "trading_day": trading_day,
-                    "market_data_context": (
-                        f"Universe under review: {', '.join(universe)}."
-                    ),
-                    "news_context": "(auto-refreshed by the scheduler)",
-                    "macro_context": "(auto-refreshed by the scheduler)",
-                    "sentiment_summary": "(none)",
-                },
-            )
-            brief = None
-            raw_output: str | None = None
-            for _attempt in range(3):
-                gateway_result = gateway.invoke(
-                    ModelRequest(
-                        request_id=f"content_brief_{_attempt}",
-                        task_type="daily_brief",
-                        prompt_version=rendered.prompt_version,
-                        input_text=rendered.input_text,
-                        required_capabilities=["structured_output"],
-                    )
-                )
-                if gateway_result.response is None:
-                    continue
-                raw_output = gateway_result.response.output_text
-                parsed = parse_structured_output(
-                    gateway_result.response,
-                    target=DailyAlphaBrief,
-                )
-                if parsed.ok and parsed.parsed is not None:
-                    brief = parsed.parsed
-                    break
-            if brief is None and raw_output:
-                brief = coerce_daily_brief(
-                    raw_output, trading_day=trading_day, universe=universe
-                )
-            if brief is not None:
-                brief_data = brief.model_dump(mode="json")
-                brief_store.save_brief(brief_data, brief_id=brief_data["brief_id"])
-            else:
-                logging.getLogger(__name__).warning(
-                    "research_content: daily brief generation failed "
-                    "(no parseable model output)"
-                )
-
-            # 3. Multi-perspective research debate.
-            question = DebateQuestion(
-                question=(
-                    f"Daily research debate: what is the {trading_day} "
-                    "outlook for the paper universe?"
-                ),
-                symbol=None,
-                time_horizon="5 trading days",
-                perspectives=["technical", "fundamental", "risk", "judge"],
-            )
-            debate_result = DebateOrchestrator(gateway).debate(question)
-            if debate_result.ok and debate_result.record is not None:
-                debate_store.save_debate_record(
-                    question=debate_result.record.question.model_dump(
-                        mode="json"
-                    ),
-                    responses=[
-                        r.model_dump(mode="json")
-                        for r in debate_result.record.responses
-                    ],
-                    consensus=(
-                        debate_result.record.consensus.model_dump(mode="json")
-                        if debate_result.record.consensus
-                        else {}
-                    ),
-                )
-
-            # 4. Model evaluation against a bundled dataset.
-            try:
-                dataset = get_dataset_by_id("daily_brief_v1")
-            except KeyError:
-                dataset = None
-            if dataset is not None:
-                model_name = os.environ.get(
-                    "ALPHABRIEF_AI_MODEL_NAME", "gpt-4o-mini"
-                )
-                eval_result = ModelEvaluator(gateway).run_dataset(
-                    model_id=f"openai:{model_name}",
-                    dataset=dataset,
-                    sample_count=5,
-                )
-                eval_store.save_evaluation(
-                    model_id=eval_result.model_id,
-                    provider=eval_result.provider,
-                    task_type=eval_result.task_type,
-                    eval_dataset=eval_result.dataset_id,
-                    sample_count=eval_result.sample_count,
-                    json_valid_rate=eval_result.json_valid_rate,
-                    schema_pass_rate=eval_result.schema_pass_rate,
-                    hallucination_rate=eval_result.hallucination_rate,
-                    avg_latency_ms=eval_result.avg_latency_ms,
-                    avg_cost_estimate=eval_result.avg_cost_estimate,
-                )
-        finally:
-            macro_store.close()
-            brief_store.close()
-            debate_store.close()
-            eval_store.close()
-
-    return _handler
 
 
 def _ai_cycle_factory(
@@ -991,7 +668,6 @@ def _ai_cycle_factory(
         try:
             universe = _ai_scheduler_universe()
             _run_ai_pre_cycle_ingestion(
-                market_store=market_store,
                 news_store=news_store,
                 symbols=universe,
             )
@@ -1007,16 +683,10 @@ def _ai_cycle_factory(
                 ),
             )
             committee = _build_ai_committee()
-            broker = PaperBroker(
-                portfolio=PortfolioState(cash=Decimal("100000")),
-                router=OrderRouter(),
-                fill_simulator=FillSimulator(),
-            )
             policy = load_paper_execution_policy(
                 load_settings().execution_policy_file
             )
-            if is_ai_external_paper_enabled():
-                _assert_external_policy_matches_broker(policy)
+            _assert_external_policy_matches_broker(policy)
             risk_gate = RiskGate(
                 limits=RiskLimitConfig(
                     trading_enabled=True,
@@ -1024,18 +694,13 @@ def _ai_cycle_factory(
                     max_order_value=policy.max_order_notional,
                 )
             )
-            execution_backend = (
-                ExternalPaperExecutionBackend(
-                    _build_adapter(),
-                    max_order_value=policy.max_order_notional,
-                )
-                if is_ai_external_paper_enabled()
-                else None
+            execution_backend = ExternalPaperExecutionBackend(
+                _build_adapter(),
+                max_order_value=policy.max_order_notional,
             )
             cycle = DailyTradingCycle(
                 committee=committee,
                 risk_gate=risk_gate,
-                broker=broker,
                 store=store,
                 snapshot_loader=lambda symbol: snapshot_builder.build(symbol)
                 if symbol in universe
@@ -1045,9 +710,8 @@ def _ai_cycle_factory(
                 max_order_value=policy.max_order_notional,
             )
             cycle.run(list(universe))
-            _write_ai_cycle_result(store.get_latest_cycle())
-        except Exception as exc:
-            _write_ai_cycle_error(exc)
+        except Exception:
+            logging.getLogger(__name__).exception("ai cycle failed")
             raise
         finally:
             news_store.close()
@@ -1107,24 +771,10 @@ def run_cmd(
         else:
             db_path = Path.home() / ".alphabrief" / "data"
         ai_handler = _ai_cycle_factory(db_path=db_path)
-        content_handler = _research_content_factory(db_path=db_path)
 
         tasks = build_default_tasks(
             on_reconcile=_on_reconcile,
             on_ai_cycle=ai_handler,
-        )
-        # Register the daily research-content task (macro indicators,
-        # daily brief, debate, model evaluation) so the dashboard content
-        # pages stay populated automatically.
-        tasks.append(
-            ScheduledTask(
-                name="research_content",
-                interval_seconds=86_400.0,
-                handler=content_handler,
-                timeout_seconds=900.0,
-                max_retries=1,
-                enabled=False,
-            )
         )
         # Override the reconcile task interval if the user asked for a
         # different value. This rebuilds the list so the rest of the
@@ -1137,14 +787,14 @@ def run_cmd(
             )
             for task in tasks
         ]
-        # Activate the AI cycle and content tasks only when the feature
-        # flag is on; otherwise they stay registered-but-disabled so the
-        # operator can see them in `scheduler tasks`.
+        # Activate the AI cycle task only when the feature flag is on;
+        # otherwise it stays registered-but-disabled so the operator can
+        # see it in `scheduler tasks`.
         if is_ai_trading_enabled():
             tasks = [
                 (
                     replace(task, enabled=True)
-                    if task.name in {"ai_daily_cycle", "research_content"}
+                    if task.name == "ai_daily_cycle"
                     else task
                 )
                 for task in tasks

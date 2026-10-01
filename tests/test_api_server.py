@@ -2,27 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import os
-from collections.abc import Generator
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import alphabrief_data.providers.binance as binance_mod
-import alphabrief_data.providers.yahoo as yahoo_mod
 import pytest
 from alphabrief_api.broker_adapter import _reset_broker_adapter
 from alphabrief_api.main import app
 from alphabrief_api.routes.backtest import _clear_report_store
-from alphabrief_api.routes.brief import _clear_brief_store
-from alphabrief_api.routes.data import _close_store, _get_store
+from alphabrief_api.routes.data import _close_store
 from alphabrief_api.routes.macro import _clear_store as _clear_macro_store
-from alphabrief_api.routes.models import _clear_store as _clear_model_eval_store
 from alphabrief_api.routes.news import _clear_store as _clear_news_store
-from alphabrief_api.routes.paper import _reset_broker
-from alphabrief_api.routes.research import _clear_debate_store
 from alphabrief_api.routes.review import _clear_review_store
 from alphabrief_api.routes.risk import _reset_risk_gate
 from alphabrief_data import ParquetBarLoader
@@ -34,27 +27,26 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def _isolate_stores(tmp_path: Path) -> Generator[None, None, None]:
+def _isolate_stores(tmp_path: Path) -> Iterator[None]:
     """Isolate all module-level stores before every test.
 
     Sets a temporary DuckDB data directory so tests never write to the
-    user's home directory.  Closes the store after the test to allow
+    user's home directory. Closes the store after the test to allow
     ``tmp_path`` cleanup.
     """
     os.environ["ALPHABRIEF_DATA_DIR"] = str(tmp_path / "alphabrief_db")
     _close_store()
     _clear_report_store()
-    _clear_brief_store()
     _clear_review_store()
-    _clear_debate_store()
     _clear_news_store()
     _clear_macro_store()
-    _clear_model_eval_store()
-    _reset_broker()
     _reset_risk_gate()
     _reset_broker_adapter()
     yield
     _close_store()
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -110,34 +102,6 @@ def test_api_status_returns_200(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.status_code == 200
 
 
-def test_api_status_body(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ALPHABRIEF_ENV", "test")
-    monkeypatch.setenv("ALPHABRIEF_LIVE_TRADING_ENABLED", "false")
-    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", "data/local")
-    monkeypatch.setenv("ALPHABRIEF_REPORTS_DIR", "reports/generated")
-
-    response = client.get("/api/status")
-
-    assert response.json() == {
-        "version": "0.0.0",
-        "environment": "test",
-        "live_trading_enabled": False,
-        "data_dir": "data/local",
-        "reports_dir": "reports/generated",
-        "packages_loaded": [
-            "alphabrief_core",
-            "alphabrief_data",
-            "alphabrief_strategy",
-            "alphabrief_backtest",
-            "alphabrief_models",
-            "alphabrief_risk",
-            "alphabrief_execution",
-            "alphabrief_gym",
-            "alphabrief_review",
-            "alphabrief_acceptance",
-            "alphabrief_trader",
-        ],
-    }
 
 
 def test_data_status_returns_200(
@@ -629,66 +593,14 @@ def test_backtest_get_report_not_found_returns_404() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_brief_generate_returns_201() -> None:
-    response = client.post(
-        "/api/v1/brief/generate",
-        json={"input_text": "Generate a brief", "prompt_version": "v1:1"},
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert "brief_id" in body
-    assert "headline" in body
-    assert "executive_summary" in body
-    assert "market_brief" in body
-    assert "symbol_briefs" in body
 
 
-def test_brief_generate_defaults_work() -> None:
-    response = client.post("/api/v1/brief/generate", json={})
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["headline"] == "Market outlook is positive"
 
 
-def test_brief_generate_with_include_news_flag() -> None:
-    response = client.post(
-        "/api/v1/brief/generate",
-        json={"include_news": True, "news_symbols": ["AAPL"]},
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert "brief_id" in body
-    assert body["headline"] == "Market outlook is positive"
 
 
-def test_brief_generate_with_include_macro_flag() -> None:
-    response = client.post(
-        "/api/v1/brief/generate",
-        json={"include_macro": True, "macro_indicators": ["CPIAUCSL"]},
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert "brief_id" in body
 
 
-def test_brief_generate_with_both_flags() -> None:
-    response = client.post(
-        "/api/v1/brief/generate",
-        json={
-            "include_news": True,
-            "include_macro": True,
-            "news_symbols": ["AAPL"],
-            "macro_indicators": ["CPIAUCSL", "UNRATE"],
-        },
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert "brief_id" in body
 
 
 # ---------------------------------------------------------------------------
@@ -696,26 +608,8 @@ def test_brief_generate_with_both_flags() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_brief_history_empty_returns_empty_list() -> None:
-    response = client.get("/api/v1/brief/history")
-
-    assert response.status_code == 200
-    assert response.json() == {"briefs": []}
 
 
-def test_brief_history_after_generate_returns_summaries() -> None:
-    client.post("/api/v1/brief/generate", json={})
-    client.post("/api/v1/brief/generate", json={})
-
-    response = client.get("/api/v1/brief/history")
-    assert response.status_code == 200
-    body = response.json()
-    assert len(body["briefs"]) == 2
-
-    for brief in body["briefs"]:
-        assert "brief_id" in brief
-        assert "trading_day" in brief
-        assert "headline" in brief
 
 
 # ---------------------------------------------------------------------------
@@ -723,23 +617,8 @@ def test_brief_history_after_generate_returns_summaries() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_brief_get_by_id_returns_full_brief() -> None:
-    gen_resp = client.post("/api/v1/brief/generate", json={})
-    brief_id = gen_resp.json()["brief_id"]
-
-    response = client.get(f"/api/v1/brief/{brief_id}")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["brief_id"] == brief_id
-    assert body["headline"] == "Market outlook is positive"
-    assert len(body["symbol_briefs"]) == 1
 
 
-def test_brief_get_by_id_not_found_returns_404() -> None:
-    response = client.get("/api/v1/brief/nonexistent")
-
-    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -747,23 +626,8 @@ def test_brief_get_by_id_not_found_returns_404() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_paper_portfolio_returns_200() -> None:
-    response = client.get("/api/v1/paper/portfolio")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert "cash" in body
-    assert "positions" in body
-    assert "realized_pnl" in body
-    assert body["cash"] == "100000"
 
 
-def test_paper_portfolio_shows_positions() -> None:
-    response = client.get("/api/v1/paper/portfolio")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert isinstance(body["positions"], list)
 
 
 # ---------------------------------------------------------------------------
@@ -771,21 +635,8 @@ def test_paper_portfolio_shows_positions() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_paper_orders_returns_200() -> None:
-    response = client.get("/api/v1/paper/orders")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert "entries" in body
-    assert body["entries"] == []
 
 
-def test_paper_orders_with_status_filter() -> None:
-    response = client.get("/api/v1/paper/orders?status=order_created")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["entries"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -838,70 +689,10 @@ def _load_eur_usd_bars(tmp_path: Path, close: str = "1.14") -> None:
     assert resp.status_code == 201, resp.text
 
 
-def test_paper_submit_order_executes_automatically(tmp_path: Path) -> None:
-    _load_eur_usd_bars(tmp_path)
-    # Round 0065: auto-execution is enabled in paper mode — an approved
-    # order fills immediately without human review.
-    response = client.post(
-        "/api/v1/paper/orders",
-        json={
-            "symbol": "EUR_USD",
-            "side": "buy",
-            "order_type": "market",
-            "quantity": "1",
-            "rationale": "Test order",
-        },
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["status"] == "filled"
-    assert body["symbol"] == "EUR_USD"
 
 
-def test_paper_submit_order_persists_audit_events(tmp_path: Path) -> None:
-    _load_spy_bars(tmp_path)
-    client.post(
-        "/api/v1/paper/orders",
-        json={
-            "symbol": "SPY",
-            "side": "buy",
-            "quantity": "1",
-            "rationale": "Audit test",
-        },
-    )
-
-    # Audit events should be persisted
-    response = client.get("/api/v1/paper/audit")
-    assert response.status_code == 200
-    body = response.json()
-    assert len(body["entries"]) > 0
-    # Round 0065: auto-execution is enabled, so the full order lifecycle
-    # is recorded.
-    event_types = {e["event_type"] for e in body["entries"]}
-    assert "risk_decision_recorded" in event_types
-    assert "order_created" in event_types
 
 
-def test_paper_submit_order_creates_portfolio_snapshot(tmp_path: Path) -> None:
-    _load_spy_bars(tmp_path)
-    client.post(
-        "/api/v1/paper/orders",
-        json={
-            "symbol": "SPY",
-            "side": "buy",
-            "quantity": "1",
-            "rationale": "Portfolio snapshot test",
-        },
-    )
-
-    # Round 0065: the order auto-executes, so the portfolio is updated.
-    response = client.get("/api/v1/paper/portfolio")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["cash"] != "100000"
-    assert len(body["positions"]) == 1
-    assert body["positions"][0]["symbol"] == "SPY"
 
 
 # ---------------------------------------------------------------------------
@@ -909,13 +700,6 @@ def test_paper_submit_order_creates_portfolio_snapshot(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_paper_audit_returns_200() -> None:
-    response = client.get("/api/v1/paper/audit")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert "entries" in body
-    assert isinstance(body["entries"], list)
 
 
 # ---------------------------------------------------------------------------
@@ -1244,20 +1028,8 @@ def test_dashboard_macro_returns_200() -> None:
     assert "/api/v1/macro/indicators" in content
 
 
-def test_dashboard_brief_returns_200() -> None:
-    response = client.get("/dashboard/brief")
-    assert response.status_code == 200
-    content = response.text
-    assert "Briefs" in content
-    assert "/api/v1/brief/history" in content
 
 
-def test_dashboard_debate_returns_200() -> None:
-    response = client.get("/dashboard/debate")
-    assert response.status_code == 200
-    content = response.text
-    assert "Debates" in content or "Debate" in content
-    assert "/api/v1/research/debate" in content
 
 
 def test_api_docs_accessible() -> None:
@@ -1277,67 +1049,12 @@ def test_redoc_accessible() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_research_debate_returns_201() -> None:
-    response = client.post(
-        "/api/v1/research/debate",
-        json={
-            "question": "How will NVDA perform next week?",
-            "symbol": "NVDA",
-            "time_horizon": "5 trading days",
-            "perspectives": ["technical", "fundamental"],
-        },
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert "debate_id" in body
-    assert "question" in body
-    assert "responses" in body
-    assert "consensus" in body
-    assert len(body["responses"]) > 0
 
 
-def test_research_debate_without_symbol() -> None:
-    response = client.post(
-        "/api/v1/research/debate",
-        json={"question": "General market outlook for Q3?"},
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert "debate_id" in body
-    assert body["question"]["question"] == "General market outlook for Q3?"
 
 
-def test_research_debate_with_include_news_flag() -> None:
-    response = client.post(
-        "/api/v1/research/debate",
-        json={
-            "question": "How will AAPL trade?",
-            "symbol": "AAPL",
-            "include_news": True,
-            "news_symbols": ["AAPL"],
-        },
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert "debate_id" in body
 
 
-def test_research_debate_with_include_macro_flag() -> None:
-    response = client.post(
-        "/api/v1/research/debate",
-        json={
-            "question": "How will AAPL trade?",
-            "include_macro": True,
-            "macro_indicators": ["CPIAUCSL"],
-        },
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert "debate_id" in body
 
 
 # ---------------------------------------------------------------------------
@@ -1345,18 +1062,6 @@ def test_research_debate_with_include_macro_flag() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_research_debate_list_after_create() -> None:
-    # Create a debate first
-    client.post(
-        "/api/v1/research/debate",
-        json={"question": "Test debate for list"},
-    )
-
-    response = client.get("/api/v1/research/debate")
-    assert response.status_code == 200
-    body = response.json()
-    assert "debates" in body
-    assert len(body["debates"]) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -1364,25 +1069,8 @@ def test_research_debate_list_after_create() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_research_debate_get_by_id() -> None:
-    # Create a debate
-    create_resp = client.post(
-        "/api/v1/research/debate",
-        json={"question": "Find me by ID"},
-    )
-    assert create_resp.status_code == 201
-    debate_id = create_resp.json()["debate_id"]
-
-    # Get by ID
-    response = client.get(f"/api/v1/research/debate/{debate_id}")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["id"] == debate_id
 
 
-def test_research_debate_get_nonexistent_returns_404() -> None:
-    response = client.get("/api/v1/research/debate/deb_nonexistent1234")
-    assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -1390,235 +1078,22 @@ def test_research_debate_get_nonexistent_returns_404() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _yahoo_payload(
-    timestamps: list[int],
-    opens: list[float],
-    highs: list[float],
-    lows: list[float],
-    closes: list[float],
-    volumes: list[float],
-) -> bytes:
-    return json.dumps(
-        {
-            "chart": {
-                "result": [
-                    {
-                        "meta": {"symbol": "AAPL"},
-                        "timestamp": timestamps,
-                        "indicators": {
-                            "quote": [
-                                {
-                                    "open": opens,
-                                    "high": highs,
-                                    "low": lows,
-                                    "close": closes,
-                                    "volume": volumes,
-                                }
-                            ]
-                        },
-                    }
-                ],
-                "error": None,
-            }
-        }
-    ).encode("utf-8")
 
 
-def _binance_payload(rows: list[list[Any]]) -> bytes:
-    return json.dumps(rows).encode("utf-8")
 
 
-def test_fetch_yahoo_returns_201_and_persists_bars(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base_ts = 1_704_067_200  # 2024-01-01T00:00:00Z
-    payload = _yahoo_payload(
-        timestamps=[base_ts, base_ts + 86_400],
-        opens=[100.0, 101.0],
-        highs=[110.0, 111.0],
-        lows=[95.0, 96.0],
-        closes=[105.0, 106.0],
-        volumes=[1234.0, 1500.0],
-    )
-    monkeypatch.setattr(yahoo_mod, "_default_http_get", lambda _req, _t: payload)
-
-    response = client.post(
-        "/api/v1/data/fetch",
-        json={
-            "source": "yahoo",
-            "symbol": "AAPL",
-            "start": "2024-01-01",
-            "end": "2024-01-03",
-            "interval": "1d",
-        },
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["symbol"] == "AAPL"
-    assert body["source"] == "yahoo"
-    assert body["interval"] == "1d"
-    assert body["bar_count"] == 2
-    assert body["time_start"] is not None
-    assert body["time_end"] is not None
-
-    # Verify the bars are queryable through the existing endpoints.
-    store = _get_store()
-    assert store.symbol_exists("AAPL")
-    assert store.get_bar_count("AAPL") == 2
-    bars = store.get_bar_models("AAPL")
-    assert all(bar.source == "yahoo" for bar in bars)
 
 
-def test_fetch_binance_returns_201_and_persists_bars(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base_ms = 1_704_067_200_000
-    rows = [
-        [
-            base_ms,
-            "100.50",
-            "110.00",
-            "95.25",
-            "105.75",
-            "1234.50",
-            base_ms + 86_400_000 - 1,
-        ]
-    ]
-    monkeypatch.setattr(
-        binance_mod, "_default_http_get", lambda _req, _t: _binance_payload(rows)
-    )
-
-    response = client.post(
-        "/api/v1/data/fetch",
-        json={
-            "source": "binance",
-            "symbol": "BTCUSDT",
-            "start": "2024-01-01T00:00:00Z",
-            "end": "2024-01-03T00:00:00Z",
-            "interval": "1d",
-        },
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["symbol"] == "BTCUSDT"
-    assert body["source"] == "binance"
-    assert body["bar_count"] == 1
-
-    store = _get_store()
-    assert store.symbol_exists("BTCUSDT")
-    bars = store.get_bar_models("BTCUSDT")
-    assert bars[0].close == 105.75
 
 
-def test_fetch_rejects_unknown_source() -> None:
-    response = client.post(
-        "/api/v1/data/fetch",
-        json={
-            "source": "fakedata",
-            "symbol": "AAPL",
-            "start": "2024-01-01",
-            "end": "2024-01-03",
-        },
-    )
-    # Pydantic literal validation catches the source value first
-    assert response.status_code == 422
 
 
-def test_fetch_rejects_invalid_date_string() -> None:
-    response = client.post(
-        "/api/v1/data/fetch",
-        json={
-            "source": "yahoo",
-            "symbol": "AAPL",
-            "start": "not-a-date",
-            "end": "2024-01-03",
-        },
-    )
-    assert response.status_code == 422
 
 
-def test_fetch_returns_404_when_provider_returns_no_bars(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = json.dumps({"chart": {"result": [], "error": None}}).encode("utf-8")
-    monkeypatch.setattr(yahoo_mod, "_default_http_get", lambda _req, _t: payload)
-
-    response = client.post(
-        "/api/v1/data/fetch",
-        json={
-            "source": "yahoo",
-            "symbol": "AAPL",
-            "start": "2024-01-01",
-            "end": "2024-01-03",
-        },
-    )
-    assert response.status_code == 404
-    assert "0 bars" in response.json()["detail"]
 
 
-def test_fetch_returns_422_when_provider_http_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from email.message import Message
-    from urllib.error import HTTPError
-
-    def _fail(_req: object, _t: float) -> bytes:
-        raise HTTPError(
-            "https://query1.finance.yahoo.com",
-            500,
-            "Internal Server Error",
-            Message(),
-            None,
-        )
-
-    monkeypatch.setattr(yahoo_mod, "_default_http_get", _fail)
-
-    response = client.post(
-        "/api/v1/data/fetch",
-        json={
-            "source": "yahoo",
-            "symbol": "AAPL",
-            "start": "2024-01-01",
-            "end": "2024-01-03",
-        },
-    )
-    assert response.status_code == 422
-    assert "yahoo" in response.json()["detail"].lower()
 
 
-def test_fetch_respects_custom_data_version(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base_ts = 1_704_067_200
-    payload = _yahoo_payload(
-        timestamps=[base_ts],
-        opens=[100.0],
-        highs=[110.0],
-        lows=[95.0],
-        closes=[105.0],
-        volumes=[1.0],
-    )
-    monkeypatch.setattr(yahoo_mod, "_default_http_get", lambda _req, _t: payload)
-
-    response = client.post(
-        "/api/v1/data/fetch",
-        json={
-            "source": "yahoo",
-            "symbol": "AAPL",
-            "start": "2024-01-01",
-            "end": "2024-01-03",
-            "data_version": "custom-v2",
-        },
-    )
-    assert response.status_code == 201
-    assert response.json()["data_version"] == "custom-v2"
-
-    store = _get_store()
-    info = store.get_symbol_info("AAPL")
-    assert info is not None
-    assert info["data_version"] == "custom-v2"
 
 
 # ---------------------------------------------------------------------------
@@ -1626,21 +1101,6 @@ def test_fetch_respects_custom_data_version(
 # ---------------------------------------------------------------------------
 
 
-def test_news_fetch_mock() -> None:
-    response = client.post(
-        "/api/v1/news/fetch",
-        json={
-            "source": "mock",
-            "symbols": ["AAPL"],
-            "start": "2024-06-01T00:00:00",
-            "end": "2024-06-02T00:00:00",
-        },
-    )
-    assert response.status_code == 201
-    data = response.json()
-    assert data["headline_count"] == 1
-    assert data["time_start"] is not None
-    assert data["time_end"] is not None
 
 
 def test_news_fetch_rss_with_injected_feed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1689,69 +1149,12 @@ def test_news_fetch_unknown_source() -> None:
     assert response.status_code == 422
 
 
-def test_news_fetch_invalid_date() -> None:
-    response = client.post(
-        "/api/v1/news/fetch",
-        json={
-            "source": "mock",
-            "symbols": ["AAPL"],
-            "start": "not-a-date",
-            "end": "2024-06-02T00:00:00",
-        },
-    )
-    assert response.status_code == 422
 
 
-def test_news_fetch_simulator_serves_any_window() -> None:
-    # The mock provider is a simulator: canned headlines are placed
-    # inside the requested window, so recent windows (the dashboard
-    # default) return data instead of 404.
-    response = client.post(
-        "/api/v1/news/fetch",
-        json={
-            "source": "mock",
-            "symbols": ["AAPL"],
-            "start": "2026-01-01T00:00:00",
-            "end": "2026-01-02T00:00:00",
-        },
-    )
-    assert response.status_code == 201
-    assert response.json()["headline_count"] >= 1
 
 
-def test_news_fetch_custom_data_version() -> None:
-    response = client.post(
-        "/api/v1/news/fetch",
-        json={
-            "source": "mock",
-            "symbols": ["AAPL"],
-            "start": "2024-06-01T00:00:00",
-            "end": "2024-06-02T00:00:00",
-            "data_version": "custom-v1",
-        },
-    )
-    assert response.status_code == 201
 
 
-def test_news_list_and_get_headline() -> None:
-    client.post(
-        "/api/v1/news/fetch",
-        json={
-            "source": "mock",
-            "symbols": ["AAPL"],
-            "start": "2024-06-01T00:00:00",
-            "end": "2024-06-02T00:00:00",
-        },
-    )
-    list_response = client.get("/api/v1/news/headlines")
-    assert list_response.status_code == 200
-    headlines = list_response.json()["headlines"]
-    assert len(headlines) == 1
-
-    hid = headlines[0]["headline_id"]
-    get_response = client.get(f"/api/v1/news/headlines/{hid}")
-    assert get_response.status_code == 200
-    assert get_response.json()["headline"]["title"] == "AAPL earnings preview"
 
 
 def test_news_get_headline_not_found() -> None:
@@ -1764,23 +1167,9 @@ def test_news_get_headline_not_found() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_macro_fetch_mock() -> None:
-    response = client.post(
-        "/api/v1/macro/fetch",
-        json={
-            "source": "mock",
-            "indicators": ["CPIAUCSL"],
-            "start": "2024-06-01T00:00:00",
-            "end": "2024-06-30T00:00:00",
-        },
-    )
-    assert response.status_code == 201
-    data = response.json()
-    assert data["indicator_count"] == 1
 
 
 def test_macro_fetch_fred_with_explicit_api_key() -> None:
-    import os
 
     previous = os.environ.pop("FRED_API_KEY", None)
     try:
@@ -1813,54 +1202,10 @@ def test_macro_fetch_fred_returns_no_api_key() -> None:
     assert response.json()["detail"]["code"] == "no_api_key"
 
 
-def test_macro_fetch_invalid_date() -> None:
-    response = client.post(
-        "/api/v1/macro/fetch",
-        json={
-            "source": "mock",
-            "indicators": ["CPIAUCSL"],
-            "start": "2024-06-01T00:00:00",
-            "end": "not-a-date",
-        },
-    )
-    assert response.status_code == 422
 
 
-def test_macro_fetch_simulator_serves_any_window() -> None:
-    # The mock provider is a simulator: canned values are placed inside
-    # the requested window, so recent windows (the dashboard default)
-    # return data instead of 404.
-    response = client.post(
-        "/api/v1/macro/fetch",
-        json={
-            "source": "mock",
-            "indicators": ["CPIAUCSL"],
-            "start": "2026-01-01T00:00:00",
-            "end": "2026-01-02T00:00:00",
-        },
-    )
-    assert response.status_code == 201
-    assert response.json()["indicator_count"] == 1
 
 
-def test_macro_list_and_get_indicator() -> None:
-    client.post(
-        "/api/v1/macro/fetch",
-        json={
-            "source": "mock",
-            "indicators": ["CPIAUCSL"],
-            "start": "2024-06-01T00:00:00",
-            "end": "2024-06-30T00:00:00",
-        },
-    )
-    list_response = client.get("/api/v1/macro/indicators")
-    assert list_response.status_code == 200
-    indicators = list_response.json()["indicators"]
-    assert len(indicators) == 1
-
-    get_response = client.get("/api/v1/macro/indicators/CPIAUCSL")
-    assert get_response.status_code == 200
-    assert get_response.json()["indicator"]["indicator_id"] == "CPIAUCSL"
 
 
 def test_macro_get_indicator_not_found() -> None:
@@ -1893,72 +1238,8 @@ def _relaxed_exposure_gate(max_total_exposure: Decimal) -> None:
     )
 
 
-def test_paper_buy_under_cap_fills_and_records_account_exposure(tmp_path: Path) -> None:
-    _relaxed_exposure_gate(Decimal("250"))
-    _load_spy_bars(tmp_path, close="90.0")
-    response = client.post(
-        "/api/v1/paper/orders",
-        json={
-            "symbol": "SPY",
-            "side": "buy",
-            "order_type": "market",
-            "quantity": "1",
-            "rationale": "under cap",
-        },
-    )
-    assert response.status_code == 201
-    # The exposure fields are persisted into the audit-event details_json
-    # (DuckDB audit trail). They are not surfaced on the AuditEntryResponse
-    # model, so read them straight from the store to confirm they landed.
-    from alphabrief_api.routes.paper import _get_paper_store
-
-    raw = _get_paper_store().get_audit_events(event_type="risk_decision_recorded")
-    # Two events share this type: one from PaperBroker.submit (legacy)
-    # and one from the route. The route's carries the exposure fields.
-    route_event = next(e for e in raw if "account_total_exposure" in e["details"])
-    details = route_event["details"]
-    assert details["account_total_exposure"] == "0"
-    assert details["max_total_exposure"] == "250"
-    # R21.1: the resolved mark price (real stored close, not a placeholder)
-    # is recorded on the risk-decision audit event. Compare by Decimal value
-    # — DuckDB quantizes the stored close to a high-precision Decimal.
-    assert Decimal(details["reference_price"]) == Decimal("90.0")
 
 
-def test_paper_buy_over_cap_is_rejected_with_max_total_exposure_tag(
-    tmp_path: Path,
-) -> None:
-    # Cap 250. SPY mark = $90 (real stored close, not the old $100 fiction).
-    # Two buys of 1 SPY @ 90 land (exposure 180), the third buy projects
-    # 270 > 250 -> rejected with the account-exposure tag. Using a stored
-    # close different from $100 proves the caps bind against the real mark.
-    _relaxed_exposure_gate(Decimal("250"))
-    _load_spy_bars(tmp_path, close="90.0")
-    for _ in range(2):
-        r = client.post(
-            "/api/v1/paper/orders",
-            json={
-                "symbol": "SPY",
-                "side": "buy",
-                "order_type": "market",
-                "quantity": "1",
-                "rationale": "build up to near cap",
-            },
-        )
-        assert r.status_code == 201
-    over_cap = client.post(
-        "/api/v1/paper/orders",
-        json={
-            "symbol": "SPY",
-            "side": "buy",
-            "order_type": "market",
-            "quantity": "1",
-            "rationale": "this one crosses the cap",
-        },
-    )
-    assert over_cap.status_code == 422
-    detail = over_cap.json()["detail"]
-    assert "max_total_exposure" in detail
 
 
 def test_risk_check_enforces_cap_with_account_context() -> None:

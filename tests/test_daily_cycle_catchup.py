@@ -13,12 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
+from _helpers import FakeExecutionBackend
 from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
@@ -75,21 +70,14 @@ def _build_cycle(
     window_hours: int = 24,
     submits: list[int] | None = None,
 ) -> DurableDailyCycle:
-    broker = PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
-    from alphabrief_trader.execution_backend import LocalPaperExecutionBackend
-
-    backend = LocalPaperExecutionBackend(broker)
+    backend: FakeExecutionBackend = FakeExecutionBackend()
     if submits is not None:
         from alphabrief_core import OrderIntent, RiskDecision
         from alphabrief_trader.execution_backend import ExecutionBackendResult
 
         counter = submits
 
-        class _CountingBackend(LocalPaperExecutionBackend):
+        class _CountingBackend(FakeExecutionBackend):
             def submit(
                 self,
                 intent: OrderIntent,
@@ -108,7 +96,7 @@ def _build_cycle(
                     estimated_quantity=estimated_quantity,
                 )
 
-        backend = _CountingBackend(broker)
+        backend = _CountingBackend()
     return DurableDailyCycle(
         committee=_committee(),
         risk_gate=RiskGate(
@@ -116,7 +104,6 @@ def _build_cycle(
                 trading_enabled=True, symbol_allowlist=frozenset({"SPY"})
             )
         ),
-        broker=broker,
         store=store,
         state_store=state_store,
         runtime_store=runtime_store,
