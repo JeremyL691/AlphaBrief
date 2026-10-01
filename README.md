@@ -4,7 +4,9 @@ A local-first data pipeline for market, news, and macro research. It ingests fro
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
-[![Tests: ~3k collected](https://img.shields.io/badge/tests-%7E3k%20collected-blue.svg)](#current-verified-baseline)
+[![Tests: ~3k collected](https://img.shields.io/badge/tests-%7E3k%20collected-blue.svg)](#current-status)
+
+> **Status (2026-09-30): v1.0 rebuild in progress.** An audit showed that the code has never placed an order on the OANDA practice account, and that several pieces of the execution path were never wired together. The rebuild plan is in [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md); live progress is in [docs/STATUS.md](docs/STATUS.md). The feature list below describes the code's design, not verified runtime behavior.
 
 ```mermaid
 flowchart LR
@@ -45,43 +47,21 @@ Market-data scripts kept annoying me in the same way: every provider had its own
 - **News provenance.** `news/ingestion.py` persists `item_id, source, canonical_url, published_at, fetched_at, content_hash, summary, fetch_outcome, correlation_id, metadata_only` with `INSERT OR IGNORE`, keeps copyright-safe retention (metadata-only sources never store full text), and sanitizes content before research or risk sees it. Daily regime and sentiment snapshots are immutable and shared by research and risk.
 - **Durable cycle.** `cycle_state.py` stores `phase, phase_order, output_ids` with `ON CONFLICT DO UPDATE`; `scheduler_leader.py` uses a renewable lease so only one scheduler runs. At-most-once is enforced with idempotency keys and immediate reconciliation after every OANDA call.
 
-### Not done yet
+## Current Status
 
-- The daily cycle is wired end to end, but T7 practice runtime evidence for M15/M16 (30-day observation, weekly zero-difference invariants, fault drills) is still pending real credentials. Commands report `BLOCKED_EXTERNAL` or `WAITING_EXTERNAL` honestly.
-- The strategy DSL is a typed AST allowlist, so no arbitrary code runs; backtests reproduce with frozen params. The IS/OOS and strategy read surfaces landed in M13 and still need T7 evidence.
-- Execution is OANDA practice only. Alpaca and live paths were removed and stay removed; missing credentials fail closed, and an in-memory fill is never presented as an OANDA fill.
-- OANDA account-wide discovery is not complete (M04); current providers are not OANDA-native, so production bars still come from Yahoo/Binance/Alpha Vantage.
-- Model composition fails closed: without `OPENAI_API_KEY` or `OLLAMA_*`, `ModelGateway` refuses, and `FakeProvider` exists only in tests.
+Measured on 2026-09-30 against the real OANDA practice account and the current `main`:
 
-<details>
-<summary>Milestone contract status (M09-M17) - contracts closed, T7 evidence pending</summary>
+| Area | Verified fact |
+|---|---|
+| Orders | The practice account has never received an order from AlphaBrief (3 lifetime transactions, all account setup). |
+| Tradable universe | The account exposes 68 FX pairs. Gold, index, and oil CFDs are readable as prices but not tradable on this account, so v1.0 trades FX and uses them only as signals. |
+| Execution path | Order units, sell direction, stop-loss/take-profit, and reconciliation of open positions have known defects in the path that the scheduler actually runs. Better-designed OANDA lifecycle modules exist but are only exercised by tests. |
+| Model provider | The previously configured provider rejects application traffic. v1.0 switches to "Sign in with ChatGPT" (OpenAI's official open-source app flow), with an optional OpenAI-compatible API key as an explicit fallback. |
+| Dashboard | The served dashboard reads an in-process simulator, not the OANDA account. |
+| Tests | 3,255 passing, 41 failing, 29 errors. 21 failures are date-dependent tests; the other 49 depend on removed process documents and belong to code scheduled for deletion. Ruff and Mypy pass. |
+| Milestones M00-M17 | Earlier milestone labels such as "DONE" referred to contract code, not runtime evidence. They are not treated as completed facts. |
 
-- M09 content pipeline (DONE): deterministic news ingestion with provenance, URL canonicalization + dedup + entity linking, revision-aware macro calendar, multi-scope sentiment, untrusted sanitization, immutable snapshots.
-- M10 ModelGateway (DONE): exclusive gateway, fail-closed composition, durable call records/budgets, five-role committee, grounded proposals, bounded structured-output repair, cycle-key idempotency.
-- M11 durable cycle (DONE): persisted CAS state machine with restart-resume every phase, leader lease, single runtime truth, research/execution separation, bounded candidate selection, catch-up windows, terminal no-trade.
-- M12-M15 (DONE): read/write contracts, strategy backtest closure, dashboard redesign, engineering readiness. Frozen build is OANDA practice-only; network allowlist enforced.
-- M16 observation (DONE, evidence PENDING): Day 0 manifest, 14-kind daily chains, weekly gates, fault drills, Day 30 close.
-- M17 handoff (DONE, evidence PENDING): evidence-derived final acceptance report, fresh-install/runbook, deterministic Electron packaging, 11-gate final release (`COMPLETE_PAPER_ONLY`).
-
-</details>
-
-## Current Verified Baseline
-
-Snapshot: 2026-08-14, commit `0a1016a` (all M01-M17 closed as contracts; 30-day observation pending T7 credentials; status `IN_PROGRESS`).
-
-| Area | What exists now | Important limitation |
-|---|---|---|
-| Market data | CSV/Parquet loaders, Yahoo/Binance/Alpha Vantage providers, quality checks, features, DuckDB storage with versioned immutable bar facts | OANDA discovery not complete; providers not OANDA-native |
-| News and macro | RSS, SEC, FRED, mock/social-sentiment providers, ingestion store with provenance | Production freshness and untrusted-content defenses incomplete |
-| Models | ModelGateway, Fake/OpenAI/Ollama adapters, structured output, evaluation/router, durable call records | Production fails closed without real provider |
-| Research | Briefs, evidence objects, debate, AI committee, daily cycle reports | Cycle wired end-to-end; runtime evidence pending |
-| Strategy/backtest | Typed AST DSL, 5 strategy families with OANDA-category admission, spread/slippage/financing/margin simulation, IS/OOS walk-forward, leakage/overfitting gates | API surfaces in M13; T7 evidence pending |
-| Risk | Symbol/order/exposure/loss/drawdown/news-aware primitives | Full account+news context not yet passed to every RiskGate call |
-| Execution | In-memory paper broker (explicit local), OANDA practice adapter, reconciliation stores | OANDA lifecycle persistence and reconciliation incomplete |
-| Operations | Scheduler, heartbeats, alerts, API/CLI, 9 dashboard pages, Electron; versioned migrations, writer lease, backups | 30-day evidence and control-plane truth incomplete |
-| API/CLI contracts | 14 read domains, 7 idempotent operator writes with audit, 18 CLI groups / 57 subcommands / 86 OpenAPI endpoints / 9 dashboard routes, locked OpenAPI with CLI parity | Dashboard redesign in M14; T7 evidence pending |
-
-Local quality at baseline: **1,389 passing tests + 12 local-HTTP failures from sandbox `127.0.0.1` bind refuse**; Ruff and Mypy passed. Current `main` collects **~3,025 tests** (21 collection errors without `httpx` - needs `pip install -e '.[dev]'`).
+The v1.0 target is an unattended, practice-only AI FX trading workstation that runs for 14 real calendar days on the OANDA practice account and ships as an open-source macOS app. See [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md) for the full specification and build stages.
 
 ## Repository Layout
 
@@ -94,7 +74,7 @@ packages/
   alphabrief-data/         bars, providers, quality, features
   alphabrief-news/         news and sentiment ingestion
   alphabrief-models/       ModelGateway and model adapters
-  alphabrief-research/     briefs and debate
+  alphabrief-research/     briefs and debate (removed in the v1.0 rebuild)
   alphabrief-strategy/     strategy specifications and signals
   alphabrief-backtest/     backtesting and metrics
   alphabrief-risk/         deterministic risk gate
@@ -102,10 +82,10 @@ packages/
   alphabrief-trader/       AI committee and daily cycle
   alphabrief-gym/          training environments
   alphabrief-review/       post-trade review
-  alphabrief-acceptance/   deterministic project gates
+  alphabrief-acceptance/   deterministic project gates (removed in the v1.0 rebuild)
 electron/                  local desktop wrapper
 config/                    non-secret policy and OANDA practice config
-docs/                      authoritative development and operating documents
+docs/                      project guide, live status, and agent prompt
 tests/                     unit, integration, contract, and acceptance tests
 ```
 
@@ -126,7 +106,7 @@ ALPHABRIEF_OANDA_TOKEN=...
 ALPHABRIEF_OANDA_ACCOUNT_ID=...
 ```
 
-Follow `docs/progress.yaml` for the current milestone; do not assume all surfaces are already OANDA-only until M01 is marked complete.
+Check [docs/STATUS.md](docs/STATUS.md) for the current build stage before relying on any runtime surface.
 
 ## Common Commands
 
@@ -134,7 +114,6 @@ Follow `docs/progress.yaml` for the current milestone; do not assume all surface
 .venv/bin/alphabrief --help
 .venv/bin/alphabrief serve serve
 .venv/bin/alphabrief scheduler status
-.venv/bin/alphabrief acceptance verify --compact
 .venv/bin/python -m pytest -q
 .venv/bin/ruff check .
 .venv/bin/mypy
@@ -148,20 +127,14 @@ npm install
 npm start
 ```
 
-## Authoritative Documents
+## Project Documents
 
-Read in this order when developing:
+1. [Agent contract](AGENTS.md): rules for coding agents working in this repository
+2. [Project guide](docs/PROJECT_GUIDE.md): final product, architecture, trading-loop specification, build stages, and definition of done
+3. [Status](docs/STATUS.md): the only mutable progress record, with evidence for each completed step
+4. [Agent prompt](docs/AGENT_PROMPT.md): the prompt used to drive the rebuild
 
-1. [Agent contract](AGENTS.md)
-2. [Current progress](docs/progress.yaml)
-3. [Final product blueprint](ALPHABRIEF_PRODUCT_BLUEPRINT.md)
-4. [Machine work queue](docs/work_items.yaml)
-5. [Autonomous loop protocol](docs/autonomous_loop.md)
-6. [Current and target architecture](docs/architecture.md)
-7. [Acceptance and traceability](docs/acceptance.md)
-8. [OANDA 30-day runbook](docs/oanda_30_day_runbook.md)
-
-Old phase plans and snapshot reports were intentionally removed; git history is the archive.
+The earlier blueprint, milestone queue, acceptance matrix, and development ledger were removed on 2026-09-30; git history is the archive.
 
 ## Safety Notice
 

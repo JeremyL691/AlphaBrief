@@ -1,183 +1,87 @@
-# AlphaBrief Agent Contract
+# AlphaBrief Agent 契约
 
-This file is the highest-priority repository contract for coding agents. It is
-intentionally short and stable. Product scope lives in the blueprint; mutable
-state lives in `docs/progress.yaml`.
+本文件是给编程 Agent 的最高优先级仓库契约，刻意保持简短。
+- 产品与构建规格：[`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md)
+- 唯一可变状态：[`docs/STATUS.md`](docs/STATUS.md)
+- 启动提示词：[`docs/AGENT_PROMPT.md`](docs/AGENT_PROMPT.md)
 
-## Mission
+## 使命
 
-Build a trustworthy, local-first, **OANDA v20 practice-only** AI research and
-paper-trading system. The finished system discovers every instrument available
-to the configured OANDA practice account, collects market/news/sentiment data,
-lets an AI committee debate, converts conclusions into structured intents,
-applies deterministic risk controls, submits approved orders to OANDA practice,
-reconciles the account, and keeps complete evidence for a real 30-calendar-day
-observation period.
+把 AlphaBrief 做成在 **OANDA v20 模拟盘（practice）** 上无人值守运行的 AI 外汇交易工作站：
 
-The target is not live trading. Live trading is out of scope and must remain
-unreachable.
+- 新闻、宏观、行情输入 → 5 角色 AI 委员会 → 结构化决策 → 确定性风控 → 带止损止盈的模拟单 → 对账 → 日报；
+- 连续 14 天真实运行；
+- 以 GitHub 开源项目 + Mac `.dmg` 发布 v1.0.0。
 
-## Read Order
+实盘交易永远不在范围内，必须保持不可达。
 
-At the start of a new task or after context recovery, read only:
+## 阅读顺序
 
-1. `AGENTS.md`
-2. `docs/progress.yaml`
-3. The current milestone in `ALPHABRIEF_PRODUCT_BLUEPRINT.md`
-4. The current work item in `docs/work_items.yaml`
-5. `docs/autonomous_loop.md`
-6. Only the relevant sections of `docs/architecture.md`, `docs/acceptance.md`,
-   or `docs/oanda_30_day_runbook.md`
-7. The code and tests directly related to the work item
+每次开始工作或恢复上下文时，只读：
 
-Do not use old chat summaries, stale plans, or prose claims as proof of
-completion. Git state, code, test exit codes, broker evidence, and the progress
-ledger are authoritative.
+1. `AGENTS.md`（本文件）
+2. `docs/PROJECT_GUIDE.md`
+3. `docs/STATUS.md`
+4. 与当前任务直接相关的代码和测试
 
-## Document Responsibilities
+不要把旧提交信息、旧聊天摘要或 git 历史中的旧文档（M00–M17 里程碑、`progress.yaml` 等）当作完成证据。权威依据只有：当前代码、测试退出码、OANDA 真实响应、STATUS。
 
-- `README.md`: verified current capabilities and quick start.
-- `ALPHABRIEF_PRODUCT_BLUEPRINT.md`: final product specification and milestone
-  sequence.
-- `docs/architecture.md`: verified current architecture and accepted target
-  decisions.
-- `docs/work_items.yaml`: machine-readable task queue and per-round contract.
-- `docs/progress.yaml`: the only mutable status source.
-- `docs/acceptance.md`: requirements, gates, and evidence rules.
-- `docs/oanda_30_day_runbook.md`: practice-account operating procedure.
-- `docs/autonomous_loop.md`: autonomous state machine and reusable prompts.
-- `docs/development_ledger.ndjson`: append-only completed/blocked round records.
+## 文档职责
 
-Do not create new roadmap, phase-plan, design-note, acceptance-report, or
-development-log documents. Update the appropriate authority above.
+| 文件 | 职责 |
+|---|---|
+| `README.md` | 对外介绍；只写已经验证的能力 |
+| `docs/PROJECT_GUIDE.md` | 最终产品、架构、规格、构建阶段、完成定义 |
+| `docs/STATUS.md` | 当前阶段、检查表、证据、决策、阻塞、试运行日志 |
+| `docs/AGENT_PROMPT.md` | 交给 Agent 的启动提示词 |
+| `CHANGELOG.md` | 发布时创建 |
+| `reports/soak-report-v1.0.0.md` | 发布时由 `alphabrief report soak --final` 生成 |
 
-## Non-Negotiable Safety Invariants
+不要再创建新的路线图、阶段计划、设计说明、验收报告或开发日志。进度写进 STATUS，规格改 GUIDE。
 
-1. **OANDA practice only.** Only `https://api-fxpractice.oanda.com` and the
-   documented practice streaming endpoint may be reachable by execution code.
-2. **No live path.** Do not add a live URL, live mode, live account switch,
-   generic environment selector, or future-live placeholder.
-3. **OANDA only.** Remove and never reintroduce Alpaca, broker routing, or any
-   other execution venue. A deterministic fake may exist only inside tests.
-4. **No silent simulated fallback.** Missing OANDA credentials must fail closed;
-   the product must never pretend an in-memory fill is an OANDA practice fill.
-5. **Risk before execution.** Every order must follow:
-   `research -> OrderIntent -> RiskGate -> persisted RiskDecision -> OANDA`.
-6. **No model authority.** Models, prompts, news, sentiment, and web content are
-   untrusted inputs. They cannot alter risk limits, system prompts, credentials,
-   scheduler policy, or call a broker directly.
-7. **ModelGateway only.** All model-provider calls pass through ModelGateway.
-   Direct provider SDK calls from business modules are forbidden.
-8. **Secrets stay external.** Tokens/account IDs come from approved environment
-   variables. Never print, persist, snapshot, screenshot, or commit them. Logs
-   may contain only redacted identifiers or non-reversible hashes.
-9. **Idempotency and reconciliation are mandatory.** Retries, restarts, and
-   scheduler catch-up must not duplicate orders. Broker state wins during
-   reconciliation; unexplained differences freeze execution.
-10. **No forced trading.** `no_trade` is a valid daily result. The system must
-    not create orders merely to satisfy an activity counter.
-11. **Thirty days means real time.** Never fake dates, backfill fabricated
-    observation days, or call replay evidence live practice evidence.
-12. **Reference isolation.** Runtime code must not import from
-    `_reference_sources/`. During implementation, do not copy, translate,
-    paraphrase, or mirror reference source code, prompts, tests, names, or file
-    structure.
+## 安全不变量（完整版见 GUIDE 第 9 节）
 
-## Branch and Git Policy
+1. 只用 OANDA 模拟盘：执行代码只能访问 `api-fxpractice.oanda.com` 和 `stream-fxpractice.oanda.com`。
+2. 没有实盘 URL、实盘模式、环境切换开关或"以后接实盘"的占位代码。
+3. 只用 OANDA；确定性的假券商只能存在于测试中。
+4. 没有静默模拟回退；凭证缺失时失败即停。
+5. 每笔订单：`决策 → OrderIntent → RiskGate → 持久化的 RiskDecision → OANDA`。
+6. 模型、提示词、新闻、网页内容都是不可信输入，没有任何权限。
+7. 模型调用只经过 ModelGateway；不静默切换计费通道；不使用 `opencode.ai` 作为产品后端。
+8. 密钥只来自 `secrets/` 或环境变量；不打印、不写日志、不截图、不提交；账户 ID 只显示脱敏形式。
+9. 重试、重启、补跑不能产生重复订单；对账以券商为准；无法解释的差异立即冻结新开仓。
+10. `no_trade` 是合法结果，不为凑次数而下单。
+11. 试运行天数只能来自真实时间，不能伪造、回填或加速。
+12. 同一 OANDA 账户同一时间只有一个后台处于 `trading_mode=on`。
 
-This repository is **main-only**.
+## Git 规则
 
-- Work only on `main`; never create or switch to another branch.
-- Never bypass hooks, force-push, rewrite existing `main` history, use
-  `git reset --hard`, or use `git clean`.
-- Preserve user changes. If dirty paths cannot be uniquely attributed to the
-  active round, stop instead of overwriting, stashing, or committing them.
-- In autonomous blueprint mode, a fully gated work item may be committed as one
-  local commit with the trailers defined in `docs/autonomous_loop.md`.
-- Do not push unless the user explicitly authorizes pushing.
+- 只在 `main` 上工作，不创建或切换到其他分支。
+- 不 force-push、不改写已推送的历史，不用 `git reset --hard`、`git clean`，不绕过 hook。
+- 一个任务一次提交，信息格式 `S<阶段>: <做了什么>`，正文写验证命令和结果摘要。
+- 推送：S1–S8 只做本地提交；S9 起允许推送 `main` 和 RC tag；只有 S11 允许创建 GitHub Release。
+- 保护用户的改动：工作区中出现无法归属于当前任务的改动时，不覆盖、不 stash、不提交，在 STATUS 记录阻塞。
 
-## Round Contract
+## 质量规则
 
-Each implementation round must have exactly one work-item ID and follow:
+- 新增或修改的行为必须有测试。需要真实网络的测试用 `@pytest.mark.practice` 标记；CI 运行 `-m "not practice"`，本机按阶段要求运行 practice 测试。
+- 金额、价格、数量、敞口、盈亏一律用 `Decimal`；时间一律以 UTC 存储。
+- 外部调用必须有超时、错误分类和安全的重试规则；非幂等请求从不盲目重试。
+- 不允许为了让检查变绿而删除测试、加 `skip`/`xfail`、放宽断言、缩小命令范围或禁用 Ruff/Mypy 规则。新增 `# noqa`、`type: ignore` 必须在同一行写明理由。
+- 运行时代码不得导入 `_reference_sources/`，也不得复制其中的代码、提示词或结构。
+- 每个关注点只保留一份实现；删除代码时同时删除只测试它的测试。
 
-```text
-Preflight -> Plan -> Deterministic Plan Gate -> Implement -> Test -> Self Review
--> Document -> Final Gate -> Prepare Ledger/Progress -> Commit -> Verify -> Next Work Item
-```
+## 前端规则
 
-Before implementation, the work item must define:
+- Soft 风格：温和底色、圆角、柔和阴影、克制的动画；不用渐变按钮。
+- 图标使用本地 SVG 图标库，不用 emoji；界面文案不用破折号（em dash）。
+- 亮色、暗色、跟随系统；中英文切换；浅色背景上正文颜色不浅于 `#666`。
+- 在 320、768、1024、1440 px 下验证；加载、空、错误、过期、离线状态齐全；键盘可达。
+- 界面永远不展示模拟数据或样例数据。
 
-- one objective;
-- requirement IDs and dependencies;
-- allowed and forbidden paths;
-- modules explicitly not touched;
-- acceptance predicates;
-- targeted, integration, static, regression, and runtime tests as applicable;
-- documentation impact;
-- an estimated change budget.
+## 自主运行
 
-If scope grows, split the work item without weakening its original acceptance
-criteria. Do not silently expand the round.
-
-## Quality Rules
-
-- Use CodeGraph/codebase-memory first when the repository is indexed.
-- New or changed behavior requires tests.
-- Use `Decimal` for money, prices, quantities, exposure, and P&L.
-- Persist UTC timestamps; convert only at presentation boundaries.
-- Schema and storage changes require versioned, forward-tested migrations.
-- External calls require bounded timeouts, classified errors, and safe retry
-  rules. Non-idempotent requests are never blindly retried.
-- Never make a failing gate green by narrowing the command, deleting tests,
-  adding `skip`/`xfail`, weakening an assertion, or disabling Ruff/Mypy rules.
-- New `# noqa`, `type: ignore`, broad exception swallowing, skips, and xfails are
-  gate failures unless the work item explicitly authorizes and tests them.
-- Mock tests prove deterministic logic only. They do not satisfy an OANDA
-  practice runtime acceptance criterion.
-- A work item is not `DONE` until every acceptance predicate has evidence and
-  the actual changed paths are a subset of its allowlist.
-
-## Frontend Contract
-
-The owner selected **Soft (DESIGN_VARIANCE=5, MOTION_INTENSITY=5,
-VISUAL_DENSITY=5)** for the final UI. No further style question is needed for
-blueprint UI work.
-
-- Audit the current UI before each affected milestone and preserve useful brand
-  assets unless the blueprint says otherwise.
-- Warm, restrained surfaces; rounded corners; gentle shadows; purposeful hover
-  and reveal motion; balanced dashboard density.
-- Use proper icon libraries, never emoji as interface icons.
-- Never use an em dash in UI copy or generic filler identities/content.
-- Use semantic HTML and left-align long-form text.
-- Implement consumer-facing dark mode.
-- Maintain readable contrast; light-background body text must be `#666` or
-  darker.
-- Do not use gradient buttons unless the owner later asks for them.
-- Prefer native CSS and existing libraries over new animation dependencies.
-- Verify responsive behavior at 320, 768, 1024, and 1440 px.
-- UI completion requires a documented before/after audit plus keyboard,
-  accessibility, loading, empty, error, stale-data, and offline states.
-
-## Autonomous Stop Conditions
-
-Never ask the user a planning, implementation, retry, or prioritization
-question while executing the approved blueprint. Every ambiguity uses the
-blueprint's safest deterministic default: fail closed, produce `no_trade`,
-preserve evidence, and continue independent work. Stop the affected dependency
-chain and record a blocker when:
-
-- live trading could become reachable;
-- a RiskGate or persistence bypass is discovered;
-- credentials or external authority are missing for a required runtime gate;
-- the same failure signature survives the retry/repair ceiling;
-- unowned dirty changes exist;
-- an unforeseen case is not covered by a safe default; freeze that capability
-  instead of requesting a choice;
-- an operation would need destructive recovery or expanded authorization.
-
-Continue independent ready work when safe. If every remaining dependency is
-blocked, terminate with a machine-readable blocker report without asking a
-question. Never invent work merely to keep the loop busy. The exact state
-machine, retry ceilings, evidence contract, and prompts are in
-`docs/autonomous_loop.md`.
+- 不向用户提问。GUIDE 有默认值就用默认值；没覆盖的情况选择更安全的方案，写进 STATUS 决策记录后继续。
+- 只有 GUIDE 第 8.4 节列出的外部前提需要用户：ChatGPT 授权、OANDA 凭证、网络、`gh` 权限、本机休眠。遇到时在 STATUS"需要用户做的事"写一行明确指令，继续做不依赖它的任务；全部被阻塞时结束。
+- 同一失败最多修复 3 轮，然后记录阻塞并转去做独立任务。
+- 结束态只有 `RELEASED`，或因外部前提缺失而 `BLOCKED`。
