@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,13 @@ from alphabrief_models.gateway import (
     ModelGateway,
     ProviderAdapter,
 )
+from alphabrief_models.model_budget import (
+    CHATGPT_PLAN_CHANNEL,
+    DEFAULT_CHATGPT_DAILY_CALLS,
+    DEFAULT_FALLBACK_DAILY_USD,
+    OPENAI_COMPATIBLE_CHANNEL,
+    ModelBudgetPolicy,
+)
 from alphabrief_models.openai_compatible import (
     FallbackConfig,
     OpenAiCompatibleAdapter,
@@ -49,6 +57,18 @@ class ModelSettings:
 
     fallback_enabled: bool = False
     primary_model: str | None = None
+    #: PROJECT_GUIDE 5.13 daily limits, configurable per installation.
+    daily_call_limit: int = DEFAULT_CHATGPT_DAILY_CALLS
+    daily_cost_limit_usd: Decimal = DEFAULT_FALLBACK_DAILY_USD
+
+    def budget_policy(self) -> ModelBudgetPolicy:
+        """The per-channel daily budget policy this configuration implies."""
+        return ModelBudgetPolicy(
+            daily_call_limits={CHATGPT_PLAN_CHANNEL: self.daily_call_limit},
+            daily_cost_limits={
+                OPENAI_COMPATIBLE_CHANNEL: self.daily_cost_limit_usd
+            },
+        )
 
 
 def load_model_settings(path: Path | None = None) -> ModelSettings:
@@ -77,9 +97,33 @@ def load_model_settings(path: Path | None = None) -> ModelSettings:
     primary_model = section.get("primary_model")
     if primary_model is not None and not isinstance(primary_model, str):
         raise ValueError(f"{config_path}: model.primary_model must be a string")
+    daily_call_limit = section.get(
+        "daily_call_limit", DEFAULT_CHATGPT_DAILY_CALLS
+    )
+    if isinstance(daily_call_limit, bool) or not isinstance(daily_call_limit, int):
+        raise ValueError(
+            f"{config_path}: model.daily_call_limit must be an integer"
+        )
+    if daily_call_limit <= 0:
+        raise ValueError(f"{config_path}: model.daily_call_limit must be positive")
+    raw_cost_limit = section.get(
+        "daily_cost_limit_usd", str(DEFAULT_FALLBACK_DAILY_USD)
+    )
+    try:
+        daily_cost_limit = Decimal(str(raw_cost_limit))
+    except (ArithmeticError, ValueError) as exc:
+        raise ValueError(
+            f"{config_path}: model.daily_cost_limit_usd must be a decimal"
+        ) from exc
+    if daily_cost_limit <= 0:
+        raise ValueError(
+            f"{config_path}: model.daily_cost_limit_usd must be positive"
+        )
     return ModelSettings(
         fallback_enabled=fallback,
         primary_model=primary_model,
+        daily_call_limit=daily_call_limit,
+        daily_cost_limit_usd=daily_cost_limit,
     )
 
 

@@ -11,6 +11,10 @@ model:
   fallback_enabled: false
   # Leave empty to use the default model discovered from the account.
   primary_model: ""
+  # Daily budget (PROJECT_GUIDE 5.13). The subscription channel is capped
+  # by call count, the optional paid fallback by estimated USD cost.
+  daily_call_limit: 150
+  daily_cost_limit_usd: "2.00"
 
 trading:
   # off | on. `off` runs the whole cycle but stops before submitting.
