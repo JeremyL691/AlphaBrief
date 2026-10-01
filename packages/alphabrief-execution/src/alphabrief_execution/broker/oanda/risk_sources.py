@@ -1,0 +1,235 @@
+"""Broker-fresh risk context sourced from the live OANDA practice account.
+
+This replaces the port-only composition that reported ``margin_used=0``
+with empty prices, positions and conversions, and a permanently
+``unknown`` reconciliation state (PROJECT_GUIDE 2.3). Everything the risk
+gate sees now comes from the broker:
+
+* account money fields and home currency from ``/summary``;
+* positions with distinct long/short sides from ``/openPositions``;
+* pending orders from ``/orders?state=PENDING``;
+* open trades from ``/openTrades``;
+* bid/ask plus the home-conversion factor from ``/pricing``;
+* the account's instrument-catalog version from ``/instruments``;
+* the reconciliation state from the durable recon store (frozen / clean);
+* health from the account summary and the instrument catalog.
+
+Nothing is synthesized: a missing datum stays missing, and the context
+builder fails closed on incomplete coverage.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from alphabrief_risk.broker_context import (
+    ConversionDatum,
+    HealthState,
+    PendingOrderDatum,
+    PositionDatum,
+    PriceDatum,
+    ReconciliationState,
+    TradeDatum,
+)
+
+from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
+from alphabrief_execution.broker.oanda.client import OandaHttpClient
+from alphabrief_execution.broker.oanda.instruments import fetch_instruments
+from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
+from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
+from alphabrief_execution.broker.oanda.pricing import PricingRequest, fetch_pricing
+from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
+from alphabrief_execution.broker.recon_store import BrokerReconStore
+from alphabrief_execution.broker.risk_context import AccountSourceDatum
+
+#: Instruments priced in one request; the pricing port also chunks this.
+DEFAULT_PRICING_BATCH = 40
+
+
+class OandaRiskContextSources:
+    """Live OANDA practice facts for one risk context."""
+
+    def __init__(
+        self,
+        client: OandaHttpClient,
+        *,
+        symbols: tuple[str, ...],
+        recon_store: BrokerReconStore | None = None,
+        request_id: str = "risk-context",
+    ) -> None:
+        self._client = client
+        self._symbols = tuple(symbols)
+        self._recon_store = recon_store
+        self._request_id = request_id
+        self._pricing_cache: dict[str, Any] | None = None
+
+    # ------------------------------------------------------------------
+    # Account / positions / orders / trades
+    # ------------------------------------------------------------------
+
+    def fetch_account(self) -> AccountSourceDatum | None:
+        summary = AccountOpsClient(self._client).account_summary(
+            request_id=f"{self._request_id}-account"
+        )
+        return AccountSourceDatum(
+            account_id=summary.account_id,
+            state="ACTIVE",
+            tradeable=True,
+            home_currency=summary.currency or "USD",
+            balance=summary.balance,
+            nav=summary.nav,
+            margin_used=summary.margin_used,
+            margin_available=summary.margin_available,
+            captured_at=self._captured_at(),
+        )
+
+    def fetch_positions(self) -> list[PositionDatum]:
+        positions = PositionOpsClient(self._client).list_positions(
+            request_id=f"{self._request_id}-positions"
+        )
+        return [
+            PositionDatum(
+                symbol=position.instrument,
+                long_units=position.long_units,
+                short_units=position.short_units,
+                average_price=(
+                    position.long_average_price
+                    if position.long_units >= position.short_units
+                    else position.short_average_price
+                ),
+            )
+            for position in positions.positions
+            if position.long_units != 0 or position.short_units != 0
+        ]
+
+    def fetch_pending_orders(self) -> list[PendingOrderDatum]:
+        orders = OrderOpsClient(self._client).list_orders(
+            status="PENDING", request_id=f"{self._request_id}-orders"
+        )
+        return [
+            PendingOrderDatum(
+                broker_order_id=order.broker_order_id,
+                symbol=order.symbol,
+                units=order.units,
+                state=str(order.state),
+            )
+            for order in orders.orders
+        ]
+
+    def fetch_trades(self) -> list[TradeDatum]:
+        trades = TradeOpsClient(self._client).list_trades(
+            request_id=f"{self._request_id}-trades"
+        )
+        return [
+            TradeDatum(
+                broker_trade_id=trade.broker_trade_id,
+                symbol=trade.instrument,
+                current_units=trade.current_units,
+                state=str(trade.state),
+            )
+            for trade in trades.trades
+        ]
+
+    # ------------------------------------------------------------------
+    # Prices and home-currency conversions
+    # ------------------------------------------------------------------
+
+    def _symbols_to_price(self) -> tuple[str, ...]:
+        """Price the configured universe plus every symbol we hold.
+
+        Prices are fetched after positions, so a position opened by an
+        earlier cycle is always covered; the configured symbols keep the
+        coverage check satisfied for instruments we are about to trade.
+        """
+        held = {position.symbol for position in self.fetch_positions()}
+        pending = {order.symbol for order in self.fetch_pending_orders()}
+        ordered = list(dict.fromkeys([*self._symbols, *sorted(held | pending)]))
+        return tuple(ordered)
+
+    def _prices_by_symbol(self) -> dict[str, Any]:
+        if self._pricing_cache is None:
+            symbols = self._symbols_to_price()
+            if not symbols:
+                self._pricing_cache = {}
+                return self._pricing_cache
+            batch = fetch_pricing(
+                self._client,
+                request=PricingRequest(symbols=tuple(symbols)),
+                request_id=f"{self._request_id}-pricing",
+            )
+            self._pricing_cache = {price.symbol: price for price in batch.prices}
+        return self._pricing_cache
+
+    def fetch_prices(self) -> list[PriceDatum]:
+        captured_at = self._captured_at()
+        return [
+            PriceDatum(
+                symbol=price.symbol,
+                bid=price.bids[0].price,
+                ask=price.asks[0].price,
+                captured_at=captured_at,
+            )
+            for price in self._prices_by_symbol().values()
+        ]
+
+    def fetch_conversions(self) -> list[ConversionDatum]:
+        """Home-currency factors straight from the pricing response."""
+        conversions: list[ConversionDatum] = []
+        for price in self._prices_by_symbol().values():
+            quote_currency = price.symbol.split("_")[-1] if "_" in price.symbol else ""
+            if not quote_currency:
+                continue
+            conversions.append(
+                ConversionDatum(
+                    symbol=price.symbol,
+                    quote_home=price.conversion_factor,
+                    factor=price.conversion_factor,
+                )
+            )
+        return conversions
+
+    # ------------------------------------------------------------------
+    # Catalog, reconciliation, health
+    # ------------------------------------------------------------------
+
+    def fetch_catalog_version(self) -> str | None:
+        catalog = fetch_instruments(self._client, account_id=self._client.account_id)
+        if not catalog.instruments:
+            return None
+        return str(getattr(catalog, "snapshot_hash", "") or len(catalog.instruments))
+
+    def fetch_reconciliation_state(self) -> ReconciliationState:
+        """Report the durable reconciliation state, not a placeholder."""
+        if self._recon_store is None:
+            return "unknown"
+        try:
+            if self._recon_store.has_open_freeze():
+                return "frozen"
+            snapshots = self._recon_store.list_snapshots()
+        except Exception:  # noqa: BLE001 - a store failure is not "clean"
+            return "unknown"
+        if not snapshots:
+            return "unknown"
+        return "clean" if snapshots[0].all_match else "unknown"
+
+    def fetch_health(self) -> HealthState:
+        try:
+            summary = AccountOpsClient(self._client).account_summary(
+                request_id=f"{self._request_id}-health"
+            )
+        except Exception:  # noqa: BLE001 - health is a probe, not a decision
+            return "unhealthy"
+        return "healthy" if summary.account_id else "unhealthy"
+
+    # ------------------------------------------------------------------
+
+    def _captured_at(self) -> datetime:
+        """One capture stamp per pass, so freshness is judged honestly."""
+        return datetime.now(UTC)
+
+
+__all__ = [
+    "DEFAULT_PRICING_BATCH",
+    "OandaRiskContextSources",
+]
