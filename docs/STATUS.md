@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 余下：点差规则（需 S5 报价历史）、事件窗口（需 S4-5 新闻）、回撤状态机（需 S5 持久化）、结果未知处理与平仓路径 |
+| 下一项任务 | S4-2 余下：点差规则（需 S5 报价历史）、事件窗口（需 S4-5 新闻）、回撤状态机（需 S5 持久化）、平仓触发条件（48 小时/周五 19:00） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-2 第一批：6 条缺口规则 + 持久化 kill switch + 真实账户上下文接入运行时 |
+| 最近更新 | 2026-10-01，S4-2：6 条缺口规则 + kill switch 持久化 + 结果未知处理接入 submit 路径 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -75,6 +75,8 @@
 
 #### S4 证据（进行中）
 
+- S4-2 第二批（本提交）：**结果未知处理接入真实提交路径**（PROJECT_GUIDE 5.8）。此前 `UnknownOutcomeResolver`/`UnknownOutcomeFailure` 只存在于 oanda 包内、没有任何运行时调用者，即"超时/断连绝不重发"实际上没有生效。现在 `ExternalPaperExecutionBackend.submit` 捕获 `UnknownOutcomeFailure` 并按持久化的 `clientExtensions.id` 查询券商：`RESOLVED_ACCEPTED` → 记为已接受（不再发送）、`RESOLVED_NOT_SUBMITTED` → 抛 `SUBMIT_NOT_ACCEPTED`（订单从未到达）、`UNRESOLVED` → 抛 `SUBMIT_UNKNOWN`（明确暴露，等待人工/后续处理）。测试 `tests/test_ai_trader_execution_backend.py` 新增 3 个用例（已接受且只提交一次、未提交与未决分别区分）。命令与结果：`pytest -q -m "not practice"` → 2461 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (412 files)。
+
 - S4-2 第一批（本提交）：
   - **补齐 6 条缺口风控规则**（新增 `alphabrief_risk.entry_rules`，纯函数 + 稳定拒绝码）：规则 3 报价新鲜/可交易（`QUOTE_STALE`/`NOT_TRADEABLE`）、规则 7 当日开仓上限（`DAILY_INTENT_CAP`，计数来自持久化的 attempt 历史 `AiTradingStore.count_daily_opens`，不是内存计数）、规则 8 最多同时持仓（`MAX_POSITIONS`，仅开仓、已持有同品种时允许加仓）、规则 12 连亏冻结品种（`LOSS_STREAK`）、规则 13 周五 13:00 UTC 后与周末只许平仓（`WEEKEND`）、规则 14 保护单与合法 units（`ORDER_INVALID`，多空方向与止损止盈相对位置都校验）。**平仓豁免**：`reduce_only` 或 `target_position_pct=0` 的意图不受任何入场规则约束（只有规则 1 的 kill switch 能拦平仓）。
   - **接入运行时**：`RiskGate` 新增 `entry_rules` 策略（未配置时保持旧行为）；cycle CLI 的 gate 现在带受审 policy（报价 15s、每日 5 笔/单品种 1 笔、最多 3 个持仓、周五与周末只平仓、必须有保护单），并在每次评估时传入真实账户上下文（新增 `OandaRiskContextSources.account_exposure_context`：真实 NAV/现金/持仓敞口按券商换算因子折算、报价时间与 tradeable、持仓数、当日开仓计数）。
@@ -101,6 +103,8 @@
 - 同时修掉一个真实流解析缺陷：真实流会同时发送 `response.output_text.delta` 与 `response.output_item.done`，旧实现把两者都拼接导致文本重复（`{"ok": true}{"ok": true}`），现已改为"优先 deltas，仅在无 deltas 时用完成项/完成响应的文本"，并补了回归测试。`model test` 现在把调用记录持久化到 `ModelCallStore`（此前只留在内存）。
 
 #### S4 证据（进行中）
+
+- S4-2 第二批（本提交）：**结果未知处理接入真实提交路径**（PROJECT_GUIDE 5.8）。此前 `UnknownOutcomeResolver`/`UnknownOutcomeFailure` 只存在于 oanda 包内、没有任何运行时调用者，即"超时/断连绝不重发"实际上没有生效。现在 `ExternalPaperExecutionBackend.submit` 捕获 `UnknownOutcomeFailure` 并按持久化的 `clientExtensions.id` 查询券商：`RESOLVED_ACCEPTED` → 记为已接受（不再发送）、`RESOLVED_NOT_SUBMITTED` → 抛 `SUBMIT_NOT_ACCEPTED`（订单从未到达）、`UNRESOLVED` → 抛 `SUBMIT_UNKNOWN`（明确暴露，等待人工/后续处理）。测试 `tests/test_ai_trader_execution_backend.py` 新增 3 个用例（已接受且只提交一次、未提交与未决分别区分）。命令与结果：`pytest -q -m "not practice"` → 2461 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (412 files)。
 
 - S4-1 第二部分（本提交）：新增 `alphabrief_execution.broker.oanda.risk_sources.OandaRiskContextSources`，从真实 practice 端点取风控上下文所需事实：`/summary`（balance/NAV/marginUsed/marginAvailable/币种）、`/positions`（多空分开 + 均价）、`/orders?state=PENDING`、`/trades`、`/pricing`（bid/ask + 本币换算因子）、`/instruments`（目录版本）、对账状态改读持久化 recon store（frozen/clean/unknown，不再恒为 unknown）、健康状态由账户摘要探测；报价覆盖"配置品种 ∪ 当前持仓 ∪ 挂单品种"。`OandaPaperAdapter` 增加只读 `client` 访问器以便构造这些来源。接入已完成：`ExternalPaperExecutionBackend` 在适配器为 `OandaPaperAdapter` 时默认使用这些真实来源（并接收 `risk_symbols` 以覆盖配置品种；cycle CLI 传当前品种、scheduler 传配置 universe），其它适配器仍走端口组合；对账状态来自持久化 recon store，健康状态来自账户摘要探测。命令与结果：`pytest -q -m "not practice"` → 2418 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (408 files)。
 

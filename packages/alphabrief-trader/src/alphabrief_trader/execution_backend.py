@@ -19,6 +19,8 @@ from typing import Any, Literal, Protocol
 from alphabrief_core import OrderIntent, RiskDecision
 from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.errors import BrokerAdapterError
+from alphabrief_execution.broker.oanda.faults import UnknownOutcomeFailure
+from alphabrief_execution.broker.oanda.unknown_outcome import UnknownOutcomeResolver
 from alphabrief_execution.broker.port import (
     BrokerAdapter,
     BrokerOrderSide,
@@ -110,9 +112,14 @@ class ExternalPaperExecutionBackend:
         risk_context_builder: BrokerRiskContextBuilder | None = None,
         decision_binding: DecisionBindingService | None = None,
         risk_symbols: Sequence[str] = (),
+        unknown_outcome_resolver: UnknownOutcomeResolver | None = None,
     ) -> None:
         self._adapter = adapter
         self._max_order_value = max_order_value
+        # Ambiguous submits are resolved by querying the broker for the
+        # client identity that was persisted before the request; they are
+        # never re-sent (PROJECT_GUIDE 5.8).
+        self._unknown_outcome_resolver = unknown_outcome_resolver
         self._risk_context_builder: BrokerRiskContextBuilder = (
             risk_context_builder
             or BrokerRiskContextBuilder(
@@ -127,6 +134,53 @@ class ExternalPaperExecutionBackend:
             or DecisionBindingService(
                 RiskDecisionStore(db_path=_paths.db_path())
             )
+        )
+
+    def _resolve_unknown_outcome(
+        self,
+        *,
+        intent: OrderIntent,
+        decision: RiskDecision,
+        quantity: Decimal,
+        reference_price: Decimal,
+        failure: Exception,
+    ) -> ExecutionBackendResult:
+        """Resolve an ambiguous submit by querying, never by re-sending.
+
+        ``RESOLVED_ACCEPTED`` means the broker did receive the order, so it
+        is reported as submitted (unfilled as far as this response knows);
+        ``RESOLVED_NOT_SUBMITTED`` means it never arrived and the caller may
+        decide what to do; ``UNRESOLVED`` is surfaced explicitly so the
+        runtime records ``SUBMIT_UNKNOWN`` and stops until it is settled.
+        """
+        del decision, reference_price  # evidence is already persisted
+        resolver = self._unknown_outcome_resolver
+        if resolver is None:
+            resolver = _resolver_for(self._adapter)
+        if resolver is None:
+            raise ExecutionBackendError(
+                f"SUBMIT_UNKNOWN: {failure} (no resolver available for this adapter)"
+            )
+        resolution = resolver.resolve(intent.intent_id)
+        if resolution.resolution == "RESOLVED_ACCEPTED":
+            return ExecutionBackendResult(
+                execution_backend="external_paper",
+                order_id=resolution.broker_order_id or intent.intent_id,
+                client_order_id=intent.intent_id,
+                broker_order_id=resolution.broker_order_id,
+                broker_status=str(resolution.state or "UNKNOWN"),
+                broker_result_json=resolution.model_dump(mode="json"),
+                filled=False,
+                fill_price=None,
+                fill_quantity=None,
+                fill_json=None,
+            )
+        if resolution.resolution == "RESOLVED_NOT_SUBMITTED":
+            raise ExecutionBackendError(
+                f"SUBMIT_NOT_ACCEPTED: {resolution.detail}"
+            )
+        raise ExecutionBackendError(
+            f"SUBMIT_UNKNOWN: {resolution.detail or failure}"
         )
 
     def estimate_quantity(
@@ -275,6 +329,14 @@ class ExternalPaperExecutionBackend:
             result = _run_blocking(
                 self._adapter.submit(request, client_order_id=intent.intent_id)
             )
+        except UnknownOutcomeFailure as exc:
+            return self._resolve_unknown_outcome(
+                intent=intent,
+                decision=decision,
+                quantity=quantity,
+                reference_price=reference_price,
+                failure=exc,
+            )
         except (BrokerAdapterError, NotImplementedError) as exc:
             raise ExecutionBackendError(str(exc)) from exc
         filled = result.status == BrokerOrderStatus.FILLED
@@ -291,6 +353,16 @@ class ExternalPaperExecutionBackend:
             fill_json=None,
             risk_context_version=context.context_version,
         )
+
+
+def _resolver_for(adapter: BrokerAdapter) -> UnknownOutcomeResolver | None:
+    """Build the resolver for an OANDA practice adapter, if it is one."""
+    from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+    from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
+
+    if isinstance(adapter, OandaPaperAdapter):
+        return UnknownOutcomeResolver(OrderOpsClient(adapter.client))
+    return None
 
 
 def _default_risk_sources(
