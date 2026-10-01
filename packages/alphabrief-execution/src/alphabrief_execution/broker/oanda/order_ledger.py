@@ -12,12 +12,12 @@ overwrite, fallback, or user question.
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import duckdb
+from alphabrief_core import paths as _paths
 from pydantic import BaseModel, ConfigDict, Field
 
 LedgerState = Literal[
@@ -78,7 +78,7 @@ class OrderLedger:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         if db_path is None:
-            db_path = _default_db_path()
+            db_path = _paths.db_path()
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
@@ -530,12 +530,6 @@ class OrderLedger:
 
 def _submit_id(cycle_id: str, intent_id: str) -> str:
     return f"{cycle_id}:{intent_id}"
-
-
-def _default_db_path() -> Path:
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    base = Path(env_dir) if env_dir else Path.home() / ".alphabrief" / "data"
-    return base / "alphabrief.db"
 
 
 __all__ = [

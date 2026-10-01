@@ -38,11 +38,8 @@ CLI_TO_RESOURCE = {
 
 #: Commands whose data is only available locally (read-only contract).
 LOCAL_ONLY_COMMANDS = {
-    ("paper", "status"),
     ("risk", "status"),
 }
-
-CLI_TO_RESOURCE[("paper", "status")] = "local"
 
 
 @pytest.fixture(autouse=True)

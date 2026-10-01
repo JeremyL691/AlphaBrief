@@ -25,11 +25,11 @@ from __future__ import annotations
 
 import functools
 import logging
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.operations.scheduler import (
     HeartbeatStore,
@@ -102,16 +102,15 @@ def _writer_locked_response() -> JSONResponse:
 
 
 def _store_db_path() -> Path | None:
-    """Resolve the DB file the read-only scheduler routes should read."""
+    """Resolve the DB file the read-only scheduler routes should read.
+
+    The scheduler snapshot wins while it exists; otherwise the route
+    reads the shared database directly.
+    """
     snapshot = scheduler_snapshot_path()
     if snapshot is not None:
         return snapshot
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return db_dir / "alphabrief.db"
-    return None
+    return _paths.db_path()
 
 
 def _heartbeat_store() -> HeartbeatStore:

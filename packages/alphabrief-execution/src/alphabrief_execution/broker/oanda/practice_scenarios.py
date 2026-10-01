@@ -10,13 +10,13 @@ is possible, and no human review is requested.
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
 import duckdb
+from alphabrief_core import paths as _paths
 from alphabrief_core.domain import OrderIntent
 from alphabrief_risk.gate import RiskGate, RiskLimitConfig
 from pydantic import BaseModel, ConfigDict, Field
@@ -336,9 +336,7 @@ def _json_dumps(value: dict[str, Any]) -> str:
 
 
 def default_store_path() -> Path:
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    base = Path(env_dir) if env_dir else Path.home() / ".alphabrief" / "data"
-    return base / "practice_scenarios.db"
+    return _paths.data_dir() / "practice_scenarios.db"
 
 
 __all__ = [

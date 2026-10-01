@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from alphabrief_api.main import app
+from alphabrief_core import paths as _paths
 from alphabrief_trader.runtime_truth import RuntimeTruthStore
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -27,7 +28,7 @@ _T0 = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
 @pytest.fixture
 def truth(tmp_path: Path) -> Iterator[RuntimeTruthStore]:
-    store = RuntimeTruthStore(db_path=tmp_path / "alphabrief.db")
+    store = RuntimeTruthStore(db_path=tmp_path / _paths.DATABASE_NAME)
     try:
         yield store
     finally:
@@ -72,11 +73,11 @@ class TestRuntimeTruthPersistence:
     def test_phase_timestamps_and_classification_survive_restart(
         self, tmp_path: Path
     ) -> None:
-        first = RuntimeTruthStore(db_path=tmp_path / "alphabrief.db")
+        first = RuntimeTruthStore(db_path=tmp_path / _paths.DATABASE_NAME)
         _seed(first)
         first.close()
 
-        second = RuntimeTruthStore(db_path=tmp_path / "alphabrief.db")
+        second = RuntimeTruthStore(db_path=tmp_path / _paths.DATABASE_NAME)
         try:
             state = second.read()
             assert state is not None
@@ -88,11 +89,11 @@ class TestRuntimeTruthPersistence:
     def test_runtime_truth_survives_store_restart(
         self, tmp_path: Path
     ) -> None:
-        first = RuntimeTruthStore(db_path=tmp_path / "alphabrief.db")
+        first = RuntimeTruthStore(db_path=tmp_path / _paths.DATABASE_NAME)
         _seed(first)
         first.close()
 
-        second = RuntimeTruthStore(db_path=tmp_path / "alphabrief.db")
+        second = RuntimeTruthStore(db_path=tmp_path / _paths.DATABASE_NAME)
         try:
             state = second.read()
             assert state is not None
@@ -148,7 +149,7 @@ class TestCliStatusSurface:
     def test_cli_status_exposes_runtime_truth(self, tmp_path: Path) -> None:
         from alphabrief_cli.scheduler_commands import scheduler_app
 
-        store = RuntimeTruthStore(db_path=tmp_path / "alphabrief.db")
+        store = RuntimeTruthStore(db_path=tmp_path / _paths.DATABASE_NAME)
         _seed(store)
         store.close()
 

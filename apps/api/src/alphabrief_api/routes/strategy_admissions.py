@@ -1,7 +1,7 @@
 """Append-only strategy-admission evidence API.
 
 Admission records document human review. They are not read by RiskGate,
-PaperBroker, or any execution path and therefore cannot authorize orders.
+the broker, or any execution path and therefore cannot authorize orders.
 """
 
 from __future__ import annotations

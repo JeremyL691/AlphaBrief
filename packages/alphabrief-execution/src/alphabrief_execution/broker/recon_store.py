@@ -24,6 +24,7 @@ from typing import Any
 from uuid import uuid4
 
 import duckdb
+from alphabrief_core import paths as _paths
 
 # ---------------------------------------------------------------------------
 # Schema bootstrap (kept in this file to keep the package self-contained;
@@ -78,23 +79,6 @@ CREATE TABLE IF NOT EXISTS broker_freeze_events (
 # ---------------------------------------------------------------------------
 # Path / time helpers
 # ---------------------------------------------------------------------------
-
-_DEFAULT_DB_DIR = Path.home() / ".alphabrief" / "data"
-
-
-def _db_dir() -> Path:
-    import os
-
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return _DEFAULT_DB_DIR
-
-
-def _db_path() -> Path:
-    db_dir = _db_dir()
-    db_dir.mkdir(parents=True, exist_ok=True)
-    return db_dir / "alphabrief.db"
 
 
 def _now_iso() -> str:
@@ -198,7 +182,7 @@ class BrokerReconStore:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         if db_path is None:
-            db_path = _db_path()
+            db_path = _paths.db_path()
         self._db_path = Path(db_path)
         self._conn = duckdb.connect(str(self._db_path))
         self._apply()

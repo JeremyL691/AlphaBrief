@@ -11,8 +11,8 @@ trading committee. One cycle = one calendar day, one universe, one
    :class:`TradingCommittee` for a ``TradePlan``.
 3. Applies the deterministic ``RiskGate`` to the synthesized
    ``OrderIntent`` candidate.
-4. Submits approved, non-human-review intents to the configured
-   :class:`PaperBroker`.
+4. Submits approved, non-human-review intents through the configured
+   :class:`ExecutionBackend`.
 5. Persists the full ``DailyCycleRecord`` via :class:`AiTradingStore`.
 
 The cycle is **paper-only** by default. ``ALPHABRIEF_AI_TRADING_ENABLED``
@@ -27,7 +27,7 @@ deterministic fakes:
 
 * ``gateway: ModelGateway`` — the only model call boundary.
 * ``risk_gate: RiskGate`` — the deterministic risk layer.
-* ``broker: PaperBroker`` — paper execution.
+* ``execution_backend`` — the broker-neutral execution hop.
 * ``snapshot_loader: Callable[[str], MarketSnapshot | None]`` — turns a
   symbol into a snapshot. ``None`` skips the symbol.
 * ``store: AiTradingStore`` — DuckDB persistence.
@@ -45,9 +45,6 @@ from hashlib import sha256
 from uuid import uuid4
 
 from alphabrief_core import OrderIntent, OrderSide, RiskDecision
-from alphabrief_execution import (
-    PaperBroker,
-)
 from alphabrief_risk import RiskGate
 
 from alphabrief_trader.committee import TradingCommittee
@@ -63,7 +60,6 @@ from alphabrief_trader.execution_backend import (
     ExecutionBackend,
     ExecutionBackendError,
     ExecutionBackendResult,
-    LocalPaperExecutionBackend,
 )
 from alphabrief_trader.execution_gate import (
     ExecutionGate,
@@ -144,10 +140,9 @@ class DailyTradingCycle:
         *,
         committee: TradingCommittee,
         risk_gate: RiskGate,
-        broker: PaperBroker,
+        execution_backend: ExecutionBackend,
         store: AiTradingStore,
         snapshot_loader: SnapshotLoader,
-        execution_backend: ExecutionBackend | None = None,
         enabled: bool | None = None,
         clock: Callable[[], datetime] | None = None,
         cycle_id_factory: Callable[[], str] | None = None,
@@ -157,19 +152,15 @@ class DailyTradingCycle:
             raise TypeError("committee is required")
         if risk_gate is None:
             raise TypeError("risk_gate is required")
-        if broker is None:
-            raise TypeError("broker is required")
+        if execution_backend is None:
+            raise TypeError("execution_backend is required")
         if store is None:
             raise TypeError("store is required")
         if snapshot_loader is None:
             raise TypeError("snapshot_loader is required")
         self._committee = committee
         self._risk_gate = risk_gate
-        self._broker = broker
-        self._execution_backend = execution_backend or LocalPaperExecutionBackend(
-            broker,
-            max_order_value=max_order_value,
-        )
+        self._execution_backend = execution_backend
         self._max_order_value = max_order_value
         self._store = store
         self._snapshot_loader = snapshot_loader
@@ -563,11 +554,10 @@ class DurableDailyCycle:
         *,
         committee: TradingCommittee,
         risk_gate: RiskGate,
-        broker: PaperBroker,
+        execution_backend: ExecutionBackend,
         store: AiTradingStore,
         state_store: CycleStateStore,
         snapshot_loader: SnapshotLoader,
-        execution_backend: ExecutionBackend | None = None,
         enabled: bool | None = None,
         clock: Callable[[], datetime] | None = None,
         max_order_value: Decimal | None = None,
@@ -580,6 +570,8 @@ class DurableDailyCycle:
     ) -> None:
         if state_store is None:
             raise TypeError("state_store is required")
+        if execution_backend is None:
+            raise TypeError("execution_backend is required")
         self._state_machine = CycleStateMachine(state_store)
         self._execution_gate = ExecutionGate()
         self._runtime_store = runtime_store
@@ -595,10 +587,9 @@ class DurableDailyCycle:
         self._trading = DailyTradingCycle(
             committee=committee,
             risk_gate=risk_gate,
-            broker=broker,
+            execution_backend=execution_backend,
             store=store,
             snapshot_loader=snapshot_loader,
-            execution_backend=execution_backend,
             enabled=enabled,
             clock=clock,
             max_order_value=max_order_value,

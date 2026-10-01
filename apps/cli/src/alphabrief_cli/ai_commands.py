@@ -10,9 +10,10 @@ Commands
 - ``ai show``     — full JSON record for a single cycle.
 
 The run command proxies through the API when the server is running
-and falls back to an in-process paper cycle otherwise. Both paths use
-the same ``DailyTradingCycle`` and ``RiskGate`` classes — there is no
-separate CLI-only execution path.
+and falls back to an in-process cycle otherwise. Both paths use the
+same ``DailyTradingCycle`` and ``RiskGate`` classes and the same OANDA
+practice execution backend — there is no separate CLI-only execution
+path and no in-process fill simulator.
 """
 
 from __future__ import annotations
@@ -22,21 +23,16 @@ import os
 import sys
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, cast
 
 import typer
 from alphabrief_api.db import AiTradingStore
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
+from alphabrief_core import paths as _paths
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
     DisciplineConfig,
+    ExecutionBackend,
     MarketSnapshot,
     SnapshotLoader,
     TradingCommittee,
@@ -58,12 +54,7 @@ ai_app = typer.Typer(help="AI Trading Committee — multi-role paper cycle.")
 
 
 def _open_store() -> AiTradingStore:
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return AiTradingStore(db_path=db_dir / "alphabrief.db")
-    return AiTradingStore()
+    return AiTradingStore(db_path=_paths.db_path())
 
 
 def _dump(payload: object, *, pretty: bool, default: bool = False) -> None:
@@ -109,12 +100,16 @@ def _build_committee() -> TradingCommittee:
     return build_ai_trading_committee()
 
 
-def _build_broker() -> PaperBroker:
-    return PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
+def _build_execution_backend() -> ExecutionBackend:
+    """Return the OANDA practice execution backend for the local cycle.
+
+    Credentials are required: missing or invalid OANDA practice
+    credentials fail closed instead of filling orders in memory.
+    """
+    from alphabrief_execution.broker.runtime import get_broker_runtime
+    from alphabrief_trader import ExternalPaperExecutionBackend
+
+    return ExternalPaperExecutionBackend(get_broker_runtime().adapter)
 
 
 def _build_risk_gate(symbols: list[str]) -> RiskGate:
@@ -269,7 +264,7 @@ def run_cmd(
         cycle = DailyTradingCycle(
             committee=_build_committee(),
             risk_gate=_build_risk_gate(parsed_symbols),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=_build_loader(parsed_symbols, parsed_prices),
             enabled=True,

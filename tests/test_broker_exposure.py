@@ -1,8 +1,7 @@
 """Tests for the execution-side account-exposure projection (Phase 19 R19.2).
 
-Drives the async adapter variant with a tiny in-memory fake adapter and
-the sync variant with a legacy :class:`PortfolioState`. Verifies the
-projection sums gross notional (``abs(qty) * mark``), honors explicit
+Drives the adapter variant with a tiny in-memory fake adapter. Verifies
+the projection sums gross notional (``abs(qty) * mark``), honors explicit
 ``mark_prices``, and carries the account snapshot's cash / account_id /
 captured_at through to the risk-layer value object.
 """
@@ -14,10 +13,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from alphabrief_execution.broker.exposure import (
-    build_account_exposure_context,
-    build_account_exposure_context_from_portfolio,
-)
+from alphabrief_execution.broker.exposure import build_account_exposure_context
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -30,8 +26,6 @@ from alphabrief_execution.broker.port import (
     SubmitRequest,
     SubmitResult,
 )
-from alphabrief_execution.portfolio import PortfolioState
-from alphabrief_execution.portfolio import Position as PortfolioPosition
 
 CAPTURED = datetime(2026, 6, 23, 10, 0, tzinfo=UTC)
 
@@ -175,60 +169,6 @@ def test_async_projection_skips_zero_quantity_positions() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sync_projection_from_portfolio_sums_exposure() -> None:
-    portfolio = PortfolioState(
-        cash=Decimal("900"),
-        positions={
-            "SPY": PortfolioPosition(
-                symbol="SPY", quantity=Decimal("2"), average_price=Decimal("100")
-            ),
-            "QQQ": PortfolioPosition(
-                symbol="QQQ", quantity=Decimal("1"), average_price=Decimal("50")
-            ),
-        },
-    )
-    ctx = build_account_exposure_context_from_portfolio(
-        portfolio, clock=lambda: CAPTURED
-    )
-    assert ctx.current_total_exposure == Decimal("250")
-    assert ctx.exposure_by_symbol == {
-        "SPY": Decimal("200"),
-        "QQQ": Decimal("50"),
-    }
-    assert ctx.cash == Decimal("900")
-    assert ctx.account_id == "paper_local"
-    assert ctx.captured_at == CAPTURED
-
-
-def test_sync_projection_empty_portfolio_is_zero_exposure() -> None:
-    portfolio = PortfolioState(cash=Decimal("100000"))
-    ctx = build_account_exposure_context_from_portfolio(
-        portfolio, clock=lambda: CAPTURED
-    )
-    assert ctx.current_total_exposure == Decimal("0")
-    assert ctx.cash == Decimal("100000")
-
-
-def test_sync_projection_accepts_mark_prices() -> None:
-    portfolio = PortfolioState(
-        cash=Decimal("900"),
-        positions={
-            "SPY": PortfolioPosition(
-                symbol="SPY", quantity=Decimal("2"), average_price=Decimal("100")
-            )
-        },
-    )
-    ctx = build_account_exposure_context_from_portfolio(
-        portfolio, mark_prices={"SPY": Decimal("120")}, clock=lambda: CAPTURED
-    )
-    assert ctx.current_total_exposure == Decimal("240")
-
-
-# ---------------------------------------------------------------------------
-# Phase 21 R21.2 — equity / reference_mark_prices projection
-# ---------------------------------------------------------------------------
-
-
 def test_async_projection_carries_equity_from_account_snapshot() -> None:
     """``equity`` is taken from ``AccountSnapshot.equity`` directly
     (the broker reports it as cash + unrealized mark-to-market)."""
@@ -265,62 +205,3 @@ def test_async_projection_reference_mark_prices_empty_when_omitted() -> None:
     assert ctx.reference_mark_prices == {}
 
 
-def test_sync_projection_computes_equity_when_mark_prices_supplied() -> None:
-    """For the legacy ``PortfolioState`` path the broker doesn't supply
-    an ``equity`` field directly, so the projection computes it as
-    ``cash + sum(qty * mark)`` when ``mark_prices`` is supplied.
-    ``ponytail:portfolio_equity_ceiling`` — without marks, equity is
-    ``None`` (paper route will fail-closed for leverage / drawdown /
-    daily-loss until Phase 21.4 introduces a persistent HWM store)."""
-    portfolio = PortfolioState(
-        cash=Decimal("900"),
-        positions={
-            "SPY": PortfolioPosition(
-                symbol="SPY", quantity=Decimal("2"), average_price=Decimal("100")
-            )
-        },
-    )
-    ctx = build_account_exposure_context_from_portfolio(
-        portfolio,
-        mark_prices={"SPY": Decimal("120")},
-        clock=lambda: CAPTURED,
-    )
-    # 900 + 2*120 = 1140
-    assert ctx.equity == Decimal("1140")
-
-
-def test_sync_projection_equity_uses_average_price_when_no_marks_supplied() -> None:
-    """Without ``mark_prices`` the projection uses ``average_price`` as
-    the mark (legacy ``PortfolioState`` has no separate equity field).
-    The result is cost-basis equity, not live MTM — callers wanting
-    MTM must pass ``mark_prices`` explicitly."""
-    portfolio = PortfolioState(
-        cash=Decimal("900"),
-        positions={
-            "SPY": PortfolioPosition(
-                symbol="SPY", quantity=Decimal("2"), average_price=Decimal("100")
-            )
-        },
-    )
-    ctx = build_account_exposure_context_from_portfolio(
-        portfolio, clock=lambda: CAPTURED
-    )
-    # 900 + 2*100 = 1100 (cost-basis)
-    assert ctx.equity == Decimal("1100")
-
-
-def test_sync_projection_carries_reference_mark_prices() -> None:
-    portfolio = PortfolioState(
-        cash=Decimal("900"),
-        positions={
-            "SPY": PortfolioPosition(
-                symbol="SPY", quantity=Decimal("1"), average_price=Decimal("100")
-            )
-        },
-    )
-    ctx = build_account_exposure_context_from_portfolio(
-        portfolio,
-        mark_prices={"SPY": Decimal("120")},
-        clock=lambda: CAPTURED,
-    )
-    assert ctx.reference_mark_prices == {"SPY": Decimal("120")}

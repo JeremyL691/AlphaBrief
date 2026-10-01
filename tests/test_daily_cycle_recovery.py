@@ -16,13 +16,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from _helpers import FakeExecutionBackend
 from alphabrief_core import OrderIntent, RiskDecision
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
 from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
@@ -37,7 +32,6 @@ from alphabrief_trader.execution_backend import (
 from alphabrief_trader.execution_gate import PreflightFacts
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.runtime_truth import RuntimeTruthStore
-from alphabrief_trader.scheduler_leader import SchedulerLeaderLease
 from alphabrief_trader.schemas import MarketSnapshot
 
 _FIXED_NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
@@ -80,18 +74,11 @@ def _build_cycle(
     facts: PreflightFacts | None = None,
 ) -> DurableDailyCycle:
     from alphabrief_trader.cycle_execution import ReconciliationEvidence
-    broker = PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
-    from alphabrief_trader.execution_backend import LocalPaperExecutionBackend
-
-    backend: ExecutionBackend = LocalPaperExecutionBackend(broker)
+    backend: ExecutionBackend = FakeExecutionBackend()
     if submits is not None:
         counter = submits
 
-        class _CountingBackend(LocalPaperExecutionBackend):
+        class _CountingBackend(FakeExecutionBackend):
             def submit(
                 self,
                 intent: OrderIntent,
@@ -110,7 +97,7 @@ def _build_cycle(
                     estimated_quantity=estimated_quantity,
                 )
 
-        backend = _CountingBackend(broker)
+        backend = _CountingBackend()
     return DurableDailyCycle(
         committee=committee or _committee(),
         risk_gate=RiskGate(
@@ -118,7 +105,6 @@ def _build_cycle(
                 trading_enabled=True, symbol_allowlist=frozenset({"SPY"})
             )
         ),
-        broker=broker,
         store=store,
         state_store=state_store,
         runtime_store=runtime_store,
@@ -342,44 +328,3 @@ class TestFailureInjection:
         )
         assert "reconciliation_evidence" in reconcile.output_ids
         assert "matched" in str(reconcile.output_ids["reconciliation_evidence"])
-
-
-class TestLeaderRecovery:
-    def test_stale_lease_blocks_former_leader(
-        self, tmp_path: Path
-    ) -> None:
-        from datetime import timedelta
-
-        class _Clock:
-            def __init__(self) -> None:
-                self.now = _FIXED_NOW
-
-            def __call__(self) -> datetime:
-                return self.now
-
-        clock = _Clock()
-        lease = SchedulerLeaderLease(db_path=tmp_path / "lease.db", clock=clock)
-        try:
-            assert lease.acquire("leader-a", ttl_seconds=60) is True
-            clock.now += timedelta(seconds=61)
-            # The former leader cannot renew or act after expiry.
-            assert lease.renew("leader-a", ttl_seconds=60) is False
-            assert lease.is_leader("leader-a") is False
-            # A new leader takes over deterministically.
-            assert lease.acquire("leader-b", ttl_seconds=60) is True
-            assert lease.is_leader("leader-b") is True
-        finally:
-            lease.close()
-
-    def test_concurrent_leaders_produce_one_holder(
-        self, tmp_path: Path
-    ) -> None:
-        lease = SchedulerLeaderLease(db_path=tmp_path / "lease.db")
-        try:
-            assert lease.acquire("scheduler-1", ttl_seconds=60) is True
-            assert lease.acquire("scheduler-2", ttl_seconds=60) is False
-            leader = lease.leader()
-            assert leader is not None
-            assert leader["holder_id"] == "scheduler-1"
-        finally:
-            lease.close()

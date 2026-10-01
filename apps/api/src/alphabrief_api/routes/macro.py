@@ -12,9 +12,7 @@ from alphabrief_news.macro_release import (
 )
 from alphabrief_news.providers import (
     FredMacroProvider,
-    MockMacroProvider,
     NewsProviderError,
-    build_default_mock_macro,
 )
 from alphabrief_news.types import MacroFetchQuery, MacroIndicator
 from fastapi import APIRouter, HTTPException, Query
@@ -53,7 +51,7 @@ def _close_store() -> None:
 # Request / response models
 # ---------------------------------------------------------------------------
 
-MacroSource = Literal["mock", "fred"]
+MacroSource = Literal["fred"]
 
 
 class MacroFetchRequest(BaseModel):
@@ -115,10 +113,9 @@ def _parse_iso_to_utc(value: str, *, field_name: str) -> datetime:
 
 
 def _build_provider(
-    source: MacroSource, indicators: list[str]
-) -> MockMacroProvider | FredMacroProvider:
-    if source == "mock":
-        return MockMacroProvider(seed_indicators=build_default_mock_macro(indicators))
+    source: MacroSource,
+    indicators: list[str],
+) -> FredMacroProvider:
     if source == "fred":
         return FredMacroProvider()
     raise HTTPException(
@@ -281,11 +278,16 @@ class MacroReleaseReviseRequest(BaseModel):
     previous: Decimal | None = None
 
 
+def _now() -> datetime:
+    """Current UTC time (replaceable so tests can inject a fixed clock)."""
+    return datetime.now(UTC)
+
+
 @router.get("/releases")
 def macro_releases() -> dict[str, Any]:
     """Ordered macro release events with explicit states."""
     store = _get_release_store()
-    now = datetime.now(UTC)
+    now = _now()
     releases = store.releases()
     events = [
         release.with_state(release_state(release, now=now).state)

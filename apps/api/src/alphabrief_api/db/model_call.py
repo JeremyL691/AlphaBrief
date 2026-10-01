@@ -18,14 +18,12 @@ migration entry, which can adopt the same name with ``IF NOT EXISTS``.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 import duckdb
+from alphabrief_core import paths as _paths
 from alphabrief_models.gateway import ModelCallRecord
-
-_DEFAULT_DB_DIR = Path.home() / ".alphabrief" / "data"
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS model_call_records (
@@ -62,19 +60,6 @@ _SELECT_COLUMNS = (
 )
 
 
-def _db_dir() -> Path:
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return _DEFAULT_DB_DIR
-
-
-def _db_path() -> Path:
-    db_dir = _db_dir()
-    db_dir.mkdir(parents=True, exist_ok=True)
-    return db_dir / "alphabrief.db"
-
-
 class ModelCallStore:
     """DuckDB-backed append-only store for ModelGateway call records.
 
@@ -88,7 +73,7 @@ class ModelCallStore:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         if db_path is None:
-            db_path = _db_path()
+            db_path = _paths.db_path()
         self._db_path = Path(db_path)
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(_CREATE_TABLE_SQL)

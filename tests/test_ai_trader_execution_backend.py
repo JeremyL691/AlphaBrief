@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from alphabrief_core import OrderIntent, RiskDecision
-from alphabrief_execution import FillSimulator, OrderRouter, PaperBroker, PortfolioState
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.port import (
     AccountSnapshot,
     BrokerAdapter,
@@ -190,7 +190,7 @@ class TestExternalPaperExecutionBackend:
                 "needs_human_review": False,
             },
         )
-        store = AiTradingStore(db_path=tmp_path / "alphabrief.db")
+        store = AiTradingStore(db_path=tmp_path / _paths.DATABASE_NAME)
         try:
             cycle = DailyTradingCycle(
                 committee=TradingCommittee(
@@ -203,11 +203,6 @@ class TestExternalPaperExecutionBackend:
                         symbol_allowlist=frozenset({"SPY"}),
                         max_order_value=Decimal("1000"),
                     )
-                ),
-                broker=PaperBroker(
-                    portfolio=PortfolioState(cash=Decimal("100000")),
-                    router=OrderRouter(),
-                    fill_simulator=FillSimulator(),
                 ),
                 store=store,
                 snapshot_loader=lambda symbol: MarketSnapshot(

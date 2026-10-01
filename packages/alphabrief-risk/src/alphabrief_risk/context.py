@@ -1,10 +1,10 @@
 """News/Macro risk-context layer for AlphaBrief.
 
-This module is a **read-only**, deterministic adapter from
-:class:`alphabrief_research.ResearchContextSummary` into audit-friendly
-risk metadata. It does **not** call ModelGateway, read from a database,
-or invoke any external provider. It does **not** modify
-:class:`alphabrief_risk.RiskGate` core semantics.
+This module is a **read-only**, deterministic adapter from a
+news/macro summary into audit-friendly risk metadata. It does **not**
+call ModelGateway, read from a database, or invoke any external
+provider. It does **not** modify :class:`alphabrief_risk.RiskGate` core
+semantics.
 
 The output is **advisory metadata only**. Downstream consumers (the
 risk API/CLI, the dashboard, or a wrapper around :class:`RiskGate`)
@@ -17,10 +17,37 @@ identical to the no-input default.
 
 from __future__ import annotations
 
-from typing import Final
+from collections.abc import Sequence
+from typing import Final, Protocol
 
-from alphabrief_research import ResearchContextSummary
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class NewsMacroSource(Protocol):
+    """Structural type for any news/macro summary passed to risk.
+
+    The fields mirror :class:`NewsMacroRiskContext`; the news layer's
+    own summary object satisfies this protocol without importing the
+    risk package.
+    """
+
+    @property
+    def aggregate_sentiment_score(self) -> float | None: ...
+
+    @property
+    def worst_sentiment(self) -> str | None: ...
+
+    @property
+    def negative_count(self) -> int: ...
+
+    @property
+    def headline_count(self) -> int: ...
+
+    @property
+    def macro_indicator_ids(self) -> Sequence[str]: ...
+
+    @property
+    def data_versions(self) -> Sequence[str]: ...
 
 #: Aggregate sentiment-score lower bound (inclusive) below which the
 #: news context is treated as negative. ``-0.2`` is intentionally
@@ -54,10 +81,8 @@ MACRO_HIGH_RISK_POSITION_MULTIPLIER: Final[float] = 0.5
 class NewsMacroRiskContext(BaseModel):
     """Input mirror of the news/macro fields that drive risk tightening.
 
-    Consumers who do not want to import
-    :class:`alphabrief_research.ResearchContextSummary` directly can
-    construct this lighter Pydantic model and pass it to
-    :func:`evaluate_news_macro_risk`. All fields are optional with
+    Consumers can construct this Pydantic model directly and pass it
+    to :func:`evaluate_news_macro_risk`. All fields are optional with
     safe defaults so the schema remains backward compatible.
     """
 
@@ -117,10 +142,9 @@ class RiskContextDecision(BaseModel):
 
 
 def _to_context(
-    source: ResearchContextSummary | NewsMacroRiskContext,
+    source: NewsMacroSource | NewsMacroRiskContext,
 ) -> NewsMacroRiskContext:
-    """Project a :class:`ResearchContextSummary` (or pre-shaped mirror)
-    into the lightweight :class:`NewsMacroRiskContext`.
+    """Project a news/macro summary into :class:`NewsMacroRiskContext`.
     """
     if isinstance(source, NewsMacroRiskContext):
         return source
@@ -135,15 +159,15 @@ def _to_context(
 
 
 def evaluate_news_macro_risk(
-    source: ResearchContextSummary | NewsMacroRiskContext,
+    source: NewsMacroSource | NewsMacroRiskContext,
     *,
     decision_id: str = "rctx_001",
     negative_floor: float = NEGATIVE_SENTIMENT_FLOOR,
     macro_high_risk_indicator_count: int = MACRO_HIGH_RISK_INDICATOR_COUNT,
     macro_position_multiplier: float = MACRO_HIGH_RISK_POSITION_MULTIPLIER,
 ) -> RiskContextDecision:
-    """Evaluate a :class:`ResearchContextSummary` (or its mirror) into
-    deterministic, tighten-only risk metadata.
+    """Evaluate a news/macro summary into deterministic, tighten-only
+    risk metadata.
 
     The function is pure and deterministic. It does not read from a
     database, call ModelGateway, or invoke any provider. It may only
@@ -165,8 +189,8 @@ def evaluate_news_macro_risk(
     Parameters
     ----------
     source
-        The news/macro summary to evaluate. Either the full
-        :class:`ResearchContextSummary` from the research layer or a
+        The news/macro summary to evaluate: either an object
+        satisfying the :class:`NewsMacroSource` protocol or a
         pre-shaped :class:`NewsMacroRiskContext`.
     decision_id
         Identifier for the produced decision. Useful for audit logs.
@@ -255,6 +279,7 @@ __all__ = [
     "RISK_TAG_MACRO_HIGH_RISK",
     "RISK_TAG_NEGATIVE_NEWS",
     "RISK_TAG_POSITION_REDUCTION",
+    "NewsMacroSource",
     "RiskContextDecision",
     "evaluate_news_macro_risk",
 ]

@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S1 做减法与恢复全绿** |
+| 当前阶段 | **S2 模型通道** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S1-1 按 GUIDE 6.1 删除代码和对应测试；更新 `pyproject.toml` |
+| 下一项任务 | S2-1 `chatgpt_plan` 适配器与 OAuth（`alphabrief model login|status|logout|test`） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-09-30，S0 全部任务与退出标准通过（见"阶段检查表 → S0 证据"） |
+| 最近更新 | 2026-09-30，S1 全部任务与退出标准通过（见"S1 证据"） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -64,14 +64,37 @@
 - 退出标准：`launchctl list | grep -cE "com\.alphabrief\.(api|scheduler)"` → `0`；`pgrep -f "alphabrief (scheduler|serve)"` → 无输出；OANDA 探测 HTTP 200。
 
 ### S1 做减法与恢复全绿
-- [ ] S1-1 按 GUIDE 6.1 删除代码和对应测试；更新 `pyproject.toml`
-- [ ] S1-2 时间相关测试改为注入时钟（21 个，外加排查其他固定 `NOW` 的测试）
-- [ ] S1-3 改写 `test_project_scaffold.py` 以检查新的文档集合
-- [ ] S1-4 清理 Alpaca 和多资产残留；重写 `.env.example`
-- [ ] S1-5 `alphabrief_core.paths`（只接受绝对路径）
-- [ ] S1-6 `scripts/secret_scan.py`
-- [ ] S1-7 `.github/workflows/ci.yml`
-- [ ] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
+- [x] S1-1 按 GUIDE 6.1 删除代码和对应测试；更新 `pyproject.toml`
+- [x] S1-2 时间相关测试改为注入时钟（21 个，外加排查其他固定 `NOW` 的测试）
+- [x] S1-3 改写 `test_project_scaffold.py` 以检查新的文档集合
+- [x] S1-4 清理 Alpaca 和多资产残留；重写 `.env.example`
+- [x] S1-5 `alphabrief_core.paths`（只接受绝对路径）
+- [x] S1-6 `scripts/secret_scan.py`
+- [x] S1-7 `.github/workflows/ci.yml`
+- [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
+
+#### S1 证据（进行中）
+
+- S1-0（S0 完成提交回填）：S0 的检查表、证据与决策已随提交 `5b56d0e` 落库。
+- S1-1（提交 `e58f444`）：
+  - 删除：`alphabrief-acceptance`、`alphabrief-research` 两个整包；core 的 6 个观察期模块；8 个 CLI 命令组（`model` 组在 S2 重写）；5 个 API 路由与 `db/writer_lease`；`scheduler_leader`；models 的 kronos/router/registry/quality_gate/briefs/daily/evaluation/prompts/evaluation_datasets；data 的 3 个联网 provider；news 的 sec_edgar/social_sentiment（mock 移到 `tests/news_mock_provider.py`）；运行时的 PaperBroker 与 fills/portfolio/router；未挂载的 `dashboard/` 包；`scripts/deployment`、`notebooks`、`strategies`。
+  - 改造：`DailyTradingCycle`/`DurableDailyCycle` 的 `broker` 参数改为必需的 `execution_backend`；scheduler、API `ai_trading`、`ai` CLI 一律走 `ExternalPaperExecutionBackend`（缺凭证即停，无内存兜底）；scheduler 默认品种改为 FX 五大货币对，删除 research_content 任务、Yahoo 行情摄取、observation JSON 导出；news/macro 只保留 `rss` 与 `fred`；`alphabrief_risk.context` 改用 `NewsMacroSource` 协议，摘要构建器迁到 `alphabrief_news.context_summary`。
+  - 新增测试替身 `tests/_helpers/fake_execution_backend.py`（确定性假券商只存在于测试中）。
+  - 命令与结果：`ruff check .` → All checks passed；`mypy` → Success: no issues found in 386 source files；`pytest -q -m "not practice"` → 2288 passed / 28 failed（当时剩余失败全部属于 S1-2 与 S1-3 的范围）。
+  - 行数：`find packages apps -name '*.py' | xargs cat | wc -l` 73915 → 55005；`find tests -name '*.py' | xargs cat | wc -l` 64394 → 48912；`git ls-files | wc -l` 576 → 424。
+- S1-2（提交 `2fea812`）：`test_risk_currency_aggregation.py`、`test_risk_exposure_matrix.py` 的 `_snapshot()` 传入 `clock=lambda: NOW`；`routes/macro.py` 与 `macro_commands.py` 增加可替换的 `_now()`；两个 macro 测试注入 `NOW` 并把 stale 样本时间改为由 `NOW` 推导；全仓库扫描后仅 `test_risk_execution_paths.py` 的假券商快照保留墙钟（默认 builder 的实时性语义，已写明原因）。命令与结果：`pytest -q -m "not practice"` → 2309 passed / 7 failed（仅剩 scaffold）；`mypy` → Success。
+- S1-6（提交见 S1-7）：新建 `scripts/secret_scan.py`：扫描 git 已跟踪文件中的 OANDA token 形态（32+32 hex）、账户 ID 形态（`NNN-NNN-NNNNNNN-NNN`）、`sk-` key 与凭证名赋值，测试夹具的假值以显式白名单列出；本地存在 `.env` 时，只取凭证名变量（token/key/secret/password/account_id）的真实值并确认不出现在任何已跟踪文件中；`--history` 追加扫描完整 git 历史（S11 门禁用）。新增 `tests/test_secret_scan_tool.py` 覆盖各形态与红acted 输出。命令与结果：`python scripts/secret_scan.py` → exit 0；`python scripts/secret_scan.py --history` → exit 0（历史命中项逐条人工核对，全部为已删除测试/参考快照中的假值，如 `101-004-1234567-001`、`001-002-3456789-001`、`explicit-key`、`adanos_test_key`、`your_password`）。
+- S1-7（本提交）：新建 `.github/workflows/ci.yml`（ubuntu-latest + Python 3.12）：`pip install -e '.[dev]'` → `ruff check .` → `mypy` → `pytest -q -m "not practice"` → `python scripts/secret_scan.py`；practice 测试按 GUIDE 第 7 节只在本机运行。YAML 已用 `yaml.safe_load` 校验，五个步骤与本地执行命令一致。
+- S1 退出标准（本提交实测）：
+  - `ruff check .` → All checks passed
+  - `mypy` → Success: no issues found in 389 source files
+  - `pytest -q -m "not practice"` → 2330 passed / 0 failed
+  - `python scripts/secret_scan.py` → exit 0
+  - `grep -rn -i "alpaca" packages apps tests config .env.example` → 5 处，全部是"禁止 Alpaca/其他券商"的约束与负例（`broker/safety.py` 禁止导入段、两条 provider 拒绝用例、electron 安全断言）
+  - 行数：`find packages apps -name '*.py' | xargs cat | wc -l` 73915 → 54767；tests 64394 → 49049；`git ls-files` 576 → 428
+- S1-5：新建唯一路径模块 `alphabrief_core.paths`（`ALPHABRIEF_HOME` 优先、`ALPHABRIEF_DATA_DIR` 作为开发别名，二者都必须是绝对路径，相对路径抛 `PathConfigError`；默认 `~/Library/Application Support/AlphaBrief`；提供 `data_dir/db_path/secrets_dir/logs_dir/reports_dir/daily_reports_dir/backups_dir/cache_dir/runtime_lock_path`）。删除全部本地路径实现（原 16 个 `_default_db_path`/`_db_dir`/`_db_path` 定义与 `_DEFAULT_DB_DIR` 常量），并把 8 处直接读 `ALPHABRIEF_DATA_DIR` 的入口（scheduler/strategy/review/ai CLI、broker runtime、practice_scenarios、api_client、routes/scheduler、routes/broker）统一接到该模块。数据库文件名统一为 `alphabrief.duckdb`（GUIDE 4.3/附录 B），删除第二套数据目录权威 `ALPHABRIEF_AI_DB_DIR`。新增 `tests/test_paths.py`（默认目录、两个变量优先级、相对路径拒绝、目录布局、各 store 共用同一 resolver）。命令与结果：`pytest -q -m "not practice"` → 2320 passed / 0 failed；`mypy` → Success: no issues found in 388 source files；`ruff check .` → All checks passed。
+- S1-4：`.env.example` 重写为附录 A 的变量集合（删除 `ALPHABRIEF_LIVE_TRADING_ENABLED`、`ALPHAVANTAGE_API_KEY`、`OPENAI_*` 与过时的 `ALPHABRIEF_AI_*`）；删除已经不再门控任何行为的 `is_ai_external_paper_enabled`；`config/paper_execution_policy.yaml` 的品种收窄为五个 FX 主要货币对、`market: fx`；清理 `port.py`、`routes/broker.py` 与相关测试里的 Alpaca 注释。`grep -rn -i "alpaca" packages apps tests config .env.example` 只剩 6 处，全部是"禁止 Alpaca/其他券商"的约束测试与安全门（`broker/safety.py` 的禁用导入段、两条 provider 拒绝用例、electron 安全断言）。命令与结果：`pytest -q -m "not practice"` → 2312 passed / 0 failed；`mypy` → Success；`ruff check .` → All checks passed。
+- S1-3：重写 `tests/test_project_scaffold.py`，检查 `AGENTS.md`、`docs/PROJECT_GUIDE.md`、`docs/STATUS.md`、`docs/AGENT_PROMPT.md` 存在，`docs/` 只有这四个（含 `images`），已删除的旧文档与旧目录确实不存在，STATUS 只有一个当前阶段与状态，markdown 本地链接可解析。命令与结果：`pytest -q -m "not practice"` → 2315 passed / 0 failed；`mypy` → Success: no issues found in 386 source files；`ruff check .` → All checks passed。
 
 ### S2 模型通道
 - [ ] S2-1 `chatgpt_plan` 适配器与 OAuth（`alphabrief model login|status|logout|test`）

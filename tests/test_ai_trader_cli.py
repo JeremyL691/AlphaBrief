@@ -23,13 +23,10 @@ def _isolated_data_dir(
     # credentials would otherwise leak into every test. Each test can
     # opt back in by setting the variable it needs.
     monkeypatch.delenv("ALPHABRIEF_AI_TRADING_ENABLED", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_AI_EXTERNAL_PAPER_ENABLED", raising=False)
     monkeypatch.delenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", raising=False)
     monkeypatch.delenv("ALPHABRIEF_AI_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_KEY", raising=False)
-    monkeypatch.delenv("ALPHABRIEF_ALPACA_SECRET", raising=False)
 
 
 class TestAiStatus:

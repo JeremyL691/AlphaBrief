@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from alphabrief_core import paths as _paths
+
 from alphabrief_execution.broker.errors import BrokerAuthError
 from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -118,15 +120,10 @@ def oanda_is_configured(environ: dict[str, str] | None = None) -> bool:
 def resolve_data_dir(environ: dict[str, str] | None = None) -> Path:
     """Resolve the persistent data directory authority.
 
-    ``ALPHABRIEF_DATA_DIR`` wins; otherwise the default under the user's
-    home directory is used. Every application entry point resolves the
-    same authority through this function.
+    Delegates to :mod:`alphabrief_core.paths` so every entry point agrees
+    on one data directory and one database file.
     """
-    source = os.environ if environ is None else environ
-    raw = source.get(ENV_DATA_DIR)
-    if raw:
-        return Path(raw)
-    return _DEFAULT_DATA_DIR
+    return _paths.data_dir(environ)
 
 
 def build_oanda_paper_adapter(
@@ -240,7 +237,7 @@ class BrokerRuntime:
         if self._store is None:
             self._data_dir.mkdir(parents=True, exist_ok=True)
             self._store = BrokerReconStore(
-                db_path=self._data_dir / "alphabrief.db"
+                db_path=self._data_dir / _paths.DATABASE_NAME
             )
         return self._store
 

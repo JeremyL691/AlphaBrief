@@ -1,10 +1,10 @@
 """Market data provider interface for AlphaBrief.
 
 This subpackage defines the protocol that external market data providers
-must implement to plug into AlphaBrief's Data Layer. Two free, key-less
-HTTP providers ship with the package: ``YahooFinanceProvider`` and
-``BinanceProvider``. Both use the Python standard library's
-``urllib.request`` only and never call any third-party SDK.
+must implement to plug into AlphaBrief's Data Layer. Market data in v1
+comes from OANDA (see ``alphabrief_execution.broker.oanda``); the protocol
+stays here so alternative read-only sources can be added without touching
+callers.
 
 All providers in this subpackage:
 
@@ -16,7 +16,6 @@ All providers in this subpackage:
 5. Never log, store, or transmit secrets.
 """
 
-from alphabrief_data.providers.alphavantage import AlphaVantageProvider
 from alphabrief_data.providers.base import (
     MarketDataProvider,
     MarketDataProviderError,
@@ -26,17 +25,12 @@ from alphabrief_data.providers.base import (
     compute_backoff_delay,
     is_retryable_exception,
 )
-from alphabrief_data.providers.binance import BinanceProvider
-from alphabrief_data.providers.yahoo import YahooFinanceProvider
 
 __all__ = [
-    "AlphaVantageProvider",
-    "BinanceProvider",
     "MarketDataProvider",
     "MarketDataProviderError",
     "MarketDataProviderErrorCode",
     "RetryPolicy",
-    "YahooFinanceProvider",
     "call_with_retry",
     "compute_backoff_delay",
     "is_retryable_exception",

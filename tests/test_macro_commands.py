@@ -13,7 +13,9 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from alphabrief_cli import macro_commands
 from alphabrief_cli.macro_commands import macro_app
+from alphabrief_core import paths as _paths
 from alphabrief_news.macro_release import (
     DEFAULT_STALE_AFTER_SECONDS,
     MacroRelease,
@@ -51,8 +53,11 @@ def _isolated_macro(
     yield
 
 
-def test_cli_macro_releases_returns_ordered_events(tmp_path: Path) -> None:
-    store = MacroReleaseStore(db_path=tmp_path / "alphabrief.db")
+def test_cli_macro_releases_returns_ordered_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(macro_commands, "_now", lambda: NOW)
+    store = MacroReleaseStore(db_path=tmp_path / _paths.DATABASE_NAME)
     try:
         store.ingest(_release())
         store.ingest(
@@ -62,7 +67,7 @@ def test_cli_macro_releases_returns_ordered_events(tmp_path: Path) -> None:
             _release(
                 release_id="stale-cpi",
                 actual=None,
-                release_time=datetime.now(UTC)
+                release_time=NOW
                 - timedelta(seconds=DEFAULT_STALE_AFTER_SECONDS + 60),
             )
         )

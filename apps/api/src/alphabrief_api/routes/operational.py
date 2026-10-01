@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.oanda.taxonomy import classify_instrument
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from fastapi import APIRouter, HTTPException
@@ -108,36 +108,23 @@ class EquitySeriesResponse(BaseModel):
     points: list[EquityPoint]
 
 
-def _db_dir() -> Path:
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return Path(os.environ.get("ALPHABRIEF_HOME", "~/.alphabrief")).expanduser()
-
-
-def _db_path() -> Path:
-    db_dir = _db_dir()
-    db_dir.mkdir(parents=True, exist_ok=True)
-    return db_dir / "alphabrief.db"
-
-
 def _account_id() -> str:
     return os.environ.get("ALPHABRIEF_OANDA_ACCOUNT_ID", "not-configured")
 
 
 def _open_paper_store() -> PaperStore:
-    return PaperStore(db_path=_db_path())
+    return PaperStore(db_path=_paths.db_path())
 
 
 def _open_catalog() -> InstrumentCatalogStore | None:
     try:
-        return InstrumentCatalogStore(db_path=_db_path())
+        return InstrumentCatalogStore(db_path=_paths.db_path())
     except Exception:
         return None
 
 
 def _open_recon() -> BrokerReconStore:
-    return BrokerReconStore(db_path=_db_path())
+    return BrokerReconStore(db_path=_paths.db_path())
 
 
 def _positions(payload: Any) -> list[tuple[str, Decimal, Decimal]]:

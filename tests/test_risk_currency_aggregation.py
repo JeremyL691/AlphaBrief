@@ -82,7 +82,9 @@ def _inputs(**overrides: object) -> ExposureInputs:
 
 
 def _snapshot(**overrides: object) -> ExposureSnapshot:
-    return compute_exposure(_inputs(**overrides))
+    # Inject the fixed test clock so freshness is judged against NOW
+    # instead of the wall clock (the snapshot evidence is built at NOW).
+    return compute_exposure(_inputs(**overrides), clock=lambda: NOW)
 
 
 def _limits(**overrides: object) -> ExposureLimits:

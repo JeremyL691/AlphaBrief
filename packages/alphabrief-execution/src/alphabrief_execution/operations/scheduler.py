@@ -30,6 +30,7 @@ from typing import Any
 from uuid import uuid4
 
 import duckdb
+from alphabrief_core import paths as _paths
 
 from alphabrief_execution.broker.errors import BrokerTransientError
 from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -66,20 +67,11 @@ CREATE TABLE IF NOT EXISTS scheduler_alerts (
 """
 
 
-def _default_db_path() -> Path:
-    import os
-
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    base = Path(env_dir) if env_dir else Path.home() / ".alphabrief" / "data"
-    base.mkdir(parents=True, exist_ok=True)
-    return base / "alphabrief.db"
-
-
 class HeartbeatStore:
     """Persists scheduler task heartbeats and alert history."""
 
     def __init__(self, db_path: Path | str | None = None) -> None:
-        self._db_path = Path(db_path) if db_path else _default_db_path()
+        self._db_path = Path(db_path) if db_path else _paths.db_path()
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(CREATE_HEARTBEATS)
         self._conn.execute(CREATE_ALERTS)

@@ -13,15 +13,13 @@ from alphabrief_news.macro_release import (
 )
 from alphabrief_news.providers import (
     FredMacroProvider,
-    MockMacroProvider,
     NewsProviderError,
-    build_default_mock_macro,
 )
 from alphabrief_news.types import MacroFetchQuery
 
 macro_app = typer.Typer(help="Fetch and inspect macro-economic indicators.")
 
-MacroSource = Literal["mock", "fred"]
+MacroSource = Literal["fred"]
 
 
 def _parse_iso_date(value: str) -> datetime:
@@ -38,12 +36,9 @@ def _parse_iso_date(value: str) -> datetime:
 
 
 def _build_provider(
-    source: MacroSource, indicators: list[str]
-) -> MockMacroProvider | FredMacroProvider:
-    if source == "mock":
-        return MockMacroProvider(
-            seed_indicators=build_default_mock_macro(indicators)
-        )
+    source: MacroSource,
+    indicators: list[str],
+) -> FredMacroProvider:
     if source == "fred":
         return FredMacroProvider()
     raise typer.BadParameter(f"unknown macro source: {source}")
@@ -129,6 +124,11 @@ def list_cmd(
         )
 
 
+def _now() -> datetime:
+    """Current UTC time (replaceable so tests can inject a fixed clock)."""
+    return datetime.now(UTC)
+
+
 @macro_app.command("releases")
 def releases_cmd(
     pretty: bool = typer.Option(  # noqa: B008
@@ -143,7 +143,7 @@ def releases_cmd(
     store = MacroReleaseStore()
     try:
         releases = store.releases()
-        now = datetime.now(UTC)
+        now = _now()
         events = [
             release.with_state(release_state(release, now=now).state)
             for release in releases

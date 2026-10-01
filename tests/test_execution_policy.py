@@ -52,31 +52,24 @@ def _configured_policy_text() -> str:
 
 
 def test_checked_in_execution_policy_is_paper_only_and_locked() -> None:
-    """M01-W01: default policy is OANDA-practice paper auto-execution.
+    """Default policy is OANDA-practice FX paper auto-execution.
 
-    FX / metals / index CFDs and the transitional names all sit behind the
-    single OANDA practice provider; the RiskGate allowlist is the policy
-    symbols. Paper mode and the live-trading lock are unchanged; automated
-    execution is allowed inside paper mode only.
+    The practice account returns CURRENCY instruments only, so the
+    reviewed operating boundary is the five FX majors. Paper mode and
+    the live-trading lock are unchanged; automated execution is allowed
+    inside paper mode only.
     """
     policy = load_paper_execution_policy("config/paper_execution_policy.yaml")
 
     assert policy.mode == "paper"
     assert policy.provider == "oanda_paper"
-    assert policy.market == "multi_asset"
+    assert policy.market == "fx"
     assert policy.symbols == (
-        # FX Majors
-        "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD",
-        # FX Crosses
-        "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CHF_JPY",
-        # Metals
-        "XAU_USD", "XAG_USD",
-        # Index CFDs (US + EU + JP)
-        "US30_USD", "SPX500_USD", "NAS100_USD", "DE30_EUR", "JP225_USD",
-        # US Equities (Alpaca)
-        "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL", "AMD", "SPY", "QQQ",
-        # Crypto (Alpaca)
-        "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
+        "EUR_USD",
+        "GBP_USD",
+        "USD_JPY",
+        "AUD_USD",
+        "USD_CAD",
     )
     assert policy.order_types == ("market", "limit")
     assert policy.max_order_notional == Decimal("2000")
@@ -154,11 +147,10 @@ def test_execution_policy_rejects_unknown_fields(tmp_path: Path) -> None:
 def test_execution_policy_accepts_reviewed_oanda_paper_boundary(
     tmp_path: Path,
 ) -> None:
-    """Round 0063: default paper policy is now OANDA + multi_asset.
+    """The reviewed OANDA paper boundary can be expressed from any baseline.
 
-    This test still proves the policy can be expressed as a paper OANDA
-    configuration, but it now mutates symbols on the already-OANDA baseline
-    rather than translating an Alpaca baseline.
+    This test mutates the checked-in policy text (provider, market and
+    symbols) and asserts the OANDA practice shape validates.
     """
     baseline = _configured_policy_text()
     text = baseline
@@ -219,26 +211,26 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
         rationale="policy boundary test",
         created_at=POLICY_NOW,
     )
-    allowed_crypto = allowed.model_copy(
-        update={"symbol": "BTC-USD", "quantity": Decimal("0.01")}
+    allowed_jpy = allowed.model_copy(
+        update={"symbol": "USD_JPY", "quantity": Decimal("10")}
     )
-    allowed_equity = allowed.model_copy(
-        update={"symbol": "AAPL", "quantity": Decimal("5")}
+    blocked_signal = allowed.model_copy(
+        update={"symbol": "XAU_USD", "quantity": Decimal("0.4")}
     )
     blocked_symbol = allowed.model_copy(update={"symbol": "NFLX"})
     blocked_value = allowed.model_copy(update={"quantity": Decimal("99999")})
 
     ctx_eur = _empty_account_context(symbol="EUR_USD", mark=Decimal("1.14"))
-    ctx_btc = _empty_account_context(symbol="BTC-USD", mark=Decimal("60000"))
-    ctx_aapl = _empty_account_context(symbol="AAPL", mark=Decimal("230"))
+    ctx_jpy = _empty_account_context(symbol="USD_JPY", mark=Decimal("150"))
+    ctx_gold = _empty_account_context(symbol="XAU_USD", mark=Decimal("4100"))
     allowed_decision = gate.evaluate(
         allowed, estimated_price=Decimal("1.14"), account_context=ctx_eur
     )
-    crypto_decision = gate.evaluate(
-        allowed_crypto, estimated_price=Decimal("60000"), account_context=ctx_btc
+    jpy_decision = gate.evaluate(
+        allowed_jpy, estimated_price=Decimal("150"), account_context=ctx_jpy
     )
-    equity_decision = gate.evaluate(
-        allowed_equity, estimated_price=Decimal("230"), account_context=ctx_aapl
+    signal_decision = gate.evaluate(
+        blocked_signal, estimated_price=Decimal("4100"), account_context=ctx_gold
     )
     blocked_symbol_decision = gate.evaluate(
         blocked_symbol, estimated_price=Decimal("100"), account_context=ctx_eur
@@ -248,8 +240,9 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
     )
     assert allowed_decision.approved is True
     assert allowed_decision.requires_human_review is False
-    assert crypto_decision.approved is True
-    assert equity_decision.approved is True
+    assert jpy_decision.approved is True
+    # Signal-only symbols are readable but never orderable.
+    assert signal_decision.approved is False
     assert blocked_symbol_decision.approved is False
     assert blocked_value_decision.approved is False
 
@@ -257,17 +250,15 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
 @pytest.mark.parametrize(
     ("symbol", "quantity"),
     [
-        # M01-W01: sample from the OANDA-practice multi-asset boundary.
-        # Quantities keep the USD notional under max_order_notional=2000 at
-        # each asset class's representative mark.
+        # Every reviewed trading symbol must pass the gate. Quantities keep
+        # the raw notional (units x mark) under max_order_notional=2000; the
+        # legacy gate compares quote-currency face value, and S4 replaces
+        # that with home-currency conversion.
         ("EUR_USD", Decimal("1000")),
-        ("GBP_JPY", Decimal("5")),
-        ("AUD_JPY", Decimal("10")),
-        ("XAU_USD", Decimal("0.4")),
-        ("XAG_USD", Decimal("30")),
-        ("AAPL", Decimal("8")),
-        ("BTC-USD", Decimal("0.02")),
-        ("ETH-USD", Decimal("0.5")),
+        ("GBP_USD", Decimal("1000")),
+        ("USD_JPY", Decimal("10")),
+        ("AUD_USD", Decimal("1000")),
+        ("USD_CAD", Decimal("1000")),
     ],
 )
 def test_risk_gate_accepts_extended_etf_symbols(symbol: str, quantity: Decimal) -> None:
@@ -293,13 +284,10 @@ def test_risk_gate_accepts_extended_etf_symbols(symbol: str, quantity: Decimal) 
     # are covered by test_default_api_risk_gate_enforces_policy_subset.
     mark = {
         "EUR_USD": Decimal("1.14"),
-        "GBP_JPY": Decimal("217.0"),
-        "AUD_JPY": Decimal("112.4"),
-        "XAU_USD": Decimal("4100"),
-        "XAG_USD": Decimal("59.7"),
-        "AAPL": Decimal("230"),
-        "BTC-USD": Decimal("60000"),
-        "ETH-USD": Decimal("3500"),
+        "GBP_USD": Decimal("1.27"),
+        "USD_JPY": Decimal("150"),
+        "AUD_USD": Decimal("0.66"),
+        "USD_CAD": Decimal("1.36"),
     }[symbol]
 
     decision = gate.evaluate(

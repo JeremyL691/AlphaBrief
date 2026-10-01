@@ -9,12 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
+from _helpers import FakeExecutionBackend
 from alphabrief_models import (
     FakeProviderAdapter,
     ModelGateway,
@@ -80,12 +75,8 @@ def _build_committee(payload: dict[str, object]) -> TradingCommittee:
     return TradingCommittee(gateway=gateway, discipline=DisciplineConfig())
 
 
-def _build_broker() -> PaperBroker:
-    return PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
+def _build_execution_backend() -> FakeExecutionBackend:
+    return FakeExecutionBackend()
 
 
 def _build_risk_gate(
@@ -121,7 +112,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=_build_committee(_BULLISH_PAYLOAD),
             risk_gate=_build_risk_gate(["SPY"]),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=False,
@@ -141,7 +132,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=_build_committee(_BULLISH_PAYLOAD),
             risk_gate=_build_risk_gate(["SPY"]),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
@@ -155,7 +146,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=_build_committee(_BULLISH_PAYLOAD),
             risk_gate=_build_risk_gate(["SPY"]),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
@@ -174,7 +165,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=_build_committee(_HOLD_PAYLOAD),
             risk_gate=_build_risk_gate(["SPY"]),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
@@ -190,7 +181,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=_build_committee(_BULLISH_PAYLOAD),
             risk_gate=_build_risk_gate(["SPY"], kill=True),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
@@ -209,7 +200,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=_build_committee(_BULLISH_PAYLOAD),
             risk_gate=_build_risk_gate(["SPY", "QQQ"]),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: None,
             enabled=True,
@@ -223,7 +214,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=_build_committee(_BULLISH_PAYLOAD),
             risk_gate=_build_risk_gate(["SPY", "QQQ"]),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
@@ -255,7 +246,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=committee,
             risk_gate=_build_risk_gate(["SPY"]),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
@@ -297,7 +288,7 @@ class TestDailyTradingCycle:
         cycle = DailyTradingCycle(
             committee=committee,
             risk_gate=_build_risk_gate(["SPY"]),
-            broker=_build_broker(),
+            execution_backend=_build_execution_backend(),
             store=store,
             snapshot_loader=lambda s: _snapshot(s),
             enabled=True,
@@ -313,7 +304,7 @@ class TestDailyTradingCycle:
             DailyTradingCycle(
                 committee=cast(TradingCommittee, None),
                 risk_gate=cast(RiskGate, None),
-                broker=cast(PaperBroker, None),
+                execution_backend=cast(FakeExecutionBackend, None),
                 store=cast(AiTradingStore, None),
                 snapshot_loader=cast(SnapshotLoader, None),
             )

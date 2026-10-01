@@ -26,8 +26,6 @@ from alphabrief_trader.execution_backend import (
     ExecutionBackendError,
     ExecutionBackendResult,
     ExternalPaperExecutionBackend,
-    LocalPaperExecutionBackend,
-    is_ai_external_paper_enabled,
 )
 from alphabrief_trader.model_factory import (
     ModelProviderUnavailableError,
@@ -78,7 +76,6 @@ __all__ = [
     "ExecutionBackendResult",
     "ExternalPaperExecutionBackend",
     "HeadlineLoader",
-    "LocalPaperExecutionBackend",
     "MarketSnapshot",
     "ModelProviderUnavailableError",
     "OrderAttempt",
@@ -94,6 +91,5 @@ __all__ = [
     "build_conservative_fake_provider",
     "default_roles",
     "is_ai_trading_enabled",
-    "is_ai_external_paper_enabled",
     "is_live_trading_unlocked",
 ]

@@ -14,12 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from alphabrief_execution import (
-    FillSimulator,
-    OrderRouter,
-    PaperBroker,
-    PortfolioState,
-)
+from _helpers import FakeExecutionBackend
 from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
@@ -88,18 +83,10 @@ def _build_cycle(
     facts: PreflightFacts,
     submit_count: list[int] | None = None,
 ) -> DurableDailyCycle:
-    broker = PaperBroker(
-        portfolio=PortfolioState(cash=Decimal("100000")),
-        router=OrderRouter(),
-        fill_simulator=FillSimulator(),
-    )
     from alphabrief_core import OrderIntent, RiskDecision
-    from alphabrief_trader.execution_backend import (
-        ExecutionBackendResult,
-        LocalPaperExecutionBackend,
-    )
+    from alphabrief_trader.execution_backend import ExecutionBackendResult
 
-    class _CountingBackend(LocalPaperExecutionBackend):
+    class _CountingBackend(FakeExecutionBackend):
         def submit(
             self,
             intent: OrderIntent,
@@ -122,12 +109,11 @@ def _build_cycle(
     return DurableDailyCycle(
         committee=_committee(),
         risk_gate=_risk_gate(),
-        broker=broker,
         store=store,
         state_store=state_store,
         runtime_store=runtime_store,
         snapshot_loader=lambda s: _snapshot(s),
-        execution_backend=_CountingBackend(broker),
+        execution_backend=_CountingBackend(),
         enabled=True,
         clock=lambda: _FIXED_NOW,
         preflight_facts_provider=lambda: facts,

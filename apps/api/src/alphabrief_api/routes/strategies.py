@@ -271,7 +271,7 @@ def set_enabled(
     """Flip the activation flag for a stored strategy.
 
     The flag is advisory at this round and does not affect RiskGate,
-    PaperBroker, or live-trading state. Future rounds may wire it into
+    the broker, or live-trading state. Future rounds may wire it into
     the risk allowlist.
     """
     store = _get_strategy_store()
@@ -305,9 +305,9 @@ def list_enabled_strategy_ids() -> EnabledStrategyIdsResponse:
 
     This is the **read-only advisory surface** for the activation
     flag. It is exposed for dashboards, audit views, and human
-    review. It is **never** consumed by ``RiskGate``, ``PaperBroker``,
-    or any execution path: the flag is a user opt-in marker, not a
-    risk control. Future rounds may opt to read this list as a
+    review. It is **never** consumed by ``RiskGate``, the broker, or
+    any execution path: the flag is a user opt-in marker, not a risk
+    control. Future rounds may opt to read this list as a
     convenience surface, but at this round it is informational
     only.
     """

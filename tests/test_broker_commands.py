@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from alphabrief_core import paths as _paths
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,7 +42,7 @@ def test_open_store_uses_persistent_data_directory_authority(
 
     store = _open_store()
     try:
-        assert (tmp_path / "alphabrief.db").is_file()
+        assert (tmp_path / _paths.DATABASE_NAME).is_file()
     finally:
         store.close()
 
@@ -90,7 +91,7 @@ def test_reconcile_cmd_fails_closed_offline_without_credentials(
     assert payload["freeze_raised"] is True
     assert payload["snapshot_id"]
 
-    store = BrokerReconStore(db_path=tmp_path / "alphabrief.db")
+    store = BrokerReconStore(db_path=tmp_path / _paths.DATABASE_NAME)
     try:
         latest = store.latest_snapshot(scope="cycle")
         assert latest is not None
@@ -164,7 +165,7 @@ def test_shutdown_flushes_durable_mappings(
 
     runtime.close()
 
-    store = BrokerReconStore(db_path=tmp_path / "alphabrief.db")
+    store = BrokerReconStore(db_path=tmp_path / _paths.DATABASE_NAME)
     try:
         rows = store.list_order_id_map()
         assert {row["client_order_id"]: row["broker_order_id"] for row in rows} == {
