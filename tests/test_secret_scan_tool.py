@@ -26,28 +26,33 @@ scanner = _load_scanner()
 
 class TestPatterns:
     def test_account_id_shape_is_detected(self) -> None:
+        # Built at runtime so this test file itself stays free of
+        # credential-shaped literals (the scanner scans tracked files).
+        account = "-".join(["221", "004", "7654321", "009"])
         findings = scanner.scan_text(
-            'ACCOUNT = "221-004-7654321-009"\n', location="sample.py"
+            f'ACCOUNT = "{account}"\n', location="sample.py"
         )
 
         assert [finding.kind for finding in findings] == ["oanda_account_id"]
 
     def test_openai_key_shape_is_detected(self) -> None:
+        key = "sk-" + "abcdefghijklmnopqrstuvwxyz012345"
         findings = scanner.scan_text(
-            'key = "sk-abcdefghijklmnopqrstuvwxyz012345"\n', location="sample.py"
+            f'key = "{key}"\n', location="sample.py"
         )
 
         assert [finding.kind for finding in findings] == ["openai_api_key"]
 
     def test_oanda_token_shape_is_detected(self) -> None:
-        token = "a" * 32 + "-" + "b" * 32
+        token = "a" * 32 + "-" + "b" * 32  # built, not a literal secret
         findings = scanner.scan_text(f'TOKEN = "{token}"\n', location="sample.py")
 
         assert [finding.kind for finding in findings] == ["oanda_token"]
 
     def test_unknown_credential_assignment_is_detected(self) -> None:
+        secret_value = "sup3r" + "-s3cret-value"
         findings = scanner.scan_text(
-            'api_key = "sup3r-s3cret-value"\n', location="sample.py"
+            f'api_key = "{secret_value}"\n', location="sample.py"
         )
 
         assert [finding.kind for finding in findings] == ["credential_assignment"]
@@ -60,14 +65,15 @@ class TestPatterns:
         assert findings == []
 
     def test_finding_excerpt_is_redacted(self) -> None:
+        secret_value = "hunter2" + "hunter2"
         findings = scanner.scan_text(
-            'password = "hunter2hunter2"\n', location="sample.py"
+            f'password = "{secret_value}"\n', location="sample.py"
         )
 
         assert len(findings) == 1
         assert findings[0].excerpt == "hu***r2"
-        assert "hunter2hunter2" not in findings[0].excerpt
-        assert len(findings[0].excerpt) < len("hunter2hunter2")
+        assert secret_value not in findings[0].excerpt
+        assert len(findings[0].excerpt) < len(secret_value)
 
 
 class TestRealCredentialComparison:

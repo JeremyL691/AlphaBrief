@@ -1,26 +1,33 @@
 """Model provider factory for the AI Trading Committee.
 
-The scheduler/API/CLI all need the same model wiring. This module keeps
-that selection in one place and fails closed when no real provider has
-been configured: production composition never falls back to a fake
-provider. A fake provider is available only through an explicit
-``ALPHABRIEF_AI_MODEL_PROVIDER=fake`` selection used by tests.
+All model traffic goes through :class:`~alphabrief_models.gateway.ModelGateway`
+and the channel composition in :mod:`alphabrief_models.channels`:
+
+* ``chatgpt_plan`` — the ChatGPT subscription channel (main);
+* ``openai_compatible`` — the optional fallback, only when
+  ``model.fallback_enabled`` is true and ``ALPHABRIEF_LLM_*`` is set;
+* ``fake`` — an explicit test/dev selection, never a production fallback.
+
+The old ``OPENAI_API_KEY``/``OPENAI_BASE_URL`` environment variables are
+**not** read here: those belong to the operator's coding tools, not to
+this product.
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 
 from alphabrief_models import (
+    ChannelGateway,
+    ChannelState,
     FakeProviderAdapter,
     ModelCallBudget,
     ModelCallRecord,
     ModelCapability,
     ModelGateway,
-    OllamaProviderAdapter,
-    OpenAIProviderAdapter,
+    ModelSettings,
     ProviderAdapter,
+    build_channel_gateway,
 )
 
 from alphabrief_trader.committee import TradingCommittee
@@ -28,21 +35,52 @@ from alphabrief_trader.rules import DisciplineConfig
 
 AI_MODEL_PROVIDER_ENV = "ALPHABRIEF_AI_MODEL_PROVIDER"
 AI_MODEL_NAME_ENV = "ALPHABRIEF_AI_MODEL_NAME"
-AI_MODEL_BASE_URL_ENV = "ALPHABRIEF_AI_MODEL_BASE_URL"
-AI_MODEL_TIMEOUT_ENV = "ALPHABRIEF_AI_MODEL_TIMEOUT_SECONDS"
 
 _STRUCTURED_CAPABILITIES: frozenset[ModelCapability] = frozenset(
     {"text_generation", "structured_output", "json_mode"}
 )
 
+#: Explicit provider selections. Anything else means "use the channels".
+_EXPLICIT_SELECTIONS = frozenset({"fake"})
+
 
 class ModelProviderUnavailableError(RuntimeError):
-    """Raised when no real model provider is configured.
+    """Raised when no real model channel is configured.
 
-    Production composition must fail closed: a missing provider must
-    never be silently replaced by a deterministic fake that could
-    fabricate research or orders.
+    Production composition must fail closed: a missing channel must never
+    be silently replaced by a deterministic fake that could fabricate
+    research or orders.
     """
+
+
+def build_ai_trading_channels(
+    *,
+    record_sink: Callable[[ModelCallRecord], None] | None = None,
+    budget: ModelCallBudget | None = None,
+) -> ChannelGateway:
+    """Return the configured channel gateway for the trading committee.
+
+    An explicit ``fake`` selection builds a single fake provider so test
+    composition never reaches the network; every other selection uses the
+    real channel composition (subscription first, opt-in fallback).
+    """
+    if _selection() == "fake":
+        gateway = ModelGateway(
+            [build_conservative_fake_provider()],
+            record_sink=record_sink,
+            budget=budget,
+        )
+        return ChannelGateway(
+            gateway=gateway,
+            state=ChannelState(),
+            settings=ModelSettings(),
+            primary_channel="fake",
+            fallback_channel=None,
+        )
+    channels = build_channel_gateway(record_sink=record_sink)
+    if budget is not None:
+        channels.gateway.set_budget(budget)
+    return channels
 
 
 def build_ai_trading_committee(
@@ -50,65 +88,39 @@ def build_ai_trading_committee(
     record_sink: Callable[[ModelCallRecord], None] | None = None,
     budget: ModelCallBudget | None = None,
 ) -> TradingCommittee:
-    """Build the AI Trading Committee from environment-backed providers.
+    """Build the AI Trading Committee on the configured channels.
 
     ``record_sink`` and ``budget`` are forwarded to the ModelGateway so
-    production callers can persist every terminal call record and bound
+    production callers persist every terminal call record and bound
     per-request/cycle/daily model usage.
-
-    Raises :class:`ModelProviderUnavailableError` when no real provider
-    is configured so the caller can fail closed (for example persist a
-    durable blocked or no-trade cycle) before any proposal or intent
-    exists.
     """
-
-    provider = build_ai_trading_provider()
-    gateway = ModelGateway(
-        providers=[provider],
-        record_sink=record_sink,
-        budget=budget,
-    )
-    return TradingCommittee(gateway=gateway, discipline=DisciplineConfig())
+    channels = build_ai_trading_channels(record_sink=record_sink, budget=budget)
+    return TradingCommittee(gateway=channels.gateway, discipline=DisciplineConfig())
 
 
 def build_ai_trading_provider() -> ProviderAdapter:
-    """Return the configured AI trading model provider.
+    """Return the model provider for the committee.
 
-    Selection rules:
-
-    1. ``ALPHABRIEF_AI_MODEL_PROVIDER=fake`` forces the conservative
-       fake. This is an explicit test/dev selection, never a fallback.
-    2. ``...=openai`` requires ``OPENAI_API_KEY`` and uses
-       ``ALPHABRIEF_AI_MODEL_NAME`` or ``gpt-4o-mini``.
-    3. ``...=ollama`` uses local Ollama and requires an explicit model
-       name or falls back to ``llama3.1``.
-    4. ``...=auto`` (default) selects OpenAI only when
-       ``OPENAI_API_KEY`` exists, otherwise raises
-       :class:`ModelProviderUnavailableError` — production never
-       silently falls back to a fake provider.
+    ``ALPHABRIEF_AI_MODEL_PROVIDER=fake`` is the only explicit selection
+    and exists for tests; every other value (including unset) uses the
+    ChatGPT subscription channel, which fails closed when not signed in.
     """
+    if _selection() == "fake":
+        return build_conservative_fake_provider()
+    channels = build_channel_gateway()
+    return channels.gateway._providers[0]  # noqa: SLF001 - single-channel wiring
+
+
+def _selection() -> str:
+    import os
 
     requested = os.environ.get(AI_MODEL_PROVIDER_ENV, "auto").strip().lower()
-    if requested in {"", "auto"}:
-        if os.environ.get("OPENAI_API_KEY"):
-            return _build_openai_provider()
-        raise ModelProviderUnavailableError(
-            "no model provider configured: set ALPHABRIEF_AI_MODEL_PROVIDER "
-            "to 'openai' with OPENAI_API_KEY, or 'ollama' with a local "
-            "server, or select 'fake' explicitly for test composition"
-        )
-    if requested == "fake":
-        return build_conservative_fake_provider()
-    if requested == "openai":
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise ValueError(
-                "ALPHABRIEF_AI_MODEL_PROVIDER=openai requires OPENAI_API_KEY"
-            )
-        return _build_openai_provider()
-    if requested == "ollama":
-        return _build_ollama_provider()
+    if requested in {"", "auto", "chatgpt", "chatgpt_plan"}:
+        return "chatgpt_plan"
+    if requested in _EXPLICIT_SELECTIONS:
+        return requested
     raise ValueError(
-        "ALPHABRIEF_AI_MODEL_PROVIDER must be one of auto, fake, openai, ollama"
+        f"{AI_MODEL_PROVIDER_ENV} must be one of auto, chatgpt, fake"
     )
 
 
@@ -119,7 +131,6 @@ def build_conservative_fake_provider() -> FakeProviderAdapter:
     environment selection or a direct test import. It is never used as a
     production fallback.
     """
-
     return FakeProviderAdapter(
         provider_name="fake",
         model_name="fake-ai-committee",
@@ -144,42 +155,11 @@ def build_conservative_fake_provider() -> FakeProviderAdapter:
     )
 
 
-def _build_openai_provider() -> OpenAIProviderAdapter:
-    return OpenAIProviderAdapter(
-        model_name=os.environ.get(AI_MODEL_NAME_ENV, "gpt-4o-mini"),
-        capabilities=_STRUCTURED_CAPABILITIES,
-        timeout_seconds=_timeout_seconds(),
-    )
-
-
-def _build_ollama_provider() -> OllamaProviderAdapter:
-    return OllamaProviderAdapter(
-        model_name=os.environ.get(AI_MODEL_NAME_ENV, "llama3.1"),
-        base_url=os.environ.get(AI_MODEL_BASE_URL_ENV, "http://localhost:11434"),
-        capabilities=_STRUCTURED_CAPABILITIES,
-        timeout_seconds=_timeout_seconds(),
-    )
-
-
-def _timeout_seconds() -> float:
-    raw = os.environ.get(AI_MODEL_TIMEOUT_ENV)
-    if raw is None or raw.strip() == "":
-        return 30.0
-    try:
-        value = float(raw)
-    except ValueError as exc:
-        raise ValueError(f"{AI_MODEL_TIMEOUT_ENV} must be a positive number") from exc
-    if value <= 0:
-        raise ValueError(f"{AI_MODEL_TIMEOUT_ENV} must be positive")
-    return value
-
-
 __all__ = [
-    "AI_MODEL_BASE_URL_ENV",
     "AI_MODEL_NAME_ENV",
     "AI_MODEL_PROVIDER_ENV",
-    "AI_MODEL_TIMEOUT_ENV",
     "ModelProviderUnavailableError",
+    "build_ai_trading_channels",
     "build_ai_trading_committee",
     "build_ai_trading_provider",
     "build_conservative_fake_provider",

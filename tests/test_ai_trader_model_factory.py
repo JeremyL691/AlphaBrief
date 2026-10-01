@@ -1,19 +1,17 @@
-"""Tests for AI trading model provider selection.
+"""Tests for AI trading model channel selection.
 
-Production composition must fail closed: with no real provider
-configured the factory raises ``ModelProviderUnavailableError`` instead
-of silently falling back to a fake provider. The deterministic fake is
-available only through an explicit ``ALPHABRIEF_AI_MODEL_PROVIDER=fake``
-selection (test composition).
+All model traffic goes through the ModelGateway channels: the ChatGPT
+subscription channel is the default, an OpenAI-compatible endpoint is an
+explicit opt-in fallback, and the deterministic fake exists only behind
+an explicit ``ALPHABRIEF_AI_MODEL_PROVIDER=fake`` selection. The
+operator's ``OPENAI_API_KEY`` is never read by the product.
 """
 
 from __future__ import annotations
 
 import pytest
-from alphabrief_models import FakeProviderAdapter, OllamaProviderAdapter
-from alphabrief_models.openai_adapter import OpenAIProviderAdapter
+from alphabrief_models import FakeProviderAdapter
 from alphabrief_trader import (
-    ModelProviderUnavailableError,
     build_ai_trading_committee,
     build_ai_trading_provider,
     build_conservative_fake_provider,
@@ -22,35 +20,41 @@ from alphabrief_trader import (
 _AI_ENV_VARS = (
     "ALPHABRIEF_AI_MODEL_PROVIDER",
     "ALPHABRIEF_AI_MODEL_NAME",
-    "ALPHABRIEF_AI_MODEL_BASE_URL",
-    "ALPHABRIEF_AI_MODEL_TIMEOUT_SECONDS",
     "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
 )
 
 
 @pytest.fixture(autouse=True)
-def _clean_ai_model_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clean_ai_model_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     for name in _AI_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+    # Keep any accidental credential writes inside the test directory.
+    monkeypatch.setenv(
+        "ALPHABRIEF_HOME", str(tmp_path_factory.mktemp("ai-model-home"))
+    )
 
 
 class TestAiTradingModelFactory:
-    def test_auto_without_openai_key_fails_closed(self) -> None:
-        with pytest.raises(ModelProviderUnavailableError, match="provider"):
-            build_ai_trading_provider()
+    def test_default_selection_is_the_chatgpt_channel(self) -> None:
+        provider = build_ai_trading_provider()
 
-    def test_auto_with_openai_key_uses_openai(
+        assert provider.provider_name == "chatgpt_plan"
+        assert "structured_output" in provider.capabilities
+
+    def test_operator_openai_key_is_not_read(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        """The product must never use the operator's coding-tool key."""
+        monkeypatch.setenv("OPENAI_API_KEY", "operator-coding-tool-key")
 
         provider = build_ai_trading_provider()
 
-        assert isinstance(provider, OpenAIProviderAdapter)
-        assert provider.model_name == "gpt-4o-mini"
-        assert "structured_output" in provider.capabilities
+        assert provider.provider_name == "chatgpt_plan"
 
-    def test_explicit_fake_requires_explicit_selection(
+    def test_explicit_fake_is_available_for_tests(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
@@ -61,48 +65,29 @@ class TestAiTradingModelFactory:
         assert provider.model_name == "fake-ai-committee"
         assert "structured_output" in provider.capabilities
 
-    def test_explicit_openai_requires_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "openai")
-
-        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-            build_ai_trading_provider()
-
-    def test_explicit_ollama_uses_local_adapter(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "ollama")
-        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_NAME", "llama3.1")
-        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_BASE_URL", "http://127.0.0.1:11434")
-
-        provider = build_ai_trading_provider()
-
-        assert isinstance(provider, OllamaProviderAdapter)
-        assert provider.model_name == "llama3.1"
-        assert provider.base_url == "http://127.0.0.1:11434"
-        assert "structured_output" in provider.capabilities
-
     def test_unknown_provider_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "surprise")
 
-        with pytest.raises(ValueError, match="auto, fake, openai, ollama"):
+        with pytest.raises(ValueError, match="auto, chatgpt, fake"):
             build_ai_trading_provider()
 
     def test_conservative_fake_requires_explicit_selection(self) -> None:
         provider = build_conservative_fake_provider()
+
         assert isinstance(provider, FakeProviderAdapter)
         # The fake is never reachable through the default composition path.
-        with pytest.raises(ModelProviderUnavailableError):
-            build_ai_trading_provider()
+        assert build_ai_trading_provider().provider_name == "chatgpt_plan"
 
-    def test_committee_without_provider_fails_closed(self) -> None:
-        with pytest.raises(ModelProviderUnavailableError):
-            build_ai_trading_committee()
+    def test_committee_is_built_on_the_channels(self) -> None:
+        committee = build_ai_trading_committee()
+
+        assert committee.roles
 
     def test_committee_with_explicit_fake_is_usable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
+
         committee = build_ai_trading_committee()
+
         assert committee.roles  # explicit test composition builds a committee
