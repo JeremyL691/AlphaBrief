@@ -286,6 +286,31 @@ class TestStreamParsing:
 
         assert exc.value.code == "usage_limit_exceeded"
 
+    def test_deltas_and_the_completed_item_do_not_duplicate_text(self) -> None:
+        """The real stream sends both; the text must appear once."""
+        body = _sse(
+            {"type": "response.output_text.delta", "delta": '{"ok": true}'},
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "content": [{"text": '{"ok": true}'}],
+                },
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "model": "gpt-test-1",
+                    "output": [
+                        {"type": "message", "content": [{"text": '{"ok": true}'}]}
+                    ],
+                },
+            },
+        )
+
+        assert parse_response_stream(body).output_text == '{"ok": true}'
+
     def test_completed_output_array_is_used_when_no_deltas(self) -> None:
         body = _sse(
             {
@@ -369,7 +394,12 @@ class TestAdapter:
         assert payload["model"] == "gpt-test-1"
         assert "instructions" not in payload
 
-    def test_missing_credentials_fail_closed(self) -> None:
+    def test_missing_credentials_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        # An isolated home so a real sign-in on this machine cannot leak in.
+        monkeypatch.setenv("ALPHABRIEF_HOME", str(tmp_path))
+        monkeypatch.delenv("ALPHABRIEF_DATA_DIR", raising=False)
         adapter = ChatGptPlanAdapter(
             credentials=None, http_send=FakeHttp([]), clock=lambda: NOW
         )

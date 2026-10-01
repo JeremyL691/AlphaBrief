@@ -9,11 +9,11 @@
 | 字段 | 值 |
 |---|---|
 | 当前阶段 | **S3 打通一单（垂直切片）** |
-| 状态 | `WAITING_OWNER_LOGIN` |
-| 下一项任务 | S3-4/S3-5 垂直切片（下单 + 平仓 + 对账）——需要 S2-5 完成一次 ChatGPT 授权 |
+| 状态 | `IN_PROGRESS` |
+| 下一项任务 | S3-4/S3-5 垂直切片：`cycle run --once --instrument EUR_USD --units 1000 --trading on` → 对账 → 平仓 → 再对账 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-09-30，S3-1/S3-2/S3-3 完成，S3-4/S3-5 命令面就绪；等待用户完成一次 ChatGPT 授权以执行真实下单 |
+| 最近更新 | 2026-10-01，S2 全部完成（主通道真实可用）；开始 S3-4/S3-5 垂直切片 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -73,6 +73,12 @@
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
+#### S2 完成证据（2026-10-01）
+
+- S2-5 用户完成授权后实测：`alphabrief model status --compact` → `{"primary": {"authorized": true, "inference_scope": true, "refresh_token_present": true, "expires_at": "2026-10-01T07:50:35Z", "scopes": ["chatgpt.tokens.use.direct","email","offline_access","openid","profile","resource.invoke"], "default_model": "gpt-6-astra", ...}}`；`alphabrief model test --compact` → `{"ok": true, "channel": "chatgpt_plan", "model": "gpt-6-astra", "text": "{\"ok\": true}", "parsed_ok": true, "parsed": {"ok": true}, "input_tokens": 18, "output_tokens": 9, "latency_ms": 2297}`，调用记录已落库（`ModelCallStore.list_calls` → 1 条，provider=chatgpt_plan、model=gpt-6-astra、status=succeeded、latency_ms=3270、tokens 18/9）。`pytest -m practice` → 5 passed（行情入库、下单序列化、对账、通道登录态、通道真实调用）。
+- 真实响应与文档不一致处（按 GUIDE 8.6 以真实响应为准）：订阅通道的模型目录实际返回 `{"models": [{"slug", "visibility", "display_name", ...}]}`（`visibility` 取值 `list`/`hide`），而公开文档描述的是 OpenAI 风格的 `data[].id` + `visibility == "list"`。`fetch_model_slugs` 现在同时接受两种形状并仍按 `visibility == "list"` 过滤；实测该账号可见模型 5 个（gpt-6-astra、gpt-5.6-sol、gpt-5.6-terra、gpt-5.6-luna、gpt-5.5），逐个用文档化的 Responses 调用（`store=false`、`stream=true`）探测均返回 HTTP 200 且含 `response.completed`；默认模型取目录中第一个可见项 `gpt-6-astra`（可用 `config/alphabrief.yaml: model.primary_model` 覆盖）。
+- 同时修掉一个真实流解析缺陷：真实流会同时发送 `response.output_text.delta` 与 `response.output_item.done`，旧实现把两者都拼接导致文本重复（`{"ok": true}{"ok": true}`），现已改为"优先 deltas，仅在无 deltas 时用完成项/完成响应的文本"，并补了回归测试。`model test` 现在把调用记录持久化到 `ModelCallStore`（此前只留在内存）。
+
 #### S4 证据（进行中）
 
 - S4-1 第二部分（进行中，提交见下）：新增 `alphabrief_execution.broker.oanda.risk_sources.OandaRiskContextSources`，从真实 practice 端点取风控上下文所需事实：`/summary`（balance/NAV/marginUsed/marginAvailable/币种）、`/positions`（多空分开 + 均价）、`/orders?state=PENDING`、`/trades`、`/pricing`（bid/ask + 本币换算因子）、`/instruments`（目录版本）、对账状态改读持久化 recon store（frozen/clean/unknown，不再恒为 unknown）、健康状态由账户摘要探测；报价覆盖"配置品种 ∪ 当前持仓 ∪ 挂单品种"。`OandaPaperAdapter` 增加只读 `client` 访问器以便构造这些来源。**该模块尚未接入执行后端默认路径**（当前仅新增模块与访问器，运行时行为未变），接入与测试是 S4-1 的下一步。命令与结果：`pytest -q -m "not practice"` → 2417 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (408 files)。
@@ -130,7 +136,7 @@
 - [x] S2-3 完整的调用记录；委员会构建时传入记录器
 - [x] S2-4 确定性测试，加一个 practice 测试（practice 待登录后通过）
 - [ ] S2-5 用户完成 ChatGPT 授权
-- [ ] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库（等 S2-5）
+- [x] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库（2026-10-01 实测）
 
 ### S3 打通一单
 - [x] S3-1 OANDA K 线和报价入库

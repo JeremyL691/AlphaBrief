@@ -404,7 +404,8 @@ def parse_response_stream(body: bytes) -> StreamOutcome:
     completed: dict[str, Any] | None = None
     failed: dict[str, Any] | None = None
     model = ""
-    text_parts: list[str] = []
+    delta_parts: list[str] = []
+    item_parts: list[str] = []
     for raw_line in body.decode("utf-8", errors="replace").splitlines():
         line = raw_line.strip()
         if not line.startswith("data:"):
@@ -420,13 +421,16 @@ def parse_response_stream(body: bytes) -> StreamOutcome:
             continue
         event_type = str(event.get("type") or "")
         if event_type == "response.output_text.delta":
-            text_parts.append(str(event.get("delta") or ""))
+            delta_parts.append(str(event.get("delta") or ""))
         elif event_type == "response.output_item.done":
+            # The completed item repeats the text already delivered as
+            # deltas, so it is only a fallback for streams that send no
+            # deltas at all.
             item = event.get("item")
             if isinstance(item, dict) and item.get("type") == "message":
                 for content in item.get("content") or ():
                     if isinstance(content, dict) and content.get("text"):
-                        text_parts.append(str(content["text"]))
+                        item_parts.append(str(content["text"]))
         elif event_type == "response.completed":
             raw = event.get("response")
             completed = raw if isinstance(raw, dict) else event
@@ -453,7 +457,7 @@ def parse_response_stream(body: bytes) -> StreamOutcome:
         input_tokens = int(raw_in) if isinstance(raw_in, int) else None
         output_tokens = int(raw_out) if isinstance(raw_out, int) else None
 
-    text = "".join(text_parts).strip()
+    text = "".join(delta_parts).strip() or "".join(item_parts).strip()
     if not text:
         text = _collect_output_text(completed)
     return StreamOutcome(
@@ -643,12 +647,22 @@ def fetch_model_slugs(
             code, _extract_error_text(payload, f"HTTP {response.status}")
         )
     body = response.json()
-    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(body, dict):
+        raise ChatGptPlanError(
+            "unsupported_capability", "model catalog is not a JSON object"
+        )
+    # The live subscription catalog returns {"models": [{"slug", "visibility",
+    # "display_name", ...}]}; the OpenAI-style {"data": [{"id"}]} shape is
+    # accepted too so either documented form works.
+    entries = body.get("models")
+    if entries is None:
+        entries = body.get("data")
     slugs: list[str] = []
-    for entry in data or ():
+    for entry in entries or ():
         if not isinstance(entry, dict):
             continue
-        if entry.get("visibility") not in (None, "list"):
+        visibility = entry.get("visibility")
+        if visibility is not None and visibility != "list":
             continue
         slug = entry.get("slug") or entry.get("id")
         if isinstance(slug, str) and slug:

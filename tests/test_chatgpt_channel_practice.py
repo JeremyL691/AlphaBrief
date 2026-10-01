@@ -10,8 +10,10 @@ carries the channel, model, latency and token usage.
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
+from alphabrief_core import load_env_file
 from alphabrief_models.chatgpt_plan import (
     ChatGptPlanAdapter,
     ChatGptPlanError,
@@ -20,6 +22,16 @@ from alphabrief_models.chatgpt_plan import (
 from alphabrief_models.gateway import ModelCallRecord, ModelGateway, ModelRequest
 
 pytestmark = pytest.mark.practice
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _local_environment() -> None:
+    """Load the developer's ``.env`` (credentials and the TLS bundle)."""
+    env_path = REPO_ROOT / ".env"
+    if env_path.is_file():
+        load_env_file(env_path)
 
 
 def test_signed_in_and_inference_scope_granted() -> None:
