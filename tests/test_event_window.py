@@ -220,12 +220,12 @@ class TestRule:
 
 
 class TestGateIntegration:
-    def _gate(self, **overrides: object) -> RiskGate:
+    def _gate(self) -> RiskGate:
         return RiskGate(
             limits=RiskLimitConfig(
                 trading_enabled=True,
                 symbol_allowlist=frozenset({"EUR_USD"}),
-                entry_rules=EntryRulePolicy(event_window_minutes=30, **overrides),
+                entry_rules=EntryRulePolicy(event_window_minutes=30),
             ),
             kill_switch=KillSwitch(),
             clock=lambda: NOW,

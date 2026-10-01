@@ -13,11 +13,12 @@ base gate checks do not cover.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from alphabrief_core import OrderIntent
+from alphabrief_core import OrderIntent, RiskDecision
 from alphabrief_risk import KillSwitch, RiskGate, RiskLimitConfig
 from alphabrief_risk.account_context import AccountExposureContext
 from alphabrief_risk.entry_rules import EntryRulePolicy
@@ -133,7 +134,7 @@ def _evaluate(
     context: AccountExposureContext | None = None,
     price: Decimal | None = Decimal("1.1000"),
     data_quality_passed: bool = True,
-) -> object:
+) -> RiskDecision:
     return gate.evaluate(
         intent or _intent(),
         estimated_price=price,
@@ -307,19 +308,19 @@ class TestBaselineIsApproved:
     def test_all_rules_pass_on_a_clean_context(self) -> None:
         decision = _evaluate(_gate())
 
-        assert decision.approved is True  # type: ignore[attr-defined]
-        assert "approved" in decision.risk_tags  # type: ignore[attr-defined]
+        assert decision.approved is True
+        assert "approved" in decision.risk_tags
 
 
 class TestRejectMatrix:
     @pytest.mark.parametrize("rule,run,expected_code", MATRIX)
     def test_rule_rejects_with_its_guide_code(
-        self, rule: str, run: object, expected_code: str
+        self, rule: str, run: Callable[[], RiskDecision], expected_code: str
     ) -> None:
-        decision = run()  # type: ignore[operator]
+        decision = run()
 
-        assert decision.approved is False, f"{rule} should reject"  # type: ignore[attr-defined]
-        assert expected_code in decision.risk_tags, (  # type: ignore[attr-defined]
+        assert decision.approved is False, f"{rule} should reject"
+        assert expected_code in decision.risk_tags, (
             f"{rule} should carry {expected_code}"
         )
 
@@ -375,7 +376,7 @@ class TestCloseExemptionMatrix:
 
         decision = _evaluate(gate, intent=close, context=hostile)
 
-        assert decision.approved is True  # type: ignore[attr-defined]
+        assert decision.approved is True
 
     def test_close_still_needs_a_fresh_quote(self) -> None:
         gate = _gate()
@@ -392,8 +393,8 @@ class TestCloseExemptionMatrix:
             context=_context(quote_captured_at=NOW - timedelta(minutes=5)),
         )
 
-        assert decision.approved is False  # type: ignore[attr-defined]
-        assert "QUOTE_STALE" in decision.risk_tags  # type: ignore[attr-defined]
+        assert decision.approved is False
+        assert "QUOTE_STALE" in decision.risk_tags
 
     def test_close_is_blocked_by_the_kill_switch(self) -> None:
         gate = _gate(kill_switch=KillSwitch(active=True, reason="manual halt"))
@@ -403,8 +404,8 @@ class TestCloseExemptionMatrix:
 
         decision = _evaluate(gate, intent=close, context=_context())
 
-        assert decision.approved is False  # type: ignore[attr-defined]
-        assert "kill_switch" in decision.risk_tags  # type: ignore[attr-defined]
+        assert decision.approved is False
+        assert "kill_switch" in decision.risk_tags
 
 
 class TestSizingMatrix:

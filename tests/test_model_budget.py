@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -138,7 +139,7 @@ class TestStoreBackedBudget:
     """The durable side: real recorded calls and persisted day state."""
 
     @pytest.fixture
-    def store(self, tmp_path: Path):
+    def store(self, tmp_path: Path) -> Iterator[ModelCallStore]:
         s = ModelCallStore(db_path=tmp_path / "calls.duckdb")
         try:
             yield s
