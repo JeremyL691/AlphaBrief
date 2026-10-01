@@ -32,8 +32,12 @@ def _vote(**overrides: object) -> CommitteeVote:
 class TestDisciplineConfig:
     def test_defaults_valid(self) -> None:
         config = DisciplineConfig()
+
         assert config.max_position_pct == Decimal("0.25")
-        assert config.no_trade_below_confidence == 0.45
+        # PROJECT_GUIDE 5.4: below 0.55 confidence the committee is no_trade.
+        assert config.no_trade_below_confidence == 0.55
+        assert config.min_analysts_supporting_direction == 2
+        assert config.honour_risk_role_veto is True
 
     def test_invalid_max_position_pct(self) -> None:
         with pytest.raises(ValueError):
@@ -260,3 +264,93 @@ class TestDisciplineGate:
         assert "r2" in plan.key_risks
         # No duplicate e1
         assert plan.key_evidence.count("e1") == 1
+
+class TestRiskRoleVeto:
+    """PROJECT_GUIDE 5.4: the risk role's veto forces no_trade."""
+
+    def _analysts(self, *, risk_veto: bool) -> list[CommitteeVote]:
+        return [
+            _vote(role="technical", view="bullish", confidence=0.8),
+            _vote(role="news_sentiment", view="bullish", confidence=0.7),
+            _vote(
+                role="risk",
+                view="bullish" if not risk_veto else "uncertain",
+                confidence=0.9,
+                veto=risk_veto,
+            ),
+        ]
+
+    def test_without_a_veto_the_trade_is_planned(self) -> None:
+        plan = DisciplineGate().synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.8),
+            analyst_votes=self._analysts(risk_veto=False),
+        )
+
+        assert plan.target_position_pct > 0
+
+    def test_a_risk_veto_blocks_new_exposure(self) -> None:
+        plan = DisciplineGate().synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.8),
+            analyst_votes=self._analysts(risk_veto=True),
+        )
+
+        assert plan.target_position_pct == Decimal("0")
+        assert plan.needs_human_review is True
+        assert "risk role vetoed" in plan.rationale
+
+    def test_the_veto_can_be_disabled_only_by_configuration(self) -> None:
+        gate = DisciplineGate(config=DisciplineConfig(honour_risk_role_veto=False))
+
+        plan = gate.synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.8),
+            analyst_votes=self._analysts(risk_veto=True),
+        )
+
+        assert plan.target_position_pct > 0
+
+
+class TestDirectionAgreement:
+    """PROJECT_GUIDE 5.4: an opening needs at least two supporting analysts."""
+
+    def test_two_supporting_analysts_allow_the_opening(self) -> None:
+        plan = DisciplineGate().synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.8),
+            analyst_votes=[
+                _vote(role="technical", view="bullish", confidence=0.8),
+                _vote(role="fundamental", view="bullish", confidence=0.7),
+                _vote(role="risk", view="uncertain", confidence=0.9),
+            ],
+        )
+
+        assert plan.target_position_pct > 0
+
+    def test_a_lone_supporter_is_not_a_mandate(self) -> None:
+        plan = DisciplineGate().synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.8),
+            analyst_votes=[
+                _vote(role="technical", view="bullish", confidence=0.8),
+                _vote(role="fundamental", view="uncertain", confidence=0.4),
+                _vote(role="risk", view="uncertain", confidence=0.9),
+            ],
+        )
+
+        assert plan.target_position_pct == Decimal("0")
+        assert "required" in plan.rationale
+
+    def test_low_confidence_still_forces_no_trade_first(self) -> None:
+        plan = DisciplineGate().synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.5),
+            analyst_votes=[
+                _vote(role="technical", view="bullish", confidence=0.8),
+                _vote(role="fundamental", view="bullish", confidence=0.7),
+            ],
+        )
+
+        assert plan.target_position_pct == Decimal("0")
+        assert "below no_trade_below_confidence" in plan.rationale

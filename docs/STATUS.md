@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 余下：点差规则（需 S5 报价历史）、事件窗口（需 S4-5 新闻）、回撤状态机（需 S5 持久化） |
+| 下一项任务 | S4-3 真实策略/输入哈希；S4-4 影子评估/日报/预算（S4-2 余下三条规则依赖 S4-5/S5） |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-2：6 条缺口规则、kill switch 持久化、结果未知处理、平仓触发条件（48h/周五 19:00） |
+| 最近更新 | 2026-10-01，S4-2 委员会协议对齐 GUIDE 5.4（0.55 门槛、risk 否决、两分析师方向要求） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -75,6 +75,8 @@
 
 #### S4 证据（进行中）
 
+- S4-2 第四批（本提交）：**委员会协议对齐 GUIDE 5.4**。发现并修正三处与规格不符的确定性规则：① `no_trade_below_confidence` 原为 0.45，规格要求 0.55（已收紧到 0.55）；② `risk` 角色的 `veto` 原先只置 `needs_human_review`，规格要求直接 `no_trade`（现已硬阻断新开仓，可用 `honour_risk_role_veto=False` 显式关闭）；③ 缺少"开仓方向至少 2 个分析角色支持"的规则（新增 `min_analysts_supporting_direction=2`，仅对 `buy`/`sell` 开仓生效，低置信度门槛优先）。测试新增 6 个（risk 否决阻断/可配置关闭/无否决放行；两个分析师放行、单个支持者不算授权、低置信度优先拦截）。命令与结果：`pytest -q -m "not practice"` → 2477 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (414 files)；`secret_scan` → exit 0。
+
 - S4-2 第三批（本提交）：**平仓触发条件**（PROJECT_GUIDE 5.10）新增 `alphabrief_trader.close_policy`（纯函数）：周五 19:00 UTC 起至整个周末必须平仓、持仓达到 48 小时必须平仓、开仓时间未知时失败闭合（不把无限期持仓带过周末缺口）。新增 `alphabrief cycle close-due`：只对**未平仓**交易判定（券商的 `state=ALL` 也返回已平仓交易，已过滤），`--trading off` 时只报告不下单。真实实测：`alphabrief cycle close-due --compact` → `{"due": [], "detail": "no position is due for close", "checked": 0}`（账户当前空仓）。测试 `tests/test_close_policy.py` 10 个（周五 18:59/19:00 边界、周六周日、48 小时边界、未知开仓时间、批量排序）。命令与结果：`pytest -q -m "not practice"` → 2471 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (414 files)；`secret_scan` → exit 0。
 
 - S4-2 第二批（本提交）：**结果未知处理接入真实提交路径**（PROJECT_GUIDE 5.8）。此前 `UnknownOutcomeResolver`/`UnknownOutcomeFailure` 只存在于 oanda 包内、没有任何运行时调用者，即"超时/断连绝不重发"实际上没有生效。现在 `ExternalPaperExecutionBackend.submit` 捕获 `UnknownOutcomeFailure` 并按持久化的 `clientExtensions.id` 查询券商：`RESOLVED_ACCEPTED` → 记为已接受（不再发送）、`RESOLVED_NOT_SUBMITTED` → 抛 `SUBMIT_NOT_ACCEPTED`（订单从未到达）、`UNRESOLVED` → 抛 `SUBMIT_UNKNOWN`（明确暴露，等待人工/后续处理）。测试 `tests/test_ai_trader_execution_backend.py` 新增 3 个用例（已接受且只提交一次、未提交与未决分别区分）。命令与结果：`pytest -q -m "not practice"` → 2461 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (412 files)。
@@ -105,6 +107,8 @@
 - 同时修掉一个真实流解析缺陷：真实流会同时发送 `response.output_text.delta` 与 `response.output_item.done`，旧实现把两者都拼接导致文本重复（`{"ok": true}{"ok": true}`），现已改为"优先 deltas，仅在无 deltas 时用完成项/完成响应的文本"，并补了回归测试。`model test` 现在把调用记录持久化到 `ModelCallStore`（此前只留在内存）。
 
 #### S4 证据（进行中）
+
+- S4-2 第四批（本提交）：**委员会协议对齐 GUIDE 5.4**。发现并修正三处与规格不符的确定性规则：① `no_trade_below_confidence` 原为 0.45，规格要求 0.55（已收紧到 0.55）；② `risk` 角色的 `veto` 原先只置 `needs_human_review`，规格要求直接 `no_trade`（现已硬阻断新开仓，可用 `honour_risk_role_veto=False` 显式关闭）；③ 缺少"开仓方向至少 2 个分析角色支持"的规则（新增 `min_analysts_supporting_direction=2`，仅对 `buy`/`sell` 开仓生效，低置信度门槛优先）。测试新增 6 个（risk 否决阻断/可配置关闭/无否决放行；两个分析师放行、单个支持者不算授权、低置信度优先拦截）。命令与结果：`pytest -q -m "not practice"` → 2477 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (414 files)；`secret_scan` → exit 0。
 
 - S4-2 第三批（本提交）：**平仓触发条件**（PROJECT_GUIDE 5.10）新增 `alphabrief_trader.close_policy`（纯函数）：周五 19:00 UTC 起至整个周末必须平仓、持仓达到 48 小时必须平仓、开仓时间未知时失败闭合（不把无限期持仓带过周末缺口）。新增 `alphabrief cycle close-due`：只对**未平仓**交易判定（券商的 `state=ALL` 也返回已平仓交易，已过滤），`--trading off` 时只报告不下单。真实实测：`alphabrief cycle close-due --compact` → `{"due": [], "detail": "no position is due for close", "checked": 0}`（账户当前空仓）。测试 `tests/test_close_policy.py` 10 个（周五 18:59/19:00 边界、周六周日、48 小时边界、未知开仓时间、批量排序）。命令与结果：`pytest -q -m "not practice"` → 2471 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (414 files)；`secret_scan` → exit 0。
 
