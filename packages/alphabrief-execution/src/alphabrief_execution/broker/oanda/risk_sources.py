@@ -40,7 +40,11 @@ from alphabrief_execution.broker.oanda.client import OandaHttpClient
 from alphabrief_execution.broker.oanda.instruments import fetch_instruments
 from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
 from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
-from alphabrief_execution.broker.oanda.pricing import PricingRequest, fetch_pricing
+from alphabrief_execution.broker.oanda.pricing import (
+    OandaPrice,
+    PricingRequest,
+    fetch_pricing,
+)
 from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.broker.risk_context import AccountSourceDatum
@@ -198,6 +202,25 @@ class OandaRiskContextSources:
     # ------------------------------------------------------------------
     # Catalog, reconciliation, health
     # ------------------------------------------------------------------
+
+    def home_conversion_factor(self, symbol: str) -> Decimal | None:
+        """The broker's quote-currency → home-currency factor for a symbol.
+
+        Read from the same pricing response that feeds the exposure
+        projection; ``None`` when the broker returned no price for the
+        symbol, which the caller must treat as "cannot size".
+        """
+        price: OandaPrice | None = self._prices_by_symbol().get(symbol)
+        if price is None:
+            return None
+        return price.conversion_factor
+
+    def mid_price(self, symbol: str) -> Decimal | None:
+        """The broker's current mid price for one instrument (touch)."""
+        price: OandaPrice | None = self._prices_by_symbol().get(symbol)
+        if price is None or not price.bids or not price.asks:
+            return None
+        return (price.bids[0].price + price.asks[0].price) / Decimal(2)
 
     def fetch_catalog_version(self) -> str | None:
         catalog = fetch_instruments(self._client, account_id=self._client.account_id)

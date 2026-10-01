@@ -68,6 +68,13 @@ from alphabrief_trader.execution_gate import (
     ExecutionMode,
     PreflightFacts,
 )
+from alphabrief_trader.intents import (
+    IntentSizing,
+    build_close_intent,
+    build_entry_intent,
+    deterministic_intent_id,
+    intent_action,
+)
 from alphabrief_trader.runtime_truth import RuntimeTruthStore
 from alphabrief_trader.schemas import (
     CommitteeInput,
@@ -78,9 +85,11 @@ from alphabrief_trader.schemas import (
     OrderAttempt,
     TradePlan,
 )
+from alphabrief_trader.sizing import SizingError, SizingInputs, size_entry
 from alphabrief_trader.stops import StopComputationError, protective_prices
 
 SnapshotLoader = Callable[[str], MarketSnapshot | None]
+SizingProvider = Callable[[str], "SizingInputs | None"]
 
 
 def _snapshot_fingerprint(snapshots: dict[str, MarketSnapshot]) -> str:
@@ -154,7 +163,8 @@ class DailyTradingCycle:
         direction_override: str | None = None,
         override_reason: str | None = None,
         trading_mode: str = "off",
-        account_context_provider: Callable[[], Any] | None = None,
+        account_context_provider: Callable[[str], Any] | None = None,
+        sizing_provider: SizingProvider | None = None,
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -189,6 +199,11 @@ class DailyTradingCycle:
         # evaluation; without it the gate cannot see the real account and
         # fails closed on the rules that need it.
         self._account_context_provider = account_context_provider
+        # Supplies the NAV, home-currency conversion factor and instrument
+        # precision that 5.6 sizing needs. When it is configured but
+        # returns nothing for a symbol, no entry is sized for that symbol:
+        # the cycle records the refusal instead of guessing a size.
+        self._sizing_provider = sizing_provider
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -359,11 +374,14 @@ class DailyTradingCycle:
         plan: TradePlan,
         snapshot: MarketSnapshot,
         now: datetime,
-        cycle_id: str | None = None,
+        cycle_id: str,
         reference_price_resolver: Callable[[str, MarketSnapshot], Decimal]
         | None = None,
     ) -> OrderAttempt:
-        intent_id = f"ai_{uuid4().hex[:12]}"
+        side: OrderSide = self._entry_side(plan)
+        intent_id = deterministic_intent_id(
+            cycle_id, plan.symbol, intent_action(reduce_only=False, side=side)
+        )
         intent = self._materialize_intent(
             plan=plan,
             snapshot=snapshot,
@@ -371,6 +389,12 @@ class DailyTradingCycle:
             now=now,
             cycle_id=cycle_id,
         )
+        if intent is None:
+            # 5.6 sizing refused (or could not size) this entry: record the
+            # refusal, never submit an unsized order.
+            return self._sizing_refusal_record(
+                intent_id=intent_id, plan=plan, snapshot=snapshot, now=now
+            )
         price = (
             reference_price_resolver(plan.symbol, snapshot)
             if reference_price_resolver
@@ -392,7 +416,7 @@ class DailyTradingCycle:
             # The real input-quality verdict (PROJECT_GUIDE 5.7 rule 5):
             # stale or incomplete inputs are rejected, never assumed.
             data_quality_passed=quality.passed,
-            account_context=self._account_context(),
+            account_context=self._account_context(intent.symbol),
         )
 
         if not decision.approved:
@@ -451,11 +475,21 @@ class DailyTradingCycle:
             now=now,
         )
 
-    def _account_context(self) -> Any | None:
-        """Fetch the broker-fresh account context for one evaluation."""
+    def _account_context(self, symbol: str) -> Any | None:
+        """Fetch the broker-fresh account context for one evaluation.
+
+        The provider receives the symbol so per-symbol counters (the daily
+        per-instrument cap) reflect the instrument being evaluated.
+        """
         if self._account_context_provider is None:
             return None
-        return self._account_context_provider()
+        return self._account_context_provider(symbol)
+
+    def _entry_side(self, plan: TradePlan) -> OrderSide:
+        """The entry side, honouring the recorded direction override."""
+        if self._direction_override is not None:
+            return "buy" if self._direction_override == "long" else "sell"
+        return "buy" if plan.side == "buy" else "sell"
 
     def _materialize_intent(
         self,
@@ -464,16 +498,23 @@ class DailyTradingCycle:
         snapshot: MarketSnapshot,
         intent_id: str,
         now: datetime,
-        cycle_id: str | None = None,
-    ) -> OrderIntent:
-        side: OrderSide = "buy" if plan.side == "buy" else "sell"
+        cycle_id: str,
+    ) -> OrderIntent | None:
+        """Turn one plan into an intent, or ``None`` when it cannot be sized.
+
+        The size comes from the 5.6 risk budget when the cycle has a
+        sizing provider (NAV, home-currency factor, instrument precision)
+        and an ATR-derived stop. ``None`` means "do not trade this entry":
+        either the risk budget rounds to nothing, or the required inputs
+        are missing — an unsized order is never submitted.
+        """
+        side: OrderSide = self._entry_side(plan)
         rationale = plan.rationale
         if self._direction_override is not None:
             # Vertical-slice exception (PROJECT_GUIDE S3-5): the committee
             # output is recorded unchanged; only the direction and the
             # fixed quantity come from the command line, and the reason is
             # part of the persisted intent.
-            side = "buy" if self._direction_override == "long" else "sell"
             rationale = (
                 f"{plan.rationale} [direction overridden: "
                 f"{self._override_reason}]"
@@ -512,6 +553,42 @@ class DailyTradingCycle:
                 rationale=rationale,
                 created_at=now,
             )
+
+        sizing_inputs = self._sizing_inputs(plan.symbol)
+        if self._sizing_provider is not None:
+            if sizing_inputs is None or stop_loss is None:
+                return None
+            try:
+                result = size_entry(
+                    inputs=sizing_inputs,
+                    reference_price=snapshot.reference_price,
+                    stop_loss=stop_loss,
+                )
+            except SizingError:
+                return None
+            if not result.tradeable:
+                return None
+            sized = IntentSizing(
+                units=result.units,
+                stop_loss=stop_loss,
+                take_profit=take_profit if take_profit is not None else stop_loss,
+                risk_amount=result.risk_amount,
+                notional=result.notional,
+                actual_risk=result.actual_risk,
+            )
+            rationale = f"{rationale} [{sized.describe()}]"
+            return build_entry_intent(
+                cycle_id=cycle_id,
+                symbol=plan.symbol,
+                side=side,
+                sizing=sized,
+                target_position_pct=None,
+                now=now,
+                rationale=rationale,
+            ).model_copy(update={"intent_id": intent_id})
+
+        # No sizing provider configured: fall back to the committee's own
+        # target fraction. The production cycle always configures one.
         return OrderIntent(
             intent_id=intent_id,
             source="model",
@@ -524,6 +601,117 @@ class DailyTradingCycle:
             cycle_id=cycle_id,
             rationale=rationale,
             created_at=now,
+        )
+
+    def _sizing_inputs(self, symbol: str) -> SizingInputs | None:
+        if self._sizing_provider is None:
+            return None
+        return self._sizing_provider(symbol)
+
+    def _sizing_refusal_record(
+        self,
+        *,
+        intent_id: str,
+        plan: TradePlan,
+        snapshot: MarketSnapshot,
+        now: datetime,
+    ) -> OrderAttempt:
+        """Audit row for an entry 5.6 sizing refused to size."""
+        reason = (
+            "sizing produced no tradeable size (risk budget or missing "
+            "NAV/ATR inputs)"
+        )
+        return OrderAttempt(
+            intent_id=intent_id,
+            risk_decision_id=None,
+            approved=False,
+            reason=reason,
+            requires_human_review=False,
+            risk_tags=["sizing_no_trade"],
+            outcome="skipped_no_intent",
+            order_intent_json={
+                "symbol": plan.symbol,
+                "side": plan.side,
+                "reference_price": str(snapshot.reference_price),
+                "reason": reason,
+            },
+            created_at=now,
+        )
+
+    def close_position(
+        self,
+        *,
+        symbol: str,
+        position_units: Decimal,
+        reference_price: Decimal,
+        cycle_id: str,
+        now: datetime | None = None,
+        reason: str = "operator close",
+        submit: bool = True,
+    ) -> OrderAttempt:
+        """Close one position through the full decision → risk → broker path.
+
+        The intent is reduce-only with a deterministic ID (PROJECT_GUIDE
+        5.5), so it is checked only against the kill switch and rule 3
+        (5.7) and the persisted RiskDecision can be replayed.
+        """
+        now = now or self._clock()
+        intent = build_close_intent(
+            cycle_id=cycle_id,
+            symbol=symbol,
+            position_units=position_units,
+            now=now,
+            reason=reason,
+        )
+        # Rule 5 (data quality) is one of the entry-only rules: a close is
+        # checked against the kill switch and rule 3 only, and rule 3 reads
+        # the quote from the account context.
+        decision = self._risk_gate.evaluate(
+            intent,
+            estimated_price=reference_price,
+            estimated_quantity=abs(position_units),
+            account_context=self._account_context(intent.symbol),
+        )
+        if not decision.approved:
+            return self._attempt_record(
+                intent=intent,
+                decision=decision,
+                outcome="blocked_risk_gate",
+                execution_result=None,
+                now=now,
+            )
+        if not submit or self._trading_mode != "on":
+            return self._attempt_record(
+                intent=intent,
+                decision=decision,
+                outcome="blocked_trading_off",
+                execution_result=None,
+                now=now,
+                error_message="NO_TRADE_TRADING_OFF",
+            )
+        try:
+            execution_result = self._execution_backend.submit(
+                intent,
+                decision,
+                reference_price=reference_price,
+                now=now,
+                estimated_quantity=abs(position_units),
+            )
+        except ExecutionBackendError as exc:
+            return self._attempt_record(
+                intent=intent,
+                decision=decision,
+                outcome="error",
+                execution_result=None,
+                now=now,
+                error_message=str(exc),
+            )
+        return self._attempt_record(
+            intent=intent,
+            decision=decision,
+            outcome="executed",
+            execution_result=execution_result,
+            now=now,
         )
 
     def _attempt_record(
@@ -906,9 +1094,20 @@ class DurableDailyCycle:
             intent = self._trading._materialize_intent(
                 plan=plan,
                 snapshot=snapshot,
-                intent_id=f"ai_{uuid4().hex[:12]}",
+                intent_id=deterministic_intent_id(
+                    cycle_id,
+                    plan.symbol,
+                    intent_action(
+                        reduce_only=False,
+                        side=self._trading._entry_side(plan),
+                    ),
+                ),
                 now=self._clock(),
+                cycle_id=cycle_id,
             )
+            if intent is None:
+                # 5.6 sizing refused this entry; there is nothing to decide.
+                continue
             quality = evaluate_snapshot_quality(
                 snapshot, now=self._clock()
             )
@@ -991,10 +1190,34 @@ class DurableDailyCycle:
             intent = self._trading._materialize_intent(
                 plan=plan,
                 snapshot=snapshot,
-                intent_id=f"ai_{sha256(f'{cycle_id}:{plan.symbol}'.encode()).hexdigest()[:12]}",
+                intent_id=deterministic_intent_id(
+                    cycle_id,
+                    plan.symbol,
+                    intent_action(
+                        reduce_only=False,
+                        side=self._trading._entry_side(plan),
+                    ),
+                ),
                 now=self._clock(),
                 cycle_id=cycle_id,
             )
+            if intent is None:
+                attempts.append(
+                    self._trading._sizing_refusal_record(
+                        intent_id=deterministic_intent_id(
+                            cycle_id,
+                            plan.symbol,
+                            intent_action(
+                                reduce_only=False,
+                                side=self._trading._entry_side(plan),
+                            ),
+                        ),
+                        plan=plan,
+                        snapshot=snapshot,
+                        now=self._clock(),
+                    ).model_dump(mode="json")
+                )
+                continue
             chain.intent_ids.append(intent.intent_id)
             quality = evaluate_snapshot_quality(
                 snapshot, now=self._clock()

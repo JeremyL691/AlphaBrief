@@ -241,3 +241,32 @@ class TestCliArgumentChecks:
     def test_units_are_parsed_as_decimal(self) -> None:
         assert _parse_units("1000") == Decimal("1000")
         assert _parse_units(None) is None
+
+
+class TestExposureCapRegime:
+    """PROJECT_GUIDE 5.6: NAV fractions when sizing is risk-based."""
+
+    def test_nav_selects_the_percentage_caps(self) -> None:
+        from alphabrief_cli.cycle_commands import (
+            MAX_ORDER_NOTIONAL_PCT,
+            MAX_TOTAL_EXPOSURE_PCT,
+            _risk_gate,
+        )
+
+        nav = Decimal("100000")
+        gate = _risk_gate(("EUR_USD",), nav=nav)
+
+        assert gate.limits.max_order_value == nav * MAX_ORDER_NOTIONAL_PCT
+        assert gate.limits.max_total_exposure == nav * MAX_TOTAL_EXPOSURE_PCT
+
+    def test_without_nav_the_reviewed_absolute_caps_apply(self) -> None:
+        from alphabrief_cli.cycle_commands import _risk_gate
+        from alphabrief_core import load_paper_execution_policy, load_settings
+
+        policy = load_paper_execution_policy(
+            load_settings().execution_policy_file
+        )
+        gate = _risk_gate(("EUR_USD",))
+
+        assert gate.limits.max_order_value == policy.max_order_notional
+        assert gate.limits.max_total_exposure == policy.max_total_exposure
