@@ -213,6 +213,7 @@ class TestExternalPaperExecutionBackend:
                 ),
                 execution_backend=ExternalPaperExecutionBackend(adapter),
                 enabled=True,
+                trading_mode="on",
             )
 
             record = cycle.run(["SPY"])

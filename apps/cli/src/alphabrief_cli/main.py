@@ -12,6 +12,7 @@ from alphabrief_cli.ai_commands import ai_app
 from alphabrief_cli.audit_commands import audit_app
 from alphabrief_cli.backtest_commands import backtest_app
 from alphabrief_cli.broker_commands import broker_app
+from alphabrief_cli.cycle_commands import cycle_app
 from alphabrief_cli.data_commands import data_app
 from alphabrief_cli.macro_commands import macro_app
 from alphabrief_cli.model_commands import model_app
@@ -30,6 +31,7 @@ app = typer.Typer(
 )
 
 app.add_typer(data_app, name="data")
+app.add_typer(cycle_app, name="cycle")
 app.add_typer(news_app, name="news")
 app.add_typer(macro_app, name="macro")
 app.add_typer(model_app, name="model")
