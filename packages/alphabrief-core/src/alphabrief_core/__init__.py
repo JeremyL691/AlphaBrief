@@ -85,6 +85,7 @@ from alphabrief_core.read_contracts import (
 from alphabrief_core.runtime_lock import (
     RuntimeLock,
     RuntimeLockError,
+    account_runtime_lock,
     lock_status,
 )
 from alphabrief_core.schedule_plan import (
@@ -172,6 +173,7 @@ __all__ = [
     "due_events",
     "evaluate_schedule",
     "RuntimeLockError",
+    "account_runtime_lock",
     "lock_status",
     "secrets_dir",
     "write_secret",
