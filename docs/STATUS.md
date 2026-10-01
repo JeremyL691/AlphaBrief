@@ -1,0 +1,168 @@
+# AlphaBrief 状态
+
+> 这是全项目唯一的可变状态文件。规则见 [`PROJECT_GUIDE.md`](PROJECT_GUIDE.md) 附录 C。
+> 勾选任务时写明日期、提交哈希和证据摘要（命令加结果，不含密钥或完整账户 ID）。
+> 决策记录、阻塞、需要用户做的事、试运行日志都只追加，不改写。
+
+## 当前
+
+| 字段 | 值 |
+|---|---|
+| 当前阶段 | **S0 环境与清场** |
+| 状态 | `READY` |
+| 下一项任务 | S0-1 停掉旧的 launchd 服务 |
+| 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
+| 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
+| 最近更新 | 2026-09-30，文档重建提交 |
+
+可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
+
+## 基线（2026-09-30 实测，文档重建后）
+
+- 测试：`pytest -q` → **3255 passed / 41 failed / 29 errors**，共 70 个未通过，分两类：
+  - **21 个是时间相关的老问题**：
+    - `test_risk_currency_aggregation.py` 11 个
+    - `test_risk_exposure_matrix.py` 8 个
+    - `test_macro_api.py` 1 个
+    - `test_macro_commands.py` 1 个
+  - **49 个依赖已删除的旧文档**：
+    - `test_autonomous_loop_state_machine.py` 12 个
+    - `test_autonomous_loop_schemas.py` 10 个
+    - `test_autonomous_loop_recovery.py` 7 个
+    - `test_project_scaffold.py` 6 个
+    - `test_autonomous_loop_meta_gate.py` 5 个
+    - `test_acceptance_api_cli.py` 4 个
+    - `test_autonomous_loop_scope_gate.py` 3 个
+    - `test_acceptance_verifier.py` 2 个
+
+    这些属于 S1 删除对象（`alphabrief-acceptance` 包及其测试），或需要改写（scaffold 测试）。
+- `ruff check .` 通过；`mypy` 通过。
+- OANDA 模拟账户：可连通；`lastTransactionID=3`；从未下单；余额 100000 USD；可交易品种 68 个，全部是外汇。
+- 旧服务 `com.alphabrief.api`、`com.alphabrief.scheduler` **仍在运行**（`~/.alphabrief/`，旧代码快照，自 9/16 起对账冻结），S0 负责清场。
+- 模型：`.env` 指向的 OpenCode Go 返回 `400 MissingSessionID`，且不允许作为产品后端；产品改用 ChatGPT 订阅登录（主）和可选的 OpenAI 兼容 key（备用）。
+- GitHub：仓库公开；`gh` 已登录（scope 含 `repo`、`workflow`）；完整 git 历史中没有真实密钥。
+- 本机：macOS 27 arm64；Amphetamine 持有防休眠断言。
+- `FRED_API_KEY`、`ALPHAVANTAGE_API_KEY` 均为空。
+
+## 阶段检查表
+
+### S0 环境与清场
+- [ ] S0-1 停掉并卸载 `com.alphabrief.api`、`com.alphabrief.scheduler`，plist 移到 `~/.alphabrief-legacy-20260930/LaunchAgents/`
+- [ ] S0-2 `~/.alphabrief` 整体移到 `~/.alphabrief-legacy-20260930/`
+- [ ] S0-3 OANDA 只读探测（摘要、品种数、`lastTransactionID`）
+- [ ] S0-4 `gh auth status`、`git remote -v`、`pmset -g assertions`、磁盘空间
+- [ ] S0-5 `main` 与 `origin/main` 同步，工作区干净
+- [ ] 退出标准：旧服务数为 0；无旧进程；OANDA 返回 200
+
+### S1 做减法与恢复全绿
+- [ ] S1-1 按 GUIDE 6.1 删除代码和对应测试；更新 `pyproject.toml`
+- [ ] S1-2 时间相关测试改为注入时钟（21 个，外加排查其他固定 `NOW` 的测试）
+- [ ] S1-3 改写 `test_project_scaffold.py` 以检查新的文档集合
+- [ ] S1-4 清理 Alpaca 和多资产残留；重写 `.env.example`
+- [ ] S1-5 `alphabrief_core.paths`（只接受绝对路径）
+- [ ] S1-6 `scripts/secret_scan.py`
+- [ ] S1-7 `.github/workflows/ci.yml`
+- [ ] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
+
+### S2 模型通道
+- [ ] S2-1 `chatgpt_plan` 适配器与 OAuth（`alphabrief model login|status|logout|test`）
+- [ ] S2-2 `openai_compatible` 备用适配器、拒绝 `opencode.ai`、`fallback_enabled` 开关
+- [ ] S2-3 完整的调用记录；委员会构建时传入记录器
+- [ ] S2-4 确定性测试，加一个 practice 测试
+- [ ] S2-5 用户完成 ChatGPT 授权
+- [ ] 退出标准：`model status` 主通道已授权；`model test --json` 真实通过并落库
+
+### S3 打通一单
+- [ ] S3-1 OANDA K 线和报价入库
+- [ ] S3-2 `order_ops` + `orders` 下单（止损止盈、带符号整数 units、clientExtensions）；删除旧下单路径
+- [ ] S3-3 流水游标与新对账逻辑
+- [ ] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`
+- [ ] S3-5 平仓与对账
+- [ ] 退出标准：`lastTransactionID` 增加并有 `ORDER_FILL` 和止损止盈单；全链路可追溯；对账干净
+
+### S4 风控与决策补全
+- [ ] S4-1 真实风控上下文；删除伪造上下文和写死的 `data_quality_passed=True`
+- [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch
+- [ ] S4-3 真实的策略版本哈希和输入哈希
+- [ ] S4-4 影子评估、日报、预算
+- [ ] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗
+- [ ] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试
+- [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
+
+### S5 常驻运行时
+- [ ] S5-1 `alphabrief run`（单进程、单实例锁、`to_thread`、超时）
+- [ ] S5-2 按时钟的时间表、补跑窗口、阶段持久化
+- [ ] S5-3 CLI 走 HTTP；后台不在线时只读
+- [ ] S5-4 `alphabrief service install|uninstall|status`
+- [ ] S5-5 `alphabrief doctor`、macOS 通知
+- [ ] S5-6 备份和恢复（复用 `db/backup.py`）
+- [ ] 退出标准：第二个实例被拒；`kill -9` 重启实测没有重复订单；没有锁冲突；`doctor` 通过
+
+### S6 前端重写
+- [ ] S6-1 静态看板与 API
+- [ ] S6-2 引导页（凭证、ChatGPT 登录、后台服务）
+- [ ] S6-3 删除 `routes/dashboard.py`
+- [ ] S6-4 Playwright 冒烟测试和 axe 可访问性检查
+- [ ] 退出标准：冒烟全绿；生成截图；NAV 与 OANDA 一致；没有任何样例数据
+
+### S7 保留模块接入真实数据
+- [ ] S7-1 回测（OANDA K 线，跑基准和策略）
+- [ ] S7-2 策略注册表（信号作为委员会证据）
+- [ ] S7-3 gym demo
+- [ ] S7-4 复盘页
+- [ ] 退出标准：见 GUIDE S7
+
+### S8 打包
+- [ ] S8-1 `scripts/build_release.sh`（PyInstaller + electron-builder + `SHA256SUMS`）
+- [ ] S8-2 改造 Electron（不依赖源码目录、托盘、服务管理、图标）
+- [ ] S8-3 冒烟测试（临时数据目录、`trading_mode=off`、不装 LaunchAgent）
+- [ ] S8-4 版本号 `1.0.0-rc.N`
+- [ ] 退出标准：dmg 和校验和生成；冒烟通过；`--version` 正确
+
+### S9 试运行前门禁
+- [ ] S9-1 RC 后台以固定 1000 units 连续运行 24 小时
+- [ ] S9-2 门禁清单全部勾选（见 GUIDE S9）
+- [ ] 退出标准：打 tag `v1.0.0-rc.N` 并推送；写入 Day 0
+
+### S10 14 天试运行
+- [ ] 合格日 14 / 14（由 `alphabrief soak status` 计算）
+- [ ] 没有未解决的冻结或阻塞
+
+### S11 发布
+- [ ] S11-1 试运行报告
+- [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
+- [ ] S11-3 版本 1.0.0、CHANGELOG、README（英文 + 中文节，含截图）
+- [ ] S11-4 正式 dmg 构建与冒烟
+- [ ] S11-5 完整历史密钥扫描、CI 全绿
+- [ ] S11-6 tag、push、`gh release create`
+- [ ] S11-7 状态 → `RELEASED`，附 Release 链接
+
+## 需要用户做的事
+
+- （S2 到达时）在终端运行 `alphabrief model login`，在浏览器点授权。整个项目只需要这一次。
+- （长期）试运行期间保持 Mac 接电源、不休眠（目前由 Amphetamine 保证）。
+- （可选）如果想启用备用模型通道：提供一个按量付费的 OpenAI 兼容 key（例如 DeepSeek 官方），写入 `.env` 的 `ALPHABRIEF_LLM_BASE_URL`、`ALPHABRIEF_LLM_API_KEY`、`ALPHABRIEF_LLM_MODEL`，并在配置中开启 `model.fallback_enabled`。
+- （可选）申请免费的 `FRED_API_KEY` 以启用宏观日历；没有也能运行（会用新闻冲击过滤代替）。
+
+## 决策记录
+
+| 日期 | 问题 | 选择 | 理由 |
+|---|---|---|---|
+| 2026-09-30 | 上架形态 | GitHub 开源发布 + 未签名的 arm64 `.dmg` | 用户决定；不上 App Store，签名流程留开关 |
+| 2026-09-30 | 发布权限 | 允许 Agent 在 S11 自动 push 并创建 Release；S9 起允许推送 `main` 和 RC tag | 用户决定 |
+| 2026-09-30 | 交易品种 | 只交易外汇（账户实测只开放外汇）；`XAU_USD`、`SPX500_USD`、`BCO_USD` 作为只读信号 | 用户决定 |
+| 2026-09-30 | 试运行 | 14 个自然日，全自主运行 | 用户决定 |
+| 2026-09-30 | 保留模块 | 回测、策略注册表、gym、复盘全部保留并接上真实数据 | 用户决定 |
+| 2026-09-30 | 模型通道 | 主通道 ChatGPT 订阅登录（OpenAI 官方 SIWC 开源方案）；备用通道为可选的 OpenAI 兼容 key；OpenCode Go 不进产品 | 用户决定；OpenCode Go 返回 400，且其文档只允许编程 Agent 流量 |
+| 2026-09-30 | 模型预算 | 备用通道每天 $2；订阅通道每天最多 150 次调用 | 用户决定 $2/天；调用上限为默认值 |
+| 2026-09-30 | 文档 | 删除旧蓝图和 `docs/` 下 7 个流程文件，由 PROJECT_GUIDE、STATUS、AGENT_PROMPT 取代 | 旧文档描述的是从未产生的证据，且彼此矛盾 |
+| 2026-09-30 | 语言 | README 英文（发布时附中文节）；GUIDE、STATUS、AGENT_PROMPT、AGENTS 用中文；界面中英切换 | 求职展示与自用兼顾 |
+
+## 阻塞
+
+（无）
+
+## 试运行日志
+
+| 日期（UTC） | 合格 | 订单 / 成交 | 当日盈亏 | NAV | 异常与处理 | 版本 |
+|---|---|---|---|---|---|---|
