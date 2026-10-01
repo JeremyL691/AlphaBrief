@@ -20,7 +20,7 @@ import json
 import sys
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
@@ -39,6 +39,7 @@ from alphabrief_execution.broker.runtime import (
     get_broker_runtime,
     oanda_is_configured,
 )
+from alphabrief_news.ingestion import NewsIngestionStore
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_risk.decision_binding import DecisionBindingService
 from alphabrief_trader import (
@@ -49,6 +50,7 @@ from alphabrief_trader import (
     StoredMarketSnapshotBuilder,
     build_ai_trading_committee,
 )
+from alphabrief_trader.schemas import NewsInputEvidence
 from alphabrief_trader.shadow_store import ShadowStore
 
 cycle_app = typer.Typer(help="Run one trading cycle or close a position.")
@@ -74,7 +76,8 @@ def _exit_error(message: str) -> None:
 
 
 def _snapshot_loader(
-    market_store: MarketDataStore, news_store: NewsStore | None = None
+    market_store: MarketDataStore, news_store: NewsStore,
+    news_health: NewsIngestionStore,
 ) -> SnapshotLoader:
     """Build snapshots from stored OANDA bars (no synthetic prices).
 
@@ -83,15 +86,6 @@ def _snapshot_loader(
     missing ATR means no protective order (never a guessed one).
     """
     from alphabrief_trader.stops import atr_from_bars
-
-    builder = StoredMarketSnapshotBuilder(
-        bar_loader=market_store.get_bar_models,
-        headline_loader=lambda symbol, start, end, limit: (
-            news_store.list_headlines(symbol=symbol, start=start, end=end, limit=limit)
-            if news_store is not None else []
-        ),
-        max_headlines=20,
-    )
 
     def _loader(symbol: str) -> MarketSnapshot | None:
         bars = market_store.get_bar_models(symbol)
@@ -103,6 +97,17 @@ def _snapshot_loader(
             if bar.data_version.endswith(":H1")
         ]
         latest = h1[-1] if h1 else bars[-1]
+        now = datetime.now(UTC)
+        headlines = news_store.list_headlines(
+            symbol=symbol, start=now - timedelta(hours=24), end=now, limit=20
+        )
+        # Freeze the exact inputs once: evidence and prompt must describe the
+        # same bounded batch, not independent database reads with different clocks.
+        builder = StoredMarketSnapshotBuilder(
+            bar_loader=lambda requested: bars,
+            headline_loader=lambda requested, start, end, limit: headlines,
+            max_headlines=20, clock=lambda: now,
+        )
         snapshot = builder.build(symbol, reference_price_override=latest.close)
         if snapshot is None:
             return None
@@ -116,6 +121,10 @@ def _snapshot_loader(
             "momentum_20d_pct": _momentum_20d_pct(bars),
             # Freshness is the broker candle time, never the builder's wall clock.
             "captured_at": latest.timestamp,
+            "news_evidence": NewsInputEvidence(
+                family_fetched_at=news_health.successful_source_family_times(now=now),
+                related_published_at={h.headline_id: h.published_at for h in headlines},
+            ),
         })
 
     return _loader
@@ -538,6 +547,8 @@ def _open_trading_cycle(
         resources.callback(market.close)
         news = NewsStore(db_path=resolved)
         resources.callback(news.close)
+        news_health = NewsIngestionStore(db_path=resolved)
+        resources.callback(news_health.close)
         calls = ModelCallStore(db_path=resolved)
         resources.callback(calls.close)
         shadows = ShadowStore(db_path=resolved)
@@ -559,7 +570,7 @@ def _open_trading_cycle(
                 if trading == "on" else _DisabledBackend()
             ),
             store=store,
-            snapshot_loader=_snapshot_loader(market, news),
+            snapshot_loader=_snapshot_loader(market, news, news_health),
             enabled=enabled,
             quantity_override=quantity_override,
             direction_override=direction_override,

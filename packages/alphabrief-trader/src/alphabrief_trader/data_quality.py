@@ -20,7 +20,7 @@ from typing import Literal
 from alphabrief_trader.schemas import MarketSnapshot
 
 #: Version of the quality rules; bump when a limit changes.
-QUALITY_POLICY_VERSION = "2026-10-01.1"
+QUALITY_POLICY_VERSION = "2026-10-01.2"
 NO_TRADE_DATA_STALE: Literal["NO_TRADE_DATA_STALE"] = "NO_TRADE_DATA_STALE"
 
 #: Maximum age of a snapshot's capture time (PROJECT_GUIDE 5.3: the latest
@@ -74,6 +74,26 @@ def evaluate_snapshot_quality(
             reasons.append("captured_at_in_the_future")
         elif age > max_age_seconds:
             reasons.append(f"snapshot_stale_{int(age)}s")
+    if snapshot.news_evidence is not None:
+        from alphabrief_news.providers.rss import SOURCE_FAMILIES
+
+        evidence = snapshot.news_evidence
+        fresh_families = {
+            family for family, fetched_at in evidence.family_fetched_at.items()
+            if family in SOURCE_FAMILIES
+            and 0 <= (now - fetched_at).total_seconds() <= 6 * 60 * 60
+        }
+        if len(fresh_families) < 2:
+            reasons.append("news_successful_families_below_2")
+        if not evidence.related_published_at:
+            reasons.append("related_news_missing")
+        else:
+            latest = max(evidence.related_published_at.values())
+            age = (now - latest).total_seconds()
+            if age < 0:
+                reasons.append("related_news_in_the_future")
+            elif age > 6 * 60 * 60:
+                reasons.append(f"related_news_stale_{int(age)}s")
     return DataQualityVerdict(passed=not reasons, reasons=tuple(reasons))
 
 

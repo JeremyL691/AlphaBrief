@@ -167,6 +167,35 @@ def _fake_committee(*, record_sink: Any = None) -> TradingCommittee:
         discipline=DisciplineConfig(), max_turns=5, challenge_rounds=0,
     )
 
+def _seed_news_quality_inputs(directory: Path, symbols: tuple[str, ...]) -> None:
+    from alphabrief_news.pipeline import prepare_headlines
+    from alphabrief_news.providers.rss import feed_source
+
+    now = datetime.now(UTC)
+    news = NewsStore(directory / _paths.DATABASE_NAME)
+    health = NewsIngestionStore(directory / _paths.DATABASE_NAME)
+    try:
+        for feed in ("marketwatch-rss", "fxstreet-rss"):
+            headlines = [NewsHeadline(
+                headline_id=f"quality-{feed}-{symbol}",
+                published_at=now - timedelta(hours=1), symbols=[symbol],
+                category="macro", source=feed_source(feed).publisher,
+                title=f"Currency market outlook for {symbol}", summary="",
+                url=f"https://example.test/quality/{feed}/{symbol}",
+                sentiment="neutral", data_version="quality-test",
+            ) for symbol in symbols]
+            prepared = prepare_headlines(
+                headlines, source=feed, correlation_id=f"quality-seed-{feed}",
+                clock=lambda: now,
+            )
+            assert prepared.ingestion is not None
+            news.insert_headlines(prepared.headlines)
+            health.persist(prepared.ingestion)
+    finally:
+        health.close()
+        news.close()
+
+
 def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> None:
     market_store = MarketDataStore(db_path=directory / _paths.DATABASE_NAME)
     now = datetime.now(UTC)
@@ -182,6 +211,7 @@ def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> No
         ], source="oanda_practice", data_version="test:H1")
     finally:
         market_store.close()
+    _seed_news_quality_inputs(directory, ("EUR_USD",))
     if not seed_spreads:
         return
     from alphabrief_data.quote_samples import QuoteSample, QuoteSampleStore
@@ -433,6 +463,10 @@ class TestSchedulerRunsAiTask:
         for _symbol in ("EUR_USD", "GBP_USD", "USD_JPY"):
             _seed_bars(_symbol, now=datetime.now(UTC))
 
+        _seed_news_quality_inputs(
+            isolated_data_dir, ("EUR_USD", "GBP_USD", "USD_JPY")
+        )
+
         class _NewsProvider:
             def fetch_headlines(
                 self, query: NewsFetchQuery
@@ -502,6 +536,8 @@ class TestSchedulerRunsAiTask:
         try:
             assert market_store.get_bar_count("EUR_USD") == 2
             headlines = news_store.list_headlines(symbol="EUR_USD", limit=10)
+            assert len(headlines) == 3  # Two quality fixtures plus one deduped fetch.
+            headlines = [h for h in headlines if h.source == "Test Wire"]
             # Three fetched: one duplicate collapsed, one injection withheld,
             # so exactly one headline is stored — with the provider's own
             # currency tag, not every symbol.
@@ -511,8 +547,14 @@ class TestSchedulerRunsAiTask:
                 db_path=isolated_data_dir / _paths.DATABASE_NAME
             )
             try:
-                records = ingestion.records()
+                assert len(ingestion.records()) == 7
+                records = ingestion.records(source="Test Wire")
                 fetches = ingestion.fetch_records()
+                assert len(fetches) == 3
+                fetches = [
+                    r for r in fetches
+                    if r["correlation_id"].startswith("precycle-")
+                ]
                 families = ingestion.successful_source_families(now=datetime.now(UTC))
             finally:
                 ingestion.close()
@@ -520,7 +562,7 @@ class TestSchedulerRunsAiTask:
             assert len(fetches) == 1
             assert fetches[0]["fetch_outcome"] == "success"
             assert fetches[0]["item_count"] == 1
-            assert families == frozenset({"marketwatch"})
+            assert families == frozenset({"marketwatch", "fxstreet"})
             assert records[0]["metadata_only"] is True
             assert len(str(records[0]["content_hash"])) == 64
 
@@ -953,3 +995,73 @@ def test_runtime_persists_provider_construction_failure_for_each_feed(
         assert all(row["fetch_outcome"] == "malformed" for row in records)
     finally:
         health.close()
+
+
+@pytest.mark.parametrize("bad_news", ["no_health", "one_family", "missing", "stale"])
+def test_production_cycle_rejects_bad_news_before_any_model_call(
+    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, bad_news: str
+) -> None:
+    import duckdb
+    from alphabrief_api.db.model_call import ModelCallStore
+    from alphabrief_news.ingestion import NewsIngestionResult
+
+    monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+    monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+    adapter = _SubmittingAdapter()
+    monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
+    _seed_risk_sized_inputs(isolated_data_dir)
+    database = isolated_data_dir / _paths.DATABASE_NAME
+    if bad_news in {"no_health", "one_family"}:
+        health = NewsIngestionStore(database)
+        try:
+            feeds = (
+                ("marketwatch-rss", "fxstreet-rss")
+                if bad_news == "no_health" else ("marketwatch-rss",)
+            )
+            for feed in feeds:
+                health.persist(NewsIngestionResult(
+                    source=feed, correlation_id="latest-failed-fetch",
+                    fetched_at=datetime.now(UTC), fetch_outcome="timeout",
+                ))
+        finally:
+            health.close()
+    else:
+        with duckdb.connect(str(database)) as connection:
+            if bad_news == "missing":
+                connection.execute("DELETE FROM news_headlines")
+            else:
+                connection.execute("UPDATE news_headlines SET published_at = ?", [
+                    datetime.now(UTC) - timedelta(hours=7)
+                ])
+    asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)())
+    cycles = AiTradingStore(database)
+    calls = ModelCallStore(database)
+    try:
+        record = cycles.get_latest_cycle()
+        assert record is not None
+        assert record["outcome"] == "skipped_data_stale"
+        assert record["votes"] == []
+        assert record["plans"] == []
+        assert record["attempts"] == []
+        assert calls.list_calls() == []
+        assert adapter.requests == []
+        evidence = record["input_quality"][0]
+        assert evidence["no_trade_reason"] == "NO_TRADE_DATA_STALE"
+        assert evidence["news_evidence"] is not None
+        if bad_news in {"no_health", "one_family"}:
+            assert evidence["reasons"] == ["news_successful_families_below_2"]
+            assert len(evidence["news_evidence"]["family_fetched_at"]) == (
+                0 if bad_news == "no_health" else 1
+            )
+        elif bad_news == "missing":
+            assert evidence["reasons"] == ["related_news_missing"]
+            assert evidence["news_evidence"]["related_published_at"] == {}
+        else:
+            assert len(evidence["reasons"]) == 1
+            assert evidence["reasons"][0].startswith("related_news_stale_")
+            assert len(evidence["news_evidence"]["related_published_at"]) == 2
+    finally:
+        calls.close()
+        cycles.close()
