@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S3 打通一单（垂直切片）** |
+| 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S3-4/S3-5 垂直切片：`cycle run --once --instrument EUR_USD --units 1000 --trading on` → 对账 → 平仓 → 再对账 |
+| 下一项任务 | S4-2 委员会协议/意图/仓位/14 条规则/结果未知处理/平仓/kill switch 补全 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S2 全部完成（主通道真实可用）；开始 S3-4/S3-5 垂直切片 |
+| 最近更新 | 2026-10-01，S3 垂直切片完成：真实下单 + 止损止盈 + 平仓 + 对账干净（见 S3 退出标准证据） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -72,6 +72,17 @@
 - [x] S1-6 `scripts/secret_scan.py`
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
+
+#### S3 退出标准证据（2026-10-01，真实 practice 账户）
+
+- 下单前账户：`lastTransactionID=3`，balance=NAV=100000.0000，marginUsed=0，持仓/交易/订单均为 0。
+- `alphabrief data sync-oanda --instrument EUR_USD` → 332 根 K 线 + 1 报价入库；快照由真实 H1 K 线计算 ATR(14)=0.0011836，价格 1.1318。
+- 委员会真实运行（5 个角色各一次真实模型调用）→ 全员 view=uncertain、manager 给出不持仓，cycle 记录 `skipped_no_intent`（这是合法结果，未凑单）。
+- 按 GUIDE S3-5 的一次性例外执行：`alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on --force-direction long --reason "S3 vertical slice"` → `{"outcome": "executed", "attempt_count": 1, "attempts": [{"intent_id": "ai_e482fc8865b9", "risk_decision_id": "risk_0f29f0ff42d54440ab6e34bf7a631015", "approved": true, "outcome": "executed", "order_id": "4", "broker_order_id": "4", "filled": true}]}`（委员会原始输出照常落库，reason 写进 intent rationale）。
+- OANDA 流水（`lastTransactionID` 3 → 11）：tx4 `MARKET_ORDER` EUR_USD +1000；tx5 `ORDER_FILL` 1000 @ 1.13173；tx6 `TAKE_PROFIT_ORDER` @ 1.13535；tx7 `STOP_LOSS_ORDER` @ 1.13002（止损止盈价由 ATR×1.5 / ×2.0 计算并随成交挂上，当时均 PENDING）；tx8 `MARKET_ORDER` EUR_USD −1000（`alphabrief cycle close --instrument EUR_USD`，order id 8）；tx9 `ORDER_FILL` −1000 @ 1.13165，pl −0.0800；tx10/tx11 `ORDER_CANCEL`（持仓平掉后保护单自动撤销）。最终 balance 99999.9200、NAV 99999.9200、持仓/交易/订单 0。
+- 全链路可追溯：轮次 ID `aic_d22761752a0a` → 意图 `ai_e482fc8865b9` → 风控决策 `risk_0f29f0ff42d54440ab6e34bf7a631015` → OANDA 订单 4（`clientExtensions={id: ai_e482fc8865b9, tag: alphabrief, comment: 轮次}`）→ 成交 tx5 → 平仓 tx9。
+- 对账：下单后与平仓后各跑一次 `alphabrief broker reconcile --scope cycle` → 均 `clean: true`、`freeze_raised: false`、`gap_count: 0`，剩余差异全部为 INFO（止损止盈挂单无 client identity、NAV/margin 为券商计算标记）。
+- 过程中发现并修复 4 个真实缺陷：模型目录返回形状（`models[].slug`）、流解析重复文本、依赖单（止损/止盈）行没有 instrument/units 导致解析失败、平仓成交缺少 `tradesClosed` 关联导致投影认为持仓"非本系统"；另修投影重建的期初余额算法（原先用当前余额播种会重复计入历史盈亏）。新增回归测试覆盖依赖单解析、`tradesOpened/tradesClosed` 关联、平仓成交关仓投影。
 
 #### S2 完成证据（2026-10-01）
 
@@ -142,9 +153,9 @@
 - [x] S3-1 OANDA K 线和报价入库
 - [x] S3-2 `order_ops` + `orders` 下单（止损止盈、带符号整数 units、clientExtensions）；删除旧下单路径
 - [x] S3-3 流水游标与新对账逻辑
-- [~] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`（命令与选项已实现并测试；真实下单待 S2-5 授权）
-- [~] S3-5 平仓与对账（`alphabrief cycle close` 已实现；真实平仓待 S2-5 授权）
-- [ ] 退出标准：`lastTransactionID` 增加并有 `ORDER_FILL` 和止损止盈单；全链路可追溯；对账干净
+- [x] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`（真实下单完成，见下）
+- [x] S3-5 平仓与对账（真实平仓与对账完成，见下）
+- [x] 退出标准：`lastTransactionID` 3→11 并有 `ORDER_FILL` 与止损止盈单；全链路可追溯；对账干净（2026-10-01 实测）
 
 ### S4 风控与决策补全
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源

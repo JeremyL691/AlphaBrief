@@ -109,6 +109,8 @@ class MarketSnapshot(_CommitteeSchema):
 
     symbol: str = Field(min_length=1)
     reference_price: Decimal = Field(gt=0)
+    #: ATR(14) of the decision timeframe (PROJECT_GUIDE 5.3 derived input).
+    atr: Decimal | None = None
     recent_return_pct: Decimal | None = None
     recent_volume: Decimal | None = None
     news_context: str | None = None
@@ -122,7 +124,11 @@ class MarketSnapshot(_CommitteeSchema):
         return _validate_timezone_aware(value)
 
     @field_validator(
-        "reference_price", "recent_return_pct", "recent_volume", mode="before"
+        "reference_price",
+        "atr",
+        "recent_return_pct",
+        "recent_volume",
+        mode="before",
     )
     @classmethod
     def _no_float(cls, value: Any) -> Any:

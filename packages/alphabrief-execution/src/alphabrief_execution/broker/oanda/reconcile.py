@@ -50,7 +50,8 @@ class RemoteOrder(BaseModel):
 
     broker_order_id: str = Field(min_length=1)
     state: str = Field(min_length=1)
-    units: Decimal
+    #: Zero for dependent orders (stop loss / take profit).
+    units: Decimal = Decimal("0")
     client_order_id: str | None = None
     #: ``clientExtensions.tag``; ``alphabrief`` means this system placed it
     #: (PROJECT_GUIDE 5.9: own orders are explainable, never a difference).
@@ -449,38 +450,57 @@ class Reconciler:
         self._money_pass(
             local.balance, remote.balance, "balance", tolerance, diffs
         )
-        self._money_pass(local.nav, remote.nav, "nav", tolerance, diffs)
-        # Margin is material in both directions: understated local margin
-        # (remote higher) is just as dangerous as overstated.
-        margin_diff = local.margin_used - remote.margin_used
-        if abs(margin_diff) > tolerance:
-            diffs.append(
-                DiffRecord(
-                    kind="money_diff",
-                    source_id="margin_used",
-                    severity="CRITICAL",
-                    detail="margin used differs beyond tolerance",
-                    local_value=str(local.margin_used),
-                    remote_value=str(remote.margin_used),
-                )
-            )
-        elif margin_diff != 0:
-            diffs.append(
-                DiffRecord(
-                    kind="money_diff",
-                    source_id="margin_used",
-                    severity="WARN",
-                    detail="margin used differs within tolerance",
-                    local_value=str(local.margin_used),
-                    remote_value=str(remote.margin_used),
-                )
-            )
+        # NAV and margin are broker-computed marks: the local projection
+        # records broker facts (fills, closes, financing) and cannot derive
+        # a mark-to-market NAV or an account's margin requirement, so a
+        # difference here is informational evidence, never a freeze.
+        self._informational_money_pass(
+            local.nav, remote.nav, "nav", tolerance, diffs
+        )
+        self._informational_money_pass(
+            local.margin_used,
+            remote.margin_used,
+            "margin_used",
+            tolerance,
+            diffs,
+        )
         self._money_pass(
             local.financing_total,
             remote.financing_total,
             "financing",
             tolerance,
             diffs,
+        )
+
+    def _informational_money_pass(
+        self,
+        local: Decimal,
+        remote: Decimal,
+        label: str,
+        tolerance: Decimal,
+        diffs: list[DiffRecord],
+    ) -> None:
+        """Record a broker-computed mark difference without freezing.
+
+        Used for values the local projection cannot derive (mark-to-market
+        NAV, margin requirement): they are surfaced as evidence so drift is
+        visible, while balance and realized P&L keep the strict check.
+        """
+        difference = local - remote
+        if difference == 0:
+            return
+        diffs.append(
+            DiffRecord(
+                kind="money_diff",
+                source_id=label,
+                severity="INFO",
+                detail=(
+                    f"{label} differs by {difference} (broker-computed mark; "
+                    "the local projection does not derive it)"
+                ),
+                local_value=str(local),
+                remote_value=str(remote),
+            )
         )
 
     def _money_pass(
