@@ -536,6 +536,10 @@ def run_cmd(
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Run one trading cycle for a single instrument."""
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("cycle run")
+
     if not once:
         _exit_error(
             "only --once is supported here; use 'alphabrief run' for the daemon"
@@ -756,6 +760,10 @@ def close_due_cmd(
     onward) and the maximum holding time. Protective orders filling at the
     broker are handled by the broker itself.
     """
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("cycle close-due")
+
     if not oanda_is_configured():
         _exit_error(
             "OANDA practice credentials are required "
@@ -857,6 +865,10 @@ def close_cmd(
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Close the current position with a reduce-only market order."""
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("cycle close")
+
     symbol = _require_instrument(instrument)
     if not oanda_is_configured():
         _exit_error(

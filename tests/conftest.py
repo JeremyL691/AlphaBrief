@@ -16,6 +16,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _TESTS_DIR = Path(__file__).resolve().parent
 _TESTS_DIR_STR = str(_TESTS_DIR)
 
@@ -24,3 +26,14 @@ _TESTS_DIR_STR = str(_TESTS_DIR)
 # ``tests/`` is visible as a top-level entry for helper imports.
 if _TESTS_DIR_STR not in sys.path:
     sys.path.insert(1, _TESTS_DIR_STR)
+
+
+@pytest.fixture(autouse=True)
+def _no_api_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep CLI tests off the HTTP path.
+
+    ``is_api_running()`` probes ``ALPHABRIEF_API_URL``; pointing it at the
+    discard port makes the probe fail fast, so a developer's running
+    backend can never change a test's behaviour.
+    """
+    monkeypatch.setenv("ALPHABRIEF_API_URL", "http://127.0.0.1:9")

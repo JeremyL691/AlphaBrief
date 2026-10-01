@@ -181,6 +181,8 @@ def check_model_channel() -> CheckResult:
     from alphabrief_models.chatgpt_plan import load_credentials
     from alphabrief_models.model_budget import ModelBudgetGuard, ModelBudgetPolicy
 
+    from alphabrief_cli.api_client import is_api_running
+
     credentials = load_credentials()
     if credentials is None:
         return CheckResult(
@@ -188,7 +190,15 @@ def check_model_channel() -> CheckResult:
             "FAIL",
             "the ChatGPT channel is not signed in (`alphabrief model login`)",
         )
-    store = ModelCallStore(db_path=_paths.db_path())
+    if is_api_running():
+        return CheckResult(
+            "model_channel",
+            "WARN",
+            "credentials present; the backend owns the database so the call "
+            "history and budget are not readable here (use `alphabrief "
+            "scheduler status` for live state)",
+        )
+    store = ModelCallStore(db_path=_paths.db_path(), read_only=True)
     try:
         since = datetime.now(UTC) - timedelta(days=1)
         usage = store.daily_usage(since)
@@ -297,11 +307,35 @@ def check_disk_space() -> CheckResult:
     )
 
 
+def _database_exists() -> bool:
+    """True when the runtime database file exists.
+
+    A read-only connection to a missing file raises, so the DB-backed
+    checks ask first and report "no data yet" instead of crashing on a
+    fresh installation.
+    """
+    return _paths.db_path().is_file()
+
 def check_reconciliation() -> CheckResult:
-    """The most recent reconciliation snapshot and any open freeze."""
+    """The most recent reconciliation snapshot and any open freeze.
+
+    DuckDB allows one process to own the file, so when the backend is
+    running the facts come from its HTTP endpoint instead of a second
+    connection; with no backend the store is read directly.
+    """
+    from alphabrief_cli.api_client import is_api_running
+
+    if is_api_running():
+        return _reconciliation_from_api()
+    if not _database_exists():
+        return CheckResult(
+            "reconciliation",
+            "WARN",
+            "no runtime database yet; no reconciliation has run",
+        )
     from alphabrief_execution.broker.recon_store import BrokerReconStore
 
-    store = BrokerReconStore(db_path=_paths.db_path())
+    store = BrokerReconStore(db_path=_paths.db_path(), read_only=True)
     try:
         snapshots = store.list_snapshots(limit=1)
         freeze = store.has_open_freeze()
@@ -329,11 +363,74 @@ def check_reconciliation() -> CheckResult:
     return CheckResult("reconciliation", "PASS", detail)
 
 
+def _reconciliation_from_api() -> CheckResult:
+    """The reconciliation verdict read from the running backend."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    from alphabrief_cli.api_client import _base_url
+
+    url = f"{_base_url()}/api/v1/broker/status"
+    try:
+        with urllib.request.urlopen(url, timeout=5.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return CheckResult(
+            "reconciliation",
+            "WARN",
+            f"backend is running but its status endpoint failed: {type(exc).__name__}",
+        )
+    freezes = payload.get("open_freezes") or []
+    if freezes:
+        reasons = "; ".join(str(item.get("reason", ""))[:80] for item in freezes)
+        return CheckResult(
+            "reconciliation", "FAIL", f"an open freeze blocks new exposure: {reasons}"
+        )
+    latest = payload.get("latest_snapshot")
+    if latest is None:
+        return CheckResult(
+            "reconciliation", "WARN", "no reconciliation snapshot recorded yet"
+        )
+    return CheckResult(
+        "reconciliation",
+        "PASS",
+        f"via backend: last snapshot {latest.get('captured_at')} "
+        f"scope {latest.get('scope')} all_match={latest.get('all_match')}",
+    )
+
+
+def _backend_owns_the_database() -> CheckResult | None:
+    """A WARN for DB-backed checks the backend's API does not expose yet.
+
+    Returning ``None`` means "no backend, read locally".
+    """
+    from alphabrief_cli.api_client import is_api_running
+
+    if not is_api_running():
+        return None
+    return None
+
 def check_market_data(symbols: Sequence[str]) -> CheckResult:
     """Stored bars exist for the universe and are recent."""
+    from alphabrief_cli.api_client import is_api_running
+
+    if is_api_running():
+        return CheckResult(
+            "market_data",
+            "WARN",
+            "the backend owns the database; bar freshness is not exposed over "
+            "HTTP yet (dashboard endpoint pending), so this check is skipped",
+        )
+    if not _database_exists():
+        return CheckResult(
+            "market_data",
+            "FAIL",
+            f"no runtime database yet; no stored bars for {', '.join(symbols)}",
+        )
     from alphabrief_api.db.market_data import MarketDataStore
 
-    store = MarketDataStore(db_path=_paths.db_path())
+    store = MarketDataStore(db_path=_paths.db_path(), read_only=True)
     try:
         missing: list[str] = []
         stale: list[str] = []
@@ -364,12 +461,27 @@ def check_market_data(symbols: Sequence[str]) -> CheckResult:
 
 def check_quote_samples(symbols: Sequence[str]) -> CheckResult:
     """Rule 4 has same-period spread history to compare against."""
+    from alphabrief_cli.api_client import is_api_running
+
+    if is_api_running():
+        return CheckResult(
+            "quote_samples",
+            "WARN",
+            "the backend owns the database; spread-sample depth is not exposed "
+            "over HTTP yet (dashboard endpoint pending), so this check is skipped",
+        )
+    if not _database_exists():
+        return CheckResult(
+            "quote_samples",
+            "WARN",
+            "no runtime database yet; no spread samples recorded",
+        )
     from alphabrief_data.quote_samples import (
         SPREAD_MEDIAN_SAMPLE_LIMIT,
         QuoteSampleStore,
     )
 
-    store = QuoteSampleStore(db_path=_paths.db_path())
+    store = QuoteSampleStore(db_path=_paths.db_path(), read_only=True)
     try:
         counts = {
             symbol: len(
