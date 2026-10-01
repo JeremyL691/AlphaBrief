@@ -97,6 +97,10 @@ class AccountExposureContext(BaseModel):
         Symbols with a high-impact macro/news event inside the rule-6
         window, mapped to the human-readable reason. The news layer
         classifies the headlines; the gate only reads this map.
+    drawdown_block_reason
+        Set when the rule-11 drawdown state machine currently blocks new
+        exposure (3% for 48 hours, or 5% for the rest of the soak). The
+        caller advances the persisted state; the gate only reads it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -118,6 +122,7 @@ class AccountExposureContext(BaseModel):
     quote_tradeable: bool | None = None
     frozen_symbols: dict[str, str] = Field(default_factory=dict)
     recent_high_impact_events: dict[str, str] = Field(default_factory=dict)
+    drawdown_block_reason: str | None = None
 
     @field_validator(
         "current_total_exposure",

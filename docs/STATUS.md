@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 规则 11 回撤状态机（需持久化窗口状态）与规则 4 点差（需 S5 报价历史）；随后 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
+| 下一项任务 | S4-2 最后一条规则 4 点差（需 S5 报价历史）与 S4-6（规则/仓位测试 + S4 退出标准全 universe 跑，需模型额度）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S4-2 第六批：规则 6 事件窗口接入真实新闻并实测（BoE/BoJ/NFP/CPI 分类正确，窗口边界含端点） |
+| 最近更新 | 2026-10-01，S4-2 第七批：规则 11 回撤状态机（3% 封禁 48h → 半仓、5% 熔断）接入真实 NAV 并实测 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -74,6 +74,12 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- S4-2 第七批（本提交）：**规则 11 回撤状态机（5.7）**。
+  - 新增 `alphabrief_risk.drawdown_policy`（纯状态机 + DuckDB 持久化）：以**试运行期最高 NAV** 为基准，回撤 <3% 正常全仓；≥3% 立即禁止新开仓 48 小时，48 小时后自动恢复为**半仓**（风险 ×0.5）直到回撤回到 3% 以下；≥5% 直接 `soak_halted`，试运行剩余期间禁止新开仓且**不会**因 NAV 回升而解除（状态只会收紧）。高水位只升不降；平仓与对账不受影响。`DrawdownStateStore`（表 `ai_drawdown_state`，按账户单行）保证重启不会重置封禁。
+  - 接入：`AccountExposureContext.drawdown_block_reason`（由调用方推进状态，gate 只读结论）；`EntryRulePolicy.block_on_drawdown`（未配置不启用），规则 11 只约束入场、缺上下文失败闭合、平仓豁免；`SizingInputs.risk_multiplier` 让半仓状态真实减半风险（`size_entry` 里 `risk_pct × multiplier`）。CLI 的账户上下文提供者与 sizing 提供者都用真实 NAV 推进并读取该状态（账户 ID 仅作状态键，不打印），受审 policy 设 `block_on_drawdown=True`。
+  - 真实实测（practice 账户）：真实 NAV 99999.9200（S3 那笔交易后）→ 高水位以 NAV 播种，状态 `normal`、回撤 0.00%、倍数 1；对同一高水位做一次**未落库**的合成 −3.5% 评估 → `blocked`、48 小时封禁至 2026-10-03T20:35Z、拒绝码 `DRAWDOWN`（探针只打印不写入，随后以真实 NAV 复评仍为 `normal`，持久化状态与事实一致）。
+  - 测试：新增 `tests/test_drawdown_state.py` 17 个（3% 边界封禁 48h、到期转半仓、回到 3% 以下清除、5% 熔断且粘滞、高水位只升、跨进程持久、未知账户无状态、规则拒绝/放行/缺上下文失败闭合/默认不启用/平仓豁免、半仓 sizing 精确减半与非法倍数拒绝）。命令与结果：`pytest -q -m "not practice"` → 2630 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (231 source files)；`secret_scan` → OK。
 
 - S4-2 第六批（本提交）：**规则 6 事件窗口（5.7）**。
   - 规则放在 risk（`alphabrief_risk.event_window`，无 news 依赖，延续 `NewsMacroSource` 协议约定）：`HIGH_IMPACT_KEYWORDS`（CPI、consumer price、inflation report、NFP/nonfarm/non-farm、payrolls、FOMC、rate decision、interest rate decision、ECB、BoE、BoJ、RBA、BoC、SNB）、`KEYWORD_CURRENCIES`（FOMC→USD、ECB→EUR、BoE→GBP、BoJ→JPY、RBA→AUD、BoC→CAD、SNB→CHF）、`events_within_window`（窗口边界含端点，未来时间戳丢弃）、`window_reason_map`、`event_window_reason`。
