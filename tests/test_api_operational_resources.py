@@ -18,6 +18,7 @@ import pytest
 from alphabrief_api.db.instrument_catalog import InstrumentCatalogStore
 from alphabrief_api.db.paper import PaperStore
 from alphabrief_api.main import create_app
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.oanda.instruments import (
     InstrumentCatalogSnapshot,
     InstrumentMetadata,
@@ -42,7 +43,7 @@ def client() -> TestClient:
 
 
 def _db_path(tmp_path: Path) -> Path:
-    return tmp_path / "alphabrief.db"
+    return tmp_path / _paths.DATABASE_NAME
 
 
 def _seed_portfolio(tmp_path: Path) -> None:

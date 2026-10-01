@@ -11,13 +11,13 @@ process-local portfolio state.
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
 import duckdb
+from alphabrief_core import paths as _paths
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 #: Deterministic margin rate used for position margin projections.
@@ -427,7 +427,7 @@ class AccountProjectionStore:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         if db_path is None:
-            db_path = _default_db_path()
+            db_path = _paths.db_path()
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
@@ -543,12 +543,6 @@ def resolve_account_snapshot(
         return store.snapshot(account_id)
     finally:
         store.close()
-
-
-def _default_db_path() -> Path:
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    base = Path(env_dir) if env_dir else Path.home() / ".alphabrief" / "data"
-    return base / "alphabrief.db"
 
 
 __all__ = [

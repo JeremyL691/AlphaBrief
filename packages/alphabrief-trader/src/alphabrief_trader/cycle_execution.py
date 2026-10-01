@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+from alphabrief_core import paths as _paths
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from alphabrief_trader.db_schema import apply_ai_trading_schema
@@ -70,12 +71,7 @@ class IdempotencyMap:
         clock: Any = None,
     ) -> None:
         if db_path is None:
-            import os
-
-            env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-            db_dir = Path(env_dir) if env_dir else Path.home() / ".alphabrief" / "data"
-            db_dir.mkdir(parents=True, exist_ok=True)
-            db_path = db_dir / "alphabrief.db"
+            db_path = _paths.db_path()
         self._db_path = Path(db_path)
         self._conn = duckdb.connect(str(self._db_path))
         apply_ai_trading_schema(self._conn)

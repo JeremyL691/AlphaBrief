@@ -16,12 +16,12 @@ full text; they retain only permitted metadata and bounded summaries
 from __future__ import annotations
 
 import hashlib
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import duckdb
+from alphabrief_core import paths as _paths
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from alphabrief_news.providers.base import (
@@ -231,7 +231,7 @@ class NewsIngestionStore:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         if db_path is None:
-            db_path = _default_db_path()
+            db_path = _paths.db_path()
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
@@ -320,12 +320,6 @@ class NewsIngestionStore:
             self._conn.close()
         except Exception:  # noqa: BLE001
             pass
-
-
-def _default_db_path() -> Path:
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    base = Path(env_dir) if env_dir else Path.home() / ".alphabrief" / "data"
-    return base / "alphabrief.db"
 
 
 __all__ = [

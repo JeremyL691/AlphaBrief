@@ -8,12 +8,12 @@ stores (REQ-EXEC-010, REQ-UI-006). Missing links resolve to explicit
 ``not_found`` entries, never fabricated values.
 """
 
+
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
 
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -104,23 +104,16 @@ class TraceChain(BaseModel):
     reconciliation: list[TraceReconciliation]
 
 
-def _db_path() -> Path:
-    env_dir = os.environ.get("ALPHABRIEF_DATA_DIR")
-    db_dir = Path(env_dir) if env_dir else Path("~/.alphabrief").expanduser()
-    db_dir.mkdir(parents=True, exist_ok=True)
-    return db_dir / "alphabrief.db"
-
-
 def _open_paper_store() -> PaperStore:
-    return PaperStore(db_path=_db_path())
+    return PaperStore(db_path=_paths.db_path())
 
 
 def _open_recon() -> BrokerReconStore:
-    return BrokerReconStore(db_path=_db_path())
+    return BrokerReconStore(db_path=_paths.db_path())
 
 
 def _open_ai_store() -> AiTradingStore:
-    return AiTradingStore(db_path=_db_path())
+    return AiTradingStore(db_path=_paths.db_path())
 
 
 @router.get("/cycles/{cycle_id}", response_model=TraceChain)

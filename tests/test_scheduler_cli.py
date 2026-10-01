@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import pytest
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.operations.scheduler import HeartbeatStore
 
@@ -105,7 +106,7 @@ def test_cli_heartbeats_command_offline_prints_empty(
 def test_cli_heartbeats_command_offline_reflects_local_store(
     tmp_path: Path, isolated_data_dir: dict[str, str]
 ) -> None:
-    store = HeartbeatStore(db_path=tmp_path / "alphabrief.db")
+    store = HeartbeatStore(db_path=tmp_path / _paths.DATABASE_NAME)
     store.record_run(task_name="reconcile", status="ok", error=None)
     store.close()
 
@@ -141,7 +142,7 @@ def test_cli_tasks_command_offline_returns_default_task_shape(
 def test_cli_freezes_command_offline_lists_open_freeze(
     tmp_path: Path, isolated_data_dir: dict[str, str]
 ) -> None:
-    recon = BrokerReconStore(db_path=tmp_path / "alphabrief.db")
+    recon = BrokerReconStore(db_path=tmp_path / _paths.DATABASE_NAME)
     recon.raise_freeze(reason="offline test", source="t")
     recon.close()
 

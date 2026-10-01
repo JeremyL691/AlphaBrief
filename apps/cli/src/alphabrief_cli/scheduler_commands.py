@@ -38,6 +38,7 @@ from alphabrief_core import (
     load_paper_execution_policy,
     load_settings,
 )
+from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.port import (
     BrokerAdapter,
 )
@@ -75,21 +76,11 @@ scheduler_app = typer.Typer(help="Inspect and run the operations scheduler.")
 
 
 def _open_heartbeat_store() -> HeartbeatStore:
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return HeartbeatStore(db_path=db_dir / "alphabrief.db")
-    return HeartbeatStore()
+    return HeartbeatStore(db_path=_paths.db_path())
 
 
 def _open_recon_store() -> BrokerReconStore:
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return BrokerReconStore(db_path=db_dir / "alphabrief.db")
-    return BrokerReconStore()
+    return BrokerReconStore(db_path=_paths.db_path())
 
 
 def _dump(payload: object, *, pretty: bool, default: bool = False) -> None:
@@ -660,7 +651,7 @@ def _ai_cycle_factory(
         # recon store). ponytail:scheduler_ai_duckdb_lock — see
         # upgrade path note in
         # The final migration contract is blueprint milestone M11.
-        database = db_path / "alphabrief.db"
+        database = db_path / _paths.DATABASE_NAME
         store = _Store(db_path=database)
         market_store = _MarketDataStore(db_path=database)
         news_store = _NewsStore(db_path=database)
@@ -760,15 +751,7 @@ def run_cmd(
         async def _on_reconcile(scope: str) -> None:
             await runner.reconcile(scope=scope)
 
-        ai_db_dir_env = os.environ.get("ALPHABRIEF_AI_DB_DIR")
-        db_dir_env = os.environ.get("ALPHABRIEF_DATA_DIR")
-        if ai_db_dir_env:
-            db_path = Path(ai_db_dir_env)
-        elif db_dir_env:
-            db_path = Path(db_dir_env)
-        else:
-            db_path = Path.home() / ".alphabrief" / "data"
-        ai_handler = _ai_cycle_factory(db_path=db_path)
+        ai_handler = _ai_cycle_factory(db_path=_paths.data_dir())
 
         tasks = build_default_tasks(
             on_reconcile=_on_reconcile,

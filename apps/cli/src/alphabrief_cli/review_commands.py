@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from datetime import date
 from pathlib import Path
 
 import typer
 from alphabrief_api.db import ReviewStore
+from alphabrief_core import paths as _paths
 from alphabrief_review import ReviewCenterSnapshot, generate_daily_review
 from alphabrief_review.io import ReviewSnapshotLoadError, load_review_snapshot
 from pydantic import ValidationError
@@ -19,13 +19,8 @@ review_app = typer.Typer(help="Browse review snapshots and journals.")
 
 
 def _open_review_store() -> ReviewStore:
-    """Return a store rooted at ``$ALPHABRIEF_DATA_DIR`` (if set)."""
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return ReviewStore(db_path=db_dir / "alphabrief.db")
-    return ReviewStore()
+    """Return the review store on the shared database path."""
+    return ReviewStore(db_path=_paths.db_path())
 
 
 @review_app.command("list")

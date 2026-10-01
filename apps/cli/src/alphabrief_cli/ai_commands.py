@@ -23,11 +23,11 @@ import os
 import sys
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, cast
 
 import typer
 from alphabrief_api.db import AiTradingStore
+from alphabrief_core import paths as _paths
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
@@ -54,12 +54,7 @@ ai_app = typer.Typer(help="AI Trading Committee — multi-role paper cycle.")
 
 
 def _open_store() -> AiTradingStore:
-    db_dir_str = os.environ.get("ALPHABRIEF_DATA_DIR")
-    if db_dir_str:
-        db_dir = Path(db_dir_str)
-        db_dir.mkdir(parents=True, exist_ok=True)
-        return AiTradingStore(db_path=db_dir / "alphabrief.db")
-    return AiTradingStore()
+    return AiTradingStore(db_path=_paths.db_path())
 
 
 def _dump(payload: object, *, pretty: bool, default: bool = False) -> None:

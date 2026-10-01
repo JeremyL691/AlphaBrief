@@ -9,6 +9,7 @@ scheduler-produced content (bars, news, macro, briefs, debates,
 evaluations) and API/CLI-produced content are both visible.
 """
 
+
 from __future__ import annotations
 
 import os
@@ -19,6 +20,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from alphabrief_core import paths as _paths
 
 _SNAPSHOT_TTL_SECONDS = 10.0
 _snapshot_state: tuple[float, Path] | None = None
@@ -38,7 +41,7 @@ def scheduler_snapshot_path() -> Path | None:
     src_dir = os.environ.get("ALPHABRIEF_SCHEDULER_DB_DIR", "").strip()
     if not src_dir:
         return None
-    src = Path(src_dir) / "alphabrief.db"
+    src = Path(src_dir) / _paths.DATABASE_NAME
     if not src.is_file():
         return None
     now = time.monotonic()
@@ -56,12 +59,12 @@ def scheduler_snapshot_path() -> Path | None:
             return _snapshot_state[1]
         dst_dir = Path(tempfile.gettempdir()) / "alphabrief_scheduler_snapshot"
         dst_dir.mkdir(parents=True, exist_ok=True)
-        dst = dst_dir / "alphabrief.db"
-        dst_wal = dst.with_name("alphabrief.db.wal")
+        dst = dst_dir / _paths.DATABASE_NAME
+        dst_wal = dst.with_name(f"{_paths.DATABASE_NAME}.wal")
         if dst_wal.exists():
             dst_wal.unlink()
         shutil.copy2(src, dst)
-        src_wal = src.with_name("alphabrief.db.wal")
+        src_wal = src.with_name(f"{_paths.DATABASE_NAME}.wal")
         if src_wal.is_file():
             shutil.copy2(src_wal, dst_wal)
         _snapshot_state = (time.monotonic(), dst)
