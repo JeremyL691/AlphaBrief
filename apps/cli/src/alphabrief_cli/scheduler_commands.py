@@ -26,7 +26,7 @@ import logging
 import os
 import signal
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from contextlib import ExitStack
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -59,13 +59,7 @@ from alphabrief_execution.operations.scheduler import (
     SchedulerStartupBlockedError,
     build_default_tasks,
 )
-from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
-    DailyTradingCycle,
-    ExternalPaperExecutionBackend,
-    StoredMarketSnapshotBuilder,
-    TradingCommittee,
-    build_ai_trading_committee,
     is_ai_trading_enabled,
 )
 
@@ -384,7 +378,6 @@ def _configure_logging() -> None:
     default level is INFO when ``ALPHABRIEF_LOG_LEVEL`` is unset or
     invalid, which matches the runbook's "logs visible" expectation.
     """
-    import logging
 
     raw = os.environ.get("ALPHABRIEF_LOG_LEVEL", "INFO").upper().strip()
     level = getattr(logging, raw, logging.INFO)
@@ -421,25 +414,6 @@ def _acquire_runtime_ownership() -> tuple[ExitStack, RuntimeLock]:
         print(f"error: {exc}", file=sys.stderr)
         raise typer.Exit(code=2) from exc
     return ownership, lock
-
-
-def _build_ai_committee(database: Path | None = None) -> TradingCommittee:
-    """Build the configured AI committee, persisting every model call.
-
-    The scheduler is the unattended runtime, so its committee must write
-    the same durable model-call evidence as the API: channel, model,
-    latency, token usage, status, and error code per terminal call.
-    """
-    from alphabrief_api.db.model_call import ModelCallStore
-
-    sink = None
-    if database is not None:
-        store = ModelCallStore(db_path=database)
-
-        def sink(record: object) -> None:
-            store.save_call(record)  # type: ignore[arg-type]
-
-    return build_ai_trading_committee(record_sink=sink)
 
 
 # Default AI cycle universe: OANDA practice FX majors. Operators can
@@ -735,7 +709,7 @@ def _reconcile_runner(recon_store: BrokerReconStore) -> Callable[[str], None]:
 
 def _ai_cycle_factory(
     *, db_path: Path
-) -> Callable[..., Awaitable[None]]:
+) -> Callable[..., Coroutine[Any, Any, None]]:
     """Build an ``on_ai_cycle`` coroutine bound to ``db_path``.
 
     The cycle runs the AI Trading Committee for the operator-curated
@@ -743,94 +717,36 @@ def _ai_cycle_factory(
     ``scheduler run`` enables the task only when
     ``ALPHABRIEF_AI_TRADING_ENABLED`` is truthy.
     """
-    from alphabrief_api.db import (
-        AiTradingStore as _Store,
-    )
-    from alphabrief_api.db import (
-        MarketDataStore as _MarketDataStore,
-    )
-    from alphabrief_api.db import (
-        NewsStore as _NewsStore,
-    )
+    from alphabrief_api.db import NewsStore
+
+    from alphabrief_cli.cycle_commands import TradingMode, _open_trading_cycle
+
+    def _run_cycle(*, cycle_key: str | None = None) -> None:
+        database = db_path / _paths.DATABASE_NAME
+        universe = _ai_scheduler_universe()
+        policy = load_paper_execution_policy(load_settings().execution_policy_file)
+        _assert_external_policy_matches_broker(policy)
+        with ExitStack() as resources:
+            news = NewsStore(db_path=database)
+            resources.callback(news.close)
+            _run_ai_pre_cycle_ingestion(news_store=news, symbols=universe)
+            with _open_trading_cycle(
+                symbols=universe, database=database,
+                trading=cast("TradingMode", trading_mode()),
+                enabled=is_ai_trading_enabled(),
+            ) as cycle:
+                cycle.run(list(universe), cycle_key=cycle_key)
 
     async def _handler(*, cycle_key: str | None = None) -> None:
-        # The store is opened and closed per-call so a long-running
-        # scheduler can survive a DuckDB single-writer lock between
-        # cycles (the AI store is currently the same DB as the broker
-        # recon store). ponytail:scheduler_ai_duckdb_lock — see
-        # upgrade path note in
-        # The final migration contract is blueprint milestone M11.
-        database = db_path / _paths.DATABASE_NAME
-        store = _Store(db_path=database)
-        market_store = _MarketDataStore(db_path=database)
-        news_store = _NewsStore(db_path=database)
+        # Open every per-round connection in the worker that uses it.
+        # Cancellation waits for the worker before releasing this invocation:
+        # a timed-out thread must never overlap a later round or lose its stores.
+        worker = asyncio.create_task(asyncio.to_thread(_run_cycle, cycle_key=cycle_key))
         try:
-            universe = _ai_scheduler_universe()
-            _run_ai_pre_cycle_ingestion(
-                news_store=news_store,
-                symbols=universe,
-            )
-            snapshot_builder = StoredMarketSnapshotBuilder(
-                bar_loader=market_store.get_bar_models,
-                headline_loader=lambda symbol, start, end, limit: (
-                    news_store.list_headlines(
-                        symbol=symbol,
-                        start=start,
-                        end=end,
-                        limit=limit,
-                    )
-                ),
-            )
-            committee = _build_ai_committee(database)
-            policy = load_paper_execution_policy(
-                load_settings().execution_policy_file
-            )
-            _assert_external_policy_matches_broker(policy)
-            from alphabrief_risk import KillSwitch, KillSwitchStore
-
-            switch_store = KillSwitchStore(db_path=_paths.db_path())
-            try:
-                kill_switch = KillSwitch.from_store(switch_store)
-            finally:
-                switch_store.close()
-            risk_gate = RiskGate(
-                limits=RiskLimitConfig(
-                    trading_enabled=True,
-                    symbol_allowlist=frozenset(universe),
-                    max_order_value=policy.max_order_notional,
-                ),
-                kill_switch=kill_switch,
-            )
-            execution_backend = ExternalPaperExecutionBackend(
-                _build_adapter(),
-                max_order_value=policy.max_order_notional,
-                risk_symbols=universe,
-            )
-            cycle = DailyTradingCycle(
-                committee=committee,
-                risk_gate=risk_gate,
-                store=store,
-                snapshot_loader=lambda symbol: snapshot_builder.build(symbol)
-                if symbol in universe
-                else None,
-                execution_backend=execution_backend,
-                enabled=is_ai_trading_enabled(),
-                max_order_value=policy.max_order_notional,
-                # The unattended runtime honours the configured trading
-                # switch; anything other than "on" stops before submitting.
-                trading_mode=trading_mode(),
-            )
-            # The cycle key makes a re-dispatched round idempotent: the
-            # same (key, snapshot) pair returns the persisted record
-            # instead of running the committee again (PROJECT_GUIDE 5.1).
-            cycle.run(list(universe), cycle_key=cycle_key)
-        except Exception:
-            logging.getLogger(__name__).exception("ai cycle failed")
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            await worker
             raise
-        finally:
-            news_store.close()
-            market_store.close()
-            store.close()
 
     return _handler
 
@@ -853,7 +769,6 @@ def run_cmd(
     """Start the scheduler as a foreground process (Ctrl-C to stop)."""
     _refuse_if_live_trading_unlocked()
     _configure_logging()
-    import logging
 
     _LOGGER = logging.getLogger(__name__)
     _LOGGER.info(

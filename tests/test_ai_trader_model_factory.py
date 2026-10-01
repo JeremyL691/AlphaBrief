@@ -91,3 +91,51 @@ class TestAiTradingModelFactory:
         committee = build_ai_trading_committee()
 
         assert committee.roles  # explicit test composition builds a committee
+
+
+def test_production_factory_uses_five_calls_and_manager_sees_analysts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+    from decimal import Decimal
+    from types import SimpleNamespace
+    from typing import Any
+
+    import alphabrief_trader.model_factory as factory
+    from alphabrief_models import ModelGateway, ModelRequest, ModelResponse
+    from alphabrief_trader import CommitteeInput, MarketSnapshot
+
+    requests: list[ModelRequest] = []
+
+    class RecordingProvider(FakeProviderAdapter):
+        def call(self, request: ModelRequest) -> ModelResponse:
+            requests.append(request)
+            return super().call(request)
+
+    provider = RecordingProvider(
+        capabilities=["structured_output"], structured_output={
+            "analysis": "Observed trend from this snapshot", "view": "bullish",
+            "confidence": 0.8, "evidence": [], "risks": [],
+            "suggested_action": "buy", "target_position_pct": "0.1",
+            "veto": False, "needs_human_review": False,
+        },
+    )
+
+    def channels(**kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(gateway=ModelGateway([provider]))
+
+    monkeypatch.setattr(factory, "build_ai_trading_channels", channels)
+    committee = factory.build_ai_trading_committee()
+    result = committee.run(CommitteeInput(snapshot=MarketSnapshot(
+        symbol="EUR_USD", reference_price=Decimal("1.1"),
+        captured_at=datetime.now(UTC),
+    )))
+    assert result.ok
+    assert len(requests) == 5
+    roles = [request.metadata["committee_role"] for request in requests]
+    assert roles == committee.roles
+    manager_input = requests[-1].input_text
+    assert "Earlier analyst votes" in manager_input
+    for role in committee.roles[:-1]:
+        assert f'"role": "{role}"' in manager_input
+    assert manager_input.count("Observed trend from this snapshot") == 4

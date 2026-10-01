@@ -95,7 +95,10 @@ def build_ai_trading_committee(
     per-request/cycle/daily model usage.
     """
     channels = build_ai_trading_channels(record_sink=record_sink, budget=budget)
-    return TradingCommittee(gateway=channels.gateway, discipline=DisciplineConfig())
+    return TradingCommittee(
+        gateway=channels.gateway, discipline=DisciplineConfig(),
+        max_turns=5, challenge_rounds=0,
+    )
 
 
 def build_ai_trading_provider() -> ProviderAdapter:

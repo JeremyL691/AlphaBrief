@@ -6,7 +6,10 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import alphabrief_cli.cycle_commands as cycle_commands
 import alphabrief_cli.scheduler_commands as scheduler_commands
 import pytest
 from _helpers import FakeExecutionBackend
@@ -37,7 +40,7 @@ from alphabrief_execution.operations.scheduler import (
 from alphabrief_models import FakeProviderAdapter, ModelGateway
 from alphabrief_news.ingestion import NewsIngestionStore
 from alphabrief_news.types import NewsFetchQuery, NewsHeadline
-from alphabrief_risk import RiskGate, RiskLimitConfig
+from alphabrief_risk import AccountExposureContext, RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
     DisciplineConfig,
@@ -95,6 +98,12 @@ class _SubmittingAdapter(_NullAdapter):
         self.requests: list[SubmitRequest] = []
         self.client_order_ids: list[str] = []
 
+    def instrument_metadata(self, symbol: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            raw_type="CURRENCY", trade_units_precision=0,
+            minimum_trade_size=Decimal("1"),
+        )
+
     async def submit(
         self, request: SubmitRequest, *, client_order_id: str
     ) -> SubmitResult:
@@ -118,10 +127,92 @@ class _SubmittingAdapter(_NullAdapter):
         )
 
 
+class _RiskSources:
+    """Deterministic broker facts only in this test module."""
+
+    def account_exposure_context(self, **facts: Any) -> AccountExposureContext:
+        facts.pop("symbol", None)
+        return AccountExposureContext(
+            current_total_exposure=Decimal("0"), exposure_by_symbol={},
+            cash=Decimal("1000"), equity=Decimal("1000"), account_id="test-account",
+            captured_at=datetime.now(UTC), quote_captured_at=datetime.now(UTC),
+            quote_tradeable=True, open_position_count=0,
+            reconciliation_state="clean", **facts,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        from alphabrief_execution.broker.risk_context import adapter_risk_sources
+
+        return getattr(adapter_risk_sources(_SubmittingAdapter()), name)
+
+    def live_quote(self, symbol: str) -> tuple[Decimal, Decimal]:
+        return Decimal("1.1399"), Decimal("1.1401")
+
+    def home_conversion_factor(self, symbol: str) -> Decimal:
+        return Decimal("1")
+
+
+def _fake_committee(*, record_sink: Any = None) -> TradingCommittee:
+    provider = FakeProviderAdapter(
+        provider_name="fake", model_name="fake-1", capabilities=["structured_output"],
+        structured_output={
+            "analysis": "No direction supported.", "view": "neutral",
+            "confidence": 0.8, "evidence": ["trend"], "risks": [],
+            "suggested_action": "hold", "target_position_pct": "0",
+            "veto": False, "needs_human_review": False,
+        },
+    )
+    return TradingCommittee(
+        gateway=ModelGateway(providers=[provider], record_sink=record_sink),
+        discipline=DisciplineConfig(), max_turns=5, challenge_rounds=0,
+    )
+
+def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> None:
+    market_store = MarketDataStore(db_path=directory / _paths.DATABASE_NAME)
+    now = datetime.now(UTC)
+    try:
+        market_store.insert_bars([
+            Bar(
+                symbol="EUR_USD", timestamp=now - timedelta(hours=14-i),
+                open=Decimal("1.14"), high=Decimal("1.15"),
+                low=Decimal("1.13"), close=Decimal("1.14"),
+                volume=Decimal("1000"), source="oanda_practice",
+                data_version="test:H1",
+            ) for i in range(15)
+        ], source="oanda_practice", data_version="test:H1")
+    finally:
+        market_store.close()
+    if not seed_spreads:
+        return
+    from alphabrief_data.quote_samples import QuoteSample, QuoteSampleStore
+
+    samples = QuoteSampleStore(db_path=directory / _paths.DATABASE_NAME)
+    try:
+        for i in range(5):
+            samples.record(QuoteSample(
+                symbol="EUR_USD", captured_at=now - timedelta(microseconds=i+1),
+                bid=Decimal("1.1399"), ask=Decimal("1.1401"),
+                spread=Decimal("0.0002"), mid=Decimal("1.14"),
+            ))
+    finally:
+        samples.close()
+
+
+
 @pytest.fixture(autouse=True)
 def _scheduler_ai_test_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        cycle_commands, "_risk_sources", lambda *a, **kw: _RiskSources()
+    )
+    monkeypatch.setattr(cycle_commands, "build_ai_trading_committee", _fake_committee)
+    monkeypatch.setattr(cycle_commands, "get_broker_runtime", lambda: SimpleNamespace(
+        adapter=scheduler_commands._build_adapter(),
+    ))
+    monkeypatch.setattr(cycle_commands, "_instrument_types", lambda symbols: {
+        symbol: "CURRENCY" for symbol in symbols
+    })
     monkeypatch.setenv("ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED", "false")
     monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -467,8 +558,9 @@ class TestSchedulerRunsAiTask:
         finally:
             store.close()
 
+    @pytest.mark.parametrize("condition", ["clear", "event", "kill", "spread", "off"])
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
-        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, condition: str,
     ) -> None:
         # Round 0063: default paper broker is OANDA, so set OANDA credentials
         # to match the default policy. Insert a EUR_USD bar instead of SPY
@@ -498,35 +590,37 @@ class TestSchedulerRunsAiTask:
             },
         )
         monkeypatch.setattr(
-            scheduler_commands,
-            "_build_ai_committee",
-            lambda database=None: TradingCommittee(
-                gateway=ModelGateway(providers=[provider]),
-                discipline=DisciplineConfig(),
+            cycle_commands,
+            "build_ai_trading_committee",
+            lambda record_sink=None: TradingCommittee(
+                gateway=ModelGateway(providers=[provider], record_sink=record_sink),
+                discipline=DisciplineConfig(), max_turns=5, challenge_rounds=0,
             ),
         )
 
-        market_store = MarketDataStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
-        try:
-            market_store.insert_bars(
-                [
-                    Bar(
-                        symbol="EUR_USD",
-                        timestamp=datetime.now(UTC),
-                        open=Decimal("1.14"),
-                        high=Decimal("1.14"),
-                        low=Decimal("1.14"),
-                        close=Decimal("1.14"),
-                        volume=Decimal("1000"),
-                        source="test",
-                        data_version="test",
-                    )
-                ],
-                source="test",
-                data_version="test",
-            )
-        finally:
-            market_store.close()
+        _seed_risk_sized_inputs(isolated_data_dir, seed_spreads=condition != "spread")
+        database = isolated_data_dir / _paths.DATABASE_NAME
+        if condition == "event":
+            news = NewsStore(db_path=database)
+            try:
+                news.insert_headlines([NewsHeadline(
+                    headline_id="cpi-event", published_at=datetime.now(UTC),
+                    symbols=["EUR_USD"], category="macro", source="test-wire",
+                    title="US CPI release", summary="Inflation release",
+                    data_version="test",
+                )])
+            finally:
+                news.close()
+        elif condition == "kill":
+            from alphabrief_risk import KillSwitchStore
+
+            switch = KillSwitchStore(db_path=database)
+            try:
+                switch.activate(reason="test persisted stop")
+            finally:
+                switch.close()
+        elif condition == "off":
+            monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "off")
 
         handler = _ai_cycle_factory(db_path=isolated_data_dir)
 
@@ -535,20 +629,50 @@ class TestSchedulerRunsAiTask:
 
         asyncio.run(_run_handler())
 
-        assert len(adapter.requests) == 1
-        assert adapter.requests[0].symbol == "EUR_USD"
-        # The committee's unchanged $100 paper budget is converted into FX
-        # units at the stored EUR_USD price before external submission.
-        assert adapter.requests[0].quantity == Decimal("100") / Decimal("1.14")
+        if condition == "clear":
+            assert len(adapter.requests) == 1
+            assert adapter.requests[0].symbol == "EUR_USD"
+            # NAV 1000 x 0.25% / (ATR .02 x 1.5) = floor(83.333...) units.
+            # This replaces the obsolete committee-budget fraction assertion.
+            assert adapter.requests[0].quantity == Decimal("83")
+            assert adapter.requests[0].stop_loss == Decimal("1.11")
+            assert adapter.requests[0].take_profit == Decimal("1.20")
+
+        else:
+            assert adapter.requests == []
 
         store = AiTradingStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
         try:
             latest = store.get_latest_cycle()
             assert latest is not None
             attempt = latest["attempts"][0]
-            assert attempt["execution_backend"] == "external_paper"
-            assert attempt["broker_order_id"] == attempt["order_id"]
-            assert attempt["client_order_id"] == attempt["intent_id"]
+            if condition == "clear":
+                assert attempt["execution_backend"] == "external_paper"
+                assert attempt["broker_order_id"] == attempt["order_id"]
+                assert attempt["client_order_id"] == attempt["intent_id"]
+            else:
+                expected = {
+                    "event": "EVENT_WINDOW", "kill": "test persisted stop",
+                    "spread": "SPREAD_WIDE", "off": "NO_TRADE_TRADING_OFF",
+                }[condition]
+                assert expected in attempt["reason"]
+                if condition == "kill":
+                    assert "kill_switch" in attempt["risk_tags"]
+                assert attempt["outcome"] == (
+                    "blocked_trading_off" if condition == "off" else "blocked_risk_gate"
+                )
+            from alphabrief_api.db.model_call import ModelCallStore
+            from alphabrief_trader.shadow_store import ShadowStore
+
+            calls = ModelCallStore(db_path=database)
+            shadows = ShadowStore(db_path=database)
+            try:
+                assert len(calls.list_calls()) == 5
+                assert len(shadows.list_decisions(cycle_id=latest["cycle_id"])) == 5
+            finally:
+                shadows.close()
+                calls.close()
+
         finally:
             store.close()
 
@@ -606,3 +730,128 @@ class TestSchedulerRunsAiTask:
             "EUR_USD",
             "GBP_USD",
         )
+
+
+class TestRuntimeComposition:
+    def test_disabled_model_channel_is_durable_and_records_shadows(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from alphabrief_api.db.model_call import ModelCallStore
+        from alphabrief_trader.shadow_store import ShadowStore
+
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        monkeypatch.setattr(scheduler_commands, "_build_adapter", _SubmittingAdapter)
+        _seed_risk_sized_inputs(isolated_data_dir)
+        database = isolated_data_dir / _paths.DATABASE_NAME
+        calls = ModelCallStore(db_path=database)
+        try:
+            calls.disable_channel("chatgpt_plan", datetime.now(UTC).date().isoformat(),
+                                  "test provider unavailable")
+        finally:
+            calls.close()
+        asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)())
+        cycles = AiTradingStore(db_path=database)
+        calls = ModelCallStore(db_path=database)
+        shadows = ShadowStore(db_path=database)
+        try:
+            record = cycles.get_latest_cycle()
+            assert record is not None
+            assert record["outcome"] == "skipped_model_unavailable"
+            assert record["votes"] == []
+            assert calls.list_calls() == []
+            assert len(shadows.list_decisions(cycle_id=record["cycle_id"])) == 5
+        finally:
+            shadows.close()
+            calls.close()
+            cycles.close()
+
+    def test_worker_does_not_block_event_loop_and_cancellation_waits_for_it(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import threading
+        from contextlib import contextmanager
+
+        started = threading.Event()
+        finish = threading.Event()
+        exited = threading.Event()
+
+        class SlowCycle:
+            def run(self, symbols: list[str], **kwargs: Any) -> None:
+                started.set()
+                assert finish.wait(timeout=5)
+
+        @contextmanager
+        def open_cycle(**kwargs: Any) -> Any:
+            try:
+                yield SlowCycle()
+            finally:
+                exited.set()
+
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        monkeypatch.setattr(cycle_commands, "_open_trading_cycle", open_cycle)
+        handler = _ai_cycle_factory(db_path=isolated_data_dir)
+
+        async def exercise() -> None:
+            task = asyncio.create_task(handler())
+            assert await asyncio.to_thread(started.wait, 2)
+            # This timer must run while the blocking cycle is still waiting.
+            await asyncio.wait_for(asyncio.sleep(0.01), timeout=0.1)
+            assert not finish.is_set()
+            task.cancel()
+            await asyncio.sleep(0.01)
+            assert not task.done()
+            assert not exited.is_set()
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert exited.is_set()
+
+        try:
+            asyncio.run(exercise())
+        finally:
+            finish.set()
+
+    def test_single_round_cli_uses_the_same_cycle_composition(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from contextlib import contextmanager
+
+        from alphabrief_cli.main import app
+        from alphabrief_trader import DailyCycleRecord
+        from typer.testing import CliRunner
+
+        observed: list[dict[str, Any]] = []
+
+        class Cycle:
+            def run(self, symbols: list[str]) -> DailyCycleRecord:
+                return DailyCycleRecord(
+                    cycle_id="test-cycle", trading_day="2026-10-01",
+                    symbols=symbols, plans=[], votes=[], attempts=[],
+                    outcome="skipped_no_intent", enabled=True,
+                    live_trading_enabled=False, summary="test",
+                    created_at=datetime.now(UTC),
+                )
+
+        @contextmanager
+        def open_cycle(**kwargs: Any) -> Any:
+            observed.append(kwargs)
+            yield Cycle()
+
+        monkeypatch.setattr(cycle_commands, "_open_trading_cycle", open_cycle)
+        result = CliRunner().invoke(app, ["cycle", "run", "--once", "--trading", "off"])
+        assert result.exit_code == 0, result.output
+        assert len(observed) == 1
+        assert observed[0]["symbols"] == cycle_commands.DEFAULT_UNIVERSE
+        assert observed[0]["trading"] == "off"
+
+    def test_news_read_failure_cannot_become_an_empty_event_map(self) -> None:
+        class BrokenNews:
+            def list_headlines(self, **kwargs: Any) -> list[NewsHeadline]:
+                raise RuntimeError("database unavailable")
+
+        with pytest.raises(RuntimeError, match="news impact evidence unavailable"):
+            cycle_commands._high_impact_event_map(BrokenNews())
