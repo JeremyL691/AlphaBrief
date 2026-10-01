@@ -172,6 +172,41 @@ class TestExternalPaperExecutionBackend:
 
         assert adapter.requests[0].quantity == Decimal("1")
 
+    def test_persisted_decision_carries_real_policy_and_snapshot_hashes(
+        self,
+    ) -> None:
+        """PROJECT_GUIDE 5.7: the persisted decision binds real content.
+
+        The policy hash must come from the reviewed config files (so it
+        changes when they change) and the snapshot hash from the broker
+        snapshot content (never a timestamp).
+        """
+        from alphabrief_core.policy_version import policy_version_hash
+        from alphabrief_risk.decision_store import RiskDecisionStore
+
+        adapter = _FakeAdapter()
+        backend = ExternalPaperExecutionBackend(adapter)
+
+        backend.submit(
+            _intent(),
+            _decision(),
+            reference_price=Decimal("50"),
+            now=datetime.now(UTC),
+            estimated_quantity=Decimal("2"),
+        )
+
+        store = RiskDecisionStore(db_path=_paths.db_path())
+        try:
+            record = store.get("risk_test")
+        finally:
+            store.close()
+        assert record is not None
+        assert record.policy_hash == policy_version_hash()
+        assert record.snapshot_hash is not None
+        assert len(record.snapshot_hash) == 64
+        assert "T" not in record.snapshot_hash
+        assert record.rule_results == "approved"
+
     def test_daily_cycle_records_external_broker_metadata(self, tmp_path: Path) -> None:
         adapter = _FakeAdapter()
         provider = FakeProviderAdapter(
@@ -228,3 +263,137 @@ class TestExternalPaperExecutionBackend:
         assert attempt.client_order_id == attempt.intent_id
         assert attempt.broker_status == "new"
         assert attempt.filled is False
+
+
+class TestUnknownOutcomeResolution:
+    """PROJECT_GUIDE 5.8: an ambiguous submit is resolved, never re-sent."""
+
+    def _intent(self) -> OrderIntent:
+        return OrderIntent(
+            intent_id="ai_unknown_1",
+            source="model",
+            symbol="EUR_USD",
+            side="buy",
+            order_type="market",
+            quantity=Decimal("1000"),
+            rationale="unknown outcome test",
+            created_at=datetime.now(UTC),
+        )
+
+    def _backend(self, adapter: object, resolver: object) -> object:
+        from alphabrief_trader import ExternalPaperExecutionBackend
+
+        return ExternalPaperExecutionBackend(
+            adapter,  # type: ignore[arg-type]
+            unknown_outcome_resolver=resolver,  # type: ignore[arg-type]
+        )
+
+    def test_ambiguous_submit_that_reached_the_broker_is_accepted(self) -> None:
+        from alphabrief_execution.broker.oanda.faults import UnknownOutcomeFailure
+        from alphabrief_execution.broker.oanda.unknown_outcome import (
+            SubmitResolutionResult,
+        )
+
+        class _AmbiguousAdapter(_FakeAdapter):
+            def __init__(self) -> None:
+                super().__init__()
+                self.submissions = 0
+
+            async def submit(
+                self, request: SubmitRequest, *, client_order_id: str
+            ) -> SubmitResult:
+                self.submissions += 1
+                raise UnknownOutcomeFailure(client_order_id)
+
+        class _Resolver:
+            def __init__(self) -> None:
+                self.queries: list[str] = []
+
+            def resolve(self, client_order_id: str, **_: object) -> object:
+                self.queries.append(client_order_id)
+                return SubmitResolutionResult(
+                    resolution="RESOLVED_ACCEPTED",
+                    broker_order_id="broker-9",
+                    state="PENDING",
+                    detail="order accepted by the broker",
+                )
+
+        adapter = _AmbiguousAdapter()
+        resolver = _Resolver()
+        backend = self._backend(adapter, resolver)
+
+        result = backend.submit(  # type: ignore[attr-defined]
+            self._intent(),
+            _decision(),
+            reference_price=Decimal("1.10"),
+            now=datetime.now(UTC),
+            estimated_quantity=Decimal("1000"),
+        )
+
+        # The order is reported as accepted, and it was never re-sent.
+        assert result.broker_order_id == "broker-9"
+        assert result.filled is False
+        assert adapter.submissions == 1
+        assert resolver.queries == ["ai_unknown_1"]
+
+    def test_unresolved_submit_is_reported_as_submit_unknown(self) -> None:
+        from alphabrief_execution.broker.oanda.faults import UnknownOutcomeFailure
+        from alphabrief_execution.broker.oanda.unknown_outcome import (
+            SubmitResolutionResult,
+        )
+        from alphabrief_trader.execution_backend import ExecutionBackendError
+
+        class _AmbiguousAdapter(_FakeAdapter):
+            async def submit(
+                self, request: SubmitRequest, *, client_order_id: str
+            ) -> SubmitResult:
+                raise UnknownOutcomeFailure(client_order_id)
+
+        class _Resolver:
+            def resolve(self, client_order_id: str, **_: object) -> object:
+                return SubmitResolutionResult(
+                    resolution="UNRESOLVED",
+                    detail="resolution query failed",
+                )
+
+        backend = self._backend(_AmbiguousAdapter(), _Resolver())
+
+        with pytest.raises(ExecutionBackendError, match="SUBMIT_UNKNOWN"):
+            backend.submit(  # type: ignore[attr-defined]
+                self._intent(),
+                _decision(),
+                reference_price=Decimal("1.10"),
+                now=datetime.now(UTC),
+                estimated_quantity=Decimal("1000"),
+            )
+
+    def test_submit_that_never_arrived_is_distinguished(self) -> None:
+        from alphabrief_execution.broker.oanda.faults import UnknownOutcomeFailure
+        from alphabrief_execution.broker.oanda.unknown_outcome import (
+            SubmitResolutionResult,
+        )
+        from alphabrief_trader.execution_backend import ExecutionBackendError
+
+        class _AmbiguousAdapter(_FakeAdapter):
+            async def submit(
+                self, request: SubmitRequest, *, client_order_id: str
+            ) -> SubmitResult:
+                raise UnknownOutcomeFailure(client_order_id)
+
+        class _Resolver:
+            def resolve(self, client_order_id: str, **_: object) -> object:
+                return SubmitResolutionResult(
+                    resolution="RESOLVED_NOT_SUBMITTED",
+                    detail="no order with that client identity exists",
+                )
+
+        backend = self._backend(_AmbiguousAdapter(), _Resolver())
+
+        with pytest.raises(ExecutionBackendError, match="SUBMIT_NOT_ACCEPTED"):
+            backend.submit(  # type: ignore[attr-defined]
+                self._intent(),
+                _decision(),
+                reference_price=Decimal("1.10"),
+                now=datetime.now(UTC),
+                estimated_quantity=Decimal("1000"),
+            )

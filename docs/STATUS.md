@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S4-2 委员会协议/意图/仓位/14 条规则/结果未知处理/平仓/kill switch 补全 |
+| 下一项任务 | S4-4 影子评估/日报/预算（模型额度受限时先做 S4-5 新闻与不依赖模型的部分）；S4-2 余下三条规则：4 点差待 S5 报价历史、6 事件窗口待 S4-5、11 回撤状态机待 S5 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-01，S3 垂直切片完成：真实下单 + 止损止盈 + 平仓 + 对账干净（见 S3 退出标准证据） |
+| 最近更新 | 2026-10-01，S4-3：决策持久化改用真实配置/快照内容哈希（policy:e54ca5bfb209） |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -73,6 +73,40 @@
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
+#### S4 证据（进行中）
+
+- S4-3（本提交）：**决策持久化改用真实哈希**（PROJECT_GUIDE 5.7）。此前 `ExternalPaperExecutionBackend` 落库的 `policy_hash` 是常量 `DEFAULT_POLICY_VERSION` 的哈希、`snapshot_hash` 是 `captured_at` 时间戳，两者都不是"配置内容/快照内容"的哈希，配置改动后旧决策仍会被认为合法。现在：
+  - 新增 `alphabrief_core.policy_version`：`policy_version_hash()` 对受审配置文件（`config/paper_execution_policy.yaml`、`config/alphabrief.yaml`）的真实字节按路径排序后逐条 `路径:sha256` 再哈希；文件缺失或为空时抛 `PolicyVersionError` 失败闭合，绝不悄悄少算一个文件。`policy_version_label()` 给出 `policy:<12 位>` 短标签。
+  - `ExternalPaperExecutionBackend` 构造时算一次 policy 哈希；读不到配置时 submit 直接失败（不落占位值）。
+  - 新增 `snapshot_content_hash(context)`：对真实券商快照（账户资金、持仓、挂单、交易、报价、换算、采集时间）做规范化 JSON 哈希，落库到决策记录的 `snapshot_hash`；时间戳不再是哈希。
+  - 测试：新增 `tests/test_policy_version_hash.py` 7 个（哈希覆盖真实文件、内容变则哈希变、缺文件/空文件失败闭合、项目根发现、快照哈希随资金与采集时间变化、哈希不是时间戳），`tests/test_ai_trader_execution_backend.py` 新增 1 个端到端断言（落库记录的 `policy_hash` 等于真实配置哈希、`snapshot_hash` 为 64 位内容哈希）。命令与结果：`pytest -q -m "not practice"` → 2531 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (221 source files)；`secret_scan` → OK。
+  - 当前真实哈希标签：`policy:e54ca5bfb209`（随配置内容变化）。
+
+- S4-2 第五批（本提交）：**决策→意图（5.5）、风险仓位（5.6）与平仓走完整风控链**。
+  - 新增 `alphabrief_trader.intents`：`intent_id = hash(cycle_id, instrument, action)`（`ai_` + 12 位十六进制，同一轮重跑得到同一个 ID），action 区分 `entry:*` 与 `close:*`；`close` 生成 reduce-only 意图（数量等于当前持仓的反向：多仓卖出、空仓买回）。cycle 与 durable cycle 都改用该确定性 ID，不再用随机 UUID。
+  - 新增 `alphabrief_trader.sizing`（5.6）：`units = floor(NAV × 风险比例 / (止损距离 × 报价货币对本币换算因子))`，再按品种 `tradeUnitsPrecision`/`minimumTradeSize` 规整，结果 ≤0 即 `no_trade`；单笔名义价值上限 NAV 的 50%；试运行前 3 天风险减半（`soak_risk_pct`）。`SizingResult` 同时给出风险预算与实际风险（被名义价值上限截断后 `actual_risk = units × 每单位风险`），意图 rationale 里两者都写，避免审计时把预算当成真实风险。
+  - 接入 cycle：`DailyTradingCycle` 新增 `sizing_provider`（按品种提供 NAV、换算因子、精度、最小下单量，全部来自券商真实数据）；已配置 sizing 但缺 ATR 或算不出数量时记 `skipped_no_intent`（`sizing_no_trade`，不产生 RiskDecision、不下单），绝不退回估算数量。`--units` 仍固定 S9 预跑尺寸。
+  - **平仓豁免（5.7）**：`RiskGate` 对 `reduce_only`（或 `target_position_pct=0`）意图只检查规则 1 的 kill switch 与规则 3（报价新鲜且 `tradeable`）；`trading_enabled=False`、品种冻结、当日上限、周五/周末、敞口与单笔名义价值上限都不拦平仓。此前 `trading_enabled=False` 会连平仓一起拦（实现缺陷，已修）。
+  - **平仓路径（5.5）**：`cycle close` / `cycle close-due` 不再直接调用 `OrderOpsClient`（原先完全绕过 RiskGate、不落 RiskDecision），改为走 `DailyTradingCycle.close_position`：意图 → RiskGate → 持久化 RiskDecision → OANDA，client order id 取自确定性意图 ID。
+  - 敞口上限按阶段切换（见决策记录）：风险仓位路径用 5.6 的 NAV 比例（单笔 50%、总敞口 150%）；`--units` 固定尺寸预跑仍用受审 policy 的绝对值（2000/20000）。
+  - 真实实测（practice 账户，NAV≈100k）：`alphabrief data sync-oanda` → 315 根 K 线 + 5 个报价、0 错误；`alphabrief cycle run --once --instrument EUR_USD --force-direction long --reason "S4-2 sizing evidence" --trading off` → ATR(H1)=0.00118357、stop 1.12882 / TP 1.13415、units=44224（被 50% NAV 名义价值上限截断）、risk_budget=250.00、actual_risk=78.72、notional=49999.65；gate 结论 `blocked_risk_gate`，真实拒绝标签 `data_quality / max_order_value / max_total_exposure / DAILY_INTENT_CAP`（轮次 aic_f2b393738913，意图 ai_13ee658d828e，决策 risk_39a1d1387ea94496bbfe593ac51745e3）。
+  - 测试：新增 `tests/test_intents.py` 11 个、`tests/test_sizing.py` 14 个、`tests/test_cycle_sizing_and_close.py` 11 个、`tests/test_risk_gate_close_path.py` 7 个；`tests/test_entry_rules.py` 的平仓用例改为"只豁免到规则 3"；`tests/test_cycle_commands.py` 新增敞口上限制度 2 个。命令与结果：`pytest -q -m "not practice"` → 2523 passed / 5 deselected；`ruff check .` → All checks passed；`mypy` → Success (220 source files)；`scripts/secret_scan.py` → OK。
+  - 待复验：模型通道当前返回 `usage_limit_exceeded`（ChatGPT 计划额度窗口用尽，见"阻塞"），NAV 比例上限改动的真实复验跑（`cycle run --once --instrument GBP_USD --force-direction long --trading off`）在额度恢复后补做。
+
+- S4-2 第四批（本提交）：**委员会协议对齐 GUIDE 5.4**。发现并修正三处与规格不符的确定性规则：① `no_trade_below_confidence` 原为 0.45，规格要求 0.55（已收紧到 0.55）；② `risk` 角色的 `veto` 原先只置 `needs_human_review`，规格要求直接 `no_trade`（现已硬阻断新开仓，可用 `honour_risk_role_veto=False` 显式关闭）；③ 缺少"开仓方向至少 2 个分析角色支持"的规则（新增 `min_analysts_supporting_direction=2`，仅对 `buy`/`sell` 开仓生效，低置信度门槛优先）。测试新增 6 个（risk 否决阻断/可配置关闭/无否决放行；两个分析师放行、单个支持者不算授权、低置信度优先拦截）。命令与结果：`pytest -q -m "not practice"` → 2477 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (414 files)；`secret_scan` → exit 0。
+
+- S4-2 第三批（本提交）：**平仓触发条件**（PROJECT_GUIDE 5.10）新增 `alphabrief_trader.close_policy`（纯函数）：周五 19:00 UTC 起至整个周末必须平仓、持仓达到 48 小时必须平仓、开仓时间未知时失败闭合（不把无限期持仓带过周末缺口）。新增 `alphabrief cycle close-due`：只对**未平仓**交易判定（券商的 `state=ALL` 也返回已平仓交易，已过滤），`--trading off` 时只报告不下单。真实实测：`alphabrief cycle close-due --compact` → `{"due": [], "detail": "no position is due for close", "checked": 0}`（账户当前空仓）。测试 `tests/test_close_policy.py` 10 个（周五 18:59/19:00 边界、周六周日、48 小时边界、未知开仓时间、批量排序）。命令与结果：`pytest -q -m "not practice"` → 2471 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (414 files)；`secret_scan` → exit 0。
+
+- S4-2 第二批（本提交）：**结果未知处理接入真实提交路径**（PROJECT_GUIDE 5.8）。此前 `UnknownOutcomeResolver`/`UnknownOutcomeFailure` 只存在于 oanda 包内、没有任何运行时调用者，即"超时/断连绝不重发"实际上没有生效。现在 `ExternalPaperExecutionBackend.submit` 捕获 `UnknownOutcomeFailure` 并按持久化的 `clientExtensions.id` 查询券商：`RESOLVED_ACCEPTED` → 记为已接受（不再发送）、`RESOLVED_NOT_SUBMITTED` → 抛 `SUBMIT_NOT_ACCEPTED`（订单从未到达）、`UNRESOLVED` → 抛 `SUBMIT_UNKNOWN`（明确暴露，等待人工/后续处理）。测试 `tests/test_ai_trader_execution_backend.py` 新增 3 个用例（已接受且只提交一次、未提交与未决分别区分）。命令与结果：`pytest -q -m "not practice"` → 2461 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (412 files)。
+
+- S4-2 第一批（本提交）：
+  - **补齐 6 条缺口风控规则**（新增 `alphabrief_risk.entry_rules`，纯函数 + 稳定拒绝码）：规则 3 报价新鲜/可交易（`QUOTE_STALE`/`NOT_TRADEABLE`）、规则 7 当日开仓上限（`DAILY_INTENT_CAP`，计数来自持久化的 attempt 历史 `AiTradingStore.count_daily_opens`，不是内存计数）、规则 8 最多同时持仓（`MAX_POSITIONS`，仅开仓、已持有同品种时允许加仓）、规则 12 连亏冻结品种（`LOSS_STREAK`）、规则 13 周五 13:00 UTC 后与周末只许平仓（`WEEKEND`）、规则 14 保护单与合法 units（`ORDER_INVALID`，多空方向与止损止盈相对位置都校验）。**平仓豁免**：`reduce_only` 或 `target_position_pct=0` 的意图不受任何入场规则约束（只有规则 1 的 kill switch 能拦平仓）。
+  - **接入运行时**：`RiskGate` 新增 `entry_rules` 策略（未配置时保持旧行为）；cycle CLI 的 gate 现在带受审 policy（报价 15s、每日 5 笔/单品种 1 笔、最多 3 个持仓、周五与周末只平仓、必须有保护单），并在每次评估时传入真实账户上下文（新增 `OandaRiskContextSources.account_exposure_context`：真实 NAV/现金/持仓敞口按券商换算因子折算、报价时间与 tradeable、持仓数、当日开仓计数）。
+  - **kill switch 持久化**：新增 `KillSwitchStore`（DuckDB，单行状态），新增 `alphabrief risk kill-switch --activate/--deactivate/--reason`；cycle 与 scheduler 的 gate 都从持久化状态加载，重启后仍然生效。真实实测：激活后 `cycle run --once --instrument EUR_USD --trading off --force-direction long` → `blocked_risk_gate`，拒绝原因含 `verify runtime blocks`（kill switch 理由）。
+  - 真实 dry run：`alphabrief cycle run --once --trading off`（全 universe）→ 5 个品种各 5 个角色共 25 次真实模型调用、5 份 plan、`skipped_no_intent`（委员会全员 uncertain，属合法 no_trade）；`data sync-oanda`（全 universe）→ 1330 根 K 线 + 5 个报价、0 错误。
+  - 测试：`tests/test_entry_rules.py` 29 个（每条规则通过+拒绝、平仓豁免、gate 集成）、`tests/test_kill_switch_store.py` 7 个（持久化跨进程、空白理由拒绝、激活拦所有单含平仓）。命令与结果：`pytest -q -m "not practice"` → 2458 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (412 files)；`secret_scan` → exit 0。
+  - 尚未完成（下一步）：规则 4 点差（需要最近 20 个报价样本，随 S5 报价轮询落库）、规则 6 事件窗口（需要 S4-5 新闻/宏观）、规则 11 回撤状态机（48 小时禁开/半仓，需要持久化窗口状态）、规则 2 的品种分类白名单（instrument_rules 已存在，待接入）、5.8 结果未知处理与 5.10 平仓触发条件（委员会平仓、48 小时最长持仓、周五 19:00 全平）。
+
 #### S3 退出标准证据（2026-10-01，真实 practice 账户）
 
 - 下单前账户：`lastTransactionID=3`，balance=NAV=100000.0000，marginUsed=0，持仓/交易/订单均为 0。
@@ -90,7 +124,7 @@
 - 真实响应与文档不一致处（按 GUIDE 8.6 以真实响应为准）：订阅通道的模型目录实际返回 `{"models": [{"slug", "visibility", "display_name", ...}]}`（`visibility` 取值 `list`/`hide`），而公开文档描述的是 OpenAI 风格的 `data[].id` + `visibility == "list"`。`fetch_model_slugs` 现在同时接受两种形状并仍按 `visibility == "list"` 过滤；实测该账号可见模型 5 个（gpt-6-astra、gpt-5.6-sol、gpt-5.6-terra、gpt-5.6-luna、gpt-5.5），逐个用文档化的 Responses 调用（`store=false`、`stream=true`）探测均返回 HTTP 200 且含 `response.completed`；默认模型取目录中第一个可见项 `gpt-6-astra`（可用 `config/alphabrief.yaml: model.primary_model` 覆盖）。
 - 同时修掉一个真实流解析缺陷：真实流会同时发送 `response.output_text.delta` 与 `response.output_item.done`，旧实现把两者都拼接导致文本重复（`{"ok": true}{"ok": true}`），现已改为"优先 deltas，仅在无 deltas 时用完成项/完成响应的文本"，并补了回归测试。`model test` 现在把调用记录持久化到 `ModelCallStore`（此前只留在内存）。
 
-#### S4 证据（进行中）
+#### S4-1 证据（进行中）
 
 - S4-1 第二部分（本提交）：新增 `alphabrief_execution.broker.oanda.risk_sources.OandaRiskContextSources`，从真实 practice 端点取风控上下文所需事实：`/summary`（balance/NAV/marginUsed/marginAvailable/币种）、`/positions`（多空分开 + 均价）、`/orders?state=PENDING`、`/trades`、`/pricing`（bid/ask + 本币换算因子）、`/instruments`（目录版本）、对账状态改读持久化 recon store（frozen/clean/unknown，不再恒为 unknown）、健康状态由账户摘要探测；报价覆盖"配置品种 ∪ 当前持仓 ∪ 挂单品种"。`OandaPaperAdapter` 增加只读 `client` 访问器以便构造这些来源。接入已完成：`ExternalPaperExecutionBackend` 在适配器为 `OandaPaperAdapter` 时默认使用这些真实来源（并接收 `risk_symbols` 以覆盖配置品种；cycle CLI 传当前品种、scheduler 传配置 universe），其它适配器仍走端口组合；对账状态来自持久化 recon store，健康状态来自账户摘要探测。命令与结果：`pytest -q -m "not practice"` → 2418 passed / 5 deselected；`ruff` → All checks passed；`mypy` → Success (408 files)。
 
@@ -159,8 +193,8 @@
 
 ### S4 风控与决策补全
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
-- [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch
-- [ ] S4-3 真实的策略版本哈希和输入哈希
+- [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（已完成：5.4 委员会协议、5.5 意图、5.6 仓位、规则 3/5/7/8/12/13/14、5.8 结果未知、5.10 平仓触发与平仓路径、kill switch 持久化；未完成：规则 4 点差、规则 6 事件窗口、规则 11 回撤状态机，见下方证据与依赖）
+- [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
 - [ ] S4-4 影子评估、日报、预算
 - [ ] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗
 - [ ] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试
@@ -235,11 +269,12 @@
 | 2026-09-30 | 文档 | 删除旧蓝图和 `docs/` 下 7 个流程文件，由 PROJECT_GUIDE、STATUS、AGENT_PROMPT 取代 | 旧文档描述的是从未产生的证据，且彼此矛盾 |
 | 2026-09-30 | 语言 | README 英文（发布时附中文节）；GUIDE、STATUS、AGENT_PROMPT、AGENTS 用中文；界面中英切换 | 求职展示与自用兼顾 |
 | 2026-09-30 | S0-5 本地 `main` 领先 `origin/main` 一个提交（`72bea02` 文档重建） | 不在 S0 推送，等 S9 首次推送 | 推送规则只从 S9 起授权（AGENTS"Git 规则"、GUIDE 8.1），S0 不在授权范围内；提前推送没有收益 |
+| 2026-10-01 | 风险仓位下单的名义价值上限用哪一套 | 按阶段切换：风险仓位路径（无 `--units`）用 GUIDE 5.6 的 NAV 比例（单笔 50%、总敞口 150%）；`--units` 固定尺寸预跑仍用受审 policy 的绝对值（2000/20000） | GUIDE 5.6 明确规定比例上限，受审 policy 的绝对值是为 S9 固定 1000 units 预跑定的；两套并存会互相矛盾（0.25% 风险的仓位名义价值约 50000，必然撞上 2000 的绝对上限，系统将永远无法按规格开仓）。比例上限同时受单笔风险预算（0.25% NAV）与止损约束，实际风险仍在 250 USD 量级 |
 | 2026-09-30 | S0-3 探测脚本放哪里 | 临时脚本放 `/tmp/alphabrief_s0_probe.py`，不进仓库 | 避免为一次性检查新增代码；同类检查在 S5 由 `alphabrief doctor` 正式实现并测试 |
 
 ## 阻塞
 
-（无）
+- 2026-10-01：模型通道返回 `usage_limit_exceeded`（`alphabrief model test` → `ChatGptPlanError:usage_limit_exceeded`）。ChatGPT 计划的本窗口调用额度已用尽（本轮为取 S4-2 真实证据跑了多次 5 角色委员会）。额度按窗口自动恢复，不需要用户操作；恢复前所有需要委员会的验证（S4-2 余项真实复验、S4-4 影子评估、S4-6 全 universe 退出标准）暂停，先做不依赖模型的工作（S4-3 哈希、S4-5 新闻、S5 运行时）。额度长期不足时改用"需要用户做的事"里的备用付费通道。
 
 ## 试运行日志
 

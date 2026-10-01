@@ -180,7 +180,7 @@ __all__ = ["data_app"]
 
 @data_app.command("sync-oanda")
 def sync_oanda_cmd(
-    instrument: list[str] = typer.Option(  # noqa: B008
+    instrument: list[str] | None = typer.Option(  # noqa: B008
         None,
         "--instrument",
         help="OANDA instrument (repeatable). Defaults to the FX majors.",
@@ -198,7 +198,7 @@ def sync_oanda_cmd(
     from alphabrief_execution.broker.oanda.market_sync import sync_market_data
 
     default_instruments = ("EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD")
-    instruments = tuple(instrument) or default_instruments
+    instruments = tuple(instrument or ()) or default_instruments
 
     from alphabrief_execution.broker.oanda.client import OandaHttpClient
     from alphabrief_execution.broker.oanda.config import (

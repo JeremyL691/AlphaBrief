@@ -81,6 +81,18 @@ class AccountExposureContext(BaseModel):
     day_realized_pnl
         Optional realized P&L accumulated since day start. Surfaced for
         audit/diagnostics only; not gated on (advisory).
+    open_position_count
+        Number of instruments the account currently holds. Required by the
+        max-open-positions rule.
+    daily_open_count / daily_symbol_open_count
+        New positions opened today (all symbols / this symbol). Required by
+        the daily intent caps.
+    quote_captured_at / quote_tradeable
+        Freshness and tradeability of the quote for the order's symbol.
+        Required by the quote rules.
+    frozen_symbols
+        Symbols temporarily barred from new exposure (for example after a
+        losing streak), with the reason kept for the decision record.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -95,6 +107,12 @@ class AccountExposureContext(BaseModel):
     equity_high_water_mark: Decimal | None = Field(default=None, ge=0)
     day_start_equity: Decimal | None = Field(default=None, ge=0)
     day_realized_pnl: Decimal | None = Field(default=None)
+    open_position_count: int | None = Field(default=None, ge=0)
+    daily_open_count: int | None = Field(default=None, ge=0)
+    daily_symbol_open_count: int | None = Field(default=None, ge=0)
+    quote_captured_at: datetime | None = None
+    quote_tradeable: bool | None = None
+    frozen_symbols: dict[str, str] = Field(default_factory=dict)
 
     @field_validator(
         "current_total_exposure",

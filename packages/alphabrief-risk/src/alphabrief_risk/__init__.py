@@ -14,11 +14,12 @@ from alphabrief_risk.context import (
     evaluate_news_macro_risk,
 )
 from alphabrief_risk.gate import RiskGate, RiskLimitConfig
-from alphabrief_risk.kill_switch import KillSwitch
+from alphabrief_risk.kill_switch import KillSwitch, KillSwitchStore
 
 __all__ = [
     "AccountExposureContext",
     "KillSwitch",
+    "KillSwitchStore",
     "MACRO_HIGH_RISK_INDICATOR_COUNT",
     "MACRO_HIGH_RISK_POSITION_MULTIPLIER",
     "NEGATIVE_SENTIMENT_FLOOR",

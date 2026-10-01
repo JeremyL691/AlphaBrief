@@ -145,6 +145,9 @@ class OrderIntent(AlphaBriefModel):
     take_profit: Decimal | None = None
     #: The committee round that produced this intent (order provenance).
     cycle_id: str | None = None
+    #: True when the intent only reduces an existing position (a close is
+    #: always allowed: entry rules never block it).
+    reduce_only: bool = False
     rationale: str = Field(min_length=1)
     created_at: datetime
 

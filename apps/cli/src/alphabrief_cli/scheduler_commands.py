@@ -704,12 +704,20 @@ def _ai_cycle_factory(
                 load_settings().execution_policy_file
             )
             _assert_external_policy_matches_broker(policy)
+            from alphabrief_risk import KillSwitch, KillSwitchStore
+
+            switch_store = KillSwitchStore(db_path=_paths.db_path())
+            try:
+                kill_switch = KillSwitch.from_store(switch_store)
+            finally:
+                switch_store.close()
             risk_gate = RiskGate(
                 limits=RiskLimitConfig(
                     trading_enabled=True,
                     symbol_allowlist=frozenset(universe),
                     max_order_value=policy.max_order_notional,
-                )
+                ),
+                kill_switch=kill_switch,
             )
             execution_backend = ExternalPaperExecutionBackend(
                 _build_adapter(),

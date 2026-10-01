@@ -25,6 +25,10 @@ from typing import Any, Literal
 import typer
 from alphabrief_api.db import AiTradingStore
 from alphabrief_api.db.market_data import MarketDataStore
+from alphabrief_core import (
+    load_paper_execution_policy,
+    load_settings,
+)
 from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.runtime import (
     build_oanda_paper_client,
@@ -46,6 +50,10 @@ TradingMode = Literal["on", "off"]
 
 #: The reviewed trading universe; an instrument outside it is refused.
 DEFAULT_UNIVERSE = ("EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD")
+
+#: Exposure caps as fractions of NAV (PROJECT_GUIDE 5.6).
+MAX_ORDER_NOTIONAL_PCT = Decimal("0.50")
+MAX_TOTAL_EXPOSURE_PCT = Decimal("1.50")
 
 
 def _dump(payload: object, *, pretty: bool) -> None:
@@ -93,13 +101,135 @@ def _snapshot_loader(market_store: MarketDataStore) -> SnapshotLoader:
     return _loader
 
 
-def _risk_gate(instrument: str) -> RiskGate:
+def _risk_gate(
+    instruments: tuple[str, ...], *, nav: Decimal | None = None
+) -> RiskGate:
+    """The reviewed risk boundary for one cycle (PROJECT_GUIDE 5.6/5.7).
+
+    ``nav`` selects the exposure-cap regime. With a live NAV (the
+    risk-sized production path) the caps are the guide's fractions of NAV:
+    50% of NAV per order and 150% of NAV of total notional. Without one
+    (the S9 fixed-units pre-run) the reviewed absolute caps from
+    ``config/paper_execution_policy.yaml`` apply instead.
+    """
+    from alphabrief_risk import KillSwitch, KillSwitchStore
+    from alphabrief_risk.entry_rules import EntryRulePolicy
+
+    policy = load_paper_execution_policy(load_settings().execution_policy_file)
+    if nav is not None and nav > 0:
+        max_order_value = nav * MAX_ORDER_NOTIONAL_PCT
+        max_total_exposure = nav * MAX_TOTAL_EXPOSURE_PCT
+    else:
+        max_order_value = policy.max_order_notional
+        max_total_exposure = policy.max_total_exposure
+    switch_store = KillSwitchStore(db_path=_paths.db_path())
+    try:
+        kill_switch = KillSwitch.from_store(switch_store)
+    finally:
+        switch_store.close()
     return RiskGate(
         limits=RiskLimitConfig(
             trading_enabled=True,
-            symbol_allowlist=frozenset({instrument}),
-        )
+            symbol_allowlist=frozenset(instruments),
+            max_order_value=max_order_value,
+            max_total_exposure=max_total_exposure,
+            entry_rules=EntryRulePolicy(
+                # Rule 3: quotes must be fresh and tradeable.
+                max_quote_age_seconds=15,
+                require_quote_tradeable=True,
+                # Rule 7: at most 5 opens a day, at most 1 per symbol.
+                max_daily_opens=5,
+                max_daily_symbol_opens=1,
+                # Rule 8: at most 3 instruments at once.
+                max_open_positions=3,
+                # Rule 13: close-only from Friday 13:00 UTC and all weekend.
+                block_weekend_and_late_friday=True,
+                # Rule 14: an entry must carry usable protective orders.
+                require_protective_orders=True,
+            ),
+        ),
+        kill_switch=kill_switch,
     )
+
+
+def _risk_sources(symbols: tuple[str, ...]) -> Any:
+    """The live OANDA risk-data sources for one cycle."""
+    from alphabrief_execution.broker.oanda.risk_sources import (
+        OandaRiskContextSources,
+    )
+    from alphabrief_execution.broker.recon_store import BrokerReconStore
+
+    return OandaRiskContextSources(
+        build_oanda_paper_client(),
+        symbols=symbols,
+        recon_store=BrokerReconStore(db_path=_paths.db_path()),
+    )
+
+
+def _account_context_provider(
+    sources: Any,
+    *,
+    trading_day: str,
+    store: AiTradingStore,
+) -> Any:
+    """Fetch the broker-fresh account context for each risk evaluation.
+
+    The daily intent counters come from the durable attempt history, so the
+    daily caps are enforced against what this system actually opened today
+    rather than against a process-local counter.
+    """
+
+    def _build(symbol: str) -> Any:
+        total, per_symbol = store.count_daily_opens(trading_day=trading_day)
+        return sources.account_exposure_context(
+            daily_open_count=total,
+            daily_symbol_open_count=per_symbol.get(symbol, 0),
+        )
+
+    return _build
+
+
+def _nav(sources: Any) -> Decimal:
+    """The live account NAV used for the 5.6 exposure caps."""
+    context = sources.account_exposure_context()
+    nav: Decimal = context.equity if context.equity is not None else context.cash
+    if nav <= 0:
+        _exit_error("the broker account reports no positive NAV")
+    return nav
+
+
+def _sizing_provider(sources: Any) -> Any:
+    """Build the 5.6 sizing inputs (NAV, factor, precision) per symbol.
+
+    Everything comes from the broker: NAV from the account summary, the
+    quote-currency conversion factor from the pricing response, and the
+    precision/minimum size from the instrument metadata. A missing piece
+    means the entry is not sized and therefore not traded.
+    """
+    from alphabrief_execution.broker.runtime import get_broker_runtime
+
+    adapter = get_broker_runtime().adapter
+
+    def _build(symbol: str) -> Any:
+        from alphabrief_trader.sizing import SizingInputs
+
+        context = sources.account_exposure_context()
+        nav = context.equity if context.equity is not None else context.cash
+        factor = sources.home_conversion_factor(symbol)
+        if factor is None:
+            return None
+        metadata = adapter.instrument_metadata(symbol)  # type: ignore[attr-defined]
+        return SizingInputs(
+            nav=nav,
+            quote_to_home=factor,
+            trade_units_precision=int(metadata.trade_units_precision),
+            minimum_trade_size=metadata.minimum_trade_size,
+            # The soak-day risk halving is wired when the 14-day run starts
+            # (S10); until then the full 0.25% risk applies.
+            soak_day=None,
+        )
+
+    return _build
 
 
 def _parse_units(raw: str | None) -> Decimal | None:
@@ -146,10 +276,13 @@ def run_cmd(
         "--once",
         help="Run exactly one cycle and exit.",
     ),
-    instrument: str = typer.Option(  # noqa: B008
-        "EUR_USD",
+    instrument: str | None = typer.Option(  # noqa: B008
+        None,
         "--instrument",
-        help="Instrument to trade (must be in the reviewed universe).",
+        help=(
+            "Instrument to trade (must be in the reviewed universe). "
+            "Omit to run the whole reviewed universe."
+        ),
     ),
     units: str | None = typer.Option(  # noqa: B008
         None,
@@ -184,7 +317,12 @@ def run_cmd(
         _exit_error(
             "only --once is supported here; use 'alphabrief run' for the daemon"
         )
-    symbol = _require_instrument(instrument)
+    symbols = (
+        (_require_instrument(instrument),)
+        if instrument is not None
+        else DEFAULT_UNIVERSE
+    )
+    symbol = symbols[0]
     parsed_units = _parse_units(units)
     if force_direction is not None:
         if force_direction not in {"long", "short"}:
@@ -196,14 +334,19 @@ def run_cmd(
     market_store = MarketDataStore(db_path=_paths.db_path())
     try:
         loader = _snapshot_loader(market_store)
-        if loader(symbol) is None:
+        missing = [name for name in symbols if loader(name) is None]
+        if missing:
             _exit_error(
-                f"no stored OANDA bars for {symbol}; run "
-                f"'alphabrief data sync-oanda --instrument {symbol}' first"
+                f"no stored OANDA bars for {', '.join(missing)}; run "
+                f"'alphabrief data sync-oanda' first"
             )
+        sources = _risk_sources(symbols)
+        # Risk-based sizing is the production path; --units keeps the S9
+        # fixed-size pre-run and its reviewed absolute caps.
+        nav = _nav(sources) if parsed_units is None else None
         cycle = DailyTradingCycle(
             committee=build_ai_trading_committee(),
-            risk_gate=_risk_gate(symbol),
+            risk_gate=_risk_gate(symbols, nav=nav),
             execution_backend=(
                 _execution_backend(symbols=(symbol,))
                 if trading == "on"
@@ -216,8 +359,21 @@ def run_cmd(
             direction_override=force_direction,
             override_reason=reason,
             trading_mode=trading,
+            # The account context is read-only and is fetched in both
+            # modes: with trading off the cycle still evaluates every rule
+            # against the real account, it just stops before submitting.
+            account_context_provider=_account_context_provider(
+                sources,
+                trading_day=datetime.now(UTC).date().isoformat(),
+                store=store,
+            ),
+            # 5.6 sizing: NAV, home-currency factor and instrument
+            # precision all come from the broker, so an entry is sized
+            # from the real account rather than from the committee's
+            # own fraction estimate.
+            sizing_provider=_sizing_provider(sources),
         )
-        record = cycle.run([symbol])
+        record = cycle.run(list(symbols))
     finally:
         market_store.close()
         store.close()
@@ -225,7 +381,8 @@ def run_cmd(
     _dump(
         {
             "cycle_id": record.cycle_id,
-            "instrument": symbol,
+            "instrument": symbol if len(symbols) == 1 else None,
+            "symbols": list(symbols),
             "trading": trading,
             "outcome": record.outcome,
             "summary": record.summary,
@@ -279,6 +436,167 @@ class _DisabledBackend:
         )
 
 
+def _close_through_the_cycle(
+    *,
+    instrument: str,
+    position_units: Decimal,
+    reference_price: Decimal,
+    reason: str,
+    trading: TradingMode,
+) -> dict[str, Any]:
+    """Close one position via decision → RiskGate → OANDA (PROJECT_GUIDE 5.5).
+
+    The reduce-only intent is checked only against the kill switch and
+    rule 3, its RiskDecision is persisted with the attempt, and the order
+    carries the intent's deterministic client order ID.
+    """
+    store = AiTradingStore(db_path=_paths.db_path())
+    try:
+        sources = _risk_sources((instrument,))
+        cycle = DailyTradingCycle(
+            committee=build_ai_trading_committee(),
+            risk_gate=_risk_gate((instrument,)),
+            execution_backend=(
+                _execution_backend(symbols=(instrument,))
+                if trading == "on"
+                else _DisabledBackend()
+            ),
+            store=store,
+            snapshot_loader=lambda symbol: None,
+            enabled=True,
+            trading_mode="on",
+            account_context_provider=_account_context_provider(
+                sources,
+                trading_day=datetime.now(UTC).date().isoformat(),
+                store=store,
+            ),
+        )
+        cycle_id = f"close_{instrument}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+        attempt = cycle.close_position(
+            symbol=instrument,
+            position_units=position_units,
+            reference_price=reference_price,
+            cycle_id=cycle_id,
+            reason=reason,
+            submit=trading == "on",
+        )
+    finally:
+        store.close()
+    return {
+        "instrument": instrument,
+        "outcome": attempt.outcome,
+        "approved": attempt.approved,
+        "risk_decision_id": attempt.risk_decision_id,
+        "intent_id": attempt.intent_id,
+        "reason": attempt.reason,
+        "closed": attempt.filled,
+        "broker_order_id": attempt.broker_order_id,
+        "client_order_id": attempt.client_order_id,
+        "cycle_id": cycle_id,
+    }
+
+
+@cycle_app.command("close-due")
+def close_due_cmd(
+    trading: TradingMode = typer.Option(  # noqa: B008
+        "on",
+        "--trading",
+        help="'on' submits the reduce-only orders; 'off' only reports.",
+    ),
+    pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
+) -> None:
+    """Close every position the policy says must close now (5.10).
+
+    Two time-based triggers: the weekend close-out (Friday 19:00 UTC
+    onward) and the maximum holding time. Protective orders filling at the
+    broker are handled by the broker itself.
+    """
+    if not oanda_is_configured():
+        _exit_error(
+            "OANDA practice credentials are required "
+            "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
+        )
+    from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
+    from alphabrief_trader.close_policy import positions_due_for_close
+
+    client = build_oanda_paper_client()
+    trades = TradeOpsClient(client).list_trades().trades
+    # Only open trades can be closed; the broker also reports closed ones.
+    open_trades = [trade for trade in trades if str(trade.state) == "OPEN"]
+    decisions = positions_due_for_close(
+        [(trade.instrument, trade.open_time) for trade in open_trades],
+        now=datetime.now(UTC),
+    )
+    due = [decision for decision in decisions if decision.should_close]
+    if not due:
+        _dump(
+            {
+                "due": [],
+                "detail": "no position is due for close",
+                "checked": len(decisions),
+            },
+            pretty=pretty,
+        )
+        return
+    if trading == "off":
+        _dump(
+            {
+                "due": [decision.to_dict() for decision in due],
+                "closed": [],
+                "detail": "NO_TRADE_TRADING_OFF: trading is off",
+            },
+            pretty=pretty,
+        )
+        return
+
+    positions = _open_positions()
+    results: list[dict[str, Any]] = []
+    for decision in due:
+        position = positions.get(decision.instrument)
+        if position is None or position[0] == 0:
+            results.append(
+                {
+                    "instrument": decision.instrument,
+                    "closed": False,
+                    "detail": "no position",
+                }
+            )
+            continue
+        results.append(
+            _close_through_the_cycle(
+                instrument=decision.instrument,
+                position_units=position[0],
+                reference_price=position[1],
+                reason=decision.reason,
+                trading=trading,
+            )
+        )
+    _dump({"due": [d.to_dict() for d in due], "closed": results}, pretty=pretty)
+
+
+def _open_positions() -> dict[str, tuple[Decimal, Decimal]]:
+    """Signed units and mid price per instrument with an open position."""
+    from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
+
+    client = build_oanda_paper_client()
+    positions = PositionOpsClient(client).list_positions().positions
+    open_units: dict[str, Decimal] = {}
+    for position in positions:
+        units = position.long_units - position.short_units
+        if units != 0:
+            open_units[position.instrument] = units
+    if not open_units:
+        return {}
+    sources = _risk_sources(tuple(sorted(open_units)))
+    priced: dict[str, tuple[Decimal, Decimal]] = {}
+    for instrument, units in open_units.items():
+        mark = sources.mid_price(instrument)
+        if mark is None:
+            continue
+        priced[instrument] = (units, mark)
+    return priced
+
+
 @cycle_app.command("close")
 def close_cmd(
     instrument: str = typer.Option(  # noqa: B008
@@ -300,18 +618,15 @@ def close_cmd(
             "OANDA practice credentials are required "
             "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
         )
-    client = build_oanda_paper_client()
-    from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
-
-    positions = PositionOpsClient(client).list_positions().positions
-    position = next((p for p in positions if p.instrument == symbol), None)
-    if position is None or (position.long_units == 0 and position.short_units == 0):
+    positions = _open_positions()
+    position = positions.get(symbol)
+    if position is None:
         _dump(
             {"instrument": symbol, "closed": False, "detail": "no open position"},
             pretty=pretty,
         )
         return
-    units = position.long_units - position.short_units
+    units, mark = position
     if trading == "off":
         _dump(
             {
@@ -323,40 +638,11 @@ def close_cmd(
             pretty=pretty,
         )
         return
-
-    from alphabrief_execution.broker.oanda.order_ops import (
-        OrderOperationError,
-        OrderOpsClient,
+    result = _close_through_the_cycle(
+        instrument=symbol,
+        position_units=units,
+        reference_price=mark,
+        reason="operator close",
+        trading=trading,
     )
-    from alphabrief_execution.broker.oanda.orders import OandaOrderRequest
-    from alphabrief_execution.broker.runtime import get_broker_runtime
-
-    adapter = get_broker_runtime().adapter
-    metadata = adapter.instrument_metadata(symbol)  # type: ignore[attr-defined]
-    cycle_id = f"close_{symbol}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
-    try:
-        created = OrderOpsClient(client).create_order(
-            OandaOrderRequest(
-                type="MARKET",
-                instrument=symbol,
-                units=-units,
-                time_in_force="FOK",
-                position_fill="DEFAULT",
-            ),
-            metadata,
-            client_order_id=f"{cycle_id}:{symbol}",
-            tag="alphabrief",
-            comment=cycle_id,
-        )
-    except OrderOperationError as exc:
-        _exit_error(f"close rejected: {exc}")
-    _dump(
-        {
-            "instrument": symbol,
-            "closed": True,
-            "broker_order_id": created.broker_order_id,
-            "state": created.state,
-            "cycle_id": cycle_id,
-        },
-        pretty=pretty,
-    )
+    _dump(result, pretty=pretty)
