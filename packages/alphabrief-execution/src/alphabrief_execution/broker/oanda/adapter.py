@@ -129,6 +129,11 @@ class OandaPaperAdapter(BrokerAdapter):
     # Idempotency helpers
     # ------------------------------------------------------------------
 
+    @property
+    def client(self) -> OandaHttpClient:
+        """The underlying practice HTTP client (read-only accessor)."""
+        return self._client
+
     def register_known_mapping(
         self, *, client_order_id: str, broker_order_id: str
     ) -> None:
