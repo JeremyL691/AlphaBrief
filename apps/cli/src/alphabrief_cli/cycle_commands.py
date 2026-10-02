@@ -738,7 +738,7 @@ def _open_trading_cycle(
     if resolved.resolve() != _paths.db_path().resolve():
         raise ValueError("cycle database must match the runtime data directory")
     with ExitStack() as resources:
-        store = AiTradingStore(db_path=resolved)
+        store = AiTradingStore(db_path=resolved, require_model_audit=True)
         resources.callback(store.close)
         market = MarketDataStore(db_path=resolved)
         resources.callback(market.close)

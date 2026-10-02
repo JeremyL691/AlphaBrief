@@ -346,7 +346,10 @@ class ExternalPaperExecutionBackend:
                 "tags": decision.risk_tags, "evidence": decision.rule_evidence,
             }, sort_keys=True) if decision.rule_evidence
                 else ",".join(decision.risk_tags)),
-            source_ids=(f"account:{context.account.account_id}",),
+            source_ids=(f"account:{context.account.account_id}",) + (
+                (f"committee_decision:{intent.committee_decision_id}",)
+                if intent.committee_decision_id is not None else ()
+            ),
             # The context builder already rejected stale, missing, or
             # unhealthy evidence, so a successfully built context is
             # fresh at approval by construction.

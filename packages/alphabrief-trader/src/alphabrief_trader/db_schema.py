@@ -163,7 +163,19 @@ CREATE TABLE IF NOT EXISTS cycle_idempotency (
 )
 """
 
+CREATE_AI_FINAL_DECISIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS ai_final_decisions (
+    decision_id TEXT PRIMARY KEY,
+    cycle_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    payload JSON NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    UNIQUE(cycle_id, symbol)
+)
+"""
+
 _AI_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    CREATE_AI_FINAL_DECISIONS_TABLE,
     CREATE_AI_DAILY_CYCLES_TABLE,
     CREATE_AI_DAILY_CYCLES_INDEX,
     CREATE_AI_COMMITTEE_VOTES_TABLE,
@@ -192,6 +204,7 @@ def apply_ai_trading_schema(connection: Any) -> None:
 def drop_ai_trading_schema(connection: Any) -> None:
     """Drop only AI trading tables, leaving the rest of the DB intact."""
 
+    connection.execute("DROP TABLE IF EXISTS ai_final_decisions")
     connection.execute("DROP TABLE IF EXISTS cycle_idempotency")
     connection.execute("DROP TABLE IF EXISTS execution_mode")
     connection.execute("DROP TABLE IF EXISTS scheduler_runtime")

@@ -44,7 +44,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha256
-from typing import Any
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from alphabrief_core import OrderIntent, OrderSide, RiskDecision
@@ -94,10 +94,12 @@ from alphabrief_trader.schemas import (
     CommitteeVote,
     CycleOutcome,
     DailyCycleRecord,
+    FinalCommitteeDecision,
     InputQualityRecord,
     MarketSnapshot,
     OrderAttempt,
     TradePlan,
+    final_decision_id,
 )
 from alphabrief_trader.shadow import (
     ShadowDecision,
@@ -461,6 +463,17 @@ class DailyTradingCycle:
                                 ),
                             }
                         )
+            final = self._store.save_final_decision(FinalCommitteeDecision(
+                decision_id=final_decision_id(cycle_id, symbol),
+                cycle_id=cycle_id, cycle_key=cycle_key, symbol=symbol,
+                plan=plan, votes=result.votes, input_quality=input_quality[-1],
+                broker_evidence=snapshot.broker_evidence,
+                direction_override=cast(
+                    "Literal['long', 'short'] | None", self._direction_override,
+                ),
+                quantity_override=self._quantity_override,
+                override_reason=self._override_reason, created_at=self._clock(),
+            ))
             all_plans.append(plan)
             self._record_shadow(
                 cycle_id=cycle_id,
@@ -499,6 +512,7 @@ class DailyTradingCycle:
                     cycle_id=cycle_id,
                     now=current,
                     reason=plan.rationale,
+                    committee_decision_id=final.decision_id,
                 )
                 all_attempts.append(
                     attempt.model_copy(
@@ -525,6 +539,7 @@ class DailyTradingCycle:
                 now=self._clock(),
                 cycle_id=cycle_id,
                 reference_price_resolver=reference_price_resolver,
+                committee_decision_id=final.decision_id,
             )
             all_attempts.append(attempt.model_copy(update={
                 "broker_evidence": snapshot.broker_evidence,
@@ -606,6 +621,7 @@ class DailyTradingCycle:
         cycle_id: str,
         reference_price_resolver: Callable[[str, MarketSnapshot], Decimal]
         | None = None,
+        committee_decision_id: str | None = None,
     ) -> OrderAttempt:
         side: OrderSide = self._entry_side(plan)
         intent_id = deterministic_intent_id(
@@ -617,6 +633,7 @@ class DailyTradingCycle:
             intent_id=intent_id,
             now=now,
             cycle_id=cycle_id,
+            committee_decision_id=committee_decision_id,
         )
         if intent is None:
             # 5.6 sizing refused (or could not size) this entry: record the
@@ -798,6 +815,7 @@ class DailyTradingCycle:
         intent_id: str,
         now: datetime,
         cycle_id: str,
+        committee_decision_id: str | None = None,
     ) -> OrderIntent | None:
         """Turn one plan into an intent, or ``None`` when it cannot be sized.
 
@@ -851,6 +869,7 @@ class DailyTradingCycle:
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 cycle_id=cycle_id,
+                committee_decision_id=committee_decision_id,
                 rationale=rationale,
                 created_at=now,
             )
@@ -886,7 +905,10 @@ class DailyTradingCycle:
                 target_position_pct=None,
                 now=now,
                 rationale=rationale,
-            ).model_copy(update={"intent_id": intent_id})
+            ).model_copy(update={
+                "intent_id": intent_id,
+                "committee_decision_id": committee_decision_id,
+            })
 
         # No sizing provider configured: fall back to the committee's own
         # target fraction. The production cycle always configures one.
@@ -900,6 +922,7 @@ class DailyTradingCycle:
             stop_loss=stop_loss,
             take_profit=take_profit,
             cycle_id=cycle_id,
+            committee_decision_id=committee_decision_id,
             rationale=rationale,
             created_at=now,
         )
@@ -949,6 +972,7 @@ class DailyTradingCycle:
         now: datetime | None = None,
         reason: str = "operator close",
         submit: bool = True,
+        committee_decision_id: str | None = None,
     ) -> OrderAttempt:
         """Close one position through the full decision → risk → broker path.
 
@@ -963,7 +987,7 @@ class DailyTradingCycle:
             position_units=position_units,
             now=now,
             reason=reason,
-        )
+        ).model_copy(update={"committee_decision_id": committee_decision_id})
         # Rule 5 (data quality) is one of the entry-only rules: a close is
         # checked against the kill switch and rule 3 only, and rule 3 reads
         # the quote from the account context.

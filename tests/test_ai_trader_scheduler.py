@@ -944,6 +944,15 @@ class TestSchedulerRunsAiTask:
             latest = store.get_latest_cycle()
             assert latest is not None
             attempt = latest["attempts"][0]
+            final_id = attempt["order_intent_json"]["committee_decision_id"]
+            final = store.get_final_decision(final_id)
+            assert final is not None and final.model_audit_verified
+            assert final.cycle_id == latest["cycle_id"]
+            assert final.plan.manager_call_id == final.model_audit["manager"].call_id
+            assert len(final.model_audit) == 5
+            assert final.input_quality.evidence_catalog == (
+                latest["input_quality"][0]["evidence_catalog"]
+            )
             if condition in {"clear", "margin_warning", "loss_streak_expired"}:
                 assert attempt["execution_backend"] == "external_paper"
                 assert attempt["broker_order_id"] == attempt["order_id"]
