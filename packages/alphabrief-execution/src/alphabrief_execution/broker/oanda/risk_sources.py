@@ -34,6 +34,7 @@ from alphabrief_risk.broker_context import (
     ReconciliationState,
     TradeDatum,
 )
+from alphabrief_risk.exposure_aggregation import gross_home_notional
 
 from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -353,9 +354,8 @@ class OandaRiskContextSources:
         Exposure is gross notional per symbol in the account's home
         currency, using the broker's own conversion factors; the quote
         fields come from the same pricing snapshot the gate's freshness
-        rule checks. Nothing is synthesized: a missing price simply leaves
-        that symbol out of the exposure map, which the gate treats as a
-        coverage failure rather than as zero exposure.
+        rule checks. Missing or stale held-position prices explicitly mark
+        the projection incomplete so entries fail closed.
         """
         captured = now or self._captured_at()
         summary = AccountOpsClient(self._client).account_summary(
@@ -364,25 +364,37 @@ class OandaRiskContextSources:
         positions = self.fetch_positions()
         prices = self._prices_by_symbol()
         conversions = {
-            conversion.symbol: conversion.factor
-            for conversion in self.fetch_conversions()
+            name: price.conversion_factor for name, price in prices.items()
+            if price.conversion_factor is not None
         }
-
+        exposure_errors: dict[str, str] = {}
         exposure_by_symbol: dict[str, Decimal] = {}
         for position in positions:
             price = prices.get(position.symbol)
-            if price is None:
+            if price is None or not price.bids or not price.asks:
+                exposure_errors[position.symbol] = "missing_position_quote"
                 continue
-            factor = conversions.get(position.symbol, Decimal("1"))
-            units = position.long_units + position.short_units
+            age = (captured - price.broker_time).total_seconds()
+            if not 0 <= age <= 15:
+                exposure_errors[position.symbol] = "stale_position_quote"
+                continue
+            factor = conversions.get(position.symbol)
+            if factor is None:
+                exposure_errors[position.symbol] = "missing_position_conversion"
+                continue
             mark = (price.bids[0].price + price.asks[0].price) / Decimal(2)
-            exposure_by_symbol[position.symbol] = abs(units) * mark * factor
+            exposure_by_symbol[position.symbol] = gross_home_notional(
+                position.long_units, position.short_units, mark, factor,
+            )
 
         quote_symbol = symbol or (self._symbols[0] if self._symbols else None)
         quote = prices.get(quote_symbol) if quote_symbol else None
         return AccountExposureContext(
             current_total_exposure=sum(exposure_by_symbol.values(), Decimal("0")),
             exposure_by_symbol=exposure_by_symbol,
+            quote_position_to_home=conversions,
+            exposure_complete=not exposure_errors,
+            exposure_errors=exposure_errors,
             cash=summary.balance,
             account_id=summary.account_id,
             captured_at=captured,
