@@ -106,20 +106,32 @@ def repair_structured_output[TargetModel: BaseModel](
         repair_request = request.model_copy(
             update={
                 "request_id": f"{request.request_id}_repair_{attempt}",
+                "call_kind": "repair",
                 "input_text": builder(request, current_raw, current_reason),
             }
         )
         result = gateway.invoke(repair_request)
         if result.response is None or result.record.status != "succeeded":
+            error_code = "provider_call_failed"
+            if result.record.classification == "budget_exhausted":
+                error_code = "model_budget:" + (
+                    result.record.error_type or "budget_exhausted"
+                )
+                if (result.record.error_type or "").endswith(
+                    ":NO_TRADE_MODEL_UNAVAILABLE"
+                ):
+                    error_code = "provider_unavailable:NO_TRADE_MODEL_UNAVAILABLE"
             attempts.append(
                 RepairVerdict(
                     attempt=attempt,
                     ok=False,
-                    error_code="provider_call_failed",
+                    error_code=error_code,
                     model_call_id=result.record.call_id,
                     created_at=now(),
                 )
             )
+            if result.record.classification == "budget_exhausted":
+                break
             current_reason = "provider_call_failed"
             continue
 

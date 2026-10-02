@@ -197,19 +197,21 @@ class TestDurableNoTrade:
         self, store: AiTradingStore
     ) -> None:
         # Every role returns invalid output and the repair never succeeds:
-        # the cycle records a durable provider_error with zero intents.
+        # All roles share two repairs; exhaustion is a durable budget
+        # refusal with zero intents, not a new allowance for each role.
         bad_payload: dict[str, object] = {"bogus": "field"}
         committee = _committee(bad_payload, repair_attempts=2)
         cycle = _cycle(store, committee=committee)
         record = cycle.run(["SPY"], cycle_key="cycle-repair-fail")
 
-        assert record.outcome == "provider_error"
+        assert record.outcome == "skipped_model_budget"
+        assert "NO_TRADE_MODEL_BUDGET" in record.summary
         assert record.plans == []
         assert record.attempts == []
         assert record.votes == []
         stored = store.get_cycle(record.cycle_id)
         assert stored is not None
-        assert stored["outcome"] == "provider_error"
+        assert stored["outcome"] == "skipped_model_budget"
         assert stored["attempts"] == []
 
     def test_budget_exhaustion_produces_no_trade_without_intent(
@@ -217,7 +219,7 @@ class TestDurableNoTrade:
     ) -> None:
         # One call per UTC day: the first role call is allowed, every
         # following committee call is rejected by the budget, so the
-        # cycle records a durable provider_error with no plan or intent.
+        # cycle records a durable model-budget refusal with no plan or intent.
         budget = ModelCallBudget(
             max_calls_per_request=100,
             max_calls_per_cycle=100,
@@ -227,12 +229,12 @@ class TestDurableNoTrade:
         cycle = _cycle(store, committee=committee)
         record = cycle.run(["SPY"], cycle_key="cycle-budget")
 
-        assert record.outcome == "provider_error"
+        assert record.outcome == "skipped_model_budget"
         assert record.plans == []
         assert record.attempts == []
         stored = store.get_cycle(record.cycle_id)
         assert stored is not None
-        assert stored["outcome"] == "provider_error"
+        assert stored["outcome"] == "skipped_model_budget"
         assert stored["attempts"] == []
 
     def test_repair_success_produces_tradeable_proposal_path(
@@ -252,7 +254,7 @@ class TestDurableNoTrade:
             def call(self, request: ModelRequest) -> ModelResponse:
                 self.calls += 1
                 payload: dict[str, object] | None = (
-                    {"bogus": "field"} if self.calls % 2 == 1 else _BULLISH_PAYLOAD
+                    {"bogus": "field"} if self.calls == 1 else _BULLISH_PAYLOAD
                 )
                 return ModelResponse(
                     request_id=request.request_id,

@@ -23,6 +23,8 @@ from decimal import Decimal
 from typing import Any
 
 from alphabrief_models import ModelCallBudget, ModelCallRecord
+from alphabrief_models.channels import load_model_settings
+from alphabrief_models.model_budget import ModelBudgetGuard
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyCycleRecord,
@@ -188,6 +190,9 @@ def _build_default_committee() -> TradingCommittee:
     return build_ai_trading_committee(
         record_sink=_persist_call_record,
         budget=ModelCallBudget(),
+        daily_budget=ModelBudgetGuard(
+            _get_call_store(), policy=load_model_settings().budget_policy()
+        ),
     )
 
 
