@@ -28,10 +28,14 @@ import duckdb
 from alphabrief_core import paths as _paths
 from alphabrief_models.gateway import ModelCallRecord
 from alphabrief_models.model_budget import (
+    MAX_COMMITTEE_NORMAL_CALLS,
+    MAX_COMMITTEE_REPAIR_CALLS,
+    MAX_ROUND_CALLS,
     NO_TRADE_MODEL_BUDGET,
     NO_TRADE_MODEL_UNAVAILABLE,
     BudgetVerdict,
     ChannelUsage,
+    ModelCallKind,
 )
 
 _CREATE_TABLE_SQL = """
@@ -109,9 +113,16 @@ class ModelCallStore:
             self._conn.execute("""CREATE TABLE IF NOT EXISTS model_call_reservations (
                 call_id TEXT PRIMARY KEY, provider TEXT NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL, reserved_cost DECIMAL(38,18))""")
+            for column in ("round_key", "symbol", "call_kind"):
+                self._conn.execute(
+                    "ALTER TABLE model_call_reservations ADD COLUMN IF NOT EXISTS "
+                    f"{column} TEXT"
+                )
             self._conn.execute("""CREATE TABLE IF NOT EXISTS model_budget_day_mutex (
                 channel TEXT NOT NULL, day TEXT NOT NULL, revision BIGINT NOT NULL,
                 PRIMARY KEY(channel, day))""")
+            self._conn.execute("""CREATE TABLE IF NOT EXISTS model_budget_round_mutex (
+                round_key TEXT PRIMARY KEY, revision BIGINT NOT NULL)""")
 
     def save_call(self, record: ModelCallRecord) -> str:
         with self._lock:
@@ -267,11 +278,28 @@ class ModelCallStore:
         call_limit: int | None,
         cost_limit: Decimal | None,
         estimated_cost: Decimal | None,
+        round_key: str | None = None,
+        symbol: str | None = None,
+        call_kind: ModelCallKind = "normal",
     ) -> BudgetVerdict:
         """Atomically serialize the day's admissions across store connections."""
         with self._lock:
             if observed_at.tzinfo is None or not channel or not call_id:
                 raise ValueError("admission requires channel, identity and UTC time")
+            if call_kind not in {"normal", "repair"}:
+                raise ValueError("unknown model call kind")
+            if round_key is not None and (
+                not round_key.strip()
+                or round_key != round_key.strip()
+                or symbol is None
+                or not symbol.strip()
+                or symbol != symbol.strip().upper()
+            ):
+                raise ValueError("round admission requires round identity and symbol")
+            if round_key is None and symbol is not None:
+                raise ValueError("symbol admission requires round identity")
+            if call_kind == "repair" and round_key is None:
+                raise ValueError("repair admission requires round identity")
             day = observed_at.astimezone(UTC).date().isoformat()
             self._conn.execute("BEGIN")
             try:
@@ -281,6 +309,13 @@ class ModelCallStore:
                     revision = model_budget_day_mutex.revision + 1""",
                     [channel, day],
                 )
+                if round_key is not None:
+                    self._conn.execute(
+                        """INSERT INTO model_budget_round_mutex VALUES (?, 1)
+                        ON CONFLICT(round_key) DO UPDATE SET
+                        revision = model_budget_round_mutex.revision + 1""",
+                        [round_key],
+                    )
                 disabled = self.disabled_channel_reason(channel, day)
                 since = observed_at.astimezone(UTC).replace(
                     hour=0, minute=0, second=0, microsecond=0
@@ -311,18 +346,48 @@ class ModelCallStore:
                     or usage.cost >= cost_limit
                 ):
                     detail = "paid cost unknown or daily cost limit"
+                if not detail and round_key is not None:
+                    legacy = self._conn.execute(
+                        """SELECT 1 FROM model_call_records r
+                        LEFT JOIN model_call_reservations a ON r.call_id = a.call_id
+                        WHERE r.cycle_key = ? AND r.status != 'rejected'
+                          AND a.round_key IS NULL LIMIT 1""",
+                        [round_key],
+                    ).fetchone()
+                    round_usage = self.round_usage(round_key)
+                    symbol_usage = self.round_usage(round_key, symbol=symbol)
+                    if legacy is not None:
+                        detail = "round call scope unknown"
+                    elif round_usage["total"] >= MAX_ROUND_CALLS:
+                        detail = "round total call limit"
+                    elif (
+                        call_kind == "normal"
+                        and symbol_usage["normal"] >= MAX_COMMITTEE_NORMAL_CALLS
+                    ):
+                        detail = "symbol normal call limit"
+                    elif (
+                        call_kind == "repair"
+                        and symbol_usage["repair"] >= MAX_COMMITTEE_REPAIR_CALLS
+                    ):
+                        detail = "symbol repair call limit"
                 if detail:
                     self._conn.execute("ROLLBACK")
                     return BudgetVerdict(
                         False, channel, reason, detail, usage.calls, usage.cost
                     )
                 self._conn.execute(
-                    "INSERT INTO model_call_reservations VALUES (?, ?, ?, ?)",
+                    """INSERT INTO model_call_reservations
+                    (call_id, provider, created_at, reserved_cost,
+                     round_key, symbol, call_kind)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     [
                         call_id,
                         channel,
                         observed_at,
                         None if estimated_cost is None else str(estimated_cost),
+                        round_key,
+                        symbol,
+                        call_kind,
                     ],
                 )
                 self._conn.execute("COMMIT")
@@ -337,6 +402,21 @@ class ModelCallStore:
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
+
+    def round_usage(
+        self, round_key: str, *, symbol: str | None = None
+    ) -> dict[str, int]:
+        """Count durable outbound admissions across all channels and UTC days."""
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT COUNT(*), COUNT(*) FILTER (WHERE call_kind = 'normal'),
+                COUNT(*) FILTER (WHERE call_kind = 'repair')
+                FROM model_call_reservations
+                WHERE round_key = ? AND (? IS NULL OR symbol = ?)""",
+                [round_key, symbol, symbol],
+            ).fetchone()
+            assert row is not None
+            return {"total": int(row[0]), "normal": int(row[1]), "repair": int(row[2])}
 
     def disabled_channel_reason(self, channel: str, day: str) -> str | None:
         """The reason a channel is disabled for one UTC day, if any."""
@@ -370,6 +450,7 @@ class ModelCallStore:
         self._conn.execute(_CREATE_CHANNEL_STATE_SQL)
         self._conn.execute("DELETE FROM model_call_reservations")
         self._conn.execute("DELETE FROM model_budget_day_mutex")
+        self._conn.execute("DELETE FROM model_budget_round_mutex")
 
     def close(self) -> None:
         """Close the DuckDB connection."""

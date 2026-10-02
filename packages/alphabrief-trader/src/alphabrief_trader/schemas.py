@@ -143,15 +143,17 @@ class SignalMarketEvidence(_CommitteeSchema):
     correlation_20d: Decimal | None = Field(default=None, ge=-1, le=1)
     correlation_samples: int = Field(default=0, ge=0, le=20)
     correlation_input_hash: str = ""
-    correlation_reason: Literal[
-        "insufficient_aligned_returns", "daily_end_mismatch", "zero_variance"
-    ] | None = None
+    correlation_reason: (
+        Literal["insufficient_aligned_returns", "daily_end_mismatch", "zero_variance"]
+        | None
+    ) = None
 
     @field_validator("latest_h1_end", "latest_daily_end")
     @classmethod
     def _tz(cls, value: datetime | None) -> datetime | None:
-        return (None if value is None
-                else _validate_timezone_aware(value).astimezone(UTC))
+        return (
+            None if value is None else _validate_timezone_aware(value).astimezone(UTC)
+        )
 
     @field_validator(
         "h1_return_pct", "daily_return_pct", "correlation_20d", mode="before"
@@ -224,6 +226,7 @@ class CommitteeInput(_CommitteeSchema):
     """Everything the daily cycle passes to the committee for one symbol."""
 
     snapshot: MarketSnapshot
+    cycle_key: str | None = Field(default=None, min_length=1)
     time_horizon: str = Field(default="5 trading days", min_length=1)
     roles: list[CommitteeRole] = Field(
         default_factory=lambda: cast(
@@ -481,9 +484,7 @@ class TradePlan(_CommitteeSchema):
         # stray block from silently producing an order.
         if self.blocked_by_ethics:
             if self.target_position_pct > 0:
-                object.__setattr__(
-                    self, "target_position_pct", Decimal("0")
-                )
+                object.__setattr__(self, "target_position_pct", Decimal("0"))
         return self
 
 

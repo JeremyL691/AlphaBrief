@@ -30,6 +30,7 @@ from alphabrief_models import (
     parse_structured_output,
     repair_structured_output,
 )
+from alphabrief_models.model_budget import MAX_COMMITTEE_REPAIR_CALLS
 from alphabrief_models.repair import RepairVerdict
 from alphabrief_models.structured_output import StructuredOutputResult
 from pydantic import BaseModel, ConfigDict, Field
@@ -214,6 +215,7 @@ class TradingCommittee:
         turns: list[CommitteeTurn] = []
         repair_attempts: list[RepairVerdict] = []
         request_id = f"ait_{uuid4().hex[:12]}"
+        round_key = payload.cycle_key or request_id
         role_errors: list[str] = []
         completed = False
         normal_calls = 0
@@ -237,6 +239,7 @@ class TradingCommittee:
                 )
             request = ModelRequest(
                 request_id=f"{request_id}_{role}",
+                cycle_key=round_key,
                 task_type="symbol_research",
                 prompt_version=PROMPT_VERSION,
                 input_text=prompt,
@@ -267,6 +270,13 @@ class TradingCommittee:
                 if self._repair_attempts <= 0:
                     role_errors.append(f"{role}: {failure_reason}")
                     continue
+                remaining_repairs = (
+                    min(self._repair_attempts, MAX_COMMITTEE_REPAIR_CALLS)
+                    - len(repair_attempts)
+                )
+                if remaining_repairs <= 0:
+                    role_errors.append(f"{role}: model_budget:symbol_repair_limit")
+                    continue
 
                 def _grounding(parsed: _PartialCommitteeVote) -> list[str]:
                     return _vote_grounding_violations(parsed, payload)
@@ -277,7 +287,7 @@ class TradingCommittee:
                     target=_PartialCommitteeVote,
                     raw_output=result.response.output_text,
                     failure_reason=failure_reason,
-                    max_attempts=self._repair_attempts,
+                    max_attempts=remaining_repairs,
                     grounding_check=_grounding,
                     clock=self._clock,
                 )
@@ -365,6 +375,7 @@ class TradingCommittee:
                 prompt = build_challenge_prompt(role, payload, transcript_so_far)
                 request = ModelRequest(
                     request_id=f"{request_id}_{role}_challenge",
+                    cycle_key=round_key,
                     task_type="symbol_research",
                     prompt_version=PROMPT_VERSION,
                     input_text=prompt,
@@ -378,6 +389,7 @@ class TradingCommittee:
                 normal_calls += 1
                 result = self._gateway.invoke(request)
                 if result.response is None or result.record.status != "succeeded":
+                    role_errors.append(_failure_code(role, result.record))
                     continue
                 challenge_parsed: StructuredOutputResult[_PartialChallengeOutput] = (
                     parse_structured_output(
@@ -413,6 +425,7 @@ class TradingCommittee:
             prompt = build_summary_prompt(payload, transcript_so_far)
             request = ModelRequest(
                 request_id=f"{request_id}_manager_summary",
+                cycle_key=round_key,
                 task_type="symbol_research",
                 prompt_version=PROMPT_VERSION,
                 input_text=prompt,
@@ -452,6 +465,20 @@ class TradingCommittee:
                         )
                     )
                     completed = True
+            else:
+                role_errors.append(_failure_code("manager", result.record))
+
+        if any(": model_budget:" in error for error in role_errors):
+            return CommitteeResult(
+                ok=False,
+                votes=votes,
+                error_message="model_budget_exhausted",
+                role_errors=role_errors,
+                transcript=CommitteeTranscript(
+                    turns=turns, max_turns=self._max_turns, completed=False
+                ),
+                repair_attempts=repair_attempts,
+            )
 
         transcript = CommitteeTranscript(
             turns=turns,
