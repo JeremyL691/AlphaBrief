@@ -153,6 +153,9 @@ def _snapshot_fingerprint(snapshots: dict[str, MarketSnapshot]) -> str:
                     *([] if snapshot.broker_evidence is None else [json.dumps(
                         snapshot.broker_evidence.model_dump(mode="json"), sort_keys=True
                     )]),
+                    *([] if snapshot.signal_evidence is None else [json.dumps(
+                        snapshot.signal_evidence.model_dump(mode="json"), sort_keys=True
+                    )]),
                 ]
             )
         )
@@ -355,6 +358,7 @@ class DailyTradingCycle:
                 news_evidence=None if snapshot is None else snapshot.news_evidence,
                 market_evidence=None if snapshot is None else snapshot.market_evidence,
                 broker_evidence=None if snapshot is None else snapshot.broker_evidence,
+                signal_evidence=None if snapshot is None else snapshot.signal_evidence,
                 evaluated_at=checked_at,
             ))
             if not quality.passed or snapshot is None:
@@ -469,6 +473,13 @@ class DailyTradingCycle:
         ]
         if refused_inputs:
             summary += f"; {NO_TRADE_DATA_STALE}=[{'; '.join(refused_inputs)}]"
+        excluded_signals = sorted({
+            f"{symbol}:{reason}"
+            for item in input_quality if item.signal_evidence is not None
+            for symbol, reason in item.signal_evidence.excluded.items()
+        })
+        if excluded_signals:
+            summary += f"; signal_excluded=[{'; '.join(excluded_signals)}]"
         record = DailyCycleRecord(
             cycle_id=cycle_id,
             trading_day=trading_day,

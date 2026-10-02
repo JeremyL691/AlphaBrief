@@ -21,6 +21,7 @@ from typing import Any, Literal, Protocol
 
 from alphabrief_core import Bar
 
+from alphabrief_execution.broker.errors import BrokerNotFoundError
 from alphabrief_execution.broker.oanda.candles import (
     CandleRequest,
     OandaCandle,
@@ -48,6 +49,9 @@ TIMEFRAMES: tuple[tuple[str, int], ...] = (
     ("D", 60),
 )
 
+SIGNAL_INSTRUMENTS = ("XAU_USD", "SPX500_USD", "BCO_USD")
+SIGNAL_TIMEFRAMES: tuple[tuple[Literal["H1", "D"], int], ...] = (("H1", 120), ("D", 60))
+
 
 class MarketSyncError(RuntimeError):
     """Raised when a market-data sync cannot complete."""
@@ -57,6 +61,60 @@ class BarSink(Protocol):
     """Minimal store contract for bars."""
 
     def insert_bars(self, bars: list[Bar], source: str, data_version: str) -> int: ...
+
+
+@dataclass(frozen=True)
+class SignalCandleObservation:
+    """One round's read-only observations; old stored bars never hide fetch failures."""
+
+    series: dict[str, dict[str, list[Bar]]]
+    excluded: dict[str, Literal["broker_not_found"]]
+    errors: dict[str, str]
+    observed_at: datetime
+
+
+def observe_signal_candles(
+    client: OandaHttpClient, *, store: BarSink,
+    clock: Callable[[], datetime] | None = None,
+) -> SignalCandleObservation:
+    """Read the guide's signals without making them eligible for orders.
+
+    A broker 404 proves the signal cannot supply this account's input.
+    Authentication, network, parsing and storage failures remain failures,
+    not permission to silently remove a required signal.
+    """
+    series: dict[str, dict[str, list[Bar]]] = {}
+    excluded: dict[str, Literal["broker_not_found"]] = {}
+    errors: dict[str, str] = {}
+    for symbol in SIGNAL_INSTRUMENTS:
+        windows: dict[str, list[Bar]] = {}
+        for timeframe, count in SIGNAL_TIMEFRAMES:
+            try:
+                page = fetch_candles(client, request=CandleRequest(
+                    symbol=symbol, granularity=timeframe,
+                    components=("M",), count=count + 1,
+                ))
+                bars = sorted(candles_to_bars(page.candles, granularity=timeframe),
+                              key=lambda bar: bar.timestamp)[-count:]
+            except BrokerNotFoundError:
+                excluded[symbol] = "broker_not_found"
+                break
+            except Exception as exc:  # noqa: BLE001 - safe classification, never exclude
+                errors[f"{symbol}:{timeframe}"] = type(exc).__name__
+                continue
+            try:
+                if bars:
+                    store.insert_bars(bars, source=BAR_SOURCE,
+                                      data_version=bars[0].data_version)
+                windows[timeframe] = bars
+            except Exception as exc:  # noqa: BLE001 - persistence is part of ingestion
+                errors[f"{symbol}:{timeframe}"] = type(exc).__name__
+        if symbol not in excluded:
+            series[symbol] = windows
+    return SignalCandleObservation(
+        series=series, excluded=excluded, errors=errors,
+        observed_at=(clock or utc_now)(),
+    )
 
 
 @dataclass
@@ -222,10 +280,14 @@ __all__ = [
     "BAR_SOURCE",
     "CANDLE_DATA_VERSION",
     "TIMEFRAMES",
+    "SIGNAL_INSTRUMENTS",
+    "SIGNAL_TIMEFRAMES",
+    "SignalCandleObservation",
     "BarSink",
     "MarketSyncError",
     "SyncReport",
     "candles_to_bars",
+    "observe_signal_candles",
     "sync_bars",
     "sync_market_data",
     "sync_quotes",
