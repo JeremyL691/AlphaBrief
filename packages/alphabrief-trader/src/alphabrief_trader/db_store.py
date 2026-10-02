@@ -22,7 +22,7 @@ tables).
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -166,31 +166,48 @@ class AiTradingStore:
     def count_daily_opens(self, *, trading_day: str) -> tuple[int, dict[str, int]]:
         """Count the entry orders this system opened on ``trading_day``.
 
-        An "open" is an attempt that actually submitted an order (outcome
-        ``executed``) for a symbol; the count is read from the durable
+        An "open" is an executed, non-reduce-only attempt for a symbol.
+        UTC bounds are compared as instants, independently of the DuckDB
+        connection's display timezone. The count is read from the durable
         attempt rows, so the daily intent caps (PROJECT_GUIDE 5.7 rule 7)
         are enforced against real history rather than a memory counter that
         resets when the process restarts.
         """
+        day_start = datetime.combine(
+            date.fromisoformat(trading_day), datetime.min.time(), tzinfo=UTC
+        )
+        day_end = day_start + timedelta(days=1)
         rows = self._conn.execute(
             """
             SELECT attempt_json
             FROM ai_order_attempts
             WHERE outcome = 'executed'
-              AND CAST(created_at AS DATE) = CAST(? AS DATE)
+              AND created_at >= ? AND created_at < ?
             """,
-            [trading_day],
+            [day_start, day_end],
         ).fetchall()
         per_symbol: dict[str, int] = {}
         for (payload,) in rows:
             try:
                 attempt = json.loads(str(payload))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                raise ValueError("daily entry history contains invalid JSON") from exc
+            if not isinstance(attempt, dict):
+                raise ValueError("daily entry history contains an invalid attempt")
+            intent = attempt.get("order_intent_json")
+            if not isinstance(intent, dict):
+                raise ValueError("daily entry history is missing an order intent")
+            # Old entries without the flag conservatively consume capacity;
+            # only an explicit true flag proves this was a closing order.
+            reduce_only = intent.get("reduce_only", False)
+            if not isinstance(reduce_only, bool):
+                raise ValueError("daily entry history has an invalid reduce-only flag")
+            symbol = intent.get("symbol")
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise ValueError("daily entry history is missing an instrument")
+            if reduce_only:
                 continue
-            intent = attempt.get("order_intent_json") or {}
-            symbol = str(intent.get("symbol") or "").strip()
-            if not symbol:
-                continue
+            symbol = symbol.strip()
             per_symbol[symbol] = per_symbol.get(symbol, 0) + 1
         return sum(per_symbol.values()), per_symbol
 
