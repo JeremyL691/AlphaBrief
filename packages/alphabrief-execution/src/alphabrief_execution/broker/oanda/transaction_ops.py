@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,6 +48,8 @@ class TransactionResult(BaseModel):
     price: Decimal | None = None
     realized_pl: Decimal | None = None
     financing: Decimal | None = None
+    commission: Decimal | None = None
+    guaranteed_execution_fee: Decimal | None = None
     #: The trade a fill or close belongs to (``tradeID`` when reported).
     trade_id: str | None = None
     request_id: str = Field(min_length=1)
@@ -59,6 +62,14 @@ class TransactionGap(BaseModel):
 
     gap_from: str
     gap_to: str
+
+
+class TransactionTimeWindow(BaseModel):
+    """Complete, unfiltered broker time query, including its account watermark."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    transactions: tuple[TransactionResult, ...]
+    last_transaction_id: str
 
 
 class TransactionRangeResult(BaseModel):
@@ -80,6 +91,91 @@ class TransactionOpsClient:
 
     def __init__(self, client: OandaHttpClient) -> None:
         self._client = client
+
+    def transactions_between(
+        self,
+        start: datetime,
+        end: datetime,
+    ) -> TransactionTimeWindow:
+        """Read every page of an inclusive UTC window; partial evidence fails."""
+        if start.tzinfo is None or end.tzinfo is None or start > end:
+            raise TransactionOperationError(
+                "invalid_window", "aware ordered times required"
+            )
+        response = self._client.request(
+            "GET",
+            self._client.account_path("/transactions"),
+            params={
+                "from": start.astimezone(UTC).isoformat(),
+                "to": end.astimezone(UTC).isoformat(),
+                "pageSize": MAX_PAGE_SIZE,
+            },
+        )
+        body = response.json_body
+        if not isinstance(body, dict):
+            raise TransactionOperationError("protocol_error", "missing time query")
+        count, pages, watermark = (
+            body.get("count"),
+            body.get("pages"),
+            body.get("lastTransactionID"),
+        )
+        if (
+            type(count) is not int
+            or count < 0
+            or not isinstance(pages, list)
+            or not isinstance(watermark, str)
+            or not watermark.isdigit()
+            or len(pages) > MAX_PAGES
+        ):
+            raise TransactionOperationError(
+                "protocol_error", "invalid time query metadata"
+            )
+        transactions: list[TransactionResult] = []
+        previous: int | None = None
+        for page in pages:
+            if not isinstance(page, str):
+                raise TransactionOperationError("protocol_error", "invalid page")
+            url = urlsplit(page)
+            query = parse_qs(url.query)
+            if (
+                url.scheme != "https"
+                or url.netloc != "api-fxpractice.oanda.com"
+                or url.path != self._client.account_path("/transactions/idrange")
+                or set(query) != {"from", "to"}
+                or any(len(v) != 1 for v in query.values())
+            ):
+                raise TransactionOperationError("protocol_error", "invalid page scope")
+            first, last = query["from"][0], query["to"][0]
+            lower = _validate_id(first, field="from")
+            upper = _validate_id(last, field="to")
+            if (
+                lower > upper
+                or upper > int(watermark)
+                or (previous is not None and lower != previous + 1)
+            ):
+                raise TransactionOperationError(
+                    "protocol_error", "non-contiguous pages"
+                )
+            result = self.transaction_range(first, last, page_size=MAX_PAGE_SIZE)
+            if result.gaps or result.duplicate_count:
+                raise TransactionOperationError(
+                    "protocol_error", "incomplete time page"
+                )
+            for transaction in result.transactions:
+                if transaction.time is None or not start <= transaction.time <= end:
+                    raise TransactionOperationError(
+                        "protocol_error", "transaction outside window"
+                    )
+            transactions.extend(result.transactions)
+            previous = upper
+        if len(transactions) != count:
+            raise TransactionOperationError(
+                "protocol_error", "time query count mismatch"
+            )
+        return TransactionTimeWindow(
+            transactions=tuple(transactions),
+            last_transaction_id=watermark,
+        )
 
     def get_transaction(
         self,
@@ -137,9 +233,7 @@ class TransactionOpsClient:
                 "invalid_range", "from_id must not exceed to_id"
             )
         _validate_page_size(page_size)
-        rows, duplicates = self._fetch_idrange(
-            from_id, to_id, page_size=page_size
-        )
+        rows, duplicates = self._fetch_idrange(from_id, to_id, page_size=page_size)
         return _normalize(
             rows,
             duplicates=duplicates,
@@ -170,9 +264,7 @@ class TransactionOpsClient:
             params={"id": since_id},
         )
         body = response.json_body
-        if not isinstance(body, dict) or not isinstance(
-            body.get("transactions"), list
-        ):
+        if not isinstance(body, dict) or not isinstance(body.get("transactions"), list):
             raise TransactionOperationError(
                 "protocol_error", "since response is not JSON"
             )
@@ -236,9 +328,7 @@ class TransactionOpsClient:
                 raise TransactionOperationError(
                     "protocol_error", "page URL is not a string"
                 )
-            response = self._client.request(
-                "GET", _path_from_page_url(page_url)
-            )
+            response = self._client.request("GET", _path_from_page_url(page_url))
 
 
 def _validate_id(value: str, *, field: str) -> int:
@@ -339,15 +429,11 @@ def _gaps_and_candidate(
         # transaction_id > expected: an explicit missing span.
         sealed = True
         gaps.append(
-            TransactionGap(
-                gap_from=str(expected), gap_to=str(transaction_id - 1)
-            )
+            TransactionGap(gap_from=str(expected), gap_to=str(transaction_id - 1))
         )
         expected = transaction_id + 1
     if declared_to is not None and expected <= declared_to:
-        gaps.append(
-            TransactionGap(gap_from=str(expected), gap_to=str(declared_to))
-        )
+        gaps.append(TransactionGap(gap_from=str(expected), gap_to=str(declared_to)))
     return gaps, candidate
 
 
@@ -381,9 +467,10 @@ def _transaction_from_row(row: dict[str, Any], *, request_id: str) -> Transactio
         price=_optional_decimal(row.get("price")),
         realized_pl=_optional_decimal(row.get("pl")),
         financing=_optional_decimal(row.get("financing")),
-        trade_id=_optional_str(row.get("tradeID")) or (
-            _trade_ids(row)[0] if _trade_ids(row) else None
-        ),
+        commission=_optional_decimal(row.get("commission")),
+        guaranteed_execution_fee=_optional_decimal(row.get("guaranteedExecutionFee")),
+        trade_id=_optional_str(row.get("tradeID"))
+        or (_trade_ids(row)[0] if _trade_ids(row) else None),
         request_id=request_id,
     )
 
@@ -397,7 +484,12 @@ def _optional_str(value: Any) -> str | None:
 def _optional_decimal(value: Any) -> Decimal | None:
     if value in (None, ""):
         return None
-    return Decimal(str(value))
+    if isinstance(value, (float, bool)):
+        raise ValueError("transaction money must not be float or bool")
+    result = Decimal(str(value))
+    if not result.is_finite():
+        raise ValueError("transaction money must be finite")
+    return result
 
 
 def _parse_time(value: Any) -> datetime | None:

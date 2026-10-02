@@ -75,12 +75,10 @@ class AccountExposureContext(BaseModel):
         the caller). Required when ``max_drawdown_floor_pct`` is
         configured; the gate fails closed if it is missing.
     day_start_equity
-        Optional equity at the start of the trading day. Required when
-        ``max_daily_loss_pct`` is configured; the gate fails closed if
-        it is missing.
+        Legacy day-result bookkeeping; rule 10 uses broker P&L instead.
     day_realized_pnl
-        Optional realized P&L accumulated since day start. Surfaced for
-        audit/diagnostics only; not gated on (advisory).
+        Broker net realized P&L since UTC midnight. Rule 10 also requires
+        current unrealized P&L, a fresh observation and the durable day latch.
     open_position_count
         Number of instruments the account currently holds. Required by the
         max-open-positions rule.
@@ -130,6 +128,10 @@ class AccountExposureContext(BaseModel):
     equity_high_water_mark: Decimal | None = Field(default=None, ge=0)
     day_start_equity: Decimal | None = Field(default=None, ge=0)
     day_realized_pnl: Decimal | None = Field(default=None)
+    day_unrealized_pnl: Decimal | None = None
+    daily_loss_captured_at: datetime | None = None
+    daily_loss_blocked: bool | None = None
+    daily_loss_error: str | None = None
     open_position_count: int | None = Field(default=None, ge=0)
     daily_open_count: int | None = Field(default=None, ge=0)
     daily_symbol_open_count: int | None = Field(default=None, ge=0)
@@ -151,6 +153,7 @@ class AccountExposureContext(BaseModel):
         "equity_high_water_mark",
         "day_start_equity",
         "day_realized_pnl",
+        "day_unrealized_pnl",
         mode="before",
     )
     @classmethod

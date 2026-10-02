@@ -26,7 +26,7 @@ def _empty_account_context(
     runtime, so a buy without an account_context fails closed
     (``account_context_required``). R21.2 adds leverage (needs ``equity``)
     and price-deviation (needs ``reference_mark_prices``) checks, both
-    fail-closed. R21.3 adds daily-loss (needs ``day_start_equity``) and
+    fail-closed. Rule 10 adds daily-loss (needs broker P&L and the durable latch) and
     drawdown (needs ``equity_high_water_mark``), also fail-closed. These
     tests exercise the symbol / order-value / human-review boundaries,
     not those checks, so the helper supplies a zero-exposure context
@@ -44,6 +44,10 @@ def _empty_account_context(
         reference_mark_prices={symbol: mark},
         equity_high_water_mark=Decimal("100000"),
         day_start_equity=Decimal("100000"),
+        day_realized_pnl=Decimal(0),
+        day_unrealized_pnl=Decimal(0),
+        daily_loss_captured_at=POLICY_NOW,
+        daily_loss_blocked=False,
     )
 
 
