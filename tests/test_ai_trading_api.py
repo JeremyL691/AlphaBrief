@@ -52,10 +52,11 @@ class TestAiRules:
         assert res.status_code == 200
         data = res.json()
         assert "discipline" in data
-        assert data["prompt_version"] == "aitrader-v1"
+        assert data["prompt_version"] == "aitrader-roles-v4"
         assert data["roles"] == [
             "technical",
-            "fundamental",
+            "macro_news",
+            "intermarket",
             "risk",
             "manager",
         ]

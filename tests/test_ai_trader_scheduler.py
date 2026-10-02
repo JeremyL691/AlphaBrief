@@ -1654,7 +1654,7 @@ def test_default_backend_checks_budget_between_analyst_calls(
                 full_round
                 and request.call_kind == "normal"
                 and request.metadata["committee_role"]
-                in {"technical", "news_sentiment"}
+                in {"technical", "macro_news"}
             ):
                 return response.model_copy(
                     update={"structured_output": None, "output_text": "{"}
