@@ -148,6 +148,20 @@ class _RiskSources:
     def live_quote(self, symbol: str) -> tuple[Decimal, Decimal]:
         return Decimal("1.1399"), Decimal("1.1401")
 
+    def decision_input_facts(self, symbol: str) -> Any:
+        from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
+
+        now = datetime.now(UTC)
+        return BrokerInputFacts(
+            symbol=symbol, bid=Decimal("1.1399"), ask=Decimal("1.1401"),
+            spread=Decimal("0.0002"), quote_to_home=Decimal(1),
+            quote_position_to_home=Decimal(1),
+            quote_captured_at=now, nav=Decimal(1000), margin_available=Decimal(1000),
+            account_captured_at=now, positions_captured_at=now,
+            position_units=Decimal(0), position_unrealized_pnl=Decimal(0),
+            reconciliation_captured_at=now,
+        )
+
     def home_conversion_factor(self, symbol: str) -> Decimal:
         return Decimal("1")
 
@@ -753,6 +767,54 @@ class TestSchedulerRunsAiTask:
             assert f"completed_{timeframe}_count_not_{count}" in quality["reasons"]
             assert quality["market_evidence"]["counts"][timeframe] == count - 1
             assert len(quality["market_evidence"]["series_hashes"][timeframe]) == 64
+        finally:
+            calls.close()
+            store.close()
+
+    @pytest.mark.parametrize("field,reason", [
+        ("quote_captured_at", "quote_captured_at_stale_or_future"),
+        ("account_captured_at", "account_captured_at_stale_or_future"),
+        ("nav", "nav_missing_or_not_positive"),
+        ("margin_available", "margin_available_missing"),
+        ("position_units", "position_units_missing"),
+        ("quote_to_home", "quote_to_home_missing_or_not_positive"),
+        ("reconciliation_captured_at", "reconciliation_captured_at_missing"),
+    ])
+    def test_production_refuses_bad_broker_inputs_before_model(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        field: str, reason: str,
+    ) -> None:
+        from alphabrief_api.db.model_call import ModelCallStore
+
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "on")
+        monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        adapter = _SubmittingAdapter()
+        monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
+        _seed_risk_sized_inputs(isolated_data_dir)
+        original = _RiskSources.decision_input_facts
+
+        def bad_inputs(source: _RiskSources, symbol: str) -> Any:
+            value = None
+            if field in {"quote_captured_at", "account_captured_at"}:
+                value = datetime.now(UTC) - timedelta(seconds=61)
+            return original(source, symbol).model_copy(update={field: value})
+
+        monkeypatch.setattr(_RiskSources, "decision_input_facts", bad_inputs)
+        asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="broker-bad"))
+        database = isolated_data_dir / _paths.DATABASE_NAME
+        store, calls = AiTradingStore(database), ModelCallStore(database)
+        try:
+            record = store.get_latest_cycle()
+            assert record is not None and record["outcome"] == "skipped_data_stale"
+            assert record["votes"] == record["plans"] == record["attempts"] == []
+            assert calls.list_calls() == [] and adapter.requests == []
+            quality = record["input_quality"][0]
+            assert reason in quality["reasons"]
+            assert quality["broker_evidence"]["symbol"] == "EUR_USD"
+            assert quality["broker_evidence"]["daily_open_count"] == 0
         finally:
             calls.close()
             store.close()

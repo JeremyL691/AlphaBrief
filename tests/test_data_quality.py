@@ -8,10 +8,11 @@ trading cycle passes that verdict through instead of hardcoding it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alphabrief_core import OrderIntent, RiskDecision
@@ -31,6 +32,7 @@ from alphabrief_trader.data_quality import (
 )
 from alphabrief_trader.db_store import AiTradingStore
 from alphabrief_trader.execution_backend import ExecutionBackendResult
+from alphabrief_trader.schemas import CommitteeInput
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
 
@@ -136,6 +138,7 @@ def _cycle(
     clock: datetime = NOW,
     calls: list[ModelCallRecord] | None = None,
     snapshots: dict[str, MarketSnapshot] | None = None,
+    refresher: Callable[[MarketSnapshot], MarketSnapshot] | None = None,
 ) -> DailyTradingCycle:
     provider = FakeProviderAdapter(
         provider_name="fake",
@@ -167,6 +170,7 @@ def _cycle(
         enabled=True,
         clock=lambda: clock,
         trading_mode="on",
+        snapshot_refresher=refresher,
     )
 
 
@@ -310,3 +314,61 @@ def test_quality_evaluates_requested_missing_symbols() -> None:
     )
     assert verdicts["EUR_USD"].passed
     assert verdicts["USD_JPY"].reasons == ("snapshot_missing",)
+
+
+@pytest.mark.parametrize("stale_after_model", [False, True])
+def test_broker_facts_are_refreshed_after_model_and_persisted_with_attempt(
+    store: AiTradingStore, monkeypatch: pytest.MonkeyPatch, stale_after_model: bool,
+) -> None:
+    from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
+
+    clock = [NOW]
+    refreshed: list[datetime] = []
+
+    def refresh(snapshot: MarketSnapshot) -> MarketSnapshot:
+        refreshed.append(clock[0])
+        quote_time = clock[0]
+        if stale_after_model and len(refreshed) == 2:
+            quote_time -= timedelta(seconds=16)
+        return snapshot.model_copy(update={"broker_evidence": BrokerInputFacts(
+            symbol=snapshot.symbol, bid=Decimal("1.1"), ask=Decimal("1.1002"),
+            spread=Decimal("0.0002"), quote_to_home=Decimal(1),
+            quote_position_to_home=Decimal(1),
+            quote_captured_at=quote_time, nav=Decimal(1000),
+            margin_available=Decimal(950),
+            account_captured_at=clock[0], positions_captured_at=clock[0],
+            reconciliation_captured_at=clock[0], position_units=Decimal(0),
+            position_unrealized_pnl=Decimal(0), daily_open_count=0,
+        )})
+
+    backend = _RecordingBackend()
+    cycle = _cycle(store, backend, snapshot=_snapshot(), refresher=refresh)
+    monkeypatch.setattr(cycle, "_clock", lambda: clock[0])
+    original = cycle._committee.run
+
+    def model(payload: CommitteeInput) -> Any:
+        result = original(payload)
+        clock[0] += timedelta(seconds=30)
+        return result
+
+    monkeypatch.setattr(cycle._committee, "run", model)
+    record = cycle.run(["EUR_USD"], cycle_key="fresh-broker-round")
+    assert refreshed == [NOW, NOW + timedelta(seconds=30)]
+    assert record.input_quality[0].passed
+    assert record.input_quality[0].broker_evidence is not None
+    assert record.input_quality[0].broker_evidence.quote_captured_at == NOW
+    assert record.attempts[0].broker_evidence is not None
+    expected_quote = NOW + timedelta(seconds=14 if stale_after_model else 30)
+    assert record.attempts[0].broker_evidence.quote_captured_at == expected_quote
+    assert backend.submissions == (0 if stale_after_model else 1)
+    if stale_after_model:
+        assert record.attempts[0].outcome == "blocked_risk_gate"
+        assert "data_quality" in record.attempts[0].risk_tags
+    saved = store.get_latest_cycle()
+    assert saved is not None
+    assert saved["attempts"][0]["broker_evidence"]["quote_captured_at"] == (
+        expected_quote.isoformat().replace("+00:00", "Z")
+    )
+    # A completed decision key keeps its original inputs despite fresher quotes.
+    assert cycle.run(["EUR_USD"], cycle_key="fresh-broker-round") == record
+    assert len(refreshed) == 2

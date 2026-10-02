@@ -20,7 +20,7 @@ from typing import Literal
 from alphabrief_trader.schemas import MarketSnapshot
 
 #: Version of the quality rules; bump when a limit changes.
-QUALITY_POLICY_VERSION = "2026-10-01.3"
+QUALITY_POLICY_VERSION = "2026-10-02.1"
 NO_TRADE_DATA_STALE: Literal["NO_TRADE_DATA_STALE"] = "NO_TRADE_DATA_STALE"
 
 #: Maximum age of a snapshot's capture time (PROJECT_GUIDE 5.3: the latest
@@ -94,6 +94,37 @@ def evaluate_snapshot_quality(
             reasons.append("return_20d_missing")
         if snapshot.volatility_20d_pct is None:
             reasons.append("volatility_20d_missing")
+    if snapshot.broker_evidence is not None:
+        broker = snapshot.broker_evidence
+        if broker.symbol != snapshot.symbol:
+            reasons.append("broker_input_symbol_mismatch")
+        reasons.extend(
+            f"broker_{source}_unavailable" for source in sorted(broker.errors)
+        )
+        for field, limit in (
+            ("quote_captured_at", 15), ("account_captured_at", 60),
+            ("positions_captured_at", 60), ("reconciliation_captured_at", 60),
+        ):
+            captured = getattr(broker, field)
+            if captured is None:
+                reasons.append(f"{field}_missing")
+            elif not 0 <= (now - captured).total_seconds() <= limit:
+                reasons.append(f"{field}_stale_or_future")
+        for field in ("bid", "ask", "quote_to_home", "quote_position_to_home", "nav"):
+            value = getattr(broker, field)
+            if value is None or value <= 0:
+                reasons.append(f"{field}_missing_or_not_positive")
+        if broker.spread is None or broker.spread < 0:
+            reasons.append("spread_missing_or_negative")
+        elif broker.bid is not None and broker.ask is not None:
+            if broker.ask < broker.bid or broker.spread != broker.ask - broker.bid:
+                reasons.append("quote_spread_inconsistent")
+        for field in (
+            "margin_available", "position_units", "position_unrealized_pnl",
+            "daily_open_count",
+        ):
+            if getattr(broker, field) is None:
+                reasons.append(f"{field}_missing")
     if snapshot.news_evidence is not None:
         from alphabrief_news.providers.rss import SOURCE_FAMILIES
 

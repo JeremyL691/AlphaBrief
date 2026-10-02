@@ -10,6 +10,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request
 
 import pytest
@@ -57,6 +58,10 @@ def _pricing_payload(symbol: str) -> dict[str, Any]:
         # Signal-only symbols may not be priced by an FX-only account.
         return {"prices": []}
     return {
+        "homeConversions": [{
+            "currency": symbol.split("_")[-1], "positionValue": "1",
+            "accountGain": "1", "accountLoss": "1",
+        }],
         "prices": [
             {
                 "instrument": symbol,
@@ -98,7 +103,7 @@ def _client(*, fail_paths: tuple[str, ...] = ()) -> OandaHttpClient:
             symbol = url.split("/instruments/")[1].split("/")[0]
             return json.dumps(_candles_payload(symbol)).encode()
         if "/pricing" in url:
-            symbol = url.split("instruments=")[1].split(",")[0]
+            symbol = parse_qs(urlparse(url).query)["instruments"][0].split(",")[0]
             return json.dumps(_pricing_payload(symbol)).encode()
         raise AssertionError(f"unexpected request: {url}")
 

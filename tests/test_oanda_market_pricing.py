@@ -19,6 +19,7 @@ from decimal import Decimal
 from typing import Any
 from urllib.request import Request
 
+import pytest
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
 from alphabrief_execution.broker.oanda.config import OandaPaperConfig
 from alphabrief_execution.broker.oanda.pricing import (
@@ -62,6 +63,59 @@ def _body(*rows: dict[str, Any]) -> dict[str, Any]:
     return {"prices": list(rows)}
 
 
+def test_native_home_conversions_preserve_position_and_loss_factors() -> None:
+    row = _price_row("USD_JPY")
+    del row["quoteHomeConversionFactors"]
+    body = {
+        "prices": [row],
+        "homeConversions": [
+            {
+                "currency": "JPY",
+                "positionValue": "0.0067",
+                "accountGain": "0.0066",
+                "accountLoss": "0.0068",
+            }
+        ],
+    }
+    captured: dict[str, Any] = {}
+    batch = fetch_pricing(
+        _client(body, captured),
+        request=PricingRequest(symbols=("USD_JPY",)),
+        request_id="native",
+    )
+    assert "includeHomeConversions=true" in captured["url"]
+    assert batch.prices[0].conversion_factor == Decimal("0.0067")
+    assert batch.prices[0].loss_conversion_factor == Decimal("0.0068")
+
+
+@pytest.mark.parametrize(
+    "conversions",
+    [
+        None,
+        [],
+        [{"currency": "CAD", "positionValue": "0.7", "accountLoss": "0.8"}],
+        [{"currency": "JPY", "accountLoss": "0.0068"}],
+    ],
+)
+def test_missing_conversion_is_not_assumed_to_equal_one(conversions: Any) -> None:
+    row = _price_row("USD_JPY")
+    del row["quoteHomeConversionFactors"]
+    body = {"prices": [row], "homeConversions": conversions}
+    batch = parse_pricing_response(body, requested=("USD_JPY",), request_id="missing")
+    assert batch.prices == ()
+    assert not batch.coverage.complete and batch.coverage.missing == ("USD_JPY",)
+
+
+def test_legacy_nontradeable_status_is_not_defaulted_to_true() -> None:
+    row = _price_row()
+    del row["tradeable"]
+    row["status"] = "non-tradeable"
+    batch = parse_pricing_response(
+        _body(row), requested=("EUR_USD",), request_id="status"
+    )
+    assert batch.prices[0].tradeable is False
+
+
 def _client(
     body: dict[str, Any], captured: dict[str, Any] | None = None
 ) -> OandaHttpClient:
@@ -98,9 +152,9 @@ def test_requests_are_deterministically_chunked() -> None:
         urls.append(request.full_url)
         query = parse_qs(urlparse(request.full_url).query)
         requested = query["instruments"][0].split(",")
-        return json.dumps(
-            _body(*[_price_row(symbol=s) for s in requested])
-        ).encode("utf-8")
+        return json.dumps(_body(*[_price_row(symbol=s) for s in requested])).encode(
+            "utf-8"
+        )
 
     client = OandaHttpClient(
         config=OandaPaperConfig(
@@ -115,9 +169,7 @@ def test_requests_are_deterministically_chunked() -> None:
     )
     batch = fetch_pricing(
         client,
-        request=PricingRequest(
-            symbols=symbols, max_instruments_per_request=3
-        ),
+        request=PricingRequest(symbols=symbols, max_instruments_per_request=3),
         request_id="req-1",
     )
     assert len(urls) == 3  # 7 symbols in chunks of 3 -> 3 requests
@@ -162,9 +214,9 @@ def test_chunk_correlation_ids_are_distinct() -> None:
 
     def _send(request: Request, timeout_seconds: float) -> bytes:
         captured["url"] = request.full_url
-        return json.dumps(
-            _body(*[_price_row(symbol=s) for s in ("A", "B")])
-        ).encode("utf-8")
+        return json.dumps(_body(*[_price_row(symbol=s) for s in ("A", "B")])).encode(
+            "utf-8"
+        )
 
     client = _client(_body(_price_row()), captured)
     batch = fetch_pricing(
@@ -184,9 +236,7 @@ def test_chunk_correlation_ids_are_distinct() -> None:
 def test_missing_sides_fail_validation() -> None:
     row = _price_row()
     row["asks"] = []
-    batch = parse_pricing_response(
-        _body(row), requested=("EUR_USD",), request_id="r"
-    )
+    batch = parse_pricing_response(_body(row), requested=("EUR_USD",), request_id="r")
     assert batch.coverage.failed == ("EUR_USD (missing bid or ask side)",)
     assert batch.coverage.complete is False
 
@@ -203,15 +253,11 @@ def test_crossed_prices_fail_validation() -> None:
 
 def test_nonpositive_conversion_factor_fails_validation() -> None:
     batch = parse_pricing_response(
-        _body(
-            _price_row(conversions={"positiveUnits": "0", "negativeUnits": "0"})
-        ),
+        _body(_price_row(conversions={"positiveUnits": "0", "negativeUnits": "0"})),
         requested=("EUR_USD",),
         request_id="r",
     )
-    assert batch.coverage.failed == (
-        "EUR_USD (nonpositive conversion factor)",
-    )
+    assert batch.coverage.failed == ("EUR_USD (nonpositive conversion factor)",)
     assert batch.coverage.complete is False
 
 
@@ -238,9 +284,7 @@ def test_malformed_timestamps_fail_validation() -> None:
 def test_float_values_are_rejected() -> None:
     row = _price_row()
     row["bids"][0]["price"] = 1.1
-    batch = parse_pricing_response(
-        _body(row), requested=("EUR_USD",), request_id="r"
-    )
+    batch = parse_pricing_response(_body(row), requested=("EUR_USD",), request_id="r")
     assert batch.coverage.failed
     assert batch.coverage.complete is False
 

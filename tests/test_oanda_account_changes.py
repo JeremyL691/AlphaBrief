@@ -127,6 +127,17 @@ def _client(broker: _FakeAccountBroker) -> AccountOpsClient:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("field", ["NAV", "marginAvailable"])
+def test_summary_missing_required_input_is_not_defaulted_to_zero(
+    monkeypatch: pytest.MonkeyPatch, field: str,
+) -> None:
+    payload = _account_payload()
+    del payload[field]
+    monkeypatch.setitem(globals(), "_account_payload", lambda: payload)
+    with pytest.raises(AccountOperationError, match="protocol_error"):
+        _client(_FakeAccountBroker()).account_summary()
+
+
 def test_account_summary_exact_fixture() -> None:
     broker = _FakeAccountBroker()
     accounts = _client(broker)

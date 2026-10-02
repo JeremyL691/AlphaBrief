@@ -10,7 +10,7 @@ is never silently closed in full.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -117,11 +117,20 @@ class PositionOpsClient:
         body = response.json_body
         if not isinstance(body, dict) or not isinstance(body.get("positions"), list):
             raise PositionOperationError("protocol_error", "list response is not JSON")
-        positions = tuple(
-            _position_from_row(row, request_id=f"list-row-{row.get('instrument', '')}")
-            for row in body["positions"]
-            if isinstance(row, dict)
-        )
+        try:
+            rows = body["positions"]
+            if not all(isinstance(row, dict) for row in rows):
+                raise ValueError("position row is not an object")
+            positions = tuple(
+                _position_from_row(
+                    row, request_id=f"list-row-{row.get('instrument', '')}"
+                )
+                for row in rows
+            )
+        except (KeyError, ValueError) as exc:
+            raise PositionOperationError(
+                "protocol_error", "invalid position facts"
+            ) from exc
         return PositionListResult(
             positions=positions,
             request_id=request_id or "list",
@@ -212,12 +221,14 @@ class PositionOpsClient:
 
 
 def _position_from_row(row: dict[str, Any], *, request_id: str) -> PositionResult:
-    raw_long = row.get("long")
-    raw_short = row.get("short")
-    long: dict[str, Any] = raw_long if isinstance(raw_long, dict) else {}
-    short: dict[str, Any] = raw_short if isinstance(raw_short, dict) else {}
-    long_units = _decimal(long.get("units", "0"))
-    short_units = _decimal(short.get("units", "0"))
+    raw_long = row["long"]
+    raw_short = row["short"]
+    if not isinstance(raw_long, dict) or not isinstance(raw_short, dict):
+        raise ValueError("position sides must be objects")
+    long: dict[str, Any] = raw_long
+    short: dict[str, Any] = raw_short
+    long_units = _decimal(long["units"])
+    short_units = _decimal(short["units"])
     if long_units != 0 and short_units != 0:
         side: PositionSide = "BOTH"
     elif long_units != 0:
@@ -232,11 +243,11 @@ def _position_from_row(row: dict[str, Any], *, request_id: str) -> PositionResul
         long_units=long_units,
         long_average_price=_optional_decimal(long.get("averagePrice")),
         long_pl=_decimal(long.get("pl", "0")),
-        long_unrealized_pl=_decimal(long.get("unrealizedPL", "0")),
+        long_unrealized_pl=_decimal(long["unrealizedPL"] if long_units else "0"),
         short_units=short_units,
         short_average_price=_optional_decimal(short.get("averagePrice")),
         short_pl=_decimal(short.get("pl", "0")),
-        short_unrealized_pl=_decimal(short.get("unrealizedPL", "0")),
+        short_unrealized_pl=_decimal(short["unrealizedPL"] if short_units else "0"),
         request_id=request_id,
     )
 
@@ -263,7 +274,12 @@ def _maybe_tx_id(transaction: Any) -> str | None:
 
 
 def _decimal(value: Any) -> Decimal:
-    return Decimal(str(value))
+    if isinstance(value, float):
+        raise ValueError("position amounts must not use float")
+    try:
+        return Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError("invalid position amount") from exc
 
 
 def _optional_decimal(value: Any) -> Decimal | None:

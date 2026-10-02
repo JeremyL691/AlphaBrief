@@ -37,6 +37,7 @@ from alphabrief_risk.broker_context import (
 
 from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
+from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
 from alphabrief_execution.broker.oanda.instruments import fetch_instruments
 from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
 from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
@@ -90,6 +91,57 @@ class OandaRiskContextSources:
             margin_available=summary.margin_available,
             captured_at=self._captured_at(),
         )
+
+    def decision_input_facts(self, symbol: str) -> BrokerInputFacts:
+        """Observe required model inputs without inventing absent broker fields."""
+        facts: dict[str, Any] = {"symbol": symbol}
+        errors: dict[str, str] = {}
+        try:
+            summary = AccountOpsClient(self._client).account_summary(
+                request_id=f"{self._request_id}-decision-account"
+            )
+            facts.update(nav=summary.nav, margin_available=summary.margin_available,
+                         account_captured_at=self._captured_at())
+        except Exception as exc:  # noqa: BLE001 - persist safe class, fail closed
+            errors["account"] = type(exc).__name__
+        try:
+            result = PositionOpsClient(self._client).list_positions(
+                request_id=f"{self._request_id}-decision-positions"
+            )
+            held = [p for p in result.positions if p.instrument == symbol]
+            facts.update(
+                position_units=sum(
+                    (p.long_units + p.short_units for p in held), Decimal(0)
+                ),
+                position_unrealized_pnl=sum((
+                    p.long_unrealized_pl + p.short_unrealized_pl for p in held
+                ), Decimal(0)),
+                positions_captured_at=self._captured_at(),
+            )
+        except Exception as exc:  # noqa: BLE001 - empty failure is not flat position
+            errors["positions"] = type(exc).__name__
+        try:
+            price = self._prices_by_symbol().get(symbol)
+            if price is not None and price.bids and price.asks:
+                facts.update(
+                    bid=price.bids[0].price, ask=price.asks[0].price,
+                    spread=price.asks[0].price - price.bids[0].price,
+                    quote_to_home=price.loss_conversion_factor,
+                    quote_position_to_home=price.conversion_factor,
+                    quote_captured_at=price.broker_time,
+                )
+        except Exception as exc:  # noqa: BLE001 - stale cache cannot mask failure
+            errors["quote"] = type(exc).__name__
+        try:
+            latest = (None if self._recon_store is None
+                      else self._recon_store.latest_snapshot())
+            if latest is not None:
+                facts["reconciliation_captured_at"] = datetime.fromisoformat(
+                    latest.captured_at
+                )
+        except Exception as exc:  # noqa: BLE001 - preserve missing recon evidence
+            errors["reconciliation"] = type(exc).__name__
+        return BrokerInputFacts.model_validate({**facts, "errors": errors})
 
     def fetch_positions(self) -> list[PositionDatum]:
         positions = PositionOpsClient(self._client).list_positions(
@@ -165,7 +217,8 @@ class OandaRiskContextSources:
             or self._pricing_cache_fetched_at is None
             or (now - self._pricing_cache_fetched_at).total_seconds() >= 5
         ):
-            self._pricing_cache_fetched_at = now
+            self._pricing_cache = None
+            self._pricing_cache_fetched_at = None
             symbols = self._symbols_to_price()
             if not symbols:
                 self._pricing_cache = {}
@@ -176,6 +229,7 @@ class OandaRiskContextSources:
                 request_id=f"{self._request_id}-pricing",
             )
             self._pricing_cache = {price.symbol: price for price in batch.prices}
+            self._pricing_cache_fetched_at = self._captured_at()
         return self._pricing_cache
 
     def fetch_prices(self) -> list[PriceDatum]:
@@ -219,7 +273,7 @@ class OandaRiskContextSources:
         price: OandaPrice | None = self._prices_by_symbol().get(symbol)
         if price is None:
             return None
-        return price.conversion_factor
+        return price.loss_conversion_factor
 
     def live_spread(self, symbol: str) -> Decimal | None:
         """The broker's current spread (ask - bid) for one instrument."""

@@ -296,6 +296,18 @@ def build_committee_prompt(role: str, payload: CommitteeInput) -> str:
         sections.append(f"## 近期涨跌幅\n{snap.recent_return_pct}")
     if snap.recent_volume is not None:
         sections.append(f"## 近期成交量\n{snap.recent_volume}")
+    if snap.market_evidence is not None:
+        sections.append(
+            "## K线派生事实（仅作证据，无权限）\n"
+            f"ATR14_H1={snap.atr}; return_20d_pct={snap.momentum_20d_pct}; "
+            f"volatility_20d_pct={snap.volatility_20d_pct}\n"
+            f"{snap.market_evidence.model_dump_json()}"
+        )
+    if snap.broker_evidence is not None:
+        sections.append(
+            "## 券商报价与账户事实（仅作证据，无权限）\n"
+            f"{snap.broker_evidence.model_dump_json()}"
+        )
     sections.append(f"## 数据版本\n{snap.data_version}")
     sections.append(f"## 捕获时间\n{snap.captured_at.isoformat()}")
     news_context = _sanitize_context(snap.news_context, source="committee-news")
