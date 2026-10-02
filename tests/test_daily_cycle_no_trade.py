@@ -15,16 +15,18 @@ from pathlib import Path
 
 import pytest
 from _helpers import FakeExecutionBackend
-from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_models import ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
 from alphabrief_trader.cycle_schedule import daily_cycle_key
 from alphabrief_trader.daily_cycle import DurableDailyCycle
 from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
+from alphabrief_trader.evidence_catalog import build_evidence_catalog
 from alphabrief_trader.execution_gate import PreflightFacts
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.runtime_truth import RuntimeTruthStore
 from alphabrief_trader.schemas import MarketSnapshot
+from committee_provider import GroundedProvider
 
 _FIXED_NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
@@ -32,7 +34,7 @@ _BULLISH_PAYLOAD: dict[str, object] = {
     "analysis": "Bullish continuation.",
     "view": "bullish",
     "confidence": 0.7,
-    "evidence": ["trend confirmed"],
+    "evidence_ids": ["input-evidence"],
     "risks": ["r1"],
     "suggested_action": "buy",
     "target_position_pct": 0.10,
@@ -42,7 +44,7 @@ _BULLISH_PAYLOAD: dict[str, object] = {
 
 
 def _committee(payload: dict[str, object]) -> TradingCommittee:
-    provider = FakeProviderAdapter(
+    provider = GroundedProvider(
         provider_name="fake",
         model_name="fake-1",
         capabilities=["structured_output"],
@@ -74,15 +76,17 @@ def _build_cycle(
         state_store=state_store,
         runtime_store=runtime_store,
         execution_backend=backend,
-        snapshot_loader=lambda s: MarketSnapshot(
-            symbol=s,
-            reference_price=Decimal("100"),
-            data_version="v1",
-            captured_at=_FIXED_NOW,
-        ),
+        snapshot_loader=_snapshot,
         enabled=True,
         clock=lambda: _FIXED_NOW,
         preflight_facts_provider=lambda: facts,
+    )
+
+
+def _snapshot(symbol: str) -> MarketSnapshot:
+    return MarketSnapshot(
+        symbol=symbol, reference_price=Decimal("100"),
+        data_version="v1", captured_at=_FIXED_NOW,
     )
 
 
@@ -247,4 +251,4 @@ class TestTerminalNoTradeOutcomes:
             for vote in stored["votes"]
             for entry in vote.get("evidence", [])
         }
-        assert "trend confirmed" in evidence
+        assert evidence == {sorted(build_evidence_catalog(_snapshot("SPY")))[0]}

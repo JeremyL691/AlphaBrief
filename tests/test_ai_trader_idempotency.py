@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 from _helpers import FakeExecutionBackend
 from alphabrief_models import (
-    FakeProviderAdapter,
     ModelCallBudget,
     ModelGateway,
     ModelRequest,
@@ -28,12 +27,13 @@ from alphabrief_trader.daily_cycle import DailyTradingCycle, _snapshot_fingerpri
 from alphabrief_trader.db_store import AiTradingStore
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.schemas import MarketSnapshot
+from committee_provider import GroundedProvider, grounded_payload
 
 _BULLISH_PAYLOAD: dict[str, object] = {
     "analysis": "Bullish continuation.",
     "view": "bullish",
     "confidence": 0.7,
-    "evidence": ["e1"],
+    "evidence_ids": ["input-evidence"],
     "risks": ["r1"],
     "suggested_action": "buy",
     "target_position_pct": 0.10,
@@ -60,7 +60,7 @@ def _committee(
     repair_attempts: int = 0,
     budget: ModelCallBudget | None = None,
 ) -> TradingCommittee:
-    provider = FakeProviderAdapter(
+    provider = GroundedProvider(
         provider_name="fake",
         model_name="fake-1",
         capabilities=["structured_output"],
@@ -242,7 +242,7 @@ class TestDurableNoTrade:
     ) -> None:
         # A role whose output repairs successfully still votes; the cycle
         # proceeds to a plan without any repair verdict being lost.
-        class _RepairingProvider(FakeProviderAdapter):
+        class _RepairingProvider(GroundedProvider):
             def __init__(self) -> None:
                 super().__init__(
                     provider_name="fake",
@@ -261,7 +261,7 @@ class TestDurableNoTrade:
                     provider=self.provider_name,
                     model=self.model_name,
                     output_text="{}",
-                    structured_output=payload,
+                    structured_output=grounded_payload(request, payload),
                     status="succeeded",
                     finish_reason="stop",
                 )

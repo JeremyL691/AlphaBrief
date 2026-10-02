@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from alphabrief_models.gateway import ModelGateway, ModelRequest
+from alphabrief_models.gateway import ModelGateway, ModelRequest, ModelResponse
 from alphabrief_models.structured_output import (
     StructuredOutputResult,
     parse_structured_output,
@@ -52,6 +52,7 @@ class StructuredRepairResult(BaseModel):
     parsed: BaseModel | None = None
     attempts: list[RepairVerdict] = Field(default_factory=list)
     exhausted: bool = False
+    response: ModelResponse | None = None
 
 
 def default_repair_prompt_builder(
@@ -182,6 +183,7 @@ def repair_structured_output[TargetModel: BaseModel](
             parsed=parsed.parsed,
             attempts=attempts,
             exhausted=False,
+            response=result.response,
         )
 
     return StructuredRepairResult(

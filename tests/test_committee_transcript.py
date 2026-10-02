@@ -45,7 +45,7 @@ _OPENING_PAYLOAD: dict[str, object] = {
     "analysis": "Bullish continuation with rising volume.",
     "view": "bullish",
     "confidence": 0.7,
-    "evidence": ["ev-price-1: uptrend", "ev-news-1: earnings beat"],
+    "evidence_ids": ["ev-price-1: uptrend", "ev-news-1: earnings beat"],
     "risks": ["resistance overhead"],
     "suggested_action": "buy",
     "target_position_pct": 0.10,
@@ -57,7 +57,7 @@ _CHALLENGE_PAYLOAD: dict[str, object] = {
     "analysis": "The bullish read overweights one headline.",
     "view": "neutral",
     "confidence": 0.6,
-    "evidence": ["ev-macro-1: cpi in line"],
+    "evidence_ids": ["ev-macro-1: cpi in line"],
     "risks": ["headline reversal"],
     "stance": "dissent",
     "challenged_claim": "earnings beat guarantees continuation",
@@ -67,7 +67,7 @@ _SUMMARY_PAYLOAD: dict[str, object] = {
     "analysis": "Mixed but constructive; keep dissent on record.",
     "view": "bullish",
     "confidence": 0.65,
-    "evidence": ["ev-price-1: uptrend"],
+    "evidence_ids": ["ev-price-1: uptrend"],
     "risks": ["headline reversal"],
     "stance": "agreement",
     "challenged_claim": None,
@@ -110,11 +110,13 @@ class _PhasedProvider(FakeProviderAdapter):
                 k for k in catalog if k.startswith("macro:")
             ),
         }
-        evidence = payload.get("evidence", [])
+        evidence = payload.get("evidence_ids", [])
         assert isinstance(evidence, list)
         payload = {
             **payload,
-            "evidence": [references.get(str(value), str(value)) for value in evidence],
+            "evidence_ids": [
+                references.get(str(value), str(value)) for value in evidence
+            ],
         }
         return ModelResponse(
             request_id=request.request_id,
@@ -293,7 +295,7 @@ class TestChallengeAndDissent:
         provider = _PhasedProvider(
             opening={
                 **_OPENING_PAYLOAD,
-                "evidence": ["ev-fake-99: invented", "not-an-id"],
+                "evidence_ids": ["ev-fake-99: invented", "not-an-id"],
             },
             challenge=_CHALLENGE_PAYLOAD,
             summary=_SUMMARY_PAYLOAD,

@@ -405,8 +405,8 @@ class DailyTradingCycle:
             )
             result = self._committee.run(payload)
             all_votes.extend(result.votes)
+            committee_role_errors.extend(result.role_errors)
             if not result.ok or result.plan is None:
-                committee_role_errors.extend(result.role_errors)
                 if any(": model_budget:" in error for error in result.role_errors):
                     overall_outcome = "skipped_model_budget"
                     committee_role_errors.append(NO_TRADE_MODEL_BUDGET)

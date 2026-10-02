@@ -16,6 +16,7 @@ from alphabrief_trader import (
     build_ai_trading_provider,
     build_conservative_fake_provider,
 )
+from committee_provider import GroundedProvider
 
 _AI_ENV_VARS = (
     "ALPHABRIEF_AI_MODEL_PROVIDER",
@@ -102,12 +103,16 @@ def test_production_factory_uses_five_calls_and_manager_sees_analysts(
     from typing import Any
 
     import alphabrief_trader.model_factory as factory
-    from alphabrief_models import ModelGateway, ModelRequest, ModelResponse
+    from alphabrief_models import (
+        ModelGateway,
+        ModelRequest,
+        ModelResponse,
+    )
     from alphabrief_trader import CommitteeInput, MarketSnapshot
 
     requests: list[ModelRequest] = []
 
-    class RecordingProvider(FakeProviderAdapter):
+    class RecordingProvider(GroundedProvider):
         def call(self, request: ModelRequest) -> ModelResponse:
             requests.append(request)
             return super().call(request)
@@ -115,7 +120,7 @@ def test_production_factory_uses_five_calls_and_manager_sees_analysts(
     provider = RecordingProvider(
         capabilities=["structured_output"], structured_output={
             "analysis": "Observed trend from this snapshot", "view": "bullish",
-            "confidence": 0.8, "evidence": [], "risks": [],
+            "confidence": 0.8, "evidence_ids": [], "risks": [],
             "suggested_action": "buy", "target_position_pct": "0.1",
             "veto": False, "needs_human_review": False,
         },

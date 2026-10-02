@@ -152,10 +152,7 @@ def build_conservative_fake_provider() -> FakeProviderAdapter:
             ),
             "view": "bullish",
             "confidence": 0.62,
-            "evidence": [
-                "EMA20 above EMA50 with rising volume",
-                "News tone modestly positive",
-            ],
+            "evidence_ids": [],
             "risks": ["Macro headline tail-risk", "Crowded long positioning"],
             "suggested_action": "watch",
             "target_position_pct": "0.10",

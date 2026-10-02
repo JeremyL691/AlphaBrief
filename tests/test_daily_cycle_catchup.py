@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 from _helpers import FakeExecutionBackend
-from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_models import ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader.committee import TradingCommittee
 from alphabrief_trader.cycle_schedule import CatchUpPolicy, daily_cycle_key
@@ -24,12 +24,13 @@ from alphabrief_trader.execution_gate import PreflightFacts
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.runtime_truth import RuntimeTruthStore
 from alphabrief_trader.schemas import MarketSnapshot
+from committee_provider import GroundedProvider
 
 _BULLISH_PAYLOAD: dict[str, object] = {
     "analysis": "Bullish continuation.",
     "view": "bullish",
     "confidence": 0.7,
-    "evidence": ["e1"],
+    "evidence_ids": ["input-evidence"],
     "risks": ["r1"],
     "suggested_action": "buy",
     "target_position_pct": 0.10,
@@ -49,7 +50,7 @@ class _Clock:
 
 
 def _committee() -> TradingCommittee:
-    provider = FakeProviderAdapter(
+    provider = GroundedProvider(
         provider_name="fake",
         model_name="fake-1",
         capabilities=["structured_output"],

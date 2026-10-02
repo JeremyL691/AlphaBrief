@@ -11,13 +11,13 @@ import pytest
 from alphabrief_api.db.model_call import ModelCallStore
 from alphabrief_models.chatgpt_plan import ChatGptPlanError
 from alphabrief_models.gateway import (
-    FakeProviderAdapter,
     ModelCallRecord,
     ModelGateway,
     ModelRequest,
     ModelResponse,
 )
 from alphabrief_models.model_budget import ModelBudgetGuard, ModelBudgetPolicy
+from committee_provider import GroundedProvider
 
 NOW = datetime(2026, 10, 2, 12, tzinfo=UTC)
 D = Decimal
@@ -33,7 +33,7 @@ def request(identity: str = "request") -> ModelRequest:
     )
 
 
-class Provider(FakeProviderAdapter):
+class Provider(GroundedProvider):
     def __init__(
         self,
         channel: str = "chatgpt_plan",
@@ -381,7 +381,7 @@ def test_manager_repair_budget_refusal_stops_and_produces_no_order(
                         "analysis": "Bounded test view",
                         "view": "bullish",
                         "confidence": "0.7",
-                        "evidence": [],
+                        "evidence_ids": [],
                         "risks": [],
                         "suggested_action": "buy",
                         "target_position_pct": "0.10",
