@@ -175,6 +175,7 @@ def sync_bars(
     store: BarSink,
     timeframes: Sequence[tuple[str, int]] = TIMEFRAMES,
     component: Literal["M", "B", "A"] = "M",
+    require_full_window: bool = False,
 ) -> tuple[dict[str, int], dict[str, str]]:
     """Fetch and persist candles for every instrument and timeframe.
 
@@ -197,20 +198,25 @@ def sync_bars(
                         components=(component,),
                     ),
                 )
-            except Exception as exc:  # noqa: BLE001 - reported per key
-                errors[key] = f"{type(exc).__name__}"
-                continue
-            bars = sorted(
-                candles_to_bars(page.candles, granularity=granularity),
-                key=lambda bar: bar.timestamp,
-            )[-count:]
-            if not bars:
-                counts[key] = 0
-                continue
-            data_version = bars[0].data_version
-            counts[key] = store.insert_bars(
-                bars, source=BAR_SOURCE, data_version=data_version
-            )
+                bars = sorted(
+                    candles_to_bars(page.candles, granularity=granularity),
+                    key=lambda bar: bar.timestamp,
+                )[-count:]
+                if (
+                    require_full_window
+                    and len({bar.timestamp for bar in bars}) != count
+                ):
+                    errors[key] = "IncompleteWindow"
+                    continue
+                if not bars:
+                    counts[key] = 0
+                    continue
+                data_version = bars[0].data_version
+                counts[key] = store.insert_bars(
+                    bars, source=BAR_SOURCE, data_version=data_version
+                )
+            except Exception as exc:  # noqa: BLE001 - safe per-window failure classification
+                errors[key] = type(exc).__name__
     return counts, errors
 
 

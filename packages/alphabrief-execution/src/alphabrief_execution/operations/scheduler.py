@@ -241,6 +241,7 @@ class ScheduledTask:
     timeout_seconds: float = 30.0
     max_retries: int = 2
     enabled: bool = True
+    run_when_frozen: bool = False
 
     def __post_init__(self) -> None:
         if self.interval_seconds <= 0:
@@ -446,7 +447,7 @@ class OperationsScheduler:
         # silently until the freeze clears or a new freeze event opens.
         alerted_freeze_id: str | None = None
         while not self._stop.is_set():
-            if self._recon_store.has_open_freeze():
+            if not task.run_when_frozen and self._recon_store.has_open_freeze():
                 open_freezes = self._recon_store.list_freezes(only_open=True)
                 current_freeze_id = (
                     open_freezes[0].event_id if open_freezes else None
@@ -565,6 +566,7 @@ def build_default_tasks(
             handler=reconcile_cycle,
             timeout_seconds=30.0,
             max_retries=1,
+            run_when_frozen=True,
         ),
     ]
     if on_ai_cycle is not None:

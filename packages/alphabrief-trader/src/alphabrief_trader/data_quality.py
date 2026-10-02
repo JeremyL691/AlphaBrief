@@ -20,7 +20,7 @@ from typing import Literal
 from alphabrief_trader.schemas import MarketSnapshot
 
 #: Version of the quality rules; bump when a limit changes.
-QUALITY_POLICY_VERSION = "2026-10-02.2"
+QUALITY_POLICY_VERSION = "2026-10-02.3"
 NO_TRADE_DATA_STALE: Literal["NO_TRADE_DATA_STALE"] = "NO_TRADE_DATA_STALE"
 
 #: Maximum age of a snapshot's capture time (PROJECT_GUIDE 5.3: the latest
@@ -78,6 +78,10 @@ def evaluate_snapshot_quality(
         from alphabrief_execution.broker.oanda.market_sync import TIMEFRAMES
 
         evidence_market = snapshot.market_evidence
+        reasons.extend(
+            f"market_{timeframe}_refresh_failed"
+            for timeframe in sorted(evidence_market.refresh_errors)
+        )
         for timeframe, count in TIMEFRAMES:
             if evidence_market.counts.get(timeframe, 0) != count:
                 reasons.append(f"completed_{timeframe}_count_not_{count}")
