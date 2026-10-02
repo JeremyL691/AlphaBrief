@@ -293,24 +293,35 @@ class MarketDataStore:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def get_bar_models(self, symbol: str) -> list[Bar]:
+    def get_bar_models(
+        self, symbol: str, *, data_version_suffix: str | None = None,
+        source: str | None = None,
+    ) -> list[Bar]:
         """Return OHLCV bars as ``Bar`` domain objects (no pagination).
 
         When multiple immutable versions of the same bar coexist, the
         latest ``data_version`` wins per ``(symbol, timestamp)`` so
         decision inputs see one bar per timestamp.
         """
+        conditions = ["symbol = ?"]
+        params: list[object] = [symbol]
+        if data_version_suffix is not None:
+            conditions.append("ends_with(data_version, ?)")
+            params.append(data_version_suffix)
+        if source is not None:
+            conditions.append("source = ?")
+            params.append(source)
         rows = self._conn.execute(
-            """SELECT symbol, timestamp, open, high, low, close,
+            f"""SELECT symbol, timestamp, open, high, low, close,
                       volume, source, data_version
                FROM bars
-               WHERE symbol = ?
+               WHERE {' AND '.join(conditions)}
                QUALIFY row_number() OVER (
                    PARTITION BY symbol, timestamp
                    ORDER BY data_version DESC, source
                ) = 1
                ORDER BY timestamp""",
-            [symbol],
+            params,
         ).fetchall()
 
         return [
