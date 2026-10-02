@@ -135,14 +135,17 @@ def sync_bars(
                     request=CandleRequest(
                         symbol=instrument,
                         granularity=granularity,  # type: ignore[arg-type]
-                        count=count,
+                        count=count + 1,
                         components=(component,),
                     ),
                 )
             except Exception as exc:  # noqa: BLE001 - reported per key
                 errors[key] = f"{type(exc).__name__}"
                 continue
-            bars = candles_to_bars(page.candles, granularity=granularity)
+            bars = sorted(
+                candles_to_bars(page.candles, granularity=granularity),
+                key=lambda bar: bar.timestamp,
+            )[-count:]
             if not bars:
                 counts[key] = 0
                 continue

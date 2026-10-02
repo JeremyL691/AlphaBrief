@@ -85,42 +85,43 @@ def _snapshot_loader(
     and attached to the snapshot: the stop distance depends on it, and a
     missing ATR means no protective order (never a guessed one).
     """
-    from alphabrief_trader.stops import atr_from_bars
+    from alphabrief_execution.broker.oanda.market_sync import BAR_SOURCE, TIMEFRAMES
+    from alphabrief_trader.market_inputs import build_market_inputs
 
     def _loader(symbol: str) -> MarketSnapshot | None:
-        bars = market_store.get_bar_models(symbol)
+        now = datetime.now(UTC)
+        inputs = build_market_inputs({
+            tf: market_store.get_bar_models(
+                symbol, data_version_suffix=f":M:{tf}", source=BAR_SOURCE
+            ) for tf, _ in TIMEFRAMES
+        }, symbol=symbol, now=now)
+        bars = [bar for series in inputs.series.values() for bar in series]
         if not bars:
             return None
-        h1 = [
-            bar
-            for bar in bars
-            if bar.data_version.endswith(":H1")
-        ]
-        latest = h1[-1] if h1 else bars[-1]
-        now = datetime.now(UTC)
+        h1 = inputs.series["H1"]
+        latest = h1[-1] if h1 else max(bars, key=lambda bar: bar.timestamp)
         headlines = news_store.list_headlines(
             symbol=symbol, start=now - timedelta(hours=24), end=now, limit=20
         )
         # Freeze the exact inputs once: evidence and prompt must describe the
         # same bounded batch, not independent database reads with different clocks.
         builder = StoredMarketSnapshotBuilder(
-            bar_loader=lambda requested: bars,
+            bar_loader=lambda requested: h1 or sorted(
+                bars, key=lambda bar: bar.timestamp
+            ),
             headline_loader=lambda requested, start, end, limit: headlines,
             max_headlines=20, clock=lambda: now,
         )
         snapshot = builder.build(symbol, reference_price_override=latest.close)
         if snapshot is None:
             return None
-        atr = atr_from_bars(
-            [bar.high for bar in h1],
-            [bar.low for bar in h1],
-            [bar.close for bar in h1],
-        )
         return snapshot.model_copy(update={
-            "atr": atr,
-            "momentum_20d_pct": _momentum_20d_pct(bars),
+            "atr": inputs.atr,
+            "momentum_20d_pct": inputs.return_20d_pct,
+            "volatility_20d_pct": inputs.volatility_20d_pct,
+            "market_evidence": inputs.evidence,
             # Freshness is the broker candle time, never the builder's wall clock.
-            "captured_at": latest.timestamp,
+            "captured_at": inputs.evidence.latest_h1_end or latest.timestamp,
             "news_evidence": NewsInputEvidence(
                 family_fetched_at=news_health.successful_source_family_times(now=now),
                 related_published_at={h.headline_id: h.published_at for h in headlines},
@@ -128,24 +129,6 @@ def _snapshot_loader(
         })
 
     return _loader
-
-
-def _momentum_20d_pct(bars: Any) -> Decimal | None:
-    """The 20-day return from stored daily closes, or None when too short.
-
-    The momentum shadow benchmark (PROJECT_GUIDE 5.11) needs a real 20-day
-    window; a shorter history yields ``None`` so the benchmark is recorded
-    as skipped rather than guessed.
-    """
-    daily = [bar for bar in bars if bar.data_version.endswith(":D")]
-    closes = [bar.close for bar in daily]
-    if len(closes) < 21:
-        return None
-    first = closes[-21]
-    if first <= 0:
-        return None
-    value: Decimal = ((closes[-1] - first) / first) * Decimal("100")
-    return value
 
 
 def _risk_gate(

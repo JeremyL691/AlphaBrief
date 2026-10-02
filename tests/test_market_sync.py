@@ -7,11 +7,12 @@ socket, no credential, no network.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from urllib.request import Request
 
+import pytest
 from alphabrief_core import Bar
 from alphabrief_execution.broker.oanda.candles import OandaCandle
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -155,6 +156,38 @@ class TestCandleConversion:
 
 
 class TestSyncBars:
+    @pytest.mark.parametrize("last_complete", [False, True])
+    def test_fetch_extra_candle_and_keep_exact_completed_window(
+        self, monkeypatch: pytest.MonkeyPatch, last_complete: bool
+    ) -> None:
+        from types import SimpleNamespace
+
+        from alphabrief_execution.broker.oanda import market_sync
+
+        requests: list[Any] = []
+
+        def fetch(client: Any, *, request: Any) -> Any:
+            requests.append(request)
+            return SimpleNamespace(candles=[OandaCandle(
+                symbol="EUR_USD", time=NOW + timedelta(hours=i), component="M",
+                open=Decimal("1"), high=Decimal("1.1"), low=Decimal("0.9"),
+                close=Decimal("1"), volume=Decimal(10),
+                complete=i < 3 or last_complete, source_version="test",
+            ) for i in range(4)])
+
+        monkeypatch.setattr(market_sync, "fetch_candles", fetch)
+        store = _MemoryStore()
+        counts, errors = sync_bars(
+            _client(), instruments=["EUR_USD"], store=store,
+            timeframes=(("H1", 3),),
+        )
+        assert requests[0].count == 4
+        assert counts == {"EUR_USD:H1": 3} and errors == {}
+        first = 1 if last_complete else 0
+        assert [b.timestamp for b in store.bars] == [
+            NOW + timedelta(hours=i) for i in range(first, first + 3)
+        ]
+
     def test_bars_are_written_per_instrument_and_timeframe(self) -> None:
         store = _MemoryStore()
 

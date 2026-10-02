@@ -20,7 +20,7 @@ from typing import Literal
 from alphabrief_trader.schemas import MarketSnapshot
 
 #: Version of the quality rules; bump when a limit changes.
-QUALITY_POLICY_VERSION = "2026-10-01.2"
+QUALITY_POLICY_VERSION = "2026-10-01.3"
 NO_TRADE_DATA_STALE: Literal["NO_TRADE_DATA_STALE"] = "NO_TRADE_DATA_STALE"
 
 #: Maximum age of a snapshot's capture time (PROJECT_GUIDE 5.3: the latest
@@ -74,6 +74,26 @@ def evaluate_snapshot_quality(
             reasons.append("captured_at_in_the_future")
         elif age > max_age_seconds:
             reasons.append(f"snapshot_stale_{int(age)}s")
+    if snapshot.market_evidence is not None:
+        from alphabrief_execution.broker.oanda.market_sync import TIMEFRAMES
+
+        evidence_market = snapshot.market_evidence
+        for timeframe, count in TIMEFRAMES:
+            if evidence_market.counts.get(timeframe, 0) != count:
+                reasons.append(f"completed_{timeframe}_count_not_{count}")
+            if not evidence_market.series_hashes.get(timeframe):
+                reasons.append(f"{timeframe}_series_hash_missing")
+        end = evidence_market.latest_h1_end
+        if end is None:
+            reasons.append("completed_H1_end_missing")
+        elif not 0 <= (now - end).total_seconds() <= max_age_seconds:
+            reasons.append("completed_H1_end_stale_or_future")
+        if snapshot.atr is None or snapshot.atr <= 0:
+            reasons.append("atr_missing_or_not_positive")
+        if snapshot.momentum_20d_pct is None:
+            reasons.append("return_20d_missing")
+        if snapshot.volatility_20d_pct is None:
+            reasons.append("volatility_20d_missing")
     if snapshot.news_evidence is not None:
         from alphabrief_news.providers.rss import SOURCE_FAMILIES
 

@@ -93,8 +93,8 @@ def test_production_loader_uses_only_related_24_hour_bounded_headlines(
             symbol="EUR_USD", timestamp=now - timedelta(hours=1),
             open=Decimal("1.1"), high=Decimal("1.2"), low=Decimal("1.0"),
             close=Decimal("1.1"), volume=Decimal("100"),
-            source="oanda_practice", data_version="test:H1",
-        )], source="oanda_practice", data_version="test:H1")
+            source="oanda_practice", data_version="test:M:H1",
+        )], source="oanda_practice", data_version="test:M:H1")
         headlines = [NewsHeadline(
             headline_id=f"news-{i}", published_at=now - timedelta(minutes=i + 1),
             symbols=["EUR_USD"], category="macro", source="Test Publisher",

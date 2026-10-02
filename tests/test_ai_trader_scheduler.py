@@ -196,21 +196,35 @@ def _seed_news_quality_inputs(directory: Path, symbols: tuple[str, ...]) -> None
         news.close()
 
 
-def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> None:
+def _seed_market_quality_inputs(directory: Path, symbols: tuple[str, ...]) -> None:
+    from alphabrief_execution.broker.oanda.market_sync import TIMEFRAMES
+
     market_store = MarketDataStore(db_path=directory / _paths.DATABASE_NAME)
     now = datetime.now(UTC)
+    durations = {"M15": timedelta(minutes=15), "H1": timedelta(hours=1),
+                 "H4": timedelta(hours=4), "D": timedelta(days=1)}
     try:
-        market_store.insert_bars([
-            Bar(
-                symbol="EUR_USD", timestamp=now - timedelta(hours=14-i),
-                open=Decimal("1.14"), high=Decimal("1.15"),
-                low=Decimal("1.13"), close=Decimal("1.14"),
-                volume=Decimal("1000"), source="oanda_practice",
-                data_version="test:H1",
-            ) for i in range(15)
-        ], source="oanda_practice", data_version="test:H1")
+        for symbol in symbols:
+            for index, (timeframe, count) in enumerate(TIMEFRAMES):
+                version = f"test:M:{timeframe}"
+                market_store.insert_bars([
+                    Bar(
+                        symbol=symbol,
+                        timestamp=now - durations[timeframe] * (count-i)
+                        - timedelta(microseconds=index + 1),
+                        open=Decimal("1.14"), high=Decimal("1.15"),
+                        low=Decimal("1.13"), close=Decimal("1.14"),
+                        volume=Decimal("1000"), source="oanda_practice",
+                        data_version=version,
+                    ) for i in range(count)
+                ], source="oanda_practice", data_version=version)
     finally:
         market_store.close()
+
+
+def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> None:
+    _seed_market_quality_inputs(directory, ("EUR_USD",))
+    now = datetime.now(UTC)
     _seed_news_quality_inputs(directory, ("EUR_USD",))
     if not seed_spreads:
         return
@@ -425,43 +439,9 @@ class TestSchedulerRunsAiTask:
             scheduler_commands, "_build_adapter", lambda: _SubmittingAdapter()
         )
 
-        def _seed_bars(symbol: str, *, now: datetime) -> None:
-            """Persist two OANDA-shaped bars per symbol before the cycle."""
-            store = MarketDataStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
-            try:
-                store.insert_bars(
-                    [
-                        Bar(
-                            symbol=symbol,
-                            timestamp=now - timedelta(hours=2),
-                            open=Decimal("99"),
-                            high=Decimal("101"),
-                            low=Decimal("98"),
-                            close=Decimal("100"),
-                            volume=Decimal("1000"),
-                            source="oanda_practice",
-                            data_version="test",
-                        ),
-                        Bar(
-                            symbol=symbol,
-                            timestamp=now - timedelta(hours=1),
-                            open=Decimal("100"),
-                            high=Decimal("102"),
-                            low=Decimal("99"),
-                            close=Decimal("101"),
-                            volume=Decimal("1100"),
-                            source="oanda_practice",
-                            data_version="test",
-                        ),
-                    ],
-                    source="oanda_practice",
-                    data_version="test",
-                )
-            finally:
-                store.close()
-
-        for _symbol in ("EUR_USD", "GBP_USD", "USD_JPY"):
-            _seed_bars(_symbol, now=datetime.now(UTC))
+        _seed_market_quality_inputs(
+            isolated_data_dir, ("EUR_USD", "GBP_USD", "USD_JPY")
+        )
 
         _seed_news_quality_inputs(
             isolated_data_dir, ("EUR_USD", "GBP_USD", "USD_JPY")
@@ -534,7 +514,7 @@ class TestSchedulerRunsAiTask:
         news_store = NewsStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
         ai_store = AiTradingStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
         try:
-            assert market_store.get_bar_count("EUR_USD") == 2
+            assert market_store.get_bar_count("EUR_USD") == 336
             headlines = news_store.list_headlines(symbol="EUR_USD", limit=10)
             assert len(headlines) == 3  # Two quality fixtures plus one deduped fetch.
             headlines = [h for h in headlines if h.source == "Test Wire"]
@@ -728,6 +708,53 @@ class TestSchedulerRunsAiTask:
                 calls.close()
 
         finally:
+            store.close()
+
+    @pytest.mark.parametrize("timeframe,count", [
+        ("M15", 96), ("H1", 120), ("H4", 60), ("D", 60),
+    ])
+    def test_production_cycle_rejects_short_market_window_before_model(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        timeframe: str, count: int,
+    ) -> None:
+        from alphabrief_api.db.model_call import ModelCallStore
+
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "on")
+        monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        adapter = _SubmittingAdapter()
+        monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
+        _seed_risk_sized_inputs(isolated_data_dir)
+        original = MarketDataStore.get_bar_models
+
+        def read_short(
+            store: MarketDataStore, symbol: str, *,
+            data_version_suffix: str | None = None, source: str | None = None,
+        ) -> list[Bar]:
+            bars = original(store, symbol, data_version_suffix=data_version_suffix,
+                            source=source)
+            return bars[1:] if data_version_suffix == f":M:{timeframe}" else bars
+
+        monkeypatch.setattr(MarketDataStore, "get_bar_models", read_short)
+        asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="short"))
+        database = isolated_data_dir / _paths.DATABASE_NAME
+        store, calls = AiTradingStore(database), ModelCallStore(database)
+        try:
+            record = store.get_latest_cycle()
+            assert record is not None
+            assert record["outcome"] == "skipped_data_stale"
+            assert record["plans"] == record["attempts"] == record["votes"] == []
+            assert calls.list_calls() == []
+            assert adapter.requests == []
+            quality = record["input_quality"][0]
+            assert quality["no_trade_reason"] == "NO_TRADE_DATA_STALE"
+            assert f"completed_{timeframe}_count_not_{count}" in quality["reasons"]
+            assert quality["market_evidence"]["counts"][timeframe] == count - 1
+            assert len(quality["market_evidence"]["series_hashes"][timeframe]) == 64
+        finally:
+            calls.close()
             store.close()
 
     def test_ai_cycle_refuses_missing_oanda_credentials(

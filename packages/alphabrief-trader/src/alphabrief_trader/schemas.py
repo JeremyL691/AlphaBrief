@@ -116,6 +116,19 @@ class NewsInputEvidence(_CommitteeSchema):
         return {key: _validate_timezone_aware(value) for key, value in values.items()}
 
 
+class MarketInputEvidence(_CommitteeSchema):
+    """Bounded completed OANDA middle-price series used for derived inputs."""
+
+    counts: dict[str, int] = Field(default_factory=dict)
+    series_hashes: dict[str, str] = Field(default_factory=dict)
+    latest_h1_end: datetime | None = None
+
+    @field_validator("latest_h1_end")
+    @classmethod
+    def _end(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else _validate_timezone_aware(value)
+
+
 class MarketSnapshot(_CommitteeSchema):
     """A compact market snapshot fed into the committee.
 
@@ -134,6 +147,8 @@ class MarketSnapshot(_CommitteeSchema):
     #: None when the stored history is too short — the benchmark is then
     #: recorded as skipped instead of guessing a direction.
     momentum_20d_pct: Decimal | None = None
+    volatility_20d_pct: Decimal | None = Field(default=None, ge=0)
+    market_evidence: MarketInputEvidence | None = None
     news_context: str | None = None
     news_evidence: NewsInputEvidence | None = None
     macro_context: str | None = None
@@ -151,6 +166,7 @@ class MarketSnapshot(_CommitteeSchema):
         "recent_return_pct",
         "recent_volume",
         "momentum_20d_pct",
+        "volatility_20d_pct",
         mode="before",
     )
     @classmethod
@@ -485,6 +501,7 @@ class InputQualityRecord(_CommitteeSchema):
     snapshot_captured_at: datetime | None = None
     data_version: str | None = None
     news_evidence: NewsInputEvidence | None = None
+    market_evidence: MarketInputEvidence | None = None
     evaluated_at: datetime
 
     @field_validator("snapshot_captured_at", "evaluated_at")
