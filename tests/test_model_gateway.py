@@ -139,7 +139,7 @@ def test_gateway_records_provider_failures_without_raw_output() -> None:
     assert gateway.call_records == [result.record]
 
 
-def test_model_call_record_does_not_store_raw_prompt_or_api_key() -> None:
+def test_model_call_record_keeps_output_audit_without_raw_prompt_or_api_key() -> None:
     provider = FakeProviderAdapter(output_text="raw model output")
     gateway = ModelGateway(
         [provider], clock=lambda: NOW, call_id_factory=lambda: "call_1"
@@ -153,7 +153,7 @@ def test_model_call_record_does_not_store_raw_prompt_or_api_key() -> None:
     assert "output_text" not in record_payload
     assert "api_key" not in record_payload
     assert "Summarize this market note." not in str(record_payload)
-    assert "raw model output" not in str(record_payload)
+    assert record_payload["audit_payload"]["output_text"] == "raw model output"
 
 
 # ---------------------------------------------------------------------------

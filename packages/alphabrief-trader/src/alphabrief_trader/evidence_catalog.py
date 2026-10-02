@@ -3,31 +3,15 @@
 from __future__ import annotations
 
 import json
-import re
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
+from alphabrief_core.secrets import scrub_secrets as scrub_secrets
 from alphabrief_news import NewsHeadline
 from alphabrief_news.untrusted import sanitize_external_text
 
 if TYPE_CHECKING:
     from alphabrief_trader.schemas import MarketSnapshot
-
-
-def scrub_secrets(text: str) -> str:
-    """One redaction policy for evidence bodies and rendered prompts."""
-    patterns = (
-        (r"Bearer\s+[A-Za-z0-9._~+/=-]{12,}", "[REDACTED-TOKEN]"),
-        (
-            r"(?:api[_-]?key|secret|token)\s*[:=]\s*[A-Za-z0-9._~+/=-]{12,}",
-            "[REDACTED-SECRET]",
-        ),
-        (r"\bsk-[A-Za-z0-9_-]{12,}\b", "[REDACTED-SECRET]"),
-        (r"\b\d{3}-\d{3}-\d{7,}-\d{3}\b", "[REDACTED-ACCOUNT-ID]"),
-    )
-    for pattern, replacement in patterns:
-        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-    return text
 
 
 def prepare_headline(headline: NewsHeadline) -> NewsHeadline | None:
