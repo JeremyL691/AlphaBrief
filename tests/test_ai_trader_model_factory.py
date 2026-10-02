@@ -138,6 +138,7 @@ def test_production_factory_uses_five_calls_and_manager_sees_analysts(
     assert result.ok
     assert len(requests) == 5
     roles = [request.metadata["committee_role"] for request in requests]
+    assert roles == ["technical", "macro_news", "intermarket", "risk", "manager"]
     assert roles == committee.roles
     manager_input = requests[-1].input_text
     assert "Earlier analyst votes" in manager_input

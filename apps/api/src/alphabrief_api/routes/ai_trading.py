@@ -41,6 +41,7 @@ from alphabrief_trader import (
     is_ai_trading_enabled,
     is_live_trading_unlocked,
 )
+from alphabrief_trader.committee_prompts import PROMPT_VERSION, default_roles
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -428,8 +429,8 @@ def get_rules() -> AiRulesResponse:
     config = DisciplineConfig()
     return AiRulesResponse(
         discipline=config.model_dump(mode="json"),
-        prompt_version="aitrader-v1",
-        roles=["technical", "fundamental", "risk", "manager"],
+        prompt_version=PROMPT_VERSION,
+        roles=[str(role) for role in default_roles()],
     )
 
 

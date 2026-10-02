@@ -35,8 +35,8 @@ from alphabrief_trader.schemas import (
 
 FIVE_ROLES = {
     "technical",
-    "news_sentiment",
-    "fundamental",
+    "macro_news",
+    "intermarket",
     "risk",
     "manager",
 }

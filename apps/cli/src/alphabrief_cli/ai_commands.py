@@ -40,6 +40,7 @@ from alphabrief_trader import (
     is_ai_trading_enabled,
     is_live_trading_unlocked,
 )
+from alphabrief_trader.committee_prompts import PROMPT_VERSION, default_roles
 
 from alphabrief_cli.api_client import (
     is_api_running,
@@ -388,8 +389,8 @@ def rules_cmd(
     _dump(
         {
             "discipline": DisciplineConfig().model_dump(mode="json"),
-            "prompt_version": "aitrader-v1",
-            "roles": ["technical", "fundamental", "risk", "manager"],
+            "prompt_version": PROMPT_VERSION,
+            "roles": default_roles(),
         },
         pretty=pretty,
     )

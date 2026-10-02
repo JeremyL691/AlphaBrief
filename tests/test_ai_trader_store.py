@@ -82,7 +82,7 @@ def _record(**overrides: object) -> DailyCycleRecord:
         "votes": [
             _vote(),
             _vote(role="technical"),
-            _vote(role="fundamental"),
+            _vote(role="intermarket"),
             _vote(role="risk"),
         ],
         "attempts": [_attempt()],

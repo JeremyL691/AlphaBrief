@@ -52,6 +52,7 @@ from alphabrief_trader.schemas import (
     CommitteeTurn,
     CommitteeVote,
     TradePlan,
+    validate_committee_roles,
 )
 
 # ---------------------------------------------------------------------------
@@ -197,7 +198,9 @@ class TradingCommittee:
             raise ValueError("repair_attempts must be non-negative")
         self._gateway = gateway
         self._discipline = DisciplineGate(config=discipline or DisciplineConfig())
-        self._roles: list[CommitteeRole] = list(roles or default_roles())
+        self._roles = validate_committee_roles(
+            list(default_roles() if roles is None else roles)
+        )
         self._clock = clock or (lambda: datetime.now(UTC))
         self._max_turns = max_turns
         self._challenge_rounds = challenge_rounds
@@ -223,7 +226,10 @@ class TradingCommittee:
         votes through the deterministic ``DisciplineGate``.
         """
         # Revalidate even model_copy inputs at the trusted model boundary.
-        payload = CommitteeInput.model_validate(payload.model_dump())
+        input_data = payload.model_dump()
+        if "roles" not in payload.model_fields_set:
+            input_data["roles"] = self._roles
+        payload = CommitteeInput.model_validate(input_data)
         snapshot = payload.snapshot
         roles = payload.roles or self._roles
         votes: list[CommitteeVote] = []

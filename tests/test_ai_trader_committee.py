@@ -66,8 +66,8 @@ class TestTradingCommittee:
         roles = {v.role for v in result.votes}
         assert roles == {
             "technical",
-            "news_sentiment",
-            "fundamental",
+            "macro_news",
+            "intermarket",
             "risk",
             "manager",
         }
@@ -98,8 +98,8 @@ class TestTradingCommittee:
         roles = {error.split(":")[0] for error in result.role_errors}
         assert roles == {
             "technical",
-            "news_sentiment",
-            "fundamental",
+            "macro_news",
+            "intermarket",
             "risk",
             "manager",
         }

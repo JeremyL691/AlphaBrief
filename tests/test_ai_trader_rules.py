@@ -73,7 +73,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bullish"),
-                _vote(role="fundamental", view="bullish"),
+                _vote(role="intermarket", view="bullish"),
                 _vote(role="risk", view="bullish"),
             ],
         )
@@ -96,7 +96,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bullish"),
-                _vote(role="fundamental", view="bullish"),
+                _vote(role="intermarket", view="bullish"),
                 _vote(role="risk", view="bullish"),
             ],
         )
@@ -110,7 +110,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bullish"),
-                _vote(role="fundamental", view="bullish"),
+                _vote(role="intermarket", view="bullish"),
                 _vote(role="risk", view="bullish"),
             ],
         )
@@ -135,7 +135,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bullish"),
-                _vote(role="fundamental", view="bearish"),
+                _vote(role="intermarket", view="bearish"),
                 _vote(role="risk", view="bullish"),
             ],
         )
@@ -144,7 +144,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bullish"),
-                _vote(role="fundamental", view="bearish"),
+                _vote(role="intermarket", view="bearish"),
                 _vote(role="risk", view="neutral"),
             ],
         )
@@ -166,7 +166,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bullish"),
-                _vote(role="fundamental", view="bullish"),
+                _vote(role="intermarket", view="bullish"),
                 _vote(role="risk", view="bullish"),
             ],
         )
@@ -187,7 +187,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bullish"),
-                _vote(role="fundamental", view="bullish"),
+                _vote(role="intermarket", view="bullish"),
                 _vote(
                     role="risk",
                     view="bearish",
@@ -210,7 +210,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bullish"),
-                _vote(role="fundamental", view="bullish"),
+                _vote(role="intermarket", view="bullish"),
                 _vote(role="risk", view="bullish"),
             ],
         )
@@ -229,7 +229,7 @@ class TestDisciplineGate:
             manager_vote=manager,
             analyst_votes=[
                 _vote(role="technical", view="bearish"),
-                _vote(role="fundamental", view="bearish"),
+                _vote(role="intermarket", view="bearish"),
                 _vote(role="risk", view="bearish"),
             ],
         )
@@ -255,7 +255,7 @@ class TestDisciplineGate:
                     evidence=["e1", "e3"],
                     risks=["r1", "r2"],
                 ),
-                _vote(role="fundamental", view="bullish"),
+                _vote(role="intermarket", view="bullish"),
                 _vote(role="risk", view="bullish"),
             ],
         )
@@ -271,7 +271,7 @@ class TestRiskRoleVeto:
     def _analysts(self, *, risk_veto: bool) -> list[CommitteeVote]:
         return [
             _vote(role="technical", view="bullish", confidence=0.8),
-            _vote(role="news_sentiment", view="bullish", confidence=0.7),
+            _vote(role="macro_news", view="bullish", confidence=0.7),
             _vote(
                 role="risk",
                 view="bullish" if not risk_veto else "uncertain",
@@ -321,7 +321,7 @@ class TestDirectionAgreement:
             manager_vote=_vote(confidence=0.8),
             analyst_votes=[
                 _vote(role="technical", view="bullish", confidence=0.8),
-                _vote(role="fundamental", view="bullish", confidence=0.7),
+                _vote(role="intermarket", view="bullish", confidence=0.7),
                 _vote(role="risk", view="uncertain", confidence=0.9),
             ],
         )
@@ -334,7 +334,7 @@ class TestDirectionAgreement:
             manager_vote=_vote(confidence=0.8),
             analyst_votes=[
                 _vote(role="technical", view="bullish", confidence=0.8),
-                _vote(role="fundamental", view="uncertain", confidence=0.4),
+                _vote(role="intermarket", view="uncertain", confidence=0.4),
                 _vote(role="risk", view="uncertain", confidence=0.9),
             ],
         )
@@ -348,7 +348,7 @@ class TestDirectionAgreement:
             manager_vote=_vote(confidence=0.5),
             analyst_votes=[
                 _vote(role="technical", view="bullish", confidence=0.8),
-                _vote(role="fundamental", view="bullish", confidence=0.7),
+                _vote(role="intermarket", view="bullish", confidence=0.7),
             ],
         )
 
