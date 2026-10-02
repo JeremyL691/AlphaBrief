@@ -113,6 +113,7 @@ def test_real_shaped_broker_margin_reaches_both_input_projections(
     client = _client(payload)
     source = OandaRiskContextSources(client, symbols=("EUR_USD",))
     monkeypatch.setattr(source, "fetch_positions", lambda: [])
+    monkeypatch.setattr(source, "fetch_pending_orders", lambda: [])
     monkeypatch.setattr(source, "_prices_by_symbol", lambda: {})
     context = source.account_exposure_context()
     facts = source.decision_input_facts("EUR_USD")

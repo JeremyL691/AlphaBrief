@@ -689,6 +689,8 @@ class TestSchedulerRunsAiTask:
             "off",
             "margin",
             "margin_warning",
+            "pending_exposure",
+            "nav_drop",
         ],
     )
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
@@ -783,6 +785,28 @@ class TestSchedulerRunsAiTask:
                 _RiskSources, "account_exposure_context", margin_context
             )
 
+        if condition in {"pending_exposure", "nav_drop"}:
+            original = _RiskSources.account_exposure_context
+
+            def changed_context(
+                self: _RiskSources, **facts: Any,
+            ) -> AccountExposureContext:
+                result = original(self, **facts)
+                if condition == "pending_exposure":
+                    return result.model_copy(update={
+                        "current_total_exposure": Decimal(1500),
+                        "exposure_by_symbol": {"EUR_USD": Decimal(1500)},
+                        "pending_exposure_by_symbol": {"EUR_USD": Decimal(1500)},
+                    })
+                # Sizing sees NAV 1000; the actual gate receives NAV 100.
+                if "symbol" in facts:
+                    return result.model_copy(update={"equity": Decimal(100)})
+                return result
+
+            monkeypatch.setattr(
+                _RiskSources, "account_exposure_context", changed_context,
+            )
+
         handler = _ai_cycle_factory(db_path=isolated_data_dir)
 
         async def _run_handler() -> None:
@@ -823,6 +847,8 @@ class TestSchedulerRunsAiTask:
                     "spread": "SPREAD_WIDE",
                     "off": "NO_TRADE_TRADING_OFF",
                     "margin": "MARGIN",
+                    "pending_exposure": "max_total_exposure",
+                    "nav_drop": "max_order_value",
                 }[condition]
                 assert expected in attempt["reason"]
                 if condition == "kill":
@@ -830,6 +856,15 @@ class TestSchedulerRunsAiTask:
                 assert attempt["outcome"] == (
                     "blocked_trading_off" if condition == "off" else "blocked_risk_gate"
                 )
+            if condition in {"pending_exposure", "nav_drop"}:
+                evidence = attempt["risk_decision_json"]["rule_evidence"]
+                assert evidence["exposure_caps"]["nav"] == (
+                    "1000" if condition == "pending_exposure" else "100"
+                )
+                if condition == "pending_exposure":
+                    assert evidence["exposure"]["pending_gross"] == "1500"
+                else:
+                    assert evidence["exposure_caps"]["order_cap"] == "50.00"
             if condition in {"margin", "margin_warning"}:
                 evidence = attempt["risk_decision_json"]["rule_evidence"]["margin"]
                 assert evidence["margin_used"] == (

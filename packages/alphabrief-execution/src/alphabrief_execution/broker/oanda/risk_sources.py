@@ -101,9 +101,12 @@ class OandaRiskContextSources:
             summary = AccountOpsClient(self._client).account_summary(
                 request_id=f"{self._request_id}-decision-account"
             )
-            facts.update(nav=summary.nav, margin_available=summary.margin_available,
-                         margin_used=summary.margin_used,
-                         account_captured_at=self._captured_at())
+            facts.update(
+                nav=summary.nav,
+                margin_available=summary.margin_available,
+                margin_used=summary.margin_used,
+                account_captured_at=self._captured_at(),
+            )
         except Exception as exc:  # noqa: BLE001 - persist safe class, fail closed
             errors["account"] = type(exc).__name__
         try:
@@ -115,9 +118,10 @@ class OandaRiskContextSources:
                 position_units=sum(
                     (p.long_units + p.short_units for p in held), Decimal(0)
                 ),
-                position_unrealized_pnl=sum((
-                    p.long_unrealized_pl + p.short_unrealized_pl for p in held
-                ), Decimal(0)),
+                position_unrealized_pnl=sum(
+                    (p.long_unrealized_pl + p.short_unrealized_pl for p in held),
+                    Decimal(0),
+                ),
                 positions_captured_at=self._captured_at(),
             )
         except Exception as exc:  # noqa: BLE001 - empty failure is not flat position
@@ -126,7 +130,8 @@ class OandaRiskContextSources:
             price = self._prices_by_symbol().get(symbol)
             if price is not None and price.bids and price.asks:
                 facts.update(
-                    bid=price.bids[0].price, ask=price.asks[0].price,
+                    bid=price.bids[0].price,
+                    ask=price.asks[0].price,
                     spread=price.asks[0].price - price.bids[0].price,
                     quote_to_home=price.loss_conversion_factor,
                     quote_position_to_home=price.conversion_factor,
@@ -135,8 +140,11 @@ class OandaRiskContextSources:
         except Exception as exc:  # noqa: BLE001 - stale cache cannot mask failure
             errors["quote"] = type(exc).__name__
         try:
-            latest = (None if self._recon_store is None
-                      else self._recon_store.latest_snapshot())
+            latest = (
+                None
+                if self._recon_store is None
+                else self._recon_store.latest_snapshot()
+            )
             if latest is not None:
                 facts["reconciliation_captured_at"] = datetime.fromisoformat(
                     latest.captured_at
@@ -165,21 +173,22 @@ class OandaRiskContextSources:
         ]
 
     def fetch_pending_orders(self) -> list[PendingOrderDatum]:
-        orders = OrderOpsClient(self._client).list_orders(
-            status="PENDING", request_id=f"{self._request_id}-orders"
+        orders = OrderOpsClient(self._client).list_pending_orders(
+            request_id=f"{self._request_id}-orders"
         )
         return [
             PendingOrderDatum(
                 broker_order_id=order.broker_order_id,
                 symbol=order.symbol,
                 units=order.units,
+                price=order.price,
                 state=str(order.state),
             )
             for order in orders.orders
             # Dependent orders (stop loss / take profit) carry no symbol and
             # no units of their own: they ride on their trade, which the
             # positions and trades sources already cover.
-            if order.symbol is not None
+            if order.symbol is not None and not order.reduce_only
         ]
 
     def fetch_trades(self) -> list[TradeDatum]:
@@ -354,7 +363,8 @@ class OandaRiskContextSources:
         Exposure is gross notional per symbol in the account's home
         currency, using the broker's own conversion factors; the quote
         fields come from the same pricing snapshot the gate's freshness
-        rule checks. Missing or stale held-position prices explicitly mark
+        rule checks. Pending non-reduce orders reserve additional gross notional.
+        Missing or stale held-position or pending-order prices explicitly mark
         the projection incomplete so entries fail closed.
         """
         captured = now or self._captured_at()
@@ -362,30 +372,44 @@ class OandaRiskContextSources:
             request_id=f"{self._request_id}-exposure"
         )
         positions = self.fetch_positions()
+        pending = self.fetch_pending_orders()
         prices = self._prices_by_symbol()
         conversions = {
-            name: price.conversion_factor for name, price in prices.items()
+            name: price.conversion_factor
+            for name, price in prices.items()
             if price.conversion_factor is not None
         }
         exposure_errors: dict[str, str] = {}
         exposure_by_symbol: dict[str, Decimal] = {}
-        for position in positions:
-            price = prices.get(position.symbol)
+        legs: list[tuple[str, Decimal, Decimal, Decimal | None, bool]] = [
+            (p.symbol, p.long_units, p.short_units, None, False) for p in positions
+        ]
+        legs.extend((o.symbol, o.units, Decimal(0), o.price, True) for o in pending)
+        pending_by_symbol: dict[str, Decimal] = {}
+        for leg_symbol, long_units, short_units, order_price, is_pending in legs:
+            price = prices.get(leg_symbol)
             if price is None or not price.bids or not price.asks:
-                exposure_errors[position.symbol] = "missing_position_quote"
+                exposure_errors[leg_symbol] = "missing_position_quote"
                 continue
             age = (captured - price.broker_time).total_seconds()
             if not 0 <= age <= 15:
-                exposure_errors[position.symbol] = "stale_position_quote"
+                exposure_errors[leg_symbol] = "stale_position_quote"
                 continue
-            factor = conversions.get(position.symbol)
+            factor = conversions.get(leg_symbol)
             if factor is None:
-                exposure_errors[position.symbol] = "missing_position_conversion"
+                exposure_errors[leg_symbol] = "missing_position_conversion"
                 continue
             mark = (price.bids[0].price + price.asks[0].price) / Decimal(2)
-            exposure_by_symbol[position.symbol] = gross_home_notional(
-                position.long_units, position.short_units, mark, factor,
+            if order_price is not None:
+                mark = max(mark, order_price)
+            notional = gross_home_notional(long_units, short_units, mark, factor)
+            exposure_by_symbol[leg_symbol] = (
+                exposure_by_symbol.get(leg_symbol, Decimal(0)) + notional
             )
+            if is_pending:
+                pending_by_symbol[leg_symbol] = (
+                    pending_by_symbol.get(leg_symbol, Decimal(0)) + notional
+                )
 
         quote_symbol = symbol or (self._symbols[0] if self._symbols else None)
         quote = prices.get(quote_symbol) if quote_symbol else None
@@ -395,6 +419,7 @@ class OandaRiskContextSources:
             quote_position_to_home=conversions,
             exposure_complete=not exposure_errors,
             exposure_errors=exposure_errors,
+            pending_exposure_by_symbol=pending_by_symbol,
             cash=summary.balance,
             account_id=summary.account_id,
             captured_at=captured,
