@@ -308,7 +308,15 @@ def _account_context_provider(
     """
 
     def _build(symbol: str) -> Any:
-        total, per_symbol = store.count_daily_opens(trading_day=trading_day)
+        total: int | None
+        symbol_count: int | None
+        try:
+            total, per_symbol = store.count_daily_opens(trading_day=trading_day)
+            symbol_count = per_symbol.get(symbol, 0)
+        except Exception:
+            # Unknown entry history rejects openings via rule 7; it must
+            # not prevent a reduce-only close using fresh broker quotes.
+            total = symbol_count = None
         events = _high_impact_event_map(news_store) if news_store is not None else {}
         verdict = _drawdown_verdict(sources)
         current_spread, recent_spreads = _spread_facts(sources, symbol)
@@ -316,7 +324,7 @@ def _account_context_provider(
             symbol=symbol,
             symbol_types=_instrument_types(universe),
             daily_open_count=total,
-            daily_symbol_open_count=per_symbol.get(symbol, 0),
+            daily_symbol_open_count=symbol_count,
             recent_high_impact_events=events,
             drawdown_block_reason=verdict.reason if verdict.blocked else None,
             current_spread=current_spread,
