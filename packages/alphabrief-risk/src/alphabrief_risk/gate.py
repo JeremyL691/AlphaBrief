@@ -96,6 +96,8 @@ class RiskLimitConfig:
     # by the caller from a persistent snapshot store so the check is
     # restart-safe.
     max_daily_loss_pct: Decimal | None = None
+    max_margin_utilization_pct: Decimal | None = None
+    margin_warning_pct: Decimal | None = None
     # Reject new buys when the drawdown from the equity high-water mark
     # exceeds this fraction of the HWM, 0..1. Requires
     # ``account_context.equity_high_water_mark`` (fail-closed
@@ -104,6 +106,17 @@ class RiskLimitConfig:
     max_drawdown_floor_pct: Decimal | None = None
 
     def __post_init__(self) -> None:
+        for value in (self.max_margin_utilization_pct, self.margin_warning_pct):
+            if value is not None and (
+                not isinstance(value, Decimal) or not value.is_finite()
+                or not Decimal(0) < value <= Decimal(1)
+            ):
+                raise ValueError("margin limits must be finite Decimal fractions")
+        if self.margin_warning_pct is not None and (
+            self.max_margin_utilization_pct is None
+            or self.margin_warning_pct >= self.max_margin_utilization_pct
+        ):
+            raise ValueError("margin warning must be below the configured ceiling")
         if self.max_order_quantity is not None and self.max_order_quantity <= 0:
             raise ValueError("max_order_quantity must be positive")
         if self.max_order_value is not None and self.max_order_value <= 0:
@@ -334,6 +347,9 @@ class RiskGate:
             failures=failures,
             tags=tags,
         )
+        margin_evidence = self._check_margin(
+            account_context=account_context, failures=failures, tags=tags,
+        )
         self._check_daily_loss(
             intent=intent,
             estimated_price=estimated_price,
@@ -361,6 +377,7 @@ class RiskGate:
             tags,
             risk_context,
             (account_qty_clamp, symbol_qty_clamp),
+            margin_evidence,
         )
 
     def _finalize(
@@ -370,6 +387,7 @@ class RiskGate:
         tags: list[str],
         risk_context: RiskContextDecision | None,
         clamps: tuple[Decimal | None, ...],
+        rule_evidence: dict[str, dict[str, str]] | None = None,
     ) -> RiskDecision:
         """Build the RiskDecision from the collected failures and tags."""
         approved = not failures
@@ -415,7 +433,48 @@ class RiskGate:
             requires_human_review=requires_human_review,
             source_module="alphabrief_risk",
             created_at=self.clock(),
+            rule_evidence=rule_evidence or {},
         )
+
+    def _check_margin(
+        self, *, account_context: AccountExposureContext | None,
+        failures: list[str], tags: list[str],
+    ) -> dict[str, dict[str, str]]:
+        from alphabrief_risk.margin_loss_rules import evaluate_margin_utilization
+
+        ceiling = self.limits.max_margin_utilization_pct
+        if ceiling is None:
+            return {}
+        context = account_context
+        result = evaluate_margin_utilization(
+            nav=None if context is None else context.equity,
+            margin_used=None if context is None else context.margin_used,
+            ceiling=ceiling,
+        )
+        age = None if context is None else (
+            self.clock() - context.captured_at
+        ).total_seconds()
+        fresh = age is not None and 0 <= age <= 60
+        passed = result.passed and fresh
+        evidence = {
+            "nav": "missing" if context is None else str(context.equity),
+            "margin_used": "missing" if context is None else str(context.margin_used),
+            "captured_at": (
+                "missing" if context is None else context.captured_at.isoformat()
+            ),
+            "utilization": result.value, "ceiling": str(ceiling),
+            "fresh": str(fresh), "passed": str(passed),
+        }
+        if not passed:
+            failures.append(f"MARGIN: {result.detail}; fresh={fresh}")
+            tags.append("MARGIN")
+        warning = self.limits.margin_warning_pct
+        if warning is not None and result.value != "unknown" and fresh:
+            warned = Decimal(result.value) > warning
+            evidence.update(warning_threshold=str(warning), warning=str(warned))
+            if warned:
+                tags.append("MARGIN_WARNING")
+        return {"margin": evidence}
 
     def _check_target_pct_limits(
         self,

@@ -20,6 +20,7 @@ class BrokerInputFacts(BaseModel):
     quote_captured_at: datetime | None = None
     nav: Decimal | None = None
     margin_available: Decimal | None = None
+    margin_used: Decimal | None = None
     account_captured_at: datetime | None = None
     position_units: Decimal | None = None
     position_unrealized_pnl: Decimal | None = None
@@ -50,6 +51,7 @@ class BrokerInputFacts(BaseModel):
         "quote_position_to_home",
         "nav",
         "margin_available",
+        "margin_used",
         "position_units",
         "position_unrealized_pnl",
         mode="before",

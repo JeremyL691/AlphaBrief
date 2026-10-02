@@ -336,6 +336,7 @@ def test_broker_facts_are_refreshed_after_model_and_persisted_with_attempt(
             quote_position_to_home=Decimal(1),
             quote_captured_at=quote_time, nav=Decimal(1000),
             margin_available=Decimal(950),
+            margin_used=Decimal(50),
             account_captured_at=clock[0], positions_captured_at=clock[0],
             reconciliation_captured_at=clock[0], position_units=Decimal(0),
             position_unrealized_pnl=Decimal(0), daily_open_count=0,

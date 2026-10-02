@@ -121,6 +121,7 @@ class AccountExposureContext(BaseModel):
     account_id: str = Field(min_length=1)
     captured_at: datetime
     equity: Decimal | None = Field(default=None, ge=0)
+    margin_used: Decimal | None = Field(default=None, ge=0)
     reference_mark_prices: dict[str, Decimal] = Field(default_factory=dict)
     equity_high_water_mark: Decimal | None = Field(default=None, ge=0)
     day_start_equity: Decimal | None = Field(default=None, ge=0)
@@ -142,6 +143,7 @@ class AccountExposureContext(BaseModel):
         "current_total_exposure",
         "cash",
         "equity",
+        "margin_used",
         "equity_high_water_mark",
         "day_start_equity",
         "day_realized_pnl",

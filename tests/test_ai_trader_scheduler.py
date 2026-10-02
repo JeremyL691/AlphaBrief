@@ -137,6 +137,7 @@ class _RiskSources:
             cash=Decimal("1000"), equity=Decimal("1000"), account_id="test-account",
             captured_at=datetime.now(UTC), quote_captured_at=datetime.now(UTC),
             quote_tradeable=True, open_position_count=0,
+            margin_used=Decimal(0),
             reconciliation_state="clean", **facts,
         )
 
@@ -157,6 +158,7 @@ class _RiskSources:
             spread=Decimal("0.0002"), quote_to_home=Decimal(1),
             quote_position_to_home=Decimal(1),
             quote_captured_at=now, nav=Decimal(1000), margin_available=Decimal(1000),
+            margin_used=Decimal(0),
             account_captured_at=now, positions_captured_at=now,
             position_units=Decimal(0), position_unrealized_pnl=Decimal(0),
             reconciliation_captured_at=now,
@@ -622,7 +624,9 @@ class TestSchedulerRunsAiTask:
         finally:
             store.close()
 
-    @pytest.mark.parametrize("condition", ["clear", "event", "kill", "spread", "off"])
+    @pytest.mark.parametrize("condition", [
+        "clear", "event", "kill", "spread", "off", "margin", "margin_warning",
+    ])
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, condition: str,
     ) -> None:
@@ -685,6 +689,19 @@ class TestSchedulerRunsAiTask:
                 switch.close()
         elif condition == "off":
             monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "off")
+        elif condition in {"margin", "margin_warning"}:
+            original_context = _RiskSources.account_exposure_context
+
+            def margin_context(
+                self: _RiskSources, **facts: Any,
+            ) -> AccountExposureContext:
+                return original_context(self, **facts).model_copy(update={
+                    "margin_used": Decimal(301 if condition == "margin" else 250),
+                })
+
+            monkeypatch.setattr(
+                _RiskSources, "account_exposure_context", margin_context
+            )
 
         handler = _ai_cycle_factory(db_path=isolated_data_dir)
 
@@ -693,7 +710,7 @@ class TestSchedulerRunsAiTask:
 
         asyncio.run(_run_handler())
 
-        if condition == "clear":
+        if condition in {"clear", "margin_warning"}:
             assert len(adapter.requests) == 1
             assert adapter.requests[0].symbol == "EUR_USD"
             # NAV 1000 x 0.25% / (ATR .02 x 1.5) = floor(83.333...) units.
@@ -710,7 +727,7 @@ class TestSchedulerRunsAiTask:
             latest = store.get_latest_cycle()
             assert latest is not None
             attempt = latest["attempts"][0]
-            if condition == "clear":
+            if condition in {"clear", "margin_warning"}:
                 assert attempt["execution_backend"] == "external_paper"
                 assert attempt["broker_order_id"] == attempt["order_id"]
                 assert attempt["client_order_id"] == attempt["intent_id"]
@@ -718,6 +735,7 @@ class TestSchedulerRunsAiTask:
                 expected = {
                     "event": "EVENT_WINDOW", "kill": "test persisted stop",
                     "spread": "SPREAD_WIDE", "off": "NO_TRADE_TRADING_OFF",
+                    "margin": "MARGIN",
                 }[condition]
                 assert expected in attempt["reason"]
                 if condition == "kill":
@@ -725,6 +743,24 @@ class TestSchedulerRunsAiTask:
                 assert attempt["outcome"] == (
                     "blocked_trading_off" if condition == "off" else "blocked_risk_gate"
                 )
+            if condition in {"margin", "margin_warning"}:
+                evidence = attempt["risk_decision_json"]["rule_evidence"]["margin"]
+                assert evidence["margin_used"] == (
+                    "301" if condition == "margin" else "250"
+                )
+                assert evidence["ceiling"] == "0.30"
+                assert "MARGIN_WARNING" in attempt["risk_tags"]
+                from alphabrief_execution.operations.scheduler import HeartbeatStore
+
+                alerts = HeartbeatStore(database)
+                try:
+                    saved_alerts = alerts.list_alerts()
+                    assert len(saved_alerts) == 1
+                    assert saved_alerts[0]["source"] == "risk_gate"
+                    assert saved_alerts[0]["severity"] == "warning"
+                    assert "MARGIN_WARNING" in saved_alerts[0]["message"]
+                finally:
+                    alerts.close()
             from alphabrief_api.db.model_call import ModelCallStore
             from alphabrief_trader.shadow_store import ShadowStore
 

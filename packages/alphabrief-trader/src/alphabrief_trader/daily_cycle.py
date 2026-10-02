@@ -203,6 +203,7 @@ class DailyTradingCycle:
         model_channel: str = CHATGPT_PLAN_CHANNEL,
         shadow_recorder: ShadowRecorder | None = None,
         snapshot_refresher: Callable[[MarketSnapshot], MarketSnapshot] | None = None,
+        risk_warning_recorder: Callable[[RiskDecision], None] | None = None,
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -251,6 +252,7 @@ class DailyTradingCycle:
         # five benchmarks side by side. Recording never places an order.
         self._shadow_recorder = shadow_recorder
         self._snapshot_refresher = snapshot_refresher
+        self._risk_warning_recorder = risk_warning_recorder
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -556,6 +558,8 @@ class DailyTradingCycle:
             account_context=account_context,
         )
 
+        if "MARGIN_WARNING" in decision.risk_tags and self._risk_warning_recorder:
+            self._risk_warning_recorder(decision)
         if not decision.approved:
             return self._attempt_record(
                 intent=intent,

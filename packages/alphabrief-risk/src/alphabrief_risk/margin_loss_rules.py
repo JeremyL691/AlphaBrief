@@ -170,6 +170,28 @@ def _pct(numerator: Decimal, denominator: Decimal) -> Decimal:
     return numerator / denominator
 
 
+def evaluate_margin_utilization(
+    *, margin_used: Decimal | None, nav: Decimal | None, ceiling: Decimal,
+) -> MarginLossRuleResult:
+    """Shared Decimal utilization rule; missing facts never mean zero."""
+    if (
+        margin_used is None or nav is None
+        or not margin_used.is_finite() or not nav.is_finite()
+        or margin_used < 0 or nav <= 0
+    ):
+        return MarginLossRuleResult(
+            rule="margin_utilization", passed=False, value="unknown",
+            ceiling=str(ceiling), detail="missing or invalid margin/NAV evidence",
+        )
+    value = margin_used / nav
+    passed = value <= ceiling
+    return MarginLossRuleResult(
+        rule="margin_utilization", passed=passed, value=str(value),
+        ceiling=str(ceiling), detail=("margin utilization within limit" if passed
+                                    else "margin utilization exceeds limit"),
+    )
+
+
 def evaluate_margin_loss_rules(
     *,
     margin: MarginEvidence,
@@ -216,23 +238,10 @@ def evaluate_margin_loss_rules(
         )
 
     if limits.max_margin_utilization_pct is not None:
-        try:
-            utilization = _pct(margin.margin_used, margin.nav)
-        except MarginLossRuleError as exc:
-            _check(
-                "margin_utilization", False, "unknown",
-                str(limits.max_margin_utilization_pct), exc.detail,
-            )
-        else:
-            _check(
-                "margin_utilization",
-                utilization <= limits.max_margin_utilization_pct,
-                str(utilization),
-                str(limits.max_margin_utilization_pct),
-                "margin utilization within limit"
-                if utilization <= limits.max_margin_utilization_pct
-                else "margin utilization exceeds limit",
-            )
+        results.append(evaluate_margin_utilization(
+            margin_used=margin.margin_used, nav=margin.nav,
+            ceiling=limits.max_margin_utilization_pct,
+        ))
 
     if limits.min_margin_available_pct is not None:
         try:
@@ -387,4 +396,5 @@ __all__ = [
     "MarginLossRuleError",
     "MarginLossRuleResult",
     "evaluate_margin_loss_rules",
+    "evaluate_margin_utilization",
 ]
