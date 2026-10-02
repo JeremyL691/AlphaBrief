@@ -20,6 +20,7 @@ from alphabrief_risk.entry_rules import (
     rejection_codes,
 )
 from alphabrief_risk.kill_switch import KillSwitch
+from alphabrief_risk.loss_state import daily_loss_breached
 
 
 def _is_close_intent(intent: OrderIntent) -> bool:
@@ -39,6 +40,8 @@ class RiskLimitConfig:
     symbol_allowlist: frozenset[str] = frozenset()
     max_order_quantity: Decimal | None = None
     require_home_currency_exposure: bool = False
+    max_order_value_pct: Decimal | None = None
+    max_total_exposure_pct: Decimal | None = None
     max_order_value: Decimal | None = None
     # Account-level total-exposure cap. ``None`` preserves the legacy
     # per-order-only behavior (no runtime account-exposure check). When
@@ -91,11 +94,9 @@ class RiskLimitConfig:
     duplicate_order_window_seconds: int | None = None
     duplicate_order_max_count: int = 1
     # --- Stateful account rules (R21.3, tighten-only / fail-closed) ---
-    # Max day-over-day equity loss as a fraction of ``day_start_equity``,
-    # 0..1. Requires ``account_context.day_start_equity`` (fail-closed
-    # ``missing_day_start_equity``). The day-start equity must be supplied
-    # by the caller from a persistent snapshot store so the check is
-    # restart-safe.
+    # Rule 10: today's realized + current unrealized loss must stay below
+    # this fraction of current NAV. Requires fresh broker evidence and a
+    # durable UTC-day block; both long and short entries are checked.
     max_daily_loss_pct: Decimal | None = None
     max_margin_utilization_pct: Decimal | None = None
     margin_warning_pct: Decimal | None = None
@@ -107,6 +108,17 @@ class RiskLimitConfig:
     max_drawdown_floor_pct: Decimal | None = None
 
     def __post_init__(self) -> None:
+        for value in (self.max_order_value_pct, self.max_total_exposure_pct):
+            if value is not None and (
+                not isinstance(value, Decimal) or not value.is_finite() or value <= 0
+            ):
+                raise ValueError("exposure fractions must be finite positive Decimals")
+        if (
+            self.max_order_value_pct is not None
+            and self.max_total_exposure_pct is not None
+            and self.max_order_value_pct > self.max_total_exposure_pct
+        ):
+            raise ValueError("total exposure fraction must cover order fraction")
         for value in (self.max_margin_utilization_pct, self.margin_warning_pct):
             if value is not None and (
                 not isinstance(value, Decimal)
@@ -150,10 +162,12 @@ class RiskLimitConfig:
                 raise ValueError("duplicate_order_window_seconds must be positive")
             if self.duplicate_order_max_count < 1:
                 raise ValueError("duplicate_order_max_count must be >= 1")
-        if self.max_daily_loss_pct is not None and not (
-            Decimal("0") <= self.max_daily_loss_pct <= Decimal("1")
+        if self.max_daily_loss_pct is not None and (
+            not isinstance(self.max_daily_loss_pct, Decimal)
+            or not self.max_daily_loss_pct.is_finite()
+            or not Decimal(0) < self.max_daily_loss_pct <= Decimal(1)
         ):
-            raise ValueError("max_daily_loss_pct must be in [0, 1]")
+            raise ValueError("max_daily_loss_pct must be a finite Decimal in (0, 1]")
         if self.max_drawdown_floor_pct is not None and not (
             Decimal("0") <= self.max_drawdown_floor_pct <= Decimal("1")
         ):
@@ -276,6 +290,11 @@ class RiskGate:
             failures.append(f"strategy {strategy_id} is not enabled")
             tags.append("strategy_disabled")
 
+        order_cap, total_cap, cap_evidence = self._exposure_caps(
+            account_context,
+            failures,
+            tags,
+        )
         home_price, exposure_evidence = self._home_exposure_price(
             intent,
             estimated_price,
@@ -283,6 +302,16 @@ class RiskGate:
             failures,
             tags,
         )
+        if exposure_evidence:
+            exposure_evidence["exposure"]["order_cap"] = str(order_cap)
+            exposure_evidence["exposure"]["total_cap"] = str(total_cap)
+            exposure_evidence["exposure"]["pending_gross"] = str(
+                None
+                if account_context is None
+                else sum(
+                    account_context.pending_exposure_by_symbol.values(), Decimal(0)
+                )
+            )
         if intent.quantity is not None:
             self._check_quantity_limit(intent.quantity, failures, tags)
             self._check_order_value_limit(
@@ -290,6 +319,7 @@ class RiskGate:
                 estimated_price=home_price,
                 failures=failures,
                 tags=tags,
+                cap=order_cap,
             )
         elif intent.target_position_pct is not None:
             self._check_target_pct_limits(
@@ -297,6 +327,7 @@ class RiskGate:
                 estimated_price=home_price,
                 failures=failures,
                 tags=tags,
+                cap=order_cap,
             )
 
         # Account-level total-exposure check (tighten-only / fail-closed).
@@ -308,6 +339,7 @@ class RiskGate:
             account_context=account_context,
             failures=failures,
             tags=tags,
+            cap=total_cap,
         )
 
         # R21.2 account-level rules (all tighten-only / fail-closed). The
@@ -361,7 +393,7 @@ class RiskGate:
             failures=failures,
             tags=tags,
         )
-        self._check_daily_loss(
+        daily_loss_evidence = self._check_daily_loss(
             intent=intent,
             estimated_price=estimated_price,
             account_context=account_context,
@@ -382,13 +414,41 @@ class RiskGate:
             tags=tags,
         )
 
+        streak_evidence: dict[str, dict[str, str]] = {}
+        if self.limits.entry_rules and self.limits.entry_rules.require_loss_streak:
+            context = account_context
+            streak_evidence["loss_streak"] = {
+                **(
+                    {}
+                    if context is None
+                    else context.loss_streak_evidence.get(intent.symbol, {})
+                ),
+                "last_transaction_id": str(
+                    None if context is None else context.loss_streak_last_transaction_id
+                ),
+                "complete": str(
+                    context is not None and context.loss_streak_complete
+                ).lower(),
+                "observed_at": str(
+                    None if context is None else context.loss_streak_captured_at
+                ),
+                "error": "missing_context"
+                if context is None
+                else context.loss_streak_error or "",
+            }
         return self._finalize(
             intent,
             failures,
             tags,
             risk_context,
             (account_qty_clamp, symbol_qty_clamp),
-            {**margin_evidence, **exposure_evidence},
+            {
+                **margin_evidence,
+                **exposure_evidence,
+                **cap_evidence,
+                **daily_loss_evidence,
+                **streak_evidence,
+            },
         )
 
     def _finalize(
@@ -501,9 +561,10 @@ class RiskGate:
         estimated_price: Decimal | None,
         failures: list[str],
         tags: list[str],
+        cap: Decimal | None = None,
     ) -> None:
         has_quantity_limit = self.limits.max_order_quantity is not None
-        has_value_limit = self.limits.max_order_value is not None
+        has_value_limit = cap is not None or self.limits.max_order_value is not None
         if not has_quantity_limit and not has_value_limit:
             return
         if estimated_quantity is None:
@@ -518,6 +579,7 @@ class RiskGate:
             estimated_price=estimated_price,
             failures=failures,
             tags=tags,
+            cap=cap,
         )
 
     def _check_quantity_limit(
@@ -532,6 +594,52 @@ class RiskGate:
         ):
             failures.append("order quantity exceeds max_order_quantity")
             tags.append("max_quantity")
+
+    def _exposure_caps(
+        self,
+        context: AccountExposureContext | None,
+        failures: list[str],
+        tags: list[str],
+    ) -> tuple[Decimal | None, Decimal | None, dict[str, dict[str, str]]]:
+        order, total = self.limits.max_order_value, self.limits.max_total_exposure
+        fractions = (
+            self.limits.max_order_value_pct,
+            self.limits.max_total_exposure_pct,
+        )
+        if all(value is None for value in fractions):
+            return order, total, {}
+        nav = None if context is None else context.equity
+        fresh = (
+            context is not None
+            and 0 <= (self.clock() - context.captured_at).total_seconds() <= 60
+        )
+        valid = nav is not None and nav.is_finite() and nav > 0 and fresh
+        if not valid:
+            failures.append("fresh positive NAV required for exposure fractions")
+            tags.append("EXPOSURE")
+        else:
+            assert nav is not None
+            if fractions[0] is not None:
+                ratio_cap = nav * fractions[0]
+                order = ratio_cap if order is None else min(order, ratio_cap)
+            if fractions[1] is not None:
+                ratio_cap = nav * fractions[1]
+                total = ratio_cap if total is None else min(total, ratio_cap)
+        return (
+            order,
+            total,
+            {
+                "exposure_caps": {
+                    "nav": str(nav),
+                    "fresh": str(fresh),
+                    "passed": str(valid),
+                    "order_pct": str(fractions[0]),
+                    "total_pct": str(fractions[1]),
+                    "order_cap": str(order),
+                    "total_cap": str(total),
+                }
+            },
+        )
 
     def _home_exposure_price(
         self,
@@ -599,14 +707,16 @@ class RiskGate:
         estimated_price: Decimal | None,
         failures: list[str],
         tags: list[str],
+        cap: Decimal | None = None,
     ) -> None:
-        if self.limits.max_order_value is None:
+        cap = self.limits.max_order_value if cap is None else cap
+        if cap is None:
             return
         if estimated_price is None:
             failures.append("estimated_price is required for max_order_value")
             tags.append("missing_price")
             return
-        if quantity * estimated_price > self.limits.max_order_value:
+        if quantity * estimated_price > cap:
             failures.append("order value exceeds max_order_value")
             tags.append("max_order_value")
 
@@ -618,9 +728,10 @@ class RiskGate:
         account_context: AccountExposureContext | None,
         failures: list[str],
         tags: list[str],
+        cap: Decimal | None = None,
     ) -> Decimal | None:
         """Both entry directions add gross home notional; reduce-only exits earlier."""
-        cap = self.limits.max_total_exposure
+        cap = self.limits.max_total_exposure if cap is None else cap
         if cap is None:
             return None
 
@@ -917,43 +1028,62 @@ class RiskGate:
         account_context: AccountExposureContext | None,
         failures: list[str],
         tags: list[str],
-    ) -> None:
-        """Reject new buys when day-over-day equity loss exceeds the cap.
-
-        Tighten-only / fail-closed. Both ``day_start_equity`` and the
-        current ``equity`` must be supplied on the context; a missing
-        required input is a rejection (never a silent skip). Buys only —
-        a sell that realizes a loss is itself the protective action.
-        """
+    ) -> dict[str, dict[str, str]]:
+        """Both entry directions require fresh broker P&L and the durable latch."""
         pct = self.limits.max_daily_loss_pct
         if pct is None:
-            return
-        if account_context is None:
-            failures.append("daily-loss check required but no account context supplied")
-            tags.append("account_context_required")
-            return
-        if intent.side == "sell":
-            return
-        if account_context.day_start_equity is None:
-            failures.append(
-                "max_daily_loss_pct configured but day_start_equity missing"
+            return {}
+        context = account_context
+        now = self.clock().astimezone(UTC)
+        evidence = {"ceiling_pct": str(pct), "valid": "false"}
+        valid = False
+        breached = False
+        if context is not None:
+            stamp = context.daily_loss_captured_at
+            evidence.update(
+                {
+                    "realized_pnl": str(context.day_realized_pnl),
+                    "unrealized_pnl": str(context.day_unrealized_pnl),
+                    "nav": str(context.equity),
+                    "blocked_for_day": str(context.daily_loss_blocked),
+                    "observed_at": str(stamp),
+                    "error": context.daily_loss_error or "",
+                }
             )
-            tags.append("missing_day_start_equity")
-            return
-        if account_context.equity is None:
-            failures.append("max_daily_loss_pct configured but current equity missing")
-            tags.append("missing_equity")
-            return
-        if account_context.day_start_equity <= 0:
-            failures.append("day_start_equity must be positive for daily-loss check")
-            tags.append("missing_day_start_equity")
-            return
-        loss_pct = (
-            account_context.day_start_equity - account_context.equity
-        ) / account_context.day_start_equity
-        if loss_pct > pct:
-            failures.append("order would breach max_daily_loss_pct")
-            tags.append("max_daily_loss")
+            valid = (
+                stamp is not None
+                and stamp.tzinfo is not None
+                and stamp.astimezone(UTC).date() == now.date()
+                and 0 <= (now - stamp).total_seconds() <= 60
+                and context.daily_loss_blocked is not None
+                and context.daily_loss_error is None
+                and context.day_realized_pnl is not None
+                and context.day_unrealized_pnl is not None
+                and context.equity is not None
+            )
+            if valid:
+                assert context.day_realized_pnl is not None
+                assert context.day_unrealized_pnl is not None
+                assert context.equity is not None
+                try:
+                    breached = daily_loss_breached(
+                        context.day_realized_pnl,
+                        context.day_unrealized_pnl,
+                        context.equity,
+                        pct,
+                    ) or bool(context.daily_loss_blocked)
+                except ValueError:
+                    valid = False
+        evidence["valid"] = str(valid).lower()
+        evidence["breached"] = str(breached).lower()
+        if not valid or breached:
+            failures.append(
+                "daily loss evidence incomplete"
+                if not valid
+                else "daily loss blocks entries for this UTC day"
+            )
+            tags.extend(("DAILY_LOSS", "max_daily_loss"))
+        return {"daily_loss": evidence}
 
     def _check_entry_rules(
         self,

@@ -56,6 +56,10 @@ def _context(**overrides: object) -> AccountExposureContext:
         "equity": Decimal("100000"),
         "equity_high_water_mark": Decimal("100000"),
         "day_start_equity": Decimal("100000"),
+        "day_realized_pnl": Decimal(0),
+        "day_unrealized_pnl": Decimal(0),
+        "daily_loss_captured_at": NOW,
+        "daily_loss_blocked": False,
         "open_position_count": 0,
         "daily_open_count": 0,
         "daily_symbol_open_count": 0,
@@ -127,6 +131,7 @@ def _weekend_gate() -> RiskGate:
         clock=lambda: saturday,
     )
 
+
 def _evaluate(
     gate: RiskGate,
     *,
@@ -177,9 +182,7 @@ MATRIX = [
     ),
     pytest.param(
         "2-not-allowlisted",
-        lambda: _evaluate(
-            _gate(), intent=_intent(symbol="USD_TRY")
-        ),
+        lambda: _evaluate(_gate(), intent=_intent(symbol="USD_TRY")),
         "symbol_not_allowed",
         id="rule2-not-allowlisted",
     ),
@@ -240,9 +243,7 @@ MATRIX = [
     ),
     pytest.param(
         "9-order-value",
-        lambda: _evaluate(
-            _gate(), intent=_intent(quantity=Decimal("100000"))
-        ),
+        lambda: _evaluate(_gate(), intent=_intent(quantity=Decimal("100000"))),
         "max_order_value",
         id="rule9-order-value",
     ),
@@ -259,7 +260,7 @@ MATRIX = [
         lambda: _evaluate(
             _gate(),
             context=_context(
-                day_start_equity=Decimal("100000"), equity=Decimal("98000")
+                day_realized_pnl=Decimal("-2000"), equity=Decimal("98000")
             ),
         ),
         "max_daily_loss",
@@ -284,9 +285,7 @@ MATRIX = [
     ),
     pytest.param(
         "13-weekend",
-        lambda: _evaluate(
-            _weekend_gate(), context=_context()
-        ),
+        lambda: _evaluate(_weekend_gate(), context=_context()),
         "WEEKEND",
         id="rule13-weekend",
     ),
@@ -330,9 +329,7 @@ class TestRejectMatrix:
             limits=RiskLimitConfig(
                 trading_enabled=True,
                 symbol_allowlist=frozenset(UNIVERSE),
-                entry_rules=EntryRulePolicy(
-                    block_weekend_and_late_friday=True
-                ),
+                entry_rules=EntryRulePolicy(block_weekend_and_late_friday=True),
             ),
             kill_switch=KillSwitch(),
             clock=lambda: saturday,
@@ -398,9 +395,7 @@ class TestCloseExemptionMatrix:
 
     def test_close_is_blocked_by_the_kill_switch(self) -> None:
         gate = _gate(kill_switch=KillSwitch(active=True, reason="manual halt"))
-        close = _intent(
-            reduce_only=True, side="sell", stop_loss=None, take_profit=None
-        )
+        close = _intent(reduce_only=True, side="sell", stop_loss=None, take_profit=None)
 
         decision = _evaluate(gate, intent=close, context=_context())
 

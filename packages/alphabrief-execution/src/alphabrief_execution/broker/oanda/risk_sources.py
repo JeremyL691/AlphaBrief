@@ -35,6 +35,7 @@ from alphabrief_risk.broker_context import (
     TradeDatum,
 )
 from alphabrief_risk.exposure_aggregation import gross_home_notional
+from alphabrief_risk.loss_state import ClosedTradeResult
 
 from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -48,6 +49,7 @@ from alphabrief_execution.broker.oanda.pricing import (
     fetch_pricing,
 )
 from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
+from alphabrief_execution.broker.oanda.transaction_ops import TransactionOpsClient
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.broker.risk_context import AccountSourceDatum
 
@@ -101,9 +103,12 @@ class OandaRiskContextSources:
             summary = AccountOpsClient(self._client).account_summary(
                 request_id=f"{self._request_id}-decision-account"
             )
-            facts.update(nav=summary.nav, margin_available=summary.margin_available,
-                         margin_used=summary.margin_used,
-                         account_captured_at=self._captured_at())
+            facts.update(
+                nav=summary.nav,
+                margin_available=summary.margin_available,
+                margin_used=summary.margin_used,
+                account_captured_at=self._captured_at(),
+            )
         except Exception as exc:  # noqa: BLE001 - persist safe class, fail closed
             errors["account"] = type(exc).__name__
         try:
@@ -115,9 +120,10 @@ class OandaRiskContextSources:
                 position_units=sum(
                     (p.long_units + p.short_units for p in held), Decimal(0)
                 ),
-                position_unrealized_pnl=sum((
-                    p.long_unrealized_pl + p.short_unrealized_pl for p in held
-                ), Decimal(0)),
+                position_unrealized_pnl=sum(
+                    (p.long_unrealized_pl + p.short_unrealized_pl for p in held),
+                    Decimal(0),
+                ),
                 positions_captured_at=self._captured_at(),
             )
         except Exception as exc:  # noqa: BLE001 - empty failure is not flat position
@@ -126,7 +132,8 @@ class OandaRiskContextSources:
             price = self._prices_by_symbol().get(symbol)
             if price is not None and price.bids and price.asks:
                 facts.update(
-                    bid=price.bids[0].price, ask=price.asks[0].price,
+                    bid=price.bids[0].price,
+                    ask=price.asks[0].price,
                     spread=price.asks[0].price - price.bids[0].price,
                     quote_to_home=price.loss_conversion_factor,
                     quote_position_to_home=price.conversion_factor,
@@ -135,8 +142,11 @@ class OandaRiskContextSources:
         except Exception as exc:  # noqa: BLE001 - stale cache cannot mask failure
             errors["quote"] = type(exc).__name__
         try:
-            latest = (None if self._recon_store is None
-                      else self._recon_store.latest_snapshot())
+            latest = (
+                None
+                if self._recon_store is None
+                else self._recon_store.latest_snapshot()
+            )
             if latest is not None:
                 facts["reconciliation_captured_at"] = datetime.fromisoformat(
                     latest.captured_at
@@ -165,21 +175,22 @@ class OandaRiskContextSources:
         ]
 
     def fetch_pending_orders(self) -> list[PendingOrderDatum]:
-        orders = OrderOpsClient(self._client).list_orders(
-            status="PENDING", request_id=f"{self._request_id}-orders"
+        orders = OrderOpsClient(self._client).list_pending_orders(
+            request_id=f"{self._request_id}-orders"
         )
         return [
             PendingOrderDatum(
                 broker_order_id=order.broker_order_id,
                 symbol=order.symbol,
                 units=order.units,
+                price=order.price,
                 state=str(order.state),
             )
             for order in orders.orders
             # Dependent orders (stop loss / take profit) carry no symbol and
             # no units of their own: they ride on their trade, which the
             # positions and trades sources already cover.
-            if order.symbol is not None
+            if order.symbol is not None and not order.reduce_only
         ]
 
     def fetch_trades(self) -> list[TradeDatum]:
@@ -348,44 +359,129 @@ class OandaRiskContextSources:
         equity_high_water_mark: Decimal | None = None,
         day_start_equity: Decimal | None = None,
         day_realized_pnl: Decimal | None = None,
+        include_daily_loss: bool = False,
+        include_loss_streak: bool = False,
     ) -> AccountExposureContext:
         """Project the live account into the risk gate's context.
 
         Exposure is gross notional per symbol in the account's home
         currency, using the broker's own conversion factors; the quote
         fields come from the same pricing snapshot the gate's freshness
-        rule checks. Missing or stale held-position prices explicitly mark
+        rule checks. Pending non-reduce orders reserve additional gross notional.
+        Missing or stale held-position or pending-order prices explicitly mark
         the projection incomplete so entries fail closed.
         """
         captured = now or self._captured_at()
         summary = AccountOpsClient(self._client).account_summary(
             request_id=f"{self._request_id}-exposure"
         )
+        loss_error: str | None = None
+        loss_captured: datetime | None = None
+        if include_daily_loss:
+            loss_captured = (now or self._captured_at()).astimezone(UTC)
+            try:
+                window = TransactionOpsClient(self._client).transactions_between(
+                    loss_captured.replace(hour=0, minute=0, second=0, microsecond=0),
+                    loss_captured,
+                )
+                if window.last_transaction_id != summary.last_transaction_id:
+                    raise ValueError("account changed during P&L observation")
+                day_realized_pnl = Decimal(0)
+                for transaction in window.transactions:
+                    if transaction.transaction_type == "ORDER_FILL":
+                        if (
+                            transaction.realized_pl is None
+                            or transaction.financing is None
+                        ):
+                            raise ValueError("fill P&L incomplete")
+                        day_realized_pnl += (
+                            transaction.realized_pl + transaction.financing
+                        )
+                        for fee in (
+                            transaction.commission,
+                            transaction.guaranteed_execution_fee,
+                        ):
+                            if fee is not None:
+                                if fee < 0:
+                                    raise ValueError("negative execution fee")
+                                day_realized_pnl -= fee
+                    elif transaction.transaction_type == "DAILY_FINANCING":
+                        if transaction.financing is None:
+                            raise ValueError("financing incomplete")
+                        day_realized_pnl += transaction.financing
+                    elif transaction.realized_pl is not None:
+                        day_realized_pnl += transaction.realized_pl
+            except Exception as exc:
+                # Partial loss evidence blocks entry; never expose broker IDs.
+                day_realized_pnl = None
+                loss_error = type(exc).__name__
+        closed_results: tuple[ClosedTradeResult, ...] | None = None
+        streak_error: str | None = None
+        streak_captured: datetime | None = None
+        if include_loss_streak:
+            try:
+                closed = TradeOpsClient(self._client).closed_trade_history(
+                    expected_watermark=summary.last_transaction_id,
+                )
+                closed_results = tuple(
+                    ClosedTradeResult(
+                        trade_id=trade.broker_trade_id,
+                        symbol=trade.instrument,
+                        closed_at=trade.close_time,
+                        closing_transaction_id=str(
+                            max(map(int, trade.closing_transaction_ids))
+                        ),
+                        pnl=trade.realized_pl + trade.financing,
+                    )
+                    for trade in closed
+                    if trade.close_time is not None
+                )
+                if len(closed_results) != len(closed):
+                    raise ValueError("closed trade time unavailable")
+                streak_captured = (now or self._captured_at()).astimezone(UTC)
+            except Exception as exc:
+                # A failed history never becomes a zero-loss baseline.
+                closed_results = None
+                streak_error = type(exc).__name__
         positions = self.fetch_positions()
+        pending = self.fetch_pending_orders()
         prices = self._prices_by_symbol()
         conversions = {
-            name: price.conversion_factor for name, price in prices.items()
+            name: price.conversion_factor
+            for name, price in prices.items()
             if price.conversion_factor is not None
         }
         exposure_errors: dict[str, str] = {}
         exposure_by_symbol: dict[str, Decimal] = {}
-        for position in positions:
-            price = prices.get(position.symbol)
+        legs: list[tuple[str, Decimal, Decimal, Decimal | None, bool]] = [
+            (p.symbol, p.long_units, p.short_units, None, False) for p in positions
+        ]
+        legs.extend((o.symbol, o.units, Decimal(0), o.price, True) for o in pending)
+        pending_by_symbol: dict[str, Decimal] = {}
+        for leg_symbol, long_units, short_units, order_price, is_pending in legs:
+            price = prices.get(leg_symbol)
             if price is None or not price.bids or not price.asks:
-                exposure_errors[position.symbol] = "missing_position_quote"
+                exposure_errors[leg_symbol] = "missing_position_quote"
                 continue
             age = (captured - price.broker_time).total_seconds()
             if not 0 <= age <= 15:
-                exposure_errors[position.symbol] = "stale_position_quote"
+                exposure_errors[leg_symbol] = "stale_position_quote"
                 continue
-            factor = conversions.get(position.symbol)
+            factor = conversions.get(leg_symbol)
             if factor is None:
-                exposure_errors[position.symbol] = "missing_position_conversion"
+                exposure_errors[leg_symbol] = "missing_position_conversion"
                 continue
             mark = (price.bids[0].price + price.asks[0].price) / Decimal(2)
-            exposure_by_symbol[position.symbol] = gross_home_notional(
-                position.long_units, position.short_units, mark, factor,
+            if order_price is not None:
+                mark = max(mark, order_price)
+            notional = gross_home_notional(long_units, short_units, mark, factor)
+            exposure_by_symbol[leg_symbol] = (
+                exposure_by_symbol.get(leg_symbol, Decimal(0)) + notional
             )
+            if is_pending:
+                pending_by_symbol[leg_symbol] = (
+                    pending_by_symbol.get(leg_symbol, Decimal(0)) + notional
+                )
 
         quote_symbol = symbol or (self._symbols[0] if self._symbols else None)
         quote = prices.get(quote_symbol) if quote_symbol else None
@@ -395,6 +491,7 @@ class OandaRiskContextSources:
             quote_position_to_home=conversions,
             exposure_complete=not exposure_errors,
             exposure_errors=exposure_errors,
+            pending_exposure_by_symbol=pending_by_symbol,
             cash=summary.balance,
             account_id=summary.account_id,
             captured_at=captured,
@@ -407,6 +504,12 @@ class OandaRiskContextSources:
             equity_high_water_mark=equity_high_water_mark,
             day_start_equity=day_start_equity,
             day_realized_pnl=day_realized_pnl,
+            day_unrealized_pnl=summary.unrealized_pl if include_daily_loss else None,
+            daily_loss_captured_at=loss_captured,
+            daily_loss_blocked=False
+            if include_daily_loss and loss_error is None
+            else None,
+            daily_loss_error=loss_error,
             open_position_count=(
                 open_position_count
                 if open_position_count is not None
@@ -417,6 +520,13 @@ class OandaRiskContextSources:
             quote_captured_at=quote.broker_time if quote is not None else None,
             quote_tradeable=(quote.tradeable if quote is not None else None),
             frozen_symbols=dict(frozen_symbols or {}),
+            closed_trade_results=closed_results,
+            loss_streak_captured_at=streak_captured,
+            loss_streak_last_transaction_id=(
+                summary.last_transaction_id if closed_results is not None else None
+            ),
+            loss_streak_error=streak_error,
+            # The provider sets complete only after durable state reconciliation.
             recent_high_impact_events=dict(recent_high_impact_events or {}),
             drawdown_block_reason=drawdown_block_reason,
             current_spread=current_spread,

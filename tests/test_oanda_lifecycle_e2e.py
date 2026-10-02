@@ -12,6 +12,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request
 
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -82,7 +83,20 @@ class _FakePracticeBroker:
         if method == "GET" and path == f"{BASE}/orders":
             return json.dumps({"orders": list(self.orders.values())}).encode("utf-8")
         if method == "GET" and path == f"{BASE}/trades":
-            return json.dumps({"trades": list(self.trades.values())}).encode("utf-8")
+            params = parse_qs(urlsplit(url).query)
+            state = params.get("state", ["ALL"])[0]
+            before = params.get("beforeID", [None])[0]
+            count = int(params.get("count", ["50"])[0])
+            rows = sorted(
+                self.trades.values(), key=lambda row: int(row["id"]), reverse=True
+            )
+            rows = [
+                row
+                for row in rows
+                if (state == "ALL" or row["state"] == state)
+                and (before is None or int(row["id"]) < int(before))
+            ]
+            return json.dumps({"trades": rows[:count]}).encode("utf-8")
         if method == "GET" and path.startswith(f"{BASE}/trades/"):
             trade_id = path.split("/trades/", 1)[1]
             trade = self.trades.get(trade_id)

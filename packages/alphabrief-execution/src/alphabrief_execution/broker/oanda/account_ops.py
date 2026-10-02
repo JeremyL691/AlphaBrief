@@ -109,7 +109,7 @@ class AccountOpsClient:
                 currency=str(account.get("currency", "")).strip(),
                 balance=_decimal(account.get("balance", "0")),
                 nav=_decimal(account["NAV"]),
-                unrealized_pl=_decimal(account.get("unrealizedPL", "0")),
+                unrealized_pl=_decimal(account["unrealizedPL"]),
                 margin_used=_decimal(account["marginUsed"]),
                 margin_available=_decimal(account["marginAvailable"]),
                 open_order_count=_count(account.get("openOrderCount")),

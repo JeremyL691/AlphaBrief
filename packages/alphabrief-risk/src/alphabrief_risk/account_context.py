@@ -28,6 +28,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from alphabrief_risk.loss_state import ClosedTradeResult
+
 
 def _reject_float(value: Any) -> Any:
     """Reject ``float`` inputs so exposure figures stay Decimal-first.
@@ -47,7 +49,7 @@ class AccountExposureContext(BaseModel):
     ----------
     current_total_exposure
         Gross long + short notional the caller computed from live
-        positions (``sum(|qty| * mark_price)``). Always ``>= 0``.
+        positions plus pending non-reduce orders, in home currency. Always >= 0.
     exposure_by_symbol
         Per-symbol gross notional, keyed by upper-cased symbol. Used
         for audit / diagnostics and for per-symbol / concentration
@@ -75,12 +77,10 @@ class AccountExposureContext(BaseModel):
         the caller). Required when ``max_drawdown_floor_pct`` is
         configured; the gate fails closed if it is missing.
     day_start_equity
-        Optional equity at the start of the trading day. Required when
-        ``max_daily_loss_pct`` is configured; the gate fails closed if
-        it is missing.
+        Legacy day-result bookkeeping; rule 10 uses broker P&L instead.
     day_realized_pnl
-        Optional realized P&L accumulated since day start. Surfaced for
-        audit/diagnostics only; not gated on (advisory).
+        Broker net realized P&L since UTC midnight. Rule 10 also requires
+        current unrealized P&L, a fresh observation and the durable day latch.
     open_position_count
         Number of instruments the account currently holds. Required by the
         max-open-positions rule.
@@ -118,6 +118,7 @@ class AccountExposureContext(BaseModel):
     current_total_exposure: Decimal = Field(ge=0)
     exposure_by_symbol: dict[str, Decimal] = Field(default_factory=dict)
     quote_position_to_home: dict[str, Decimal] = Field(default_factory=dict)
+    pending_exposure_by_symbol: dict[str, Decimal] = Field(default_factory=dict)
     exposure_complete: bool = False
     exposure_errors: dict[str, str] = Field(default_factory=dict)
     cash: Decimal
@@ -129,12 +130,22 @@ class AccountExposureContext(BaseModel):
     equity_high_water_mark: Decimal | None = Field(default=None, ge=0)
     day_start_equity: Decimal | None = Field(default=None, ge=0)
     day_realized_pnl: Decimal | None = Field(default=None)
+    day_unrealized_pnl: Decimal | None = None
+    daily_loss_captured_at: datetime | None = None
+    daily_loss_blocked: bool | None = None
+    daily_loss_error: str | None = None
     open_position_count: int | None = Field(default=None, ge=0)
     daily_open_count: int | None = Field(default=None, ge=0)
     daily_symbol_open_count: int | None = Field(default=None, ge=0)
     quote_captured_at: datetime | None = None
     quote_tradeable: bool | None = None
     frozen_symbols: dict[str, str] = Field(default_factory=dict)
+    closed_trade_results: tuple[ClosedTradeResult, ...] | None = None
+    loss_streak_captured_at: datetime | None = None
+    loss_streak_last_transaction_id: str | None = None
+    loss_streak_complete: bool = False
+    loss_streak_error: str | None = None
+    loss_streak_evidence: dict[str, dict[str, str]] = Field(default_factory=dict)
     recent_high_impact_events: dict[str, str] = Field(default_factory=dict)
     drawdown_block_reason: str | None = None
     current_spread: Decimal | None = Field(default=None, ge=0)
@@ -150,13 +161,19 @@ class AccountExposureContext(BaseModel):
         "equity_high_water_mark",
         "day_start_equity",
         "day_realized_pnl",
+        "day_unrealized_pnl",
         mode="before",
     )
     @classmethod
     def _decimal_values_must_not_be_float(cls, value: Any) -> Any:
         return _reject_float(value)
 
-    @field_validator("exposure_by_symbol", "quote_position_to_home", mode="before")
+    @field_validator(
+        "exposure_by_symbol",
+        "quote_position_to_home",
+        "pending_exposure_by_symbol",
+        mode="before",
+    )
     @classmethod
     def _exposure_by_symbol_must_not_contain_floats(cls, value: Any) -> Any:
         if isinstance(value, dict):

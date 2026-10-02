@@ -82,7 +82,8 @@ def _exit_error(message: str) -> None:
 
 
 def _snapshot_loader(
-    market_store: MarketDataStore, news_store: NewsStore,
+    market_store: MarketDataStore,
+    news_store: NewsStore,
     news_health: NewsIngestionStore,
     signal_observation: SignalCandleObservation | None = None,
     refresh_errors: dict[str, str] | None = None,
@@ -99,11 +100,16 @@ def _snapshot_loader(
 
     def _loader(symbol: str) -> MarketSnapshot | None:
         now = datetime.now(UTC)
-        inputs = build_market_inputs({
-            tf: market_store.get_bar_models(
-                symbol, data_version_suffix=f":M:{tf}", source=BAR_SOURCE
-            ) for tf, _ in TIMEFRAMES
-        }, symbol=symbol, now=now)
+        inputs = build_market_inputs(
+            {
+                tf: market_store.get_bar_models(
+                    symbol, data_version_suffix=f":M:{tf}", source=BAR_SOURCE
+                )
+                for tf, _ in TIMEFRAMES
+            },
+            symbol=symbol,
+            now=now,
+        )
         bars = [bar for series in inputs.series.values() for bar in series]
         if not bars:
             return None
@@ -115,39 +121,51 @@ def _snapshot_loader(
         # Freeze the exact inputs once: evidence and prompt must describe the
         # same bounded batch, not independent database reads with different clocks.
         builder = StoredMarketSnapshotBuilder(
-            bar_loader=lambda requested: h1 or sorted(
-                bars, key=lambda bar: bar.timestamp
+            bar_loader=lambda requested: (
+                h1 or sorted(bars, key=lambda bar: bar.timestamp)
             ),
             headline_loader=lambda requested, start, end, limit: headlines,
-            max_headlines=20, clock=lambda: now,
+            max_headlines=20,
+            clock=lambda: now,
         )
         snapshot = builder.build(symbol, reference_price_override=latest.close)
         if snapshot is None:
             return None
-        return snapshot.model_copy(update={
-            "atr": inputs.atr,
-            "momentum_20d_pct": inputs.return_20d_pct,
-            "volatility_20d_pct": inputs.volatility_20d_pct,
-            "market_evidence": inputs.evidence.model_copy(update={
-                "refresh_errors": {
-                    key.split(":", 1)[1]: error
-                    for key, error in (refresh_errors or {}).items()
-                    if key.startswith(f"{symbol}:")
-                },
-            }),
-            "signal_evidence": (
-                SignalInputEvidence(observed_at=now, errors={"inputs": "not_observed"})
-                if signal_observation is None else build_signal_inputs(
-                    signal_observation, daily=inputs.series["D"], now=now
-                )
-            ),
-            # Freshness is the broker candle time, never the builder's wall clock.
-            "captured_at": inputs.evidence.latest_h1_end or latest.timestamp,
-            "news_evidence": NewsInputEvidence(
-                family_fetched_at=news_health.successful_source_family_times(now=now),
-                related_published_at={h.headline_id: h.published_at for h in headlines},
-            ),
-        })
+        return snapshot.model_copy(
+            update={
+                "atr": inputs.atr,
+                "momentum_20d_pct": inputs.return_20d_pct,
+                "volatility_20d_pct": inputs.volatility_20d_pct,
+                "market_evidence": inputs.evidence.model_copy(
+                    update={
+                        "refresh_errors": {
+                            key.split(":", 1)[1]: error
+                            for key, error in (refresh_errors or {}).items()
+                            if key.startswith(f"{symbol}:")
+                        },
+                    }
+                ),
+                "signal_evidence": (
+                    SignalInputEvidence(
+                        observed_at=now, errors={"inputs": "not_observed"}
+                    )
+                    if signal_observation is None
+                    else build_signal_inputs(
+                        signal_observation, daily=inputs.series["D"], now=now
+                    )
+                ),
+                # Freshness is the broker candle time, never the builder's wall clock.
+                "captured_at": inputs.evidence.latest_h1_end or latest.timestamp,
+                "news_evidence": NewsInputEvidence(
+                    family_fetched_at=news_health.successful_source_family_times(
+                        now=now
+                    ),
+                    related_published_at={
+                        h.headline_id: h.published_at for h in headlines
+                    },
+                ),
+            }
+        )
 
     return _loader
 
@@ -158,27 +176,33 @@ def _signal_observation(market: MarketDataStore) -> SignalCandleObservation:
 
 
 def _refresh_market_bars(
-    market: MarketDataStore, symbols: tuple[str, ...],
+    market: MarketDataStore,
+    symbols: tuple[str, ...],
 ) -> dict[str, str]:
     """Require an actual complete practice response for every FX window."""
     from alphabrief_execution.broker.oanda.market_sync import sync_bars
 
     _, errors = sync_bars(
-        build_oanda_paper_client(), instruments=symbols, store=market,
+        build_oanda_paper_client(),
+        instruments=symbols,
+        store=market,
         require_full_window=True,
     )
     return errors
 
 
 def _risk_gate(
-    instruments: tuple[str, ...], *, nav: Decimal | None = None,
+    instruments: tuple[str, ...],
+    *,
+    nav: Decimal | None = None,
     require_nav: bool = False,
 ) -> RiskGate:
     """The reviewed risk boundary for one cycle (PROJECT_GUIDE 5.6/5.7).
 
     ``nav`` selects the exposure-cap regime. With a live NAV (the
     risk-sized production path) the caps are the guide's fractions of NAV:
-    50% of NAV per order and 150% of NAV of total notional. Without one
+    50% of current NAV per order and 150% of current NAV of total notional,
+    recomputed from each gate account context. Without one
     (the S9 fixed-units pre-run) the reviewed absolute caps from
     ``config/paper_execution_policy.yaml`` apply instead.
     """
@@ -186,9 +210,11 @@ def _risk_gate(
     from alphabrief_risk.entry_rules import EntryRulePolicy
 
     policy = load_paper_execution_policy(load_settings().execution_policy_file)
+    max_order_value: Decimal | None
+    max_total_exposure: Decimal | None
     if nav is not None and nav > 0:
-        max_order_value = nav * MAX_ORDER_NOTIONAL_PCT
-        max_total_exposure = nav * MAX_TOTAL_EXPOSURE_PCT
+        max_order_value = None
+        max_total_exposure = None
     else:
         max_order_value = policy.max_order_notional
         max_total_exposure = policy.max_total_exposure
@@ -202,10 +228,17 @@ def _risk_gate(
             trading_enabled=not require_nav or (nav is not None and nav > 0),
             symbol_allowlist=frozenset(instruments),
             require_home_currency_exposure=True,
+            max_order_value_pct=(
+                MAX_ORDER_NOTIONAL_PCT if nav is not None and nav > 0 else None
+            ),
+            max_total_exposure_pct=(
+                MAX_TOTAL_EXPOSURE_PCT if nav is not None and nav > 0 else None
+            ),
             max_order_value=max_order_value,
             max_total_exposure=max_total_exposure,
             max_margin_utilization_pct=Decimal("0.30"),
             margin_warning_pct=Decimal("0.20"),
+            max_daily_loss_pct=Decimal("0.01"),
             entry_rules=EntryRulePolicy(
                 # Rule 3: quotes must be fresh and tradeable.
                 max_quote_age_seconds=15,
@@ -225,6 +258,7 @@ def _risk_gate(
                 # same-period samples (5 samples minimum).
                 max_spread_median_multiplier=Decimal("2"),
                 min_spread_samples=5,
+                require_loss_streak=True,
                 # Rule 1 (freeze part) and rule 2 (CURRENCY classification).
                 require_unfrozen=True,
                 require_currency_type=True,
@@ -238,9 +272,7 @@ def _risk_gate(
     )
 
 
-def _risk_sources(
-    symbols: tuple[str, ...], *, recon_store: Any | None = None
-) -> Any:
+def _risk_sources(symbols: tuple[str, ...], *, recon_store: Any | None = None) -> Any:
     """The live OANDA risk-data sources for one cycle."""
     from alphabrief_execution.broker.oanda.risk_sources import (
         OandaRiskContextSources,
@@ -251,7 +283,8 @@ def _risk_sources(
         build_oanda_paper_client(),
         symbols=symbols,
         recon_store=(
-            recon_store if recon_store is not None
+            recon_store
+            if recon_store is not None
             else BrokerReconStore(db_path=_paths.db_path())
         ),
     )
@@ -264,6 +297,7 @@ def _account_context_provider(
     store: AiTradingStore,
     news_store: Any | None = None,
     universe: tuple[str, ...] = (),
+    loss_store: Any | None = None,
 ) -> Any:
     """Fetch the broker-fresh account context for each risk evaluation.
 
@@ -275,14 +309,10 @@ def _account_context_provider(
 
     def _build(symbol: str) -> Any:
         total, per_symbol = store.count_daily_opens(trading_day=trading_day)
-        events = (
-            _high_impact_event_map(news_store)
-            if news_store is not None
-            else {}
-        )
+        events = _high_impact_event_map(news_store) if news_store is not None else {}
         verdict = _drawdown_verdict(sources)
         current_spread, recent_spreads = _spread_facts(sources, symbol)
-        return sources.account_exposure_context(
+        context = sources.account_exposure_context(
             symbol=symbol,
             symbol_types=_instrument_types(universe),
             daily_open_count=total,
@@ -291,7 +321,98 @@ def _account_context_provider(
             drawdown_block_reason=verdict.reason if verdict.blocked else None,
             current_spread=current_spread,
             recent_spreads=recent_spreads,
+            include_daily_loss=True,
+            include_loss_streak=True,
         )
+        checked_at = datetime.now(UTC)
+        stamp = context.daily_loss_captured_at
+        daily_fresh = (
+            stamp is not None
+            and stamp.tzinfo is not None
+            and stamp.astimezone(UTC).date() == checked_at.date()
+            and 0 <= (checked_at - stamp).total_seconds() <= 60
+        )
+        context = context.model_copy(update={"daily_loss_blocked": None})
+        if (
+            loss_store is not None
+            and daily_fresh
+            and context.daily_loss_error is None
+            and context.day_realized_pnl is not None
+            and context.day_unrealized_pnl is not None
+            and context.equity is not None
+        ):
+            try:
+                blocked = loss_store.observe_daily_loss(
+                    context.account_id,
+                    observed_at=stamp,
+                    realized_pnl=context.day_realized_pnl,
+                    unrealized_pnl=context.day_unrealized_pnl,
+                    nav=context.equity,
+                    ceiling_pct=Decimal("0.01"),
+                )
+                context = context.model_copy(update={"daily_loss_blocked": blocked})
+            except Exception:
+                context = context.model_copy(
+                    update={"daily_loss_error": "loss_state_unavailable"}
+                )
+        streak_stamp = context.loss_streak_captured_at
+        if (
+            loss_store is not None
+            and context.closed_trade_results is not None
+            and context.loss_streak_error is None
+            and context.loss_streak_last_transaction_id is not None
+            and streak_stamp is not None
+            and streak_stamp.tzinfo is not None
+            and 0 <= (checked_at - streak_stamp).total_seconds() <= 60
+        ):
+            try:
+                states = loss_store.observe_closed_trades(
+                    context.account_id,
+                    trades=context.closed_trade_results,
+                    observed_at=streak_stamp,
+                    last_transaction_id=context.loss_streak_last_transaction_id,
+                )
+                frozen = dict(context.frozen_symbols)
+                evidence: dict[str, dict[str, str]] = {}
+                for instrument in set(universe) | set(states) | {symbol}:
+                    state = states.get(instrument)
+                    deadline = None if state is None else state.frozen_until
+                    blocked = deadline is not None and checked_at < deadline
+                    if blocked and deadline is not None:
+                        frozen[instrument] = (
+                            "three losing closed trades; frozen until "
+                            + deadline.isoformat()
+                        )
+                    evidence[instrument] = {
+                        "consecutive_losses": str(
+                            0 if state is None else state.consecutive_losses
+                        ),
+                        "frozen_until": str(deadline),
+                        "blocked": str(blocked).lower(),
+                        "last_trade_id": str(
+                            None if state is None else state.last_trade_id
+                        ),
+                        "last_close_transaction_id": str(
+                            None if state is None else state.last_close_transaction_id
+                        ),
+                    }
+                context = context.model_copy(
+                    update={
+                        "loss_streak_complete": True,
+                        "frozen_symbols": frozen,
+                        "loss_streak_evidence": evidence,
+                    }
+                )
+            except Exception:
+                context = context.model_copy(
+                    update={
+                        "loss_streak_complete": False,
+                        "loss_streak_error": "loss_state_unavailable",
+                    }
+                )
+        else:
+            context = context.model_copy(update={"loss_streak_complete": False})
+        return context
 
     return _build
 
@@ -313,6 +434,7 @@ def _instrument_types(symbols: tuple[str, ...]) -> dict[str, str]:
         if isinstance(raw_type, str) and raw_type:
             types[symbol] = raw_type
     return types
+
 
 def _spread_facts(
     sources: Any, symbol: str
@@ -440,9 +562,11 @@ def _nav(sources: Any) -> Decimal | None:
 
 
 def _snapshot_refresher(
-    sources: Any, store: AiTradingStore,
+    sources: Any,
+    store: AiTradingStore,
 ) -> Callable[[MarketSnapshot], MarketSnapshot]:
     """Observe broker inputs at each model/submit boundary; never fill missing facts."""
+
     def refresh(snapshot: MarketSnapshot) -> MarketSnapshot:
         try:
             facts: BrokerInputFacts = sources.decision_input_facts(snapshot.symbol)
@@ -456,10 +580,12 @@ def _snapshot_refresher(
             )
             facts = facts.model_copy(update={"daily_open_count": count})
         except Exception as exc:  # noqa: BLE001 - an unknown counter is not zero
-            facts = facts.model_copy(update={
-                "daily_open_count": None,
-                "errors": {**facts.errors, "daily_opens": type(exc).__name__},
-            })
+            facts = facts.model_copy(
+                update={
+                    "daily_open_count": None,
+                    "errors": {**facts.errors, "daily_opens": type(exc).__name__},
+                }
+            )
         return snapshot.model_copy(update={"broker_evidence": facts})
 
     return refresh
@@ -564,7 +690,8 @@ def _require_instrument(instrument: str) -> str:
 
 
 def _execution_backend(
-    *, symbols: tuple[str, ...] = DEFAULT_UNIVERSE,
+    *,
+    symbols: tuple[str, ...] = DEFAULT_UNIVERSE,
     sources: Any | None = None,
     decision_binding: DecisionBindingService | None = None,
 ) -> ExternalPaperExecutionBackend:
@@ -585,10 +712,14 @@ def _execution_backend(
 
 @contextmanager
 def _open_trading_cycle(
-    *, symbols: tuple[str, ...], trading: TradingMode,
-    enabled: bool = True, database: Path | None = None,
+    *,
+    symbols: tuple[str, ...],
+    trading: TradingMode,
+    enabled: bool = True,
+    database: Path | None = None,
     quantity_override: Decimal | None = None,
-    direction_override: str | None = None, override_reason: str | None = None,
+    direction_override: str | None = None,
+    override_reason: str | None = None,
 ) -> Iterator[DailyTradingCycle]:
     """One production composition and bounded resource lifetime for all rounds."""
     from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -619,13 +750,21 @@ def _open_trading_cycle(
         resources.callback(decisions.close)
         warnings = HeartbeatStore(db_path=resolved)
         resources.callback(warnings.close)
+        from alphabrief_risk.loss_state import LossStateStore
+
+        losses = LossStateStore(db_path=resolved)
+        resources.callback(losses.close)
 
         def record_warning(decision: RiskDecision) -> None:
             warnings.record_alert(
-                severity="warning", source="risk_gate", task_name="margin",
+                severity="warning",
+                source="risk_gate",
+                task_name="margin",
                 message="MARGIN_WARNING: margin utilization exceeds 20%",
-                payload={"decision_id": decision.decision_id,
-                         "rule_evidence": decision.rule_evidence},
+                payload={
+                    "decision_id": decision.decision_id,
+                    "rule_evidence": decision.rule_evidence,
+                },
             )
 
         nav = _nav(sources) if quantity_override is None else None
@@ -636,10 +775,12 @@ def _open_trading_cycle(
             ),
             execution_backend=(
                 _execution_backend(
-                    symbols=symbols, sources=sources,
+                    symbols=symbols,
+                    sources=sources,
                     decision_binding=DecisionBindingService(decisions),
                 )
-                if trading == "on" else _DisabledBackend()
+                if trading == "on"
+                else _DisabledBackend()
             ),
             store=store,
             snapshot_loader=_snapshot_loader(
@@ -652,8 +793,12 @@ def _open_trading_cycle(
             override_reason=override_reason,
             trading_mode=trading,
             account_context_provider=_account_context_provider(
-                sources, trading_day=datetime.now(UTC).date().isoformat(),
-                store=store, news_store=news, universe=symbols,
+                sources,
+                trading_day=datetime.now(UTC).date().isoformat(),
+                store=store,
+                news_store=news,
+                universe=symbols,
+                loss_store=losses,
             ),
             sizing_provider=_sizing_provider(sources),
             model_budget=_model_budget(calls),
@@ -728,8 +873,11 @@ def run_cmd(
             _exit_error("--force-direction requires --reason")
 
     with _open_trading_cycle(
-        symbols=symbols, trading=trading, quantity_override=parsed_units,
-        direction_override=force_direction, override_reason=reason,
+        symbols=symbols,
+        trading=trading,
+        quantity_override=parsed_units,
+        direction_override=force_direction,
+        override_reason=reason,
     ) as cycle:
         record = cycle.run(list(symbols))
 

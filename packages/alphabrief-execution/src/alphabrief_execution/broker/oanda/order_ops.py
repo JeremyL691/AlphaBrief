@@ -58,6 +58,7 @@ class OrderStateResult(BaseModel):
     units: Decimal = Decimal("0")
     #: The trade a dependent order belongs to, when the broker reports one.
     trade_id: str | None = None
+    reduce_only: bool = False
     price: Decimal | None = None
     submitted_at: datetime | None = None
     request_id: str = Field(min_length=1)
@@ -155,16 +156,12 @@ class OrderOpsClient:
             raise OrderOperationError("protocol_error", "create response is not JSON")
         create_tx = body.get("orderCreateTransaction")
         fill_tx = body.get("orderFillTransaction")
-        if not isinstance(create_tx, dict) or not isinstance(
-            create_tx.get("id"), str
-        ):
+        if not isinstance(create_tx, dict) or not isinstance(create_tx.get("id"), str):
             raise OrderOperationError(
                 "protocol_error", "create response missing transaction"
             )
         broker_order_id = str(create_tx["id"])
-        state: OrderStateValue = (
-            "FILLED" if isinstance(fill_tx, dict) else "PENDING"
-        )
+        state: OrderStateValue = "FILLED" if isinstance(fill_tx, dict) else "PENDING"
         result = OrderCreateResult(
             broker_order_id=broker_order_id,
             client_order_id=client_order_id,
@@ -215,6 +212,80 @@ class OrderOpsClient:
             raise OrderOperationError(
                 "protocol_error", f"order parse failed: {exc}"
             ) from exc
+
+    def list_pending_orders(self, *, request_id: str | None = None) -> OrderListResult:
+        """Read the complete pending snapshot, never a truncated historical page."""
+        response = self._client.request(
+            "GET",
+            self._client.account_path("/pendingOrders"),
+        )
+        body = response.json_body
+        if not isinstance(body, dict) or not isinstance(body.get("orders"), list):
+            raise OrderOperationError("protocol_error", "pending orders missing")
+        orders: list[OrderStateResult] = []
+        seen: set[str] = set()
+        dependent_types = {
+            "STOP_LOSS",
+            "TAKE_PROFIT",
+            "TRAILING_STOP_LOSS",
+            "GUARANTEED_STOP_LOSS",
+        }
+        for row in body["orders"]:
+            if not isinstance(row, dict) or row.get("state") != "PENDING":
+                raise OrderOperationError("protocol_error", "invalid pending order row")
+            if row.get("instrument"):
+                if row.get("type") not in {
+                    "MARKET",
+                    "LIMIT",
+                    "STOP",
+                    "MARKET_IF_TOUCHED",
+                }:
+                    raise OrderOperationError(
+                        "protocol_error", "unknown pending entry type"
+                    )
+                if row["type"] != "MARKET" and row.get("price") is None:
+                    raise OrderOperationError(
+                        "protocol_error", "pending entry price missing"
+                    )
+                raw = row.get("units")
+                if raw is None or isinstance(raw, (float, bool)):
+                    raise OrderOperationError(
+                        "protocol_error", "pending units missing or invalid"
+                    )
+                try:
+                    units = Decimal(str(raw))
+                    if not units.is_finite() or units == 0:
+                        raise ValueError("invalid units")
+                except (ValueError, ArithmeticError) as exc:
+                    raise OrderOperationError(
+                        "protocol_error", "invalid pending units"
+                    ) from exc
+            elif row.get("type") not in dependent_types or not row.get("tradeID"):
+                raise OrderOperationError(
+                    "protocol_error", "unidentified pending order"
+                )
+            if isinstance(row.get("price"), (float, bool)):
+                raise OrderOperationError("protocol_error", "invalid pending price")
+            try:
+                order = self._order_state_from_row(row)
+            except (ValueError, ArithmeticError) as exc:
+                raise OrderOperationError(
+                    "protocol_error", "invalid pending order"
+                ) from exc
+            if order.price is not None and (
+                not order.price.is_finite() or order.price <= 0
+            ):
+                raise OrderOperationError("protocol_error", "invalid pending price")
+            if order.broker_order_id in seen:
+                raise OrderOperationError("protocol_error", "duplicate pending order")
+            seen.add(order.broker_order_id)
+            orders.append(order)
+        return OrderListResult(
+            orders=tuple(orders),
+            page=1,
+            has_more=False,
+            request_id=request_id or "pending-orders",
+        )
 
     def list_orders(
         self,
@@ -321,6 +392,7 @@ class OrderOpsClient:
                 state=_parse_state(str(row.get("state", ""))),
                 units=Decimal(str(row.get("units") or "0")),
                 trade_id=str(row.get("tradeID") or "").strip() or None,
+                reduce_only=row.get("positionFill") == "REDUCE_ONLY",
                 price=(
                     Decimal(str(row["price"]))
                     if row.get("price") not in (None, "")
