@@ -13,6 +13,7 @@ from time import perf_counter
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from alphabrief_core.secrets import scrub_payload
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from alphabrief_models.model_budget import ModelBudgetGuard, ModelCallKind
@@ -187,6 +188,16 @@ class ModelCallRecord(AlphaBriefModelSchema):
     snapshot_id: str | None = None
     cycle_key: str | None = None
     created_at: datetime
+    audit_payload: dict[str, Any] | None = None
+
+    @field_validator("audit_payload")
+    @classmethod
+    def _scrub_audit(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        scrubbed = scrub_payload(value)
+        assert isinstance(scrubbed, dict)
+        return scrubbed
 
     @field_validator("created_at")
     @classmethod
@@ -496,6 +507,7 @@ class ModelGateway:
                 output_tokens=response.output_tokens,
                 cost_estimate=response.cost_estimate,
                 call_id=call_id,
+                response=response,
             )
             self._emit(record)
             if (
@@ -547,6 +559,7 @@ class ModelGateway:
         output_tokens: int | None = None,
         cost_estimate: Decimal | None = None,
         call_id: str | None = None,
+        response: ModelResponse | None = None,
     ) -> ModelCallRecord:
         return ModelCallRecord(
             call_id=call_id or self._call_id_factory(),
@@ -568,4 +581,14 @@ class ModelGateway:
             snapshot_id=request.snapshot_id,
             cycle_key=request.cycle_key,
             created_at=self._clock(),
+            audit_payload={
+                "request_metadata": request.metadata,
+                "call_kind": request.call_kind,
+                "output_text": None if response is None else response.output_text,
+                "structured_output": None
+                if response is None
+                else response.structured_output,
+                "response_status": None if response is None else response.status,
+                "finish_reason": None if response is None else response.finish_reason,
+            },
         )

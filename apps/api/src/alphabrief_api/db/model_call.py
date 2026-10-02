@@ -18,6 +18,7 @@ migration entry, which can adopt the same name with ``IF NOT EXISTS``.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -59,7 +60,8 @@ CREATE TABLE IF NOT EXISTS model_call_records (
     schema_verdict  TEXT,
     snapshot_id     TEXT,
     cycle_key       TEXT,
-    created_at      TIMESTAMPTZ NOT NULL
+    created_at      TIMESTAMPTZ NOT NULL,
+    audit_payload   JSON
 )
 """
 
@@ -109,6 +111,10 @@ class ModelCallStore:
         self._conn = duckdb.connect(str(self._db_path), read_only=read_only)
         if not read_only:
             self._conn.execute(_CREATE_TABLE_SQL)
+            self._conn.execute(
+                "ALTER TABLE model_call_records "
+                "ADD COLUMN IF NOT EXISTS audit_payload JSON"
+            )
             self._conn.execute(_CREATE_CHANNEL_STATE_SQL)
             self._conn.execute("""CREATE TABLE IF NOT EXISTS model_call_reservations (
                 call_id TEXT PRIMARY KEY, provider TEXT NOT NULL,
@@ -123,8 +129,21 @@ class ModelCallStore:
                 PRIMARY KEY(channel, day))""")
             self._conn.execute("""CREATE TABLE IF NOT EXISTS model_budget_round_mutex (
                 round_key TEXT PRIMARY KEY, revision BIGINT NOT NULL)""")
+        columns = {
+            row[1]
+            for row in self._conn.execute(
+                "PRAGMA table_info('model_call_records')"
+            ).fetchall()
+        }
+        self._select_columns = _SELECT_COLUMNS + (
+            ", audit_payload"
+            if "audit_payload" in columns
+            else ", NULL AS audit_payload"
+        )
 
     def save_call(self, record: ModelCallRecord) -> str:
+        # Revalidate model_copy callers before accepting untrusted audit content.
+        record = ModelCallRecord.model_validate(record.model_dump())
         with self._lock:
             """Persist one terminal call record idempotently and return its ID.
 
@@ -149,9 +168,9 @@ class ModelCallStore:
                     prompt_version, input_hash, output_hash, latency_ms,
                     cost_estimate, status, classification, error_type,
                     input_tokens, output_tokens, retry_count, schema_verdict,
-                    snapshot_id, cycle_key, created_at
+                    snapshot_id, cycle_key, created_at, audit_payload
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     record.call_id,
@@ -174,6 +193,13 @@ class ModelCallStore:
                     record.snapshot_id,
                     record.cycle_key,
                     record.created_at,
+                    None
+                    if record.audit_payload is None
+                    else json.dumps(
+                        record.model_dump(mode="json")["audit_payload"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
                 ],
             )
             return record.call_id
@@ -181,7 +207,7 @@ class ModelCallStore:
     def get_call(self, call_id: str) -> dict[str, Any] | None:
         """Return one call record by ID, or ``None``."""
         row = self._conn.execute(
-            f"SELECT {_SELECT_COLUMNS} FROM model_call_records WHERE call_id = ?",
+            f"SELECT {self._select_columns} FROM model_call_records WHERE call_id = ?",
             [call_id],
         ).fetchone()
         if row is None:
@@ -196,7 +222,7 @@ class ModelCallStore:
         """Return all call records paginated (newest first)."""
         rows = self._conn.execute(
             f"""
-            SELECT {_SELECT_COLUMNS}
+            SELECT {self._select_columns}
             FROM model_call_records
             ORDER BY created_at DESC, call_id DESC
             LIMIT ? OFFSET ?
@@ -209,7 +235,7 @@ class ModelCallStore:
         """Return every call record bound to one cycle key (newest first)."""
         rows = self._conn.execute(
             f"""
-            SELECT {_SELECT_COLUMNS}
+            SELECT {self._select_columns}
             FROM model_call_records
             WHERE cycle_key = ?
             ORDER BY created_at DESC, call_id DESC
@@ -222,7 +248,7 @@ class ModelCallStore:
         """Return every call record bound to one snapshot ID (newest first)."""
         rows = self._conn.execute(
             f"""
-            SELECT {_SELECT_COLUMNS}
+            SELECT {self._select_columns}
             FROM model_call_records
             WHERE snapshot_id = ?
             ORDER BY created_at DESC, call_id DESC
@@ -482,6 +508,7 @@ def _row_to_dict(row: tuple[Any, ...]) -> dict[str, Any]:
         "snapshot_id": row[17],
         "cycle_key": row[18],
         "created_at": str(row[19]),
+        "audit_payload": None if row[20] is None else json.loads(row[20]),
     }
 
 
