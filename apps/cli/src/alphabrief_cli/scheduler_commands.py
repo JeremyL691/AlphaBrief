@@ -26,7 +26,8 @@ import logging
 import os
 import signal
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +36,9 @@ from typing import Any, cast
 import typer
 from alphabrief_core import (
     PaperExecutionPolicy,
+    RuntimeLock,
+    RuntimeLockError,
+    account_runtime_lock,
     load_paper_execution_policy,
     load_settings,
 )
@@ -55,13 +59,8 @@ from alphabrief_execution.operations.scheduler import (
     SchedulerStartupBlockedError,
     build_default_tasks,
 )
-from alphabrief_risk import RiskGate, RiskLimitConfig
+from alphabrief_news.ingestion import NewsIngestionStore
 from alphabrief_trader import (
-    DailyTradingCycle,
-    ExternalPaperExecutionBackend,
-    StoredMarketSnapshotBuilder,
-    TradingCommittee,
-    build_ai_trading_committee,
     is_ai_trading_enabled,
 )
 
@@ -380,7 +379,6 @@ def _configure_logging() -> None:
     default level is INFO when ``ALPHABRIEF_LOG_LEVEL`` is unset or
     invalid, which matches the runbook's "logs visible" expectation.
     """
-    import logging
 
     raw = os.environ.get("ALPHABRIEF_LOG_LEVEL", "INFO").upper().strip()
     level = getattr(logging, raw, logging.INFO)
@@ -401,23 +399,22 @@ def trading_mode() -> str:
     return "on" if raw == "on" else "off"
 
 
-def _build_ai_committee(database: Path | None = None) -> TradingCommittee:
-    """Build the configured AI committee, persisting every model call.
+def _acquire_runtime_ownership() -> tuple[ExitStack, RuntimeLock]:
+    """Acquire directory and trading-account ownership before any runtime work."""
+    from alphabrief_execution.broker.errors import BrokerAuthError
+    from alphabrief_execution.broker.oanda.config import read_oanda_credentials
 
-    The scheduler is the unattended runtime, so its committee must write
-    the same durable model-call evidence as the API: channel, model,
-    latency, token usage, status, and error code per terminal call.
-    """
-    from alphabrief_api.db.model_call import ModelCallStore
-
-    sink = None
-    if database is not None:
-        store = ModelCallStore(db_path=database)
-
-        def sink(record: object) -> None:
-            store.save_call(record)  # type: ignore[arg-type]
-
-    return build_ai_trading_committee(record_sink=sink)
+    ownership = ExitStack()
+    try:
+        lock = ownership.enter_context(RuntimeLock())
+        if trading_mode() == "on":
+            _, account_id = read_oanda_credentials()
+            ownership.enter_context(account_runtime_lock(account_id))
+    except (RuntimeLockError, BrokerAuthError, OSError) as exc:
+        ownership.close()
+        print(f"error: {exc}", file=sys.stderr)
+        raise typer.Exit(code=2) from exc
+    return ownership, lock
 
 
 # Default AI cycle universe: OANDA practice FX majors. Operators can
@@ -554,63 +551,87 @@ def _ingest_ai_news(
     start = now - timedelta(hours=lookback_hours)
     data_version = f"ai-precycle-{source}-v1"
 
+    from uuid import uuid4
+
+    from alphabrief_news.ingestion import NewsIngestionResult, classify_fetch_failure
     from alphabrief_news.pipeline import prepare_headlines
     from alphabrief_news.providers import NewsProviderError
     from alphabrief_news.types import NewsFetchQuery
 
-    try:
-        provider = _build_news_provider(source)
-    except (NewsProviderError, ValueError) as exc:
-        print(f"scheduler: news pre-cycle ingest disabled: {exc}", file=sys.stderr)
-        return 0
-
     ingestion_store = _news_ingestion_store()
     inserted_total = 0
-    for feed in feeds:
-        query = NewsFetchQuery(
-            symbols=[feed],
-            start=start,
-            end=now,
-            limit=limit,
-            data_version=data_version,
-        )
+    try:
+        provider = None
+        build_failure = "invalid_config"
         try:
-            headlines = provider.fetch_headlines(query)
-        except NewsProviderError as exc:
-            print(
-                f"scheduler: news pre-cycle ingest failed for {feed}: "
-                f"[{exc.code}] {exc}",
-                file=sys.stderr,
+            provider = _build_news_provider(source)
+        except (NewsProviderError, ValueError) as exc:
+            build_failure = (
+                exc.code if isinstance(exc, NewsProviderError) else "invalid_config"
             )
-            continue
-        # One deterministic pass: sanitize untrusted text, record
-        # provenance, and deduplicate (PROJECT_GUIDE S4-5). Headlines keep
-        # their currency-relevance tags from the provider — they are never
-        # re-tagged with every traded symbol.
-        prepared = prepare_headlines(
-            headlines,
-            source=feed,
-            correlation_id=f"precycle-{feed}-{now.strftime('%Y%m%dT%H%M%SZ')}",
-            clock=lambda: now,
-        )
-        tagged = [
-            _tag_ai_news_headline(
-                headline,
-                feed=feed,
+            print("scheduler: news provider unavailable", file=sys.stderr)
+
+        for feed in feeds:
+            correlation_id = f"precycle-{feed}-{uuid4().hex}"
+
+            def record_failure(
+                code: str, *, feed: str = feed, correlation_id: str = correlation_id
+            ) -> None:
+                ingestion_store.persist(NewsIngestionResult(
+                    source=feed, correlation_id=correlation_id,
+                    fetch_outcome=classify_fetch_failure(code), fetched_at=now,
+                ))
+                # Provider messages can contain URLs or credentials. Only
+                # the classified outcome is logged or persisted.
+                print(
+                    f"scheduler: news fetch failed for {feed}: "
+                    f"{classify_fetch_failure(code)}", file=sys.stderr,
+                )
+
+            if provider is None:
+                record_failure(build_failure)
+                continue
+            query = NewsFetchQuery(
+                symbols=[feed], start=start, end=now, limit=limit,
                 data_version=data_version,
             )
-            for headline in prepared.headlines
-        ]
-        inserted_total += int(news_store.insert_headlines(tagged))
-        if prepared.ingestion is not None:
-            ingestion_store.persist(prepared.ingestion)
-        if prepared.dropped:
-            print(
-                f"scheduler: withheld {len(prepared.dropped)} headline(s) "
-                f"from {feed} for prompt-injection patterns (hashes kept)",
-                file=sys.stderr,
-            )
-    return inserted_total
+            try:
+                headlines = provider.fetch_headlines(query)
+            except NewsProviderError as exc:
+                record_failure(exc.code)
+                continue
+            except TimeoutError:
+                record_failure("network_error")
+                continue
+            except Exception:  # noqa: BLE001 - persist unknown provider failures safely
+                record_failure("unexpected_provider_failure")
+                continue
+            # Sanitize and deduplicate once; health and item provenance commit
+            # together, even for an empty batch. No fabricated news fallback.
+            try:
+                prepared = prepare_headlines(
+                    headlines, source=feed, correlation_id=correlation_id,
+                    clock=lambda: now,
+                )
+            except (ValueError, TypeError):
+                record_failure("parse_error")
+                continue
+            tagged = [
+                _tag_ai_news_headline(headline, feed=feed, data_version=data_version)
+                for headline in prepared.headlines
+            ]
+            inserted_total += int(news_store.insert_headlines(tagged))
+            if prepared.ingestion is not None:
+                ingestion_store.persist(prepared.ingestion)
+            if prepared.dropped:
+                print(
+                    f"scheduler: withheld {len(prepared.dropped)} headline(s) "
+                    f"from {feed} for prompt-injection patterns (hashes kept)",
+                    file=sys.stderr,
+                )
+        return inserted_total
+    finally:
+        ingestion_store.close()
 
 
 def _configured_news_feeds() -> tuple[str, ...]:
@@ -652,10 +673,8 @@ def _tag_ai_news_headline(
     )
 
 
-def _news_ingestion_store() -> Any:
+def _news_ingestion_store() -> NewsIngestionStore:
     """The durable ingestion-provenance store for the pre-cycle fetch."""
-    from alphabrief_news.ingestion import NewsIngestionStore
-
     return NewsIngestionStore(db_path=_paths.db_path())
 
 
@@ -713,7 +732,7 @@ def _reconcile_runner(recon_store: BrokerReconStore) -> Callable[[str], None]:
 
 def _ai_cycle_factory(
     *, db_path: Path
-) -> Callable[..., Awaitable[None]]:
+) -> Callable[..., Coroutine[Any, Any, None]]:
     """Build an ``on_ai_cycle`` coroutine bound to ``db_path``.
 
     The cycle runs the AI Trading Committee for the operator-curated
@@ -721,94 +740,36 @@ def _ai_cycle_factory(
     ``scheduler run`` enables the task only when
     ``ALPHABRIEF_AI_TRADING_ENABLED`` is truthy.
     """
-    from alphabrief_api.db import (
-        AiTradingStore as _Store,
-    )
-    from alphabrief_api.db import (
-        MarketDataStore as _MarketDataStore,
-    )
-    from alphabrief_api.db import (
-        NewsStore as _NewsStore,
-    )
+    from alphabrief_api.db import NewsStore
+
+    from alphabrief_cli.cycle_commands import TradingMode, _open_trading_cycle
+
+    def _run_cycle(*, cycle_key: str | None = None) -> None:
+        database = db_path / _paths.DATABASE_NAME
+        universe = _ai_scheduler_universe()
+        policy = load_paper_execution_policy(load_settings().execution_policy_file)
+        _assert_external_policy_matches_broker(policy)
+        with ExitStack() as resources:
+            news = NewsStore(db_path=database)
+            resources.callback(news.close)
+            _run_ai_pre_cycle_ingestion(news_store=news, symbols=universe)
+            with _open_trading_cycle(
+                symbols=universe, database=database,
+                trading=cast("TradingMode", trading_mode()),
+                enabled=is_ai_trading_enabled(),
+            ) as cycle:
+                cycle.run(list(universe), cycle_key=cycle_key)
 
     async def _handler(*, cycle_key: str | None = None) -> None:
-        # The store is opened and closed per-call so a long-running
-        # scheduler can survive a DuckDB single-writer lock between
-        # cycles (the AI store is currently the same DB as the broker
-        # recon store). ponytail:scheduler_ai_duckdb_lock — see
-        # upgrade path note in
-        # The final migration contract is blueprint milestone M11.
-        database = db_path / _paths.DATABASE_NAME
-        store = _Store(db_path=database)
-        market_store = _MarketDataStore(db_path=database)
-        news_store = _NewsStore(db_path=database)
+        # Open every per-round connection in the worker that uses it.
+        # Cancellation waits for the worker before releasing this invocation:
+        # a timed-out thread must never overlap a later round or lose its stores.
+        worker = asyncio.create_task(asyncio.to_thread(_run_cycle, cycle_key=cycle_key))
         try:
-            universe = _ai_scheduler_universe()
-            _run_ai_pre_cycle_ingestion(
-                news_store=news_store,
-                symbols=universe,
-            )
-            snapshot_builder = StoredMarketSnapshotBuilder(
-                bar_loader=market_store.get_bar_models,
-                headline_loader=lambda symbol, start, end, limit: (
-                    news_store.list_headlines(
-                        symbol=symbol,
-                        start=start,
-                        end=end,
-                        limit=limit,
-                    )
-                ),
-            )
-            committee = _build_ai_committee(database)
-            policy = load_paper_execution_policy(
-                load_settings().execution_policy_file
-            )
-            _assert_external_policy_matches_broker(policy)
-            from alphabrief_risk import KillSwitch, KillSwitchStore
-
-            switch_store = KillSwitchStore(db_path=_paths.db_path())
-            try:
-                kill_switch = KillSwitch.from_store(switch_store)
-            finally:
-                switch_store.close()
-            risk_gate = RiskGate(
-                limits=RiskLimitConfig(
-                    trading_enabled=True,
-                    symbol_allowlist=frozenset(universe),
-                    max_order_value=policy.max_order_notional,
-                ),
-                kill_switch=kill_switch,
-            )
-            execution_backend = ExternalPaperExecutionBackend(
-                _build_adapter(),
-                max_order_value=policy.max_order_notional,
-                risk_symbols=universe,
-            )
-            cycle = DailyTradingCycle(
-                committee=committee,
-                risk_gate=risk_gate,
-                store=store,
-                snapshot_loader=lambda symbol: snapshot_builder.build(symbol)
-                if symbol in universe
-                else None,
-                execution_backend=execution_backend,
-                enabled=is_ai_trading_enabled(),
-                max_order_value=policy.max_order_notional,
-                # The unattended runtime honours the configured trading
-                # switch; anything other than "on" stops before submitting.
-                trading_mode=trading_mode(),
-            )
-            # The cycle key makes a re-dispatched round idempotent: the
-            # same (key, snapshot) pair returns the persisted record
-            # instead of running the committee again (PROJECT_GUIDE 5.1).
-            cycle.run(list(universe), cycle_key=cycle_key)
-        except Exception:
-            logging.getLogger(__name__).exception("ai cycle failed")
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            await worker
             raise
-        finally:
-            news_store.close()
-            market_store.close()
-            store.close()
 
     return _handler
 
@@ -831,7 +792,6 @@ def run_cmd(
     """Start the scheduler as a foreground process (Ctrl-C to stop)."""
     _refuse_if_live_trading_unlocked()
     _configure_logging()
-    import logging
 
     _LOGGER = logging.getLogger(__name__)
     _LOGGER.info(
@@ -843,9 +803,12 @@ def run_cmd(
         ",".join(_ai_scheduler_universe()),
     )
 
-    heartbeats = _open_heartbeat_store()
-    recon_store = _open_recon_store()
-    try:
+    ownership, _ = _acquire_runtime_ownership()
+    with ownership:
+        heartbeats = _open_heartbeat_store()
+        ownership.callback(heartbeats.close)
+        recon_store = _open_recon_store()
+        ownership.callback(recon_store.close)
         alert_sink = AlertSink(heartbeat_store=heartbeats)
 
         _reconcile_once = _reconcile_runner(recon_store)
@@ -916,9 +879,6 @@ def run_cmd(
         except KeyboardInterrupt:
             scheduler.request_stop()
             print("scheduler: stopped")
-    finally:
-        heartbeats.close()
-        recon_store.close()
 
 
 __all__ = ["scheduler_app"]

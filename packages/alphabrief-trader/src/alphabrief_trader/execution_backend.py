@@ -341,7 +341,10 @@ class ExternalPaperExecutionBackend:
             # A real content hash of the broker snapshot the decision was
             # approved against, never a timestamp.
             snapshot_hash=snapshot_content_hash(context),
-            rule_results=",".join(decision.risk_tags),
+            rule_results=(json.dumps({
+                "tags": decision.risk_tags, "evidence": decision.rule_evidence,
+            }, sort_keys=True) if decision.rule_evidence
+                else ",".join(decision.risk_tags)),
             source_ids=(f"account:{context.account.account_id}",),
             # The context builder already rejected stale, missing, or
             # unhealthy evidence, so a successfully built context is

@@ -459,11 +459,10 @@ def test_missing_oanda_credentials_fail_closed_without_order_or_fill(
     with pytest.raises(BrokerAuthError, match="missing OANDA credentials"):
         OandaHttpClient(
             config=OandaPaperConfig(
-                base_url="http://oanda.test",
+                base_url="https://api-fxpractice.oanda.com",
                 timeout_seconds=1.0,
                 max_retries=0,
                 retry_backoff_seconds=0.001,
-                allow_insecure_base_url=True,
             )
         )
 

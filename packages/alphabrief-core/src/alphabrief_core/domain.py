@@ -204,6 +204,8 @@ class RiskDecision(AlphaBriefModel):
     # version, snapshot hash). When set, execution validates the inputs
     # against it and refuses on any post-decision change (REQ-RISK-010).
     execution_input_hash: str | None = None
+    # Serialized, credential-free facts and outcomes of configured rules.
+    rule_evidence: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     @field_validator("created_at")
     @classmethod

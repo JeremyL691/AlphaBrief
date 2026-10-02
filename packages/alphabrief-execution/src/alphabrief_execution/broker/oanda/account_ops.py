@@ -8,7 +8,7 @@ Decimal-safe; missing, malformed, or invalid cursors fail closed.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,7 +41,7 @@ class AccountSummaryResult(BaseModel):
     balance: Decimal
     nav: Decimal
     unrealized_pl: Decimal
-    margin_used: Decimal
+    margin_used: Decimal = Field(ge=0)
     margin_available: Decimal
     open_order_count: int
     open_trade_count: int
@@ -108,10 +108,10 @@ class AccountOpsClient:
                 account_id=str(account.get("id", "")).strip(),
                 currency=str(account.get("currency", "")).strip(),
                 balance=_decimal(account.get("balance", "0")),
-                nav=_decimal(account.get("NAV", "0")),
+                nav=_decimal(account["NAV"]),
                 unrealized_pl=_decimal(account.get("unrealizedPL", "0")),
-                margin_used=_decimal(account.get("marginUsed", "0")),
-                margin_available=_decimal(account.get("marginAvailable", "0")),
+                margin_used=_decimal(account["marginUsed"]),
+                margin_available=_decimal(account["marginAvailable"]),
                 open_order_count=_count(account.get("openOrderCount")),
                 open_trade_count=_count(account.get("openTradeCount")),
                 open_position_count=_count(account.get("openPositionCount")),
@@ -198,7 +198,15 @@ class AccountOpsClient:
 
 
 def _decimal(value: Any) -> Decimal:
-    return Decimal(str(value))
+    if isinstance(value, float):
+        raise ValueError("account monetary values must not use float")
+    try:
+        result = Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError("account monetary value is invalid") from exc
+    if not result.is_finite():
+        raise ValueError("account monetary values must be finite")
+    return result
 
 
 def _count(value: Any) -> int:

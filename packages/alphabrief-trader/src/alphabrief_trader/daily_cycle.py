@@ -7,7 +7,9 @@ trading committee. One cycle = one calendar day, one universe, one
 1. Loads a market snapshot for each symbol in the universe
    (``MarketDataProvider``-driven or supplied by the caller — the
    cycle never calls provider SDKs directly).
-2. Builds a :class:`MarketSnapshot` per symbol and asks
+2. Checks each requested symbol before calling the model; missing or
+   stale inputs are recorded as ``NO_TRADE_DATA_STALE`` without an intent.
+   Builds a :class:`MarketSnapshot` per usable symbol and asks
    :class:`TradingCommittee` for a ``TradePlan``.
 3. Applies the deterministic ``RiskGate`` to the synthesized
    ``OrderIntent`` candidate.
@@ -29,7 +31,7 @@ deterministic fakes:
 * ``risk_gate: RiskGate`` — the deterministic risk layer.
 * ``execution_backend`` — the broker-neutral execution hop.
 * ``snapshot_loader: Callable[[str], MarketSnapshot | None]`` — turns a
-  symbol into a snapshot. ``None`` skips the symbol.
+  symbol into a snapshot. ``None`` records a missing-input refusal.
 * ``store: AiTradingStore`` — DuckDB persistence.
 * ``enabled: bool`` — feature flag.
 """
@@ -61,7 +63,11 @@ from alphabrief_trader.cycle_execution import (
 )
 from alphabrief_trader.cycle_schedule import CatchUpPolicy, CatchUpVerdict
 from alphabrief_trader.cycle_state import CYCLE_PHASE_ORDER, CycleStateMachine
-from alphabrief_trader.data_quality import evaluate_snapshot_quality
+from alphabrief_trader.data_quality import (
+    NO_TRADE_DATA_STALE,
+    evaluate_snapshot_quality,
+    evaluate_snapshots,
+)
 from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
 from alphabrief_trader.execution_backend import (
     ExecutionBackend,
@@ -86,6 +92,7 @@ from alphabrief_trader.schemas import (
     CommitteeVote,
     CycleOutcome,
     DailyCycleRecord,
+    InputQualityRecord,
     MarketSnapshot,
     OrderAttempt,
     TradePlan,
@@ -134,6 +141,21 @@ def _snapshot_fingerprint(snapshots: dict[str, MarketSnapshot]) -> str:
                     ),
                     snapshot.news_context or "",
                     snapshot.macro_context or "",
+                    *([] if snapshot.news_evidence is None else [json.dumps(
+                        snapshot.news_evidence.model_dump(mode="json"), sort_keys=True
+                    )]),
+                    *([] if snapshot.market_evidence is None else [json.dumps({
+                        "series": snapshot.market_evidence.model_dump(mode="json"),
+                        "atr": str(snapshot.atr),
+                        "return_20d_pct": str(snapshot.momentum_20d_pct),
+                        "volatility_20d_pct": str(snapshot.volatility_20d_pct),
+                    }, sort_keys=True)]),
+                    *([] if snapshot.broker_evidence is None else [json.dumps(
+                        snapshot.broker_evidence.model_dump(mode="json"), sort_keys=True
+                    )]),
+                    *([] if snapshot.signal_evidence is None else [json.dumps(
+                        snapshot.signal_evidence.model_dump(mode="json"), sort_keys=True
+                    )]),
                 ]
             )
         )
@@ -180,6 +202,8 @@ class DailyTradingCycle:
         model_budget: ModelBudgetGuard | None = None,
         model_channel: str = CHATGPT_PLAN_CHANNEL,
         shadow_recorder: ShadowRecorder | None = None,
+        snapshot_refresher: Callable[[MarketSnapshot], MarketSnapshot] | None = None,
+        risk_warning_recorder: Callable[[RiskDecision], None] | None = None,
     ) -> None:
         if committee is None:
             raise TypeError("committee is required")
@@ -227,6 +251,8 @@ class DailyTradingCycle:
         # Shadow evaluation (PROJECT_GUIDE 5.11): every round records the
         # five benchmarks side by side. Recording never places an order.
         self._shadow_recorder = shadow_recorder
+        self._snapshot_refresher = snapshot_refresher
+        self._risk_warning_recorder = risk_warning_recorder
         self._store = store
         self._snapshot_loader = snapshot_loader
         self._enabled = (
@@ -250,29 +276,28 @@ class DailyTradingCycle:
     ) -> DailyCycleRecord:
         """Run one full daily cycle for the given symbols.
 
-        When ``cycle_key`` is provided the cycle is idempotent: a
-        previously persisted terminal record with the same cycle key AND
-        the same deterministic snapshot fingerprint is returned as-is —
-        no committee run, no new proposal or OrderIntent can be created
-        for the same (cycle key, snapshot) pair (REQ-AI-009).
+        A terminal cycle key identifies a completed decision opportunity.
+        New quotes or account observations never authorize replaying it;
+        the original frozen record is returned without another model call.
         """
         trading_day = self._trading_day()
         cycle_id = self._cycle_id_factory()
         now = self._clock()
         live_unlocked = is_live_trading_unlocked()
 
-        snapshots = self._load_snapshots(symbols)
-        fingerprint = _snapshot_fingerprint(snapshots)
         if cycle_key is not None:
             existing = self._store.get_cycle_by_key(cycle_key)
             if existing is not None:
                 rehydrated = DailyCycleRecord.model_validate(existing)
-                if rehydrated.snapshot_fingerprint == fingerprint:
-                    return rehydrated
+                return rehydrated
+
+        snapshots = self._load_snapshots(symbols)
+        fingerprint = _snapshot_fingerprint(snapshots)
 
         all_votes: list[CommitteeVote] = []
         all_plans: list[TradePlan] = []
         all_attempts: list[OrderAttempt] = []
+        input_quality: list[InputQualityRecord] = []
         committee_role_errors: list[str] = []
         overall_outcome: CycleOutcome = "skipped_no_intent"
 
@@ -319,7 +344,28 @@ class DailyTradingCycle:
 
         for symbol in symbols:
             snapshot = snapshots.get(symbol)
-            if snapshot is None:
+            if snapshot is not None and self._snapshot_refresher is not None:
+                snapshot = self._snapshot_refresher(snapshot)
+                snapshots[symbol] = snapshot
+            checked_at = self._clock()
+            quality = evaluate_snapshots(
+                snapshots, symbols=[symbol], now=checked_at
+            )[symbol]
+            input_quality.append(InputQualityRecord(
+                symbol=symbol, passed=quality.passed,
+                reasons=list(quality.reasons), policy_version=quality.policy_version,
+                no_trade_reason=None if quality.passed else NO_TRADE_DATA_STALE,
+                snapshot_captured_at=None if snapshot is None else snapshot.captured_at,
+                data_version=None if snapshot is None else snapshot.data_version,
+                news_evidence=None if snapshot is None else snapshot.news_evidence,
+                market_evidence=None if snapshot is None else snapshot.market_evidence,
+                broker_evidence=None if snapshot is None else snapshot.broker_evidence,
+                signal_evidence=None if snapshot is None else snapshot.signal_evidence,
+                evaluated_at=checked_at,
+            ))
+            if not quality.passed or snapshot is None:
+                # Missing/stale inputs produce a durable refusal before any
+                # model call, plan, or OrderIntent (PROJECT_GUIDE 5.3).
                 continue
 
             budget_block = self._budget_block()
@@ -377,14 +423,20 @@ class DailyTradingCycle:
                 # The committee saw no position: record the plan, no order.
                 continue
 
+            if self._snapshot_refresher is not None:
+                # Refresh broker observations after the model, retaining the
+                # candle/news inputs the committee actually saw.
+                snapshot = self._snapshot_refresher(snapshot)
             attempt = self._attempt_execution(
                 plan=plan,
                 snapshot=snapshot,
-                now=now,
+                now=self._clock(),
                 cycle_id=cycle_id,
                 reference_price_resolver=reference_price_resolver,
             )
-            all_attempts.append(attempt)
+            all_attempts.append(attempt.model_copy(update={
+                "broker_evidence": snapshot.broker_evidence,
+            }))
             if attempt.outcome == "executed":
                 overall_outcome = "executed"
 
@@ -409,12 +461,27 @@ class DailyTradingCycle:
                 overall_outcome = "skipped_no_intent"
             elif committee_role_errors:
                 overall_outcome = "provider_error"
+            elif any(not item.passed for item in input_quality):
+                overall_outcome = "skipped_data_stale"
             else:
                 overall_outcome = "skipped_no_consensus"
 
         summary = self._build_summary(
             all_plans, all_attempts, overall_outcome, committee_role_errors
         )
+        refused_inputs = [
+            f"{item.symbol}:{','.join(item.reasons)}"
+            for item in input_quality if not item.passed
+        ]
+        if refused_inputs:
+            summary += f"; {NO_TRADE_DATA_STALE}=[{'; '.join(refused_inputs)}]"
+        excluded_signals = sorted({
+            f"{symbol}:{reason}"
+            for item in input_quality if item.signal_evidence is not None
+            for symbol, reason in item.signal_evidence.excluded.items()
+        })
+        if excluded_signals:
+            summary += f"; signal_excluded=[{'; '.join(excluded_signals)}]"
         record = DailyCycleRecord(
             cycle_id=cycle_id,
             trading_day=trading_day,
@@ -422,12 +489,13 @@ class DailyTradingCycle:
             plans=all_plans,
             votes=all_votes,
             attempts=all_attempts,
+            input_quality=input_quality,
             outcome=overall_outcome,
             enabled=True,
             live_trading_enabled=False,
             summary=summary,
             cycle_key=cycle_key,
-            snapshot_fingerprint=fingerprint,
+            snapshot_fingerprint=_snapshot_fingerprint(snapshots),
             created_at=now,
         )
         self._store.save_cycle(record)
@@ -477,6 +545,8 @@ class DailyTradingCycle:
         except ExecutionBackendError:
             estimated_quantity = None
 
+        account_context = self._account_context(intent.symbol)
+        now = self._clock()
         quality = evaluate_snapshot_quality(snapshot, now=now)
         decision: RiskDecision = self._risk_gate.evaluate(
             intent,
@@ -485,9 +555,11 @@ class DailyTradingCycle:
             # The real input-quality verdict (PROJECT_GUIDE 5.7 rule 5):
             # stale or incomplete inputs are rejected, never assumed.
             data_quality_passed=quality.passed,
-            account_context=self._account_context(intent.symbol),
+            account_context=account_context,
         )
 
+        if "MARGIN_WARNING" in decision.risk_tags and self._risk_warning_recorder:
+            self._risk_warning_recorder(decision)
         if not decision.approved:
             return self._attempt_record(
                 intent=intent,

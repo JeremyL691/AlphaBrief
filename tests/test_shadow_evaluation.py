@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -182,7 +183,7 @@ class TestStatistics:
 
 class TestShadowStore:
     @pytest.fixture
-    def store(self, tmp_path: Path):
+    def store(self, tmp_path: Path) -> Iterator[ShadowStore]:
         s = ShadowStore(db_path=tmp_path / "shadow.duckdb")
         try:
             yield s

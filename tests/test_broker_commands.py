@@ -128,7 +128,7 @@ def test_entry_points_resolve_one_shared_runtime_adapter(
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
     monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
-    monkeypatch.setenv("ALPHABRIEF_OANDA_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
 
     api_adapter = broker_adapter.get_broker_adapter()
     scheduler_adapter = _build_adapter()
@@ -154,7 +154,7 @@ def test_shutdown_flushes_durable_mappings(
 
     monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
     monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
-    monkeypatch.setenv("ALPHABRIEF_OANDA_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)
 
     runtime = BrokerRuntime(data_dir=tmp_path)
     adapter = runtime.adapter

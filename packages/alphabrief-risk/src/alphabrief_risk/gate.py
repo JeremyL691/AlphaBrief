@@ -38,6 +38,7 @@ class RiskLimitConfig:
     enabled_strategies: frozenset[str] | None = None
     symbol_allowlist: frozenset[str] = frozenset()
     max_order_quantity: Decimal | None = None
+    require_home_currency_exposure: bool = False
     max_order_value: Decimal | None = None
     # Account-level total-exposure cap. ``None`` preserves the legacy
     # per-order-only behavior (no runtime account-exposure check). When
@@ -96,6 +97,8 @@ class RiskLimitConfig:
     # by the caller from a persistent snapshot store so the check is
     # restart-safe.
     max_daily_loss_pct: Decimal | None = None
+    max_margin_utilization_pct: Decimal | None = None
+    margin_warning_pct: Decimal | None = None
     # Reject new buys when the drawdown from the equity high-water mark
     # exceeds this fraction of the HWM, 0..1. Requires
     # ``account_context.equity_high_water_mark`` (fail-closed
@@ -104,6 +107,18 @@ class RiskLimitConfig:
     max_drawdown_floor_pct: Decimal | None = None
 
     def __post_init__(self) -> None:
+        for value in (self.max_margin_utilization_pct, self.margin_warning_pct):
+            if value is not None and (
+                not isinstance(value, Decimal)
+                or not value.is_finite()
+                or not Decimal(0) < value <= Decimal(1)
+            ):
+                raise ValueError("margin limits must be finite Decimal fractions")
+        if self.margin_warning_pct is not None and (
+            self.max_margin_utilization_pct is None
+            or self.margin_warning_pct >= self.max_margin_utilization_pct
+        ):
+            raise ValueError("margin warning must be below the configured ceiling")
         if self.max_order_quantity is not None and self.max_order_quantity <= 0:
             raise ValueError("max_order_quantity must be positive")
         if self.max_order_value is not None and self.max_order_value <= 0:
@@ -184,7 +199,7 @@ class RiskGate:
         If ``account_context`` is provided and
         ``limits.max_total_exposure`` is configured, an account-level
         total-exposure check is applied in the same **tighten-only**
-        spirit: a buy that would push gross account exposure above the
+        spirit: an entry that would push gross account exposure above the
         cap is rejected, and ``max_quantity`` is clamped down to the
         largest size that lands exactly on the cap. The check is
         **fail-closed** — when ``max_total_exposure`` is configured but
@@ -261,28 +276,35 @@ class RiskGate:
             failures.append(f"strategy {strategy_id} is not enabled")
             tags.append("strategy_disabled")
 
+        home_price, exposure_evidence = self._home_exposure_price(
+            intent,
+            estimated_price,
+            account_context,
+            failures,
+            tags,
+        )
         if intent.quantity is not None:
             self._check_quantity_limit(intent.quantity, failures, tags)
             self._check_order_value_limit(
                 quantity=intent.quantity,
-                estimated_price=estimated_price,
+                estimated_price=home_price,
                 failures=failures,
                 tags=tags,
             )
         elif intent.target_position_pct is not None:
             self._check_target_pct_limits(
                 estimated_quantity=estimated_quantity,
-                estimated_price=estimated_price,
+                estimated_price=home_price,
                 failures=failures,
                 tags=tags,
             )
 
         # Account-level total-exposure check (tighten-only / fail-closed).
-        # Returns the largest buyable quantity that lands exactly on the
+        # Returns the largest entry quantity that lands exactly on the
         # cap, or None when no clamp applies.
         account_qty_clamp = self._check_account_exposure(
             intent=intent,
-            estimated_price=estimated_price,
+            estimated_price=home_price,
             account_context=account_context,
             failures=failures,
             tags=tags,
@@ -293,21 +315,21 @@ class RiskGate:
         # check; the rest append failures/tags only.
         symbol_qty_clamp = self._check_symbol_exposure(
             intent=intent,
-            estimated_price=estimated_price,
+            estimated_price=home_price,
             account_context=account_context,
             failures=failures,
             tags=tags,
         )
         self._check_concentration(
             intent=intent,
-            estimated_price=estimated_price,
+            estimated_price=home_price,
             account_context=account_context,
             failures=failures,
             tags=tags,
         )
         self._check_leverage(
             intent=intent,
-            estimated_price=estimated_price,
+            estimated_price=home_price,
             account_context=account_context,
             failures=failures,
             tags=tags,
@@ -331,6 +353,11 @@ class RiskGate:
         )
         self._check_duplicate_order(
             intent=intent,
+            failures=failures,
+            tags=tags,
+        )
+        margin_evidence = self._check_margin(
+            account_context=account_context,
             failures=failures,
             tags=tags,
         )
@@ -361,6 +388,7 @@ class RiskGate:
             tags,
             risk_context,
             (account_qty_clamp, symbol_qty_clamp),
+            {**margin_evidence, **exposure_evidence},
         )
 
     def _finalize(
@@ -370,6 +398,7 @@ class RiskGate:
         tags: list[str],
         risk_context: RiskContextDecision | None,
         clamps: tuple[Decimal | None, ...],
+        rule_evidence: dict[str, dict[str, str]] | None = None,
     ) -> RiskDecision:
         """Build the RiskDecision from the collected failures and tags."""
         approved = not failures
@@ -415,7 +444,55 @@ class RiskGate:
             requires_human_review=requires_human_review,
             source_module="alphabrief_risk",
             created_at=self.clock(),
+            rule_evidence=rule_evidence or {},
         )
+
+    def _check_margin(
+        self,
+        *,
+        account_context: AccountExposureContext | None,
+        failures: list[str],
+        tags: list[str],
+    ) -> dict[str, dict[str, str]]:
+        from alphabrief_risk.margin_loss_rules import evaluate_margin_utilization
+
+        ceiling = self.limits.max_margin_utilization_pct
+        if ceiling is None:
+            return {}
+        context = account_context
+        result = evaluate_margin_utilization(
+            nav=None if context is None else context.equity,
+            margin_used=None if context is None else context.margin_used,
+            ceiling=ceiling,
+        )
+        age = (
+            None
+            if context is None
+            else (self.clock() - context.captured_at).total_seconds()
+        )
+        fresh = age is not None and 0 <= age <= 60
+        passed = result.passed and fresh
+        evidence = {
+            "nav": "missing" if context is None else str(context.equity),
+            "margin_used": "missing" if context is None else str(context.margin_used),
+            "captured_at": (
+                "missing" if context is None else context.captured_at.isoformat()
+            ),
+            "utilization": result.value,
+            "ceiling": str(ceiling),
+            "fresh": str(fresh),
+            "passed": str(passed),
+        }
+        if not passed:
+            failures.append(f"MARGIN: {result.detail}; fresh={fresh}")
+            tags.append("MARGIN")
+        warning = self.limits.margin_warning_pct
+        if warning is not None and result.value != "unknown" and fresh:
+            warned = Decimal(result.value) > warning
+            evidence.update(warning_threshold=str(warning), warning=str(warned))
+            if warned:
+                tags.append("MARGIN_WARNING")
+        return {"margin": evidence}
 
     def _check_target_pct_limits(
         self,
@@ -456,6 +533,65 @@ class RiskGate:
             failures.append("order quantity exceeds max_order_quantity")
             tags.append("max_quantity")
 
+    def _home_exposure_price(
+        self,
+        intent: OrderIntent,
+        price: Decimal | None,
+        context: AccountExposureContext | None,
+        failures: list[str],
+        tags: list[str],
+    ) -> tuple[Decimal | None, dict[str, dict[str, str]]]:
+        """Resolve value conversion separately from raw quote-price comparisons."""
+        if not self.limits.require_home_currency_exposure:
+            return price, {}
+        factor = (
+            None
+            if context is None
+            else context.quote_position_to_home.get(intent.symbol)
+        )
+        fresh = (
+            context is not None
+            and 0 <= (self.clock() - context.captured_at).total_seconds() <= 60
+        )
+        complete = (
+            context is not None
+            and context.exposure_complete
+            and not context.exposure_errors
+        )
+        valid_price = isinstance(price, Decimal) and price.is_finite() and price > 0
+        if not fresh or not complete or factor is None or not valid_price:
+            failures.append("complete fresh home-currency exposure evidence required")
+            tags.append("EXPOSURE")
+            home_price = None
+        else:
+            assert price is not None
+            home_price = price * factor
+        evidence = {
+            "price": str(price),
+            "position_value_factor": str(factor),
+            "home_price": str(home_price),
+            "fresh": str(fresh),
+            "complete": str(complete),
+            "current_gross": str(
+                None if context is None else context.current_total_exposure
+            ),
+            "order_notional": str(
+                None
+                if home_price is None or intent.quantity is None
+                else intent.quantity * home_price
+            ),
+            "order_cap": str(self.limits.max_order_value),
+            "total_cap": str(self.limits.max_total_exposure),
+            "captured_at": str(None if context is None else context.captured_at),
+            "coverage_errors": str({} if context is None else context.exposure_errors),
+            "projected_gross": str(
+                None
+                if context is None or home_price is None or intent.quantity is None
+                else context.current_total_exposure + intent.quantity * home_price
+            ),
+        }
+        return home_price, {"exposure": evidence}
+
     def _check_order_value_limit(
         self,
         *,
@@ -483,33 +619,7 @@ class RiskGate:
         failures: list[str],
         tags: list[str],
     ) -> Decimal | None:
-        """Enforce ``max_total_exposure`` against live account state.
-
-        Returns the largest buyable quantity that lands exactly on the
-        cap (so the caller can clamp ``max_quantity`` down), or ``None``
-        when no clamp applies (cap unset, sell side, or no headroom).
-
-        Tighten-only / fail-closed:
-
-        * When ``max_total_exposure`` is unset, this is a no-op (legacy
-          per-order-only behavior preserved).
-        * When the cap is set but ``account_context`` is ``None``, the
-          intent is rejected with the ``account_context_required`` tag.
-          Skipping would defeat runtime enforcement.
-        * Sells never increase gross exposure, so they bypass the
-          new-exposure projection (they may still fail other checks).
-          ponytail:sell-exposure-ceiling: we treat sells as never
-          increasing gross exposure, which ignores a short-sale flip
-          from a net-short position. Acceptable for the paper long-only
-          policy (``us_equity``, allowlisted ETFs); upgrade path is to
-          track signed exposure if shorts are ever admitted.
-        * Buys project ``current_total_exposure + qty * price`` and
-          reject with ``max_total_exposure`` when over the cap; the
-          returned clamp is ``headroom / price``.
-        * A buy with no ``estimated_price`` while the cap is set is
-          rejected with ``missing_price`` (mirrors
-          ``_check_order_value_limit``).
-        """
+        """Both entry directions add gross home notional; reduce-only exits earlier."""
         cap = self.limits.max_total_exposure
         if cap is None:
             return None
@@ -520,10 +630,6 @@ class RiskGate:
                 "context supplied"
             )
             tags.append("account_context_required")
-            return None
-
-        # Sells reduce or close exposure; they do not add gross notional.
-        if intent.side == "sell":
             return None
 
         if intent.quantity is None:
@@ -569,7 +675,7 @@ class RiskGate:
         """Enforce ``max_symbol_exposure`` for the order's symbol.
 
         Tighten-only / fail-closed, mirroring ``_check_account_exposure``.
-        Returns the largest buyable qty that lands the symbol's projected
+        Returns the largest entry qty that lands the symbol's projected
         notional exactly on the cap, or None when no clamp applies.
         """
         cap = self.limits.max_symbol_exposure
@@ -580,8 +686,6 @@ class RiskGate:
                 "per-symbol exposure check required but no account context supplied"
             )
             tags.append("account_context_required")
-            return None
-        if intent.side == "sell":
             return None
         if intent.quantity is None:
             return None
@@ -622,7 +726,7 @@ class RiskGate:
             )
             tags.append("account_context_required")
             return
-        if intent.side == "sell" or intent.quantity is None:
+        if intent.quantity is None:
             return
 
         # Project the post-order per-symbol and total notional.
@@ -673,7 +777,7 @@ class RiskGate:
             failures.append("account equity must be positive for leverage check")
             tags.append("missing_equity")
             return
-        if intent.side == "sell" or intent.quantity is None:
+        if intent.quantity is None:
             return
         if estimated_price is None:
             failures.append("estimated_price is required for max_leverage")

@@ -47,9 +47,6 @@ from alphabrief_execution.broker.port import (
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 
-#: Test / dev-only override for the OANDA base URL (mock servers).
-ENV_BASE_URL_OVERRIDE = "ALPHABRIEF_OANDA_BASE_URL"
-
 #: Environment variable naming the persistent data directory.
 ENV_DATA_DIR = "ALPHABRIEF_DATA_DIR"
 
@@ -144,26 +141,18 @@ def oanda_paper_transport_config(
     config_path: Path | str | None = None,
 ) -> OandaPaperConfig:
     """Resolve the practice transport configuration (paper hosts only)."""
-    override = os.environ.get(ENV_BASE_URL_OVERRIDE)
-    if override:
+    if os.environ.get("ALPHABRIEF_OANDA_BASE_URL", "").strip():
+        raise ValueError("OANDA endpoint overrides are no longer supported")
+    path = Path(config_path) if config_path is not None else _DEFAULT_CONFIG_PATH
+    if path.is_file():
+        config = load_oanda_paper_config(path)
+    else:
         config = OandaPaperConfig(
-            base_url=override,
+            base_url=DEFAULT_BASE_URL,
             timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
             max_retries=DEFAULT_MAX_RETRIES,
             retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-            allow_insecure_base_url=True,
         )
-    else:
-        path = Path(config_path) if config_path is not None else _DEFAULT_CONFIG_PATH
-        if path.is_file():
-            config = load_oanda_paper_config(path)
-        else:
-            config = OandaPaperConfig(
-                base_url=DEFAULT_BASE_URL,
-                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-                max_retries=DEFAULT_MAX_RETRIES,
-                retry_backoff_seconds=DEFAULT_RETRY_BACKOFF_SECONDS,
-            )
     return config
 
 
@@ -283,7 +272,6 @@ def reset_broker_runtime() -> None:
 
 __all__ = [
     "BrokerRuntime",
-    "ENV_BASE_URL_OVERRIDE",
     "ENV_DATA_DIR",
     "NullBrokerAdapter",
     "build_oanda_paper_adapter",

@@ -18,32 +18,45 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal
 
 import typer
-from alphabrief_api.db import AiTradingStore
+from alphabrief_api.db import AiTradingStore, NewsStore
 from alphabrief_api.db.market_data import MarketDataStore
 from alphabrief_api.db.model_call import ModelCallStore
 from alphabrief_core import (
+    RiskDecision,
     load_paper_execution_policy,
     load_settings,
 )
 from alphabrief_core import paths as _paths
+from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
+from alphabrief_execution.broker.oanda.market_sync import (
+    SignalCandleObservation,
+    observe_signal_candles,
+)
 from alphabrief_execution.broker.runtime import (
     build_oanda_paper_client,
     get_broker_runtime,
     oanda_is_configured,
 )
+from alphabrief_news.ingestion import NewsIngestionStore
 from alphabrief_risk import RiskGate, RiskLimitConfig
+from alphabrief_risk.decision_binding import DecisionBindingService
 from alphabrief_trader import (
     DailyTradingCycle,
     ExternalPaperExecutionBackend,
     MarketSnapshot,
     SnapshotLoader,
+    StoredMarketSnapshotBuilder,
     build_ai_trading_committee,
 )
+from alphabrief_trader.schemas import NewsInputEvidence, SignalInputEvidence
 from alphabrief_trader.shadow_store import ShadowStore
 
 cycle_app = typer.Typer(help="Run one trading cycle or close a position.")
@@ -68,62 +81,98 @@ def _exit_error(message: str) -> None:
     sys.exit(1)
 
 
-def _snapshot_loader(market_store: MarketDataStore) -> SnapshotLoader:
+def _snapshot_loader(
+    market_store: MarketDataStore, news_store: NewsStore,
+    news_health: NewsIngestionStore,
+    signal_observation: SignalCandleObservation | None = None,
+    refresh_errors: dict[str, str] | None = None,
+) -> SnapshotLoader:
     """Build snapshots from stored OANDA bars (no synthetic prices).
 
     The ATR(14) of the H1 series is computed from the same stored candles
     and attached to the snapshot: the stop distance depends on it, and a
     missing ATR means no protective order (never a guessed one).
     """
-    from alphabrief_trader.stops import atr_from_bars
+    from alphabrief_execution.broker.oanda.market_sync import BAR_SOURCE, TIMEFRAMES
+    from alphabrief_trader.market_inputs import build_market_inputs
+    from alphabrief_trader.signal_inputs import build_signal_inputs
 
     def _loader(symbol: str) -> MarketSnapshot | None:
-        bars = market_store.get_bar_models(symbol)
+        now = datetime.now(UTC)
+        inputs = build_market_inputs({
+            tf: market_store.get_bar_models(
+                symbol, data_version_suffix=f":M:{tf}", source=BAR_SOURCE
+            ) for tf, _ in TIMEFRAMES
+        }, symbol=symbol, now=now)
+        bars = [bar for series in inputs.series.values() for bar in series]
         if not bars:
             return None
-        latest = bars[-1]
-        h1 = [
-            bar
-            for bar in bars
-            if bar.data_version.endswith(":H1")
-        ]
-        atr = atr_from_bars(
-            [bar.high for bar in h1],
-            [bar.low for bar in h1],
-            [bar.close for bar in h1],
+        h1 = inputs.series["H1"]
+        latest = h1[-1] if h1 else max(bars, key=lambda bar: bar.timestamp)
+        headlines = news_store.list_headlines(
+            symbol=symbol, start=now - timedelta(hours=24), end=now, limit=20
         )
-        return MarketSnapshot(
-            symbol=symbol,
-            reference_price=latest.close,
-            atr=atr,
-            momentum_20d_pct=_momentum_20d_pct(bars),
-            data_version=latest.data_version,
-            captured_at=latest.timestamp,
+        # Freeze the exact inputs once: evidence and prompt must describe the
+        # same bounded batch, not independent database reads with different clocks.
+        builder = StoredMarketSnapshotBuilder(
+            bar_loader=lambda requested: h1 or sorted(
+                bars, key=lambda bar: bar.timestamp
+            ),
+            headline_loader=lambda requested, start, end, limit: headlines,
+            max_headlines=20, clock=lambda: now,
         )
+        snapshot = builder.build(symbol, reference_price_override=latest.close)
+        if snapshot is None:
+            return None
+        return snapshot.model_copy(update={
+            "atr": inputs.atr,
+            "momentum_20d_pct": inputs.return_20d_pct,
+            "volatility_20d_pct": inputs.volatility_20d_pct,
+            "market_evidence": inputs.evidence.model_copy(update={
+                "refresh_errors": {
+                    key.split(":", 1)[1]: error
+                    for key, error in (refresh_errors or {}).items()
+                    if key.startswith(f"{symbol}:")
+                },
+            }),
+            "signal_evidence": (
+                SignalInputEvidence(observed_at=now, errors={"inputs": "not_observed"})
+                if signal_observation is None else build_signal_inputs(
+                    signal_observation, daily=inputs.series["D"], now=now
+                )
+            ),
+            # Freshness is the broker candle time, never the builder's wall clock.
+            "captured_at": inputs.evidence.latest_h1_end or latest.timestamp,
+            "news_evidence": NewsInputEvidence(
+                family_fetched_at=news_health.successful_source_family_times(now=now),
+                related_published_at={h.headline_id: h.published_at for h in headlines},
+            ),
+        })
 
     return _loader
 
 
-def _momentum_20d_pct(bars: Any) -> Decimal | None:
-    """The 20-day return from stored daily closes, or None when too short.
+def _signal_observation(market: MarketDataStore) -> SignalCandleObservation:
+    """Read signals once per round through the same practice-only client."""
+    return observe_signal_candles(build_oanda_paper_client(), store=market)
 
-    The momentum shadow benchmark (PROJECT_GUIDE 5.11) needs a real 20-day
-    window; a shorter history yields ``None`` so the benchmark is recorded
-    as skipped rather than guessed.
-    """
-    daily = [bar for bar in bars if bar.data_version.endswith(":D")]
-    closes = [bar.close for bar in daily]
-    if len(closes) < 21:
-        return None
-    first = closes[-21]
-    if first <= 0:
-        return None
-    value: Decimal = ((closes[-1] - first) / first) * Decimal("100")
-    return value
+
+def _refresh_market_bars(
+    market: MarketDataStore, symbols: tuple[str, ...],
+) -> dict[str, str]:
+    """Require an actual complete practice response for every FX window."""
+    from alphabrief_execution.broker.oanda.market_sync import sync_bars
+
+    _, errors = sync_bars(
+        build_oanda_paper_client(), instruments=symbols, store=market,
+        require_full_window=True,
+    )
+    return errors
 
 
 def _risk_gate(
-    instruments: tuple[str, ...], *, nav: Decimal | None = None
+    instruments: tuple[str, ...], *, nav: Decimal | None = None,
+    require_nav: bool = False,
 ) -> RiskGate:
     """The reviewed risk boundary for one cycle (PROJECT_GUIDE 5.6/5.7).
 
@@ -150,10 +199,13 @@ def _risk_gate(
         switch_store.close()
     return RiskGate(
         limits=RiskLimitConfig(
-            trading_enabled=True,
+            trading_enabled=not require_nav or (nav is not None and nav > 0),
             symbol_allowlist=frozenset(instruments),
+            require_home_currency_exposure=True,
             max_order_value=max_order_value,
             max_total_exposure=max_total_exposure,
+            max_margin_utilization_pct=Decimal("0.30"),
+            margin_warning_pct=Decimal("0.20"),
             entry_rules=EntryRulePolicy(
                 # Rule 3: quotes must be fresh and tradeable.
                 max_quote_age_seconds=15,
@@ -186,7 +238,9 @@ def _risk_gate(
     )
 
 
-def _risk_sources(symbols: tuple[str, ...]) -> Any:
+def _risk_sources(
+    symbols: tuple[str, ...], *, recon_store: Any | None = None
+) -> Any:
     """The live OANDA risk-data sources for one cycle."""
     from alphabrief_execution.broker.oanda.risk_sources import (
         OandaRiskContextSources,
@@ -196,7 +250,10 @@ def _risk_sources(symbols: tuple[str, ...]) -> Any:
     return OandaRiskContextSources(
         build_oanda_paper_client(),
         symbols=symbols,
-        recon_store=BrokerReconStore(db_path=_paths.db_path()),
+        recon_store=(
+            recon_store if recon_store is not None
+            else BrokerReconStore(db_path=_paths.db_path())
+        ),
     )
 
 
@@ -226,6 +283,7 @@ def _account_context_provider(
         verdict = _drawdown_verdict(sources)
         current_spread, recent_spreads = _spread_facts(sources, symbol)
         return sources.account_exposure_context(
+            symbol=symbol,
             symbol_types=_instrument_types(universe),
             daily_open_count=total,
             daily_symbol_open_count=per_symbol.get(symbol, 0),
@@ -244,8 +302,6 @@ def _instrument_types(symbols: tuple[str, ...]) -> dict[str, str]:
     Read from the account's own instrument catalog; a symbol the broker
     does not classify is left out, which the rule treats as fail-closed.
     """
-    from alphabrief_execution.broker.runtime import get_broker_runtime
-
     adapter = get_broker_runtime().adapter
     types: dict[str, str] = {}
     for symbol in symbols:
@@ -351,8 +407,8 @@ def _high_impact_event_map(news_store: Any) -> dict[str, str]:
             end=now + timedelta(minutes=1),
             limit=200,
         )
-    except Exception:  # noqa: BLE001 - a news read failure must not invent events
-        return {}
+    except Exception as exc:  # noqa: BLE001 - unknown news must stop an entry
+        raise RuntimeError("news impact evidence unavailable") from exc
     events = high_impact_events(
         [
             HeadlineLike(
@@ -371,13 +427,42 @@ def _high_impact_event_map(news_store: Any) -> dict[str, str]:
     return window_reason_map(events, now=now, window_minutes=window_minutes)
 
 
-def _nav(sources: Any) -> Decimal:
+def _nav(sources: Any) -> Decimal | None:
     """The live account NAV used for the 5.6 exposure caps."""
-    context = sources.account_exposure_context()
+    try:
+        context = sources.account_exposure_context()
+    except Exception:  # noqa: BLE001 - missing NAV disables entries, facts explain why
+        return None
     nav: Decimal = context.equity if context.equity is not None else context.cash
     if nav <= 0:
-        _exit_error("the broker account reports no positive NAV")
+        return None
     return nav
+
+
+def _snapshot_refresher(
+    sources: Any, store: AiTradingStore,
+) -> Callable[[MarketSnapshot], MarketSnapshot]:
+    """Observe broker inputs at each model/submit boundary; never fill missing facts."""
+    def refresh(snapshot: MarketSnapshot) -> MarketSnapshot:
+        try:
+            facts: BrokerInputFacts = sources.decision_input_facts(snapshot.symbol)
+        except Exception as exc:  # noqa: BLE001 - safe refusal rather than zero facts
+            facts = BrokerInputFacts(
+                symbol=snapshot.symbol, errors={"inputs": type(exc).__name__}
+            )
+        try:
+            count, _ = store.count_daily_opens(
+                trading_day=datetime.now(UTC).date().isoformat()
+            )
+            facts = facts.model_copy(update={"daily_open_count": count})
+        except Exception as exc:  # noqa: BLE001 - an unknown counter is not zero
+            facts = facts.model_copy(update={
+                "daily_open_count": None,
+                "errors": {**facts.errors, "daily_opens": type(exc).__name__},
+            })
+        return snapshot.model_copy(update={"broker_evidence": facts})
+
+    return refresh
 
 
 def _sizing_provider(sources: Any) -> Any:
@@ -388,8 +473,6 @@ def _sizing_provider(sources: Any) -> Any:
     precision/minimum size from the instrument metadata. A missing piece
     means the entry is not sized and therefore not traded.
     """
-    from alphabrief_execution.broker.runtime import get_broker_runtime
-
     adapter = get_broker_runtime().adapter
 
     def _build(symbol: str) -> Any:
@@ -398,7 +481,8 @@ def _sizing_provider(sources: Any) -> Any:
         context = sources.account_exposure_context()
         nav = context.equity if context.equity is not None else context.cash
         factor = sources.home_conversion_factor(symbol)
-        if factor is None:
+        position_factor = context.quote_position_to_home.get(symbol)
+        if factor is None or position_factor is None:
             return None
         metadata = adapter.instrument_metadata(symbol)  # type: ignore[attr-defined]
         # Rule 11: after a 3% drawdown block expires the system resumes at
@@ -412,6 +496,7 @@ def _sizing_provider(sources: Any) -> Any:
         return SizingInputs(
             nav=nav,
             quote_to_home=factor,
+            quote_position_to_home=position_factor,
             trade_units_precision=int(metadata.trade_units_precision),
             minimum_trade_size=metadata.minimum_trade_size,
             risk_multiplier=multiplier,
@@ -479,17 +564,102 @@ def _require_instrument(instrument: str) -> str:
 
 
 def _execution_backend(
-    *, symbols: tuple[str, ...] = DEFAULT_UNIVERSE
+    *, symbols: tuple[str, ...] = DEFAULT_UNIVERSE,
+    sources: Any | None = None,
+    decision_binding: DecisionBindingService | None = None,
 ) -> ExternalPaperExecutionBackend:
     if not oanda_is_configured():
         _exit_error(
             "OANDA practice credentials are required "
             "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
         )
+    from alphabrief_execution.broker.risk_context import BrokerRiskContextBuilder
+
     return ExternalPaperExecutionBackend(
         get_broker_runtime().adapter,
         risk_symbols=symbols,
+        risk_context_builder=(BrokerRiskContextBuilder(sources) if sources else None),
+        decision_binding=decision_binding,
     )
+
+
+@contextmanager
+def _open_trading_cycle(
+    *, symbols: tuple[str, ...], trading: TradingMode,
+    enabled: bool = True, database: Path | None = None,
+    quantity_override: Decimal | None = None,
+    direction_override: str | None = None, override_reason: str | None = None,
+) -> Iterator[DailyTradingCycle]:
+    """One production composition and bounded resource lifetime for all rounds."""
+    from alphabrief_execution.broker.recon_store import BrokerReconStore
+    from alphabrief_execution.operations.scheduler import HeartbeatStore
+    from alphabrief_risk.decision_store import RiskDecisionStore
+
+    resolved = database or _paths.db_path()
+    if resolved.resolve() != _paths.db_path().resolve():
+        raise ValueError("cycle database must match the runtime data directory")
+    with ExitStack() as resources:
+        store = AiTradingStore(db_path=resolved)
+        resources.callback(store.close)
+        market = MarketDataStore(db_path=resolved)
+        resources.callback(market.close)
+        refresh_errors = _refresh_market_bars(market, symbols)
+        news = NewsStore(db_path=resolved)
+        resources.callback(news.close)
+        news_health = NewsIngestionStore(db_path=resolved)
+        resources.callback(news_health.close)
+        calls = ModelCallStore(db_path=resolved)
+        resources.callback(calls.close)
+        shadows = ShadowStore(db_path=resolved)
+        resources.callback(shadows.close)
+        recon = BrokerReconStore(db_path=resolved)
+        resources.callback(recon.close)
+        sources = _risk_sources(symbols, recon_store=recon)
+        decisions = RiskDecisionStore(db_path=resolved)
+        resources.callback(decisions.close)
+        warnings = HeartbeatStore(db_path=resolved)
+        resources.callback(warnings.close)
+
+        def record_warning(decision: RiskDecision) -> None:
+            warnings.record_alert(
+                severity="warning", source="risk_gate", task_name="margin",
+                message="MARGIN_WARNING: margin utilization exceeds 20%",
+                payload={"decision_id": decision.decision_id,
+                         "rule_evidence": decision.rule_evidence},
+            )
+
+        nav = _nav(sources) if quantity_override is None else None
+        yield DailyTradingCycle(
+            committee=build_ai_trading_committee(record_sink=_call_recorder(calls)),
+            risk_gate=_risk_gate(
+                symbols, nav=nav, require_nav=quantity_override is None
+            ),
+            execution_backend=(
+                _execution_backend(
+                    symbols=symbols, sources=sources,
+                    decision_binding=DecisionBindingService(decisions),
+                )
+                if trading == "on" else _DisabledBackend()
+            ),
+            store=store,
+            snapshot_loader=_snapshot_loader(
+                market, news, news_health, _signal_observation(market), refresh_errors
+            ),
+            snapshot_refresher=_snapshot_refresher(sources, store),
+            enabled=enabled,
+            quantity_override=quantity_override,
+            direction_override=direction_override,
+            override_reason=override_reason,
+            trading_mode=trading,
+            account_context_provider=_account_context_provider(
+                sources, trading_day=datetime.now(UTC).date().isoformat(),
+                store=store, news_store=news, universe=symbols,
+            ),
+            sizing_provider=_sizing_provider(sources),
+            model_budget=_model_budget(calls),
+            shadow_recorder=_shadow_recorder(shadows),
+            risk_warning_recorder=record_warning,
+        )
 
 
 @cycle_app.command("run")
@@ -557,72 +727,11 @@ def run_cmd(
         if not (reason or "").strip():
             _exit_error("--force-direction requires --reason")
 
-    store = AiTradingStore(db_path=_paths.db_path())
-    market_store = MarketDataStore(db_path=_paths.db_path())
-    # Created before the committee so every terminal model call is
-    # persisted: the daily budget (5.13) and the daily report (5.12) both
-    # count real recorded calls, never an in-memory counter.
-    model_calls = ModelCallStore(db_path=_paths.db_path())
-    shadow_store = ShadowStore(db_path=_paths.db_path())
-    try:
-        loader = _snapshot_loader(market_store)
-        missing = [name for name in symbols if loader(name) is None]
-        if missing:
-            _exit_error(
-                f"no stored OANDA bars for {', '.join(missing)}; run "
-                f"'alphabrief data sync-oanda' first"
-            )
-        sources = _risk_sources(symbols)
-        # Risk-based sizing is the production path; --units keeps the S9
-        # fixed-size pre-run and its reviewed absolute caps.
-        nav = _nav(sources) if parsed_units is None else None
-        cycle = DailyTradingCycle(
-            committee=build_ai_trading_committee(
-                # save_call returns the call id; the sink contract is
-                # "record it", so the return value is discarded.
-                record_sink=_call_recorder(model_calls),
-            ),
-            risk_gate=_risk_gate(symbols, nav=nav),
-            execution_backend=(
-                _execution_backend(symbols=(symbol,))
-                if trading == "on"
-                else _DisabledBackend()
-            ),
-            store=store,
-            snapshot_loader=loader,
-            enabled=True,
-            quantity_override=parsed_units,
-            direction_override=force_direction,
-            override_reason=reason,
-            trading_mode=trading,
-            # The account context is read-only and is fetched in both
-            # modes: with trading off the cycle still evaluates every rule
-            # against the real account, it just stops before submitting.
-            account_context_provider=_account_context_provider(
-                sources,
-                trading_day=datetime.now(UTC).date().isoformat(),
-                store=store,
-                universe=tuple(symbols),
-            ),
-            # 5.6 sizing: NAV, home-currency factor and instrument
-            # precision all come from the broker, so an entry is sized
-            # from the real account rather than from the committee's
-            # own fraction estimate.
-            sizing_provider=_sizing_provider(sources),
-            # 5.13 budget: the daily channel allowance is enforced against
-            # the recorded calls, so an exhausted plan stops the round
-            # instead of burning the remaining quota.
-            model_budget=_model_budget(model_calls),
-            # 5.11 shadow evaluation: the five benchmarks are recorded for
-            # later scoring; recording never places an order.
-            shadow_recorder=_shadow_recorder(shadow_store),
-        )
+    with _open_trading_cycle(
+        symbols=symbols, trading=trading, quantity_override=parsed_units,
+        direction_override=force_direction, override_reason=reason,
+    ) as cycle:
         record = cycle.run(list(symbols))
-    finally:
-        shadow_store.close()
-        model_calls.close()
-        market_store.close()
-        store.close()
 
     _dump(
         {

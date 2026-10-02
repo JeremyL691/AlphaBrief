@@ -127,31 +127,30 @@ class TestCycleIdempotency:
         # Exactly one terminal record exists: no duplicate run was created.
         assert len(store.list_cycles()) == 1
 
-    def test_same_key_different_snapshot_creates_new_run(
+    def test_same_key_keeps_frozen_record_without_loading_new_snapshot(
         self, store: AiTradingStore
     ) -> None:
         cycle = _cycle(store, committee=_committee())
         first = cycle.run(["SPY"], cycle_key="cycle-2026-08-13-SPY")
 
-        # A different reference price changes the snapshot fingerprint.
+        def unexpected_load(symbol: str) -> MarketSnapshot:
+            raise AssertionError(
+                "completed cycle must not load new broker observations"
+            )
+
         changed_cycle = DailyTradingCycle(
             committee=_committee(),
             risk_gate=_risk_gate(["SPY"]),
             execution_backend=_backend(),
             store=store,
-            snapshot_loader=lambda s: MarketSnapshot(
-                symbol="SPY",
-                reference_price=Decimal("150"),
-                data_version="test-v1",
-                captured_at=SNAPSHOT_NOW,
-            ),
+            snapshot_loader=unexpected_load,
             enabled=True,
             clock=lambda: datetime(2026, 8, 13, 12, 0, tzinfo=UTC),
         )
         second = changed_cycle.run(["SPY"], cycle_key="cycle-2026-08-13-SPY")
 
-        assert second.cycle_id != first.cycle_id
-        assert len(store.list_cycles()) == 2
+        assert second == first
+        assert len(store.list_cycles()) == 1
 
     def test_fingerprint_is_deterministic_and_content_sensitive(self) -> None:
         snap_a = _snapshot("SPY")

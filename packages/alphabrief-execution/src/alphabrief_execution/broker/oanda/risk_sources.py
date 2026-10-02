@@ -34,9 +34,11 @@ from alphabrief_risk.broker_context import (
     ReconciliationState,
     TradeDatum,
 )
+from alphabrief_risk.exposure_aggregation import gross_home_notional
 
 from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
+from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
 from alphabrief_execution.broker.oanda.instruments import fetch_instruments
 from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
 from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
@@ -69,6 +71,7 @@ class OandaRiskContextSources:
         self._recon_store = recon_store
         self._request_id = request_id
         self._pricing_cache: dict[str, Any] | None = None
+        self._pricing_cache_fetched_at: datetime | None = None
 
     # ------------------------------------------------------------------
     # Account / positions / orders / trades
@@ -89,6 +92,58 @@ class OandaRiskContextSources:
             margin_available=summary.margin_available,
             captured_at=self._captured_at(),
         )
+
+    def decision_input_facts(self, symbol: str) -> BrokerInputFacts:
+        """Observe required model inputs without inventing absent broker fields."""
+        facts: dict[str, Any] = {"symbol": symbol}
+        errors: dict[str, str] = {}
+        try:
+            summary = AccountOpsClient(self._client).account_summary(
+                request_id=f"{self._request_id}-decision-account"
+            )
+            facts.update(nav=summary.nav, margin_available=summary.margin_available,
+                         margin_used=summary.margin_used,
+                         account_captured_at=self._captured_at())
+        except Exception as exc:  # noqa: BLE001 - persist safe class, fail closed
+            errors["account"] = type(exc).__name__
+        try:
+            result = PositionOpsClient(self._client).list_positions(
+                request_id=f"{self._request_id}-decision-positions"
+            )
+            held = [p for p in result.positions if p.instrument == symbol]
+            facts.update(
+                position_units=sum(
+                    (p.long_units + p.short_units for p in held), Decimal(0)
+                ),
+                position_unrealized_pnl=sum((
+                    p.long_unrealized_pl + p.short_unrealized_pl for p in held
+                ), Decimal(0)),
+                positions_captured_at=self._captured_at(),
+            )
+        except Exception as exc:  # noqa: BLE001 - empty failure is not flat position
+            errors["positions"] = type(exc).__name__
+        try:
+            price = self._prices_by_symbol().get(symbol)
+            if price is not None and price.bids and price.asks:
+                facts.update(
+                    bid=price.bids[0].price, ask=price.asks[0].price,
+                    spread=price.asks[0].price - price.bids[0].price,
+                    quote_to_home=price.loss_conversion_factor,
+                    quote_position_to_home=price.conversion_factor,
+                    quote_captured_at=price.broker_time,
+                )
+        except Exception as exc:  # noqa: BLE001 - stale cache cannot mask failure
+            errors["quote"] = type(exc).__name__
+        try:
+            latest = (None if self._recon_store is None
+                      else self._recon_store.latest_snapshot())
+            if latest is not None:
+                facts["reconciliation_captured_at"] = datetime.fromisoformat(
+                    latest.captured_at
+                )
+        except Exception as exc:  # noqa: BLE001 - preserve missing recon evidence
+            errors["reconciliation"] = type(exc).__name__
+        return BrokerInputFacts.model_validate({**facts, "errors": errors})
 
     def fetch_positions(self) -> list[PositionDatum]:
         positions = PositionOpsClient(self._client).list_positions(
@@ -158,7 +213,14 @@ class OandaRiskContextSources:
         return tuple(ordered)
 
     def _prices_by_symbol(self) -> dict[str, Any]:
-        if self._pricing_cache is None:
+        now = self._captured_at()
+        if (
+            self._pricing_cache is None
+            or self._pricing_cache_fetched_at is None
+            or (now - self._pricing_cache_fetched_at).total_seconds() >= 5
+        ):
+            self._pricing_cache = None
+            self._pricing_cache_fetched_at = None
             symbols = self._symbols_to_price()
             if not symbols:
                 self._pricing_cache = {}
@@ -169,16 +231,16 @@ class OandaRiskContextSources:
                 request_id=f"{self._request_id}-pricing",
             )
             self._pricing_cache = {price.symbol: price for price in batch.prices}
+            self._pricing_cache_fetched_at = self._captured_at()
         return self._pricing_cache
 
     def fetch_prices(self) -> list[PriceDatum]:
-        captured_at = self._captured_at()
         return [
             PriceDatum(
                 symbol=price.symbol,
                 bid=price.bids[0].price,
                 ask=price.asks[0].price,
-                captured_at=captured_at,
+                captured_at=price.broker_time,
             )
             for price in self._prices_by_symbol().values()
         ]
@@ -213,7 +275,7 @@ class OandaRiskContextSources:
         price: OandaPrice | None = self._prices_by_symbol().get(symbol)
         if price is None:
             return None
-        return price.conversion_factor
+        return price.loss_conversion_factor
 
     def live_spread(self, symbol: str) -> Decimal | None:
         """The broker's current spread (ask - bid) for one instrument."""
@@ -273,6 +335,8 @@ class OandaRiskContextSources:
         self,
         *,
         now: datetime | None = None,
+        symbol: str | None = None,
+        drawdown_block_reason: str | None = None,
         open_position_count: int | None = None,
         daily_open_count: int | None = None,
         daily_symbol_open_count: int | None = None,
@@ -290,9 +354,8 @@ class OandaRiskContextSources:
         Exposure is gross notional per symbol in the account's home
         currency, using the broker's own conversion factors; the quote
         fields come from the same pricing snapshot the gate's freshness
-        rule checks. Nothing is synthesized: a missing price simply leaves
-        that symbol out of the exposure map, which the gate treats as a
-        coverage failure rather than as zero exposure.
+        rule checks. Missing or stale held-position prices explicitly mark
+        the projection incomplete so entries fail closed.
         """
         captured = now or self._captured_at()
         summary = AccountOpsClient(self._client).account_summary(
@@ -301,29 +364,42 @@ class OandaRiskContextSources:
         positions = self.fetch_positions()
         prices = self._prices_by_symbol()
         conversions = {
-            conversion.symbol: conversion.factor
-            for conversion in self.fetch_conversions()
+            name: price.conversion_factor for name, price in prices.items()
+            if price.conversion_factor is not None
         }
-
+        exposure_errors: dict[str, str] = {}
         exposure_by_symbol: dict[str, Decimal] = {}
         for position in positions:
             price = prices.get(position.symbol)
-            if price is None:
+            if price is None or not price.bids or not price.asks:
+                exposure_errors[position.symbol] = "missing_position_quote"
                 continue
-            factor = conversions.get(position.symbol, Decimal("1"))
-            units = position.long_units + position.short_units
+            age = (captured - price.broker_time).total_seconds()
+            if not 0 <= age <= 15:
+                exposure_errors[position.symbol] = "stale_position_quote"
+                continue
+            factor = conversions.get(position.symbol)
+            if factor is None:
+                exposure_errors[position.symbol] = "missing_position_conversion"
+                continue
             mark = (price.bids[0].price + price.asks[0].price) / Decimal(2)
-            exposure_by_symbol[position.symbol] = abs(units) * mark * factor
+            exposure_by_symbol[position.symbol] = gross_home_notional(
+                position.long_units, position.short_units, mark, factor,
+            )
 
-        first_symbol = self._symbols[0] if self._symbols else None
-        quote = prices.get(first_symbol) if first_symbol else None
+        quote_symbol = symbol or (self._symbols[0] if self._symbols else None)
+        quote = prices.get(quote_symbol) if quote_symbol else None
         return AccountExposureContext(
             current_total_exposure=sum(exposure_by_symbol.values(), Decimal("0")),
             exposure_by_symbol=exposure_by_symbol,
+            quote_position_to_home=conversions,
+            exposure_complete=not exposure_errors,
+            exposure_errors=exposure_errors,
             cash=summary.balance,
             account_id=summary.account_id,
             captured_at=captured,
             equity=summary.nav,
+            margin_used=summary.margin_used,
             reference_mark_prices={
                 symbol: (price.bids[0].price + price.asks[0].price) / Decimal(2)
                 for symbol, price in prices.items()
@@ -338,10 +414,11 @@ class OandaRiskContextSources:
             ),
             daily_open_count=daily_open_count,
             daily_symbol_open_count=daily_symbol_open_count,
-            quote_captured_at=captured if quote is not None else None,
+            quote_captured_at=quote.broker_time if quote is not None else None,
             quote_tradeable=(quote.tradeable if quote is not None else None),
             frozen_symbols=dict(frozen_symbols or {}),
             recent_high_impact_events=dict(recent_high_impact_events or {}),
+            drawdown_block_reason=drawdown_block_reason,
             current_spread=current_spread,
             recent_spreads=tuple(recent_spreads),
             # Rule 1 reads the durable reconciliation state; a frozen

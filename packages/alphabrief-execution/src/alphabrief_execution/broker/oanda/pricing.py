@@ -13,7 +13,7 @@ represented as a complete pricing snapshot.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -60,11 +60,15 @@ class OandaPrice(BaseModel):
     closeout_bid: Decimal
     closeout_ask: Decimal
     conversion_factor: Decimal = Field(gt=0)
+    loss_conversion_factor: Decimal | None = Field(default=None, gt=0)
     broker_time: datetime
     request_id: str = Field(min_length=1)
     source_version: str = Field(min_length=1)
 
-    @field_validator("closeout_bid", "closeout_ask", "conversion_factor", mode="before")
+    @field_validator(
+        "closeout_bid", "closeout_ask", "conversion_factor", "loss_conversion_factor",
+        mode="before",
+    )
     @classmethod
     def decimals_must_not_be_float(cls, value: Any) -> Any:
         if isinstance(value, float):
@@ -109,7 +113,7 @@ def _decimal(value: Any, field: str) -> Decimal:
         raise ValueError(f"{field} must not be a float")
     try:
         return Decimal(str(value))
-    except (TypeError, ValueError) as exc:
+    except (InvalidOperation, TypeError, ValueError) as exc:
         raise ValueError(f"{field} is not Decimal-safe") from exc
 
 
@@ -178,12 +182,30 @@ def parse_pricing_response(
             if not bids or not asks:
                 raise ValueError("missing bid or ask side")
             conversions = row.get("quoteHomeConversionFactors")
-            conversion_factor = Decimal("1")
-            if isinstance(conversions, dict):
-                positive = conversions.get("positiveUnits")
-                if positive not in (None, ""):
-                    conversion_factor = _decimal(positive, "conversion factor")
-            if conversion_factor <= 0:
+            home_conversions = body.get("homeConversions")
+            if isinstance(home_conversions, list):
+                quote_currency = symbol.split("_")[-1]
+                matches = [item for item in home_conversions
+                           if isinstance(item, dict)
+                           and item.get("currency") == quote_currency]
+                if len(matches) != 1:
+                    raise ValueError("home conversion coverage missing or duplicate")
+                conversion_factor = _decimal(
+                    matches[0].get("positionValue"), "position value conversion"
+                )
+                loss_conversion_factor = _decimal(
+                    matches[0].get("accountLoss"), "account loss conversion"
+                )
+            elif isinstance(conversions, dict):
+                conversion_factor = _decimal(
+                    conversions.get("positiveUnits"), "conversion factor"
+                )
+                loss_conversion_factor = _decimal(
+                    conversions.get("negativeUnits"), "loss conversion factor"
+                )
+            else:
+                raise ValueError("missing home conversion factor")
+            if conversion_factor <= 0 or loss_conversion_factor <= 0:
                 raise ValueError("nonpositive conversion factor")
 
             raw_time = row.get("time")
@@ -199,15 +221,22 @@ def parse_pricing_response(
                 if raw_spread not in (None, "")
                 else best_ask - best_bid
             )
+            tradeable = row.get("tradeable")
+            if not isinstance(tradeable, bool):
+                status = row.get("status")
+                if status not in {"tradeable", "non-tradeable", "invalid"}:
+                    raise ValueError("missing tradeability status")
+                tradeable = status == "tradeable"
             price = OandaPrice(
                 symbol=symbol,
                 bids=bids,
                 asks=asks,
                 spread=spread,
-                tradeable=bool(row.get("tradeable", True)),
+                tradeable=tradeable,
                 closeout_bid=_decimal(row.get("closeoutBid"), "closeoutBid"),
                 closeout_ask=_decimal(row.get("closeoutAsk"), "closeoutAsk"),
                 conversion_factor=conversion_factor,
+                loss_conversion_factor=loss_conversion_factor,
                 broker_time=row_time,
                 request_id=request_id,
                 source_version=source_version,
@@ -259,7 +288,7 @@ def fetch_pricing(
         response = client.request(
             "GET",
             f"/v3/accounts/{client.account_id}/pricing",
-            params={"instruments": ",".join(chunk)},
+            params={"instruments": ",".join(chunk), "includeHomeConversions": "true"},
         )
         batch = parse_pricing_response(
             response.json_body,

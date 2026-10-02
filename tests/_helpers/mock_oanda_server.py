@@ -183,3 +183,29 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 __all__ = ["MockOandaServer", "MockRequest"]
+
+
+def loopback_http_sender(base_url: str) -> Any:
+    """Test-only transport: send canonical practice requests to a local server.
+
+    Product configuration never gains a localhost exception. The copied
+    request preserves method, headers, body, path and query for wire tests.
+    """
+    from urllib.parse import urlsplit
+    from urllib.request import Request, urlopen
+
+    def send(request: Request, timeout_seconds: float) -> bytes:
+        parsed = urlsplit(request.full_url)
+        assert parsed.scheme == "https"
+        assert parsed.netloc == "api-fxpractice.oanda.com"
+        target = base_url + parsed.path
+        if parsed.query:
+            target += "?" + parsed.query
+        local_request = Request(
+            target, data=request.data, headers=dict(request.header_items()),
+            method=request.get_method(),
+        )
+        with urlopen(local_request, timeout=timeout_seconds) as response:
+            return bytes(response.read())
+
+    return send

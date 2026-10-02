@@ -32,11 +32,10 @@ def _credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _config() -> OandaPaperConfig:
     return OandaPaperConfig(
-        base_url="http://oanda.test",
+        base_url="https://api-fxpractice.oanda.com",
         timeout_seconds=1.0,
         max_retries=0,
         retry_backoff_seconds=0.001,
-        allow_insecure_base_url=True,
     )
 
 
@@ -280,11 +279,10 @@ def test_ssl_error_is_treated_as_transient_and_retried(
         raise _ssl.SSLError("ssl handshake failed: certificate verify failed")
 
     config = OandaPaperConfig(
-        base_url="http://oanda.test",
+        base_url="https://api-fxpractice.oanda.com",
         timeout_seconds=1.0,
         max_retries=2,
         retry_backoff_seconds=0.001,
-        allow_insecure_base_url=True,
     )
     client = OandaHttpClient(config=config, http_send=_explode)
 
@@ -317,11 +315,10 @@ def test_final_attempt_logs_giving_up_warning(
         raise OSError("connection refused")
 
     config = OandaPaperConfig(
-        base_url="http://oanda.test",
+        base_url="https://api-fxpractice.oanda.com",
         timeout_seconds=1.0,
         max_retries=1,
         retry_backoff_seconds=0.001,
-        allow_insecure_base_url=True,
     )
     client = OandaHttpClient(config=config, http_send=_explode)
 

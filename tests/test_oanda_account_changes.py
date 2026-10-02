@@ -110,11 +110,10 @@ class _FakeAccountBroker:
 def _client(broker: _FakeAccountBroker) -> AccountOpsClient:
     http = OandaHttpClient(
         config=OandaPaperConfig(
-            base_url="http://oanda.test",
+            base_url="https://api-fxpractice.oanda.com",
             timeout_seconds=1.0,
             max_retries=0,
             retry_backoff_seconds=0.001,
-            allow_insecure_base_url=True,
         ),
         http_send=lambda request, timeout: broker.handle(request),
         token="t",
@@ -126,6 +125,17 @@ def _client(broker: _FakeAccountBroker) -> AccountOpsClient:
 # ---------------------------------------------------------------------------
 # AC-M06-W04-01: summary and changes match exact fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("field", ["NAV", "marginAvailable"])
+def test_summary_missing_required_input_is_not_defaulted_to_zero(
+    monkeypatch: pytest.MonkeyPatch, field: str,
+) -> None:
+    payload = _account_payload()
+    del payload[field]
+    monkeypatch.setitem(globals(), "_account_payload", lambda: payload)
+    with pytest.raises(AccountOperationError, match="protocol_error"):
+        _client(_FakeAccountBroker()).account_summary()
 
 
 def test_account_summary_exact_fixture() -> None:

@@ -117,10 +117,14 @@ class AccountExposureContext(BaseModel):
 
     current_total_exposure: Decimal = Field(ge=0)
     exposure_by_symbol: dict[str, Decimal] = Field(default_factory=dict)
+    quote_position_to_home: dict[str, Decimal] = Field(default_factory=dict)
+    exposure_complete: bool = False
+    exposure_errors: dict[str, str] = Field(default_factory=dict)
     cash: Decimal
     account_id: str = Field(min_length=1)
     captured_at: datetime
     equity: Decimal | None = Field(default=None, ge=0)
+    margin_used: Decimal | None = Field(default=None, ge=0)
     reference_mark_prices: dict[str, Decimal] = Field(default_factory=dict)
     equity_high_water_mark: Decimal | None = Field(default=None, ge=0)
     day_start_equity: Decimal | None = Field(default=None, ge=0)
@@ -142,6 +146,7 @@ class AccountExposureContext(BaseModel):
         "current_total_exposure",
         "cash",
         "equity",
+        "margin_used",
         "equity_high_water_mark",
         "day_start_equity",
         "day_realized_pnl",
@@ -151,7 +156,7 @@ class AccountExposureContext(BaseModel):
     def _decimal_values_must_not_be_float(cls, value: Any) -> Any:
         return _reject_float(value)
 
-    @field_validator("exposure_by_symbol", mode="before")
+    @field_validator("exposure_by_symbol", "quote_position_to_home", mode="before")
     @classmethod
     def _exposure_by_symbol_must_not_contain_floats(cls, value: Any) -> Any:
         if isinstance(value, dict):
@@ -160,6 +165,15 @@ class AccountExposureContext(BaseModel):
                     raise ValueError(
                         "account exposure decimal values must not be floats"
                     )
+        return value
+
+    @field_validator("quote_position_to_home")
+    @classmethod
+    def _conversion_factors_positive(
+        cls, value: dict[str, Decimal]
+    ) -> dict[str, Decimal]:
+        if any(not factor.is_finite() or factor <= 0 for factor in value.values()):
+            raise ValueError("position conversion factors must be finite and positive")
         return value
 
     @field_validator("reference_mark_prices", mode="before")

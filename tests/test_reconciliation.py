@@ -73,11 +73,10 @@ def _reconciler(
 
 def _config() -> OandaPaperConfig:
     return OandaPaperConfig(
-        base_url="http://oanda.test",
+        base_url="https://api-fxpractice.oanda.com",
         timeout_seconds=1.0,
         max_retries=0,
         retry_backoff_seconds=0.001,
-        allow_insecure_base_url=True,
     )
 
 
@@ -135,7 +134,7 @@ def _our_order() -> dict[str, Any]:
 def _foreign_position() -> dict[str, Any]:
     return {
         "instrument": "EUR_USD",
-        "long": {"units": "5000", "averagePrice": "1.10000"},
+        "long": {"units": "5000", "averagePrice": "1.10000", "unrealizedPL": "0"},
         "short": {"units": "0"},
     }
 
