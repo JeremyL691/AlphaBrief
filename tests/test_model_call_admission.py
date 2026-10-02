@@ -378,13 +378,12 @@ def test_manager_repair_budget_refusal_stops_and_produces_no_order(
             return response.model_copy(
                 update={
                     "structured_output": {
-                        "analysis": "Bounded test view",
-                        "view": "bullish",
-                        "confidence": "0.7",
+                        "stance": "long",
+                        "confidence": 0.7,
+                        "horizon_hours": 24,
+                        "key_points": ["Bounded test view"],
                         "evidence_ids": [],
-                        "risks": [],
-                        "suggested_action": "buy",
-                        "target_position_pct": "0.10",
+                        "veto": False,
                     }
                 }
             )
