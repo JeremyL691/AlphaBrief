@@ -456,6 +456,7 @@ electron/       桌面外壳与打包配置
 - **全量落库**：完整的提示词版本号、输入摘要哈希、每个角色的原始输出、解析结果、最终决策都要落库。
   - 网关在业务解析前保存每次实际响应的完整正文、provider结构化载荷、响应状态/结束原因及可信请求角色/阶段/品种/normal或repair类别；失败、修复及明确启用的备用各自保留真实call_id，不能用成功修复覆盖失败原文。正文只替换凭证，不按日志摘要截断；output_hash仍对应收到的原文。未收到响应保存null，收到空文本保存空字符串。旧记录缺原文时保持未知，不能由解析意见反向补造。
   - 每次实际响应的schema解析和引用判决另以不可覆盖记录关联call_id：保留目标schema及哈希、解析对象、accepted/schema_rejected/grounding_rejected、稳定错误码和违规哈希。判决不覆盖provider响应、不计为新模型调用；记录失败时停止决策。没有响应或旧记录没有判决时不能反向补造。
+  - 完整最终决策必须在影子记录、意图执行和减仓前提交到同一数据库的不可覆盖记录：按cycle_id与品种生成身份，冻结完整有效计划、五份原始意见、模型前输入目录/质量事实、模型后持仓事实及显式S3覆盖参数。默认后台/单轮CLI必须关联已经持久成功的五个实际调用和accepted判决，核对角色、品种、轮次、输入目录正文哈希及原生意见内容，并保存真实prompt_version/input_hash/output_hash/schema_hash/validation_id。保存失败停止执行；意图和持久RiskDecision的source_ids带上该决策身份。旧历史不补造，未核对调用的记录明确标为未验证；阶段恢复及结果未知处理不能由这份决策记录替代。
 
 ### 5.5 决策 → 意图
 
@@ -505,12 +506,14 @@ electron/       桌面外壳与打包配置
 | 14 | 止损、止盈、units 都已确定且合法 | `ORDER_INVALID` |
 
 规则执行要求：
+- 日内开仓历史按UTC当天00:00（包含）至次日00:00（不包含）的真实时刻查询，不按数据库连接的本地日期分组。明确的reduce-only平仓不占开仓次数；旧历史缺少该标记时保守计为开仓，历史损坏或品种不明时按未知计数拒绝新开仓，不当作零次数；reduce-only平仓仍执行下面的精简检查。意图预留、提交结果未知与恢复去重仍须满足5.5/5.8，不由已完成轮次统计替代。
 - 平仓（reduce-only）意图只检查规则 1 中的 kill switch 和规则 3；**冻结状态下也允许平仓**。
 - 每个决策都持久化：规则结果、输入哈希（基于真实快照内容）、策略版本哈希（基于配置文件内容）。下单前必须校验持久化的决策与将要提交的订单一致。
 
 ### 5.8 下单与结果未知
 
-- 订单：`MARKET` + `timeInForce=FOK` + `positionFill=DEFAULT` + `stopLossOnFill` + `takeProfitOnFill` + `clientExtensions`。
+- 开仓订单：`MARKET` + `timeInForce=FOK` + `positionFill=DEFAULT` + `stopLossOnFill` + `takeProfitOnFill` + `clientExtensions`。
+- 减仓订单：带实际持仓反向的 units、`timeInForce=FOK`、`positionFill=REDUCE_ONLY` 与 `clientExtensions`；减仓标记必须由 OrderIntent 贯穿到券商请求，不能在持仓变化后反手开仓。OANDA 的 REDUCE_ONLY 语义为仅减少既有持仓，见[官方订单定义](https://developer.oanda.com/rest-live-v20/order-df/#OrderPositionFill)。
 - 提交前把意图和决策落库；提交后无论成功、拒绝还是超时，都落库。
 - **超时或连接中断 → 状态 `SUBMIT_UNKNOWN`**：按 `clientExtensions.id` 查询订单，并扫描流水。找到就按真实结果记账；查询窗口（默认 120 秒）内找不到，就标记为未成交并告警。**绝不直接重发。**
 - 重启后，先处理所有 `SUBMIT_UNKNOWN`，再允许新的下单。

@@ -44,7 +44,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha256
-from typing import Any
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from alphabrief_core import OrderIntent, OrderSide, RiskDecision
@@ -94,10 +94,12 @@ from alphabrief_trader.schemas import (
     CommitteeVote,
     CycleOutcome,
     DailyCycleRecord,
+    FinalCommitteeDecision,
     InputQualityRecord,
     MarketSnapshot,
     OrderAttempt,
     TradePlan,
+    final_decision_id,
 )
 from alphabrief_trader.shadow import (
     ShadowDecision,
@@ -424,6 +426,54 @@ class DailyTradingCycle:
                 )
                 continue
             plan = result.plan
+            if not plan.blocked_by_ethics and plan.action in {
+                "open_long",
+                "open_short",
+                "close",
+            }:
+                if self._snapshot_refresher is not None:
+                    snapshot = self._snapshot_refresher(snapshot)
+                facts = snapshot.broker_evidence
+                # A configured broker source cannot disappear after the model.
+                # Minimal unit fixtures without a source retain their old scope.
+                if facts is not None or self._snapshot_refresher is not None:
+                    units = None if facts is None else facts.position_units
+                    captured = None if facts is None else facts.positions_captured_at
+                    action = plan.action
+                    if (
+                        facts is None or facts.symbol != symbol
+                        or units is None
+                        or not units.is_finite()
+                        or captured is None
+                        or not 0 <= (self._clock() - captured).total_seconds() <= 60
+                    ):
+                        action = "no_trade"
+                    elif action == "close" and units == 0:
+                        action = "hold"
+                    elif action in {"open_long", "open_short"} and units != 0:
+                        same_direction = (units > 0) == (action == "open_long")
+                        action = "hold" if same_direction else "close"
+                    if action != plan.action:
+                        plan = plan.model_copy(
+                            update={
+                                "action": action,
+                                "target_position_pct": Decimal("0"),
+                                "rationale": (
+                                    f"{plan.rationale}; position_action={action}"
+                                ),
+                            }
+                        )
+            final = self._store.save_final_decision(FinalCommitteeDecision(
+                decision_id=final_decision_id(cycle_id, symbol),
+                cycle_id=cycle_id, cycle_key=cycle_key, symbol=symbol,
+                plan=plan, votes=result.votes, input_quality=input_quality[-1],
+                broker_evidence=snapshot.broker_evidence,
+                direction_override=cast(
+                    "Literal['long', 'short'] | None", self._direction_override,
+                ),
+                quantity_override=self._quantity_override,
+                override_reason=self._override_reason, created_at=self._clock(),
+            ))
             all_plans.append(plan)
             self._record_shadow(
                 cycle_id=cycle_id,
@@ -439,13 +489,49 @@ class DailyTradingCycle:
             if plan.blocked_by_ethics:
                 # Ethics veto is absolute: no override applies.
                 continue
+            if plan.action == "close":
+                facts = snapshot.broker_evidence
+                units = None if facts is None else facts.position_units
+                captured = None if facts is None else facts.positions_captured_at
+                current = self._clock()
+                if (
+                    units is None
+                    or not units.is_finite()
+                    or units == 0
+                    or captured is None
+                    or not 0 <= (current - captured).total_seconds() <= 60
+                ):
+                    committee_role_errors.append(
+                        f"{symbol}: close_position_unknown_or_empty"
+                    )
+                    continue
+                attempt = self.close_position(
+                    symbol=symbol,
+                    position_units=units,
+                    reference_price=snapshot.reference_price,
+                    cycle_id=cycle_id,
+                    now=current,
+                    reason=plan.rationale,
+                    committee_decision_id=final.decision_id,
+                )
+                all_attempts.append(
+                    attempt.model_copy(
+                        update={
+                            "broker_evidence": snapshot.broker_evidence,
+                        }
+                    )
+                )
+                if attempt.outcome == "executed":
+                    overall_outcome = "executed"
+                continue
+            if plan.action in {"hold", "no_trade"} and self._direction_override is None:
+                continue
             if plan.target_position_pct <= 0 and self._direction_override is None:
                 # The committee saw no position: record the plan, no order.
                 continue
 
-            if self._snapshot_refresher is not None:
-                # Refresh broker observations after the model, retaining the
-                # candle/news inputs the committee actually saw.
+            if self._snapshot_refresher is not None and plan.action is None:
+                # Historical plans lack an action; never invent a held state.
                 snapshot = self._snapshot_refresher(snapshot)
             attempt = self._attempt_execution(
                 plan=plan,
@@ -453,6 +539,7 @@ class DailyTradingCycle:
                 now=self._clock(),
                 cycle_id=cycle_id,
                 reference_price_resolver=reference_price_resolver,
+                committee_decision_id=final.decision_id,
             )
             all_attempts.append(attempt.model_copy(update={
                 "broker_evidence": snapshot.broker_evidence,
@@ -534,6 +621,7 @@ class DailyTradingCycle:
         cycle_id: str,
         reference_price_resolver: Callable[[str, MarketSnapshot], Decimal]
         | None = None,
+        committee_decision_id: str | None = None,
     ) -> OrderAttempt:
         side: OrderSide = self._entry_side(plan)
         intent_id = deterministic_intent_id(
@@ -545,6 +633,7 @@ class DailyTradingCycle:
             intent_id=intent_id,
             now=now,
             cycle_id=cycle_id,
+            committee_decision_id=committee_decision_id,
         )
         if intent is None:
             # 5.6 sizing refused (or could not size) this entry: record the
@@ -726,6 +815,7 @@ class DailyTradingCycle:
         intent_id: str,
         now: datetime,
         cycle_id: str,
+        committee_decision_id: str | None = None,
     ) -> OrderIntent | None:
         """Turn one plan into an intent, or ``None`` when it cannot be sized.
 
@@ -753,6 +843,8 @@ class DailyTradingCycle:
                 side=side,
                 reference_price=snapshot.reference_price,
                 atr=snapshot.atr,
+                stop_atr_multiple=plan.stop_atr_multiple,
+                take_profit_r_multiple=plan.take_profit_r_multiple,
             )
         except StopComputationError:
             # No ATR means no protective order: the risk gate rejects the
@@ -777,6 +869,7 @@ class DailyTradingCycle:
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 cycle_id=cycle_id,
+                committee_decision_id=committee_decision_id,
                 rationale=rationale,
                 created_at=now,
             )
@@ -812,7 +905,10 @@ class DailyTradingCycle:
                 target_position_pct=None,
                 now=now,
                 rationale=rationale,
-            ).model_copy(update={"intent_id": intent_id})
+            ).model_copy(update={
+                "intent_id": intent_id,
+                "committee_decision_id": committee_decision_id,
+            })
 
         # No sizing provider configured: fall back to the committee's own
         # target fraction. The production cycle always configures one.
@@ -826,6 +922,7 @@ class DailyTradingCycle:
             stop_loss=stop_loss,
             take_profit=take_profit,
             cycle_id=cycle_id,
+            committee_decision_id=committee_decision_id,
             rationale=rationale,
             created_at=now,
         )
@@ -875,6 +972,7 @@ class DailyTradingCycle:
         now: datetime | None = None,
         reason: str = "operator close",
         submit: bool = True,
+        committee_decision_id: str | None = None,
     ) -> OrderAttempt:
         """Close one position through the full decision → risk → broker path.
 
@@ -889,7 +987,7 @@ class DailyTradingCycle:
             position_units=position_units,
             now=now,
             reason=reason,
-        )
+        ).model_copy(update={"committee_decision_id": committee_decision_id})
         # Rule 5 (data quality) is one of the entry-only rules: a close is
         # checked against the kill switch and rule 3 only, and rule 3 reads
         # the quote from the account context.

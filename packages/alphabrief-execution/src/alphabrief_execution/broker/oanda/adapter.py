@@ -212,7 +212,7 @@ class OandaPaperAdapter(BrokerAdapter):
             units=units,
             time_in_force=_time_in_force_for(request),
             price=request.limit_price,
-            position_fill="DEFAULT",
+            position_fill="REDUCE_ONLY" if request.reduce_only else "DEFAULT",
             stop_loss=(
                 DependentOrder(kind="stop_loss", price=request.stop_loss)
                 if request.stop_loss is not None

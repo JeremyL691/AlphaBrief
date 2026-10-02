@@ -115,9 +115,7 @@ def _decision(*, max_quantity: Decimal | None = None) -> RiskDecision:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_data_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the runtime data directory at tmp so the decision-binding
     store (M08-W07) never touches the developer's real data directory."""
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
@@ -135,10 +133,13 @@ class TestExternalPaperExecutionBackend:
 
         assert quantity == Decimal("2.00")
 
-    def test_submit_uses_intent_id_as_client_order_id(self) -> None:
+    @pytest.mark.parametrize("reduce_only", [False, True])
+    def test_submit_uses_intent_id_as_client_order_id(self, reduce_only: bool) -> None:
         adapter = _FakeAdapter()
         backend = ExternalPaperExecutionBackend(adapter)
-        intent = _intent()
+        intent = _intent().model_copy(update={
+            "reduce_only": reduce_only, "committee_decision_id": "d" * 64,
+        })
 
         result = backend.submit(
             intent,
@@ -158,6 +159,16 @@ class TestExternalPaperExecutionBackend:
         assert adapter.requests[0].symbol == "SPY"
         assert adapter.requests[0].side == BrokerOrderSide.BUY
         assert adapter.requests[0].quantity == Decimal("2")
+        assert adapter.requests[0].reduce_only is reduce_only
+        from alphabrief_risk.decision_store import RiskDecisionStore
+
+        saved_store = RiskDecisionStore(db_path=_paths.db_path())
+        try:
+            saved = saved_store.get("risk_test")
+            assert saved is not None
+            assert "committee_decision:" + "d" * 64 in saved.source_ids
+        finally:
+            saved_store.close()
 
     def test_submit_clamps_to_risk_max_quantity(self) -> None:
         adapter = _FakeAdapter()

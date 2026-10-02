@@ -14,6 +14,7 @@ from alphabrief_models import (
 )
 from alphabrief_trader.committee import TradingCommittee
 from alphabrief_trader.schemas import CommitteeInput, MarketSnapshot
+from committee_provider import canonical_fixture_payload
 
 
 def _input() -> CommitteeInput:
@@ -55,6 +56,7 @@ class CitationProvider(FakeProviderAdapter):
             )
         else:
             output.update(stance="agreement", challenged_claim=None)
+        output = canonical_fixture_payload(request, output)
         targeted = phase == self.phase and (role == "risk" or phase == "summary")
         if targeted and not (self.repair and request.call_kind == "repair"):
             if self.refs == "legacy":

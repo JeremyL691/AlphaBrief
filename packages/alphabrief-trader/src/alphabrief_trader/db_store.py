@@ -22,21 +22,27 @@ tables).
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
 import duckdb
 from alphabrief_core import paths as _paths
+from alphabrief_core.secrets import scrub_payload
+from alphabrief_models.gateway import ModelValidationRecord
 
 from alphabrief_trader.db_schema import (
     apply_ai_trading_schema,
     drop_ai_trading_schema,
 )
 from alphabrief_trader.schemas import (
+    CANONICAL_COMMITTEE_ROLES,
     DailyCycleRecord,
     DailyCycleSummary,
+    DecisionCallReference,
+    FinalCommitteeDecision,
 )
 
 
@@ -63,12 +69,124 @@ class AiTradingStore:
         store.close()
     """
 
-    def __init__(self, db_path: Path | str | None = None) -> None:
+    def __init__(
+        self, db_path: Path | str | None = None, *, require_model_audit: bool = False,
+    ) -> None:
         if db_path is None:
             db_path = _paths.db_path()
         self._db_path = Path(db_path)
+        self._require_model_audit = require_model_audit
         self._conn = duckdb.connect(str(self._db_path))
         apply_ai_trading_schema(self._conn)
+
+    def get_final_decision(self, decision_id: str) -> FinalCommitteeDecision | None:
+        row = self._conn.execute(
+            "SELECT payload FROM ai_final_decisions WHERE decision_id = ?",
+            [decision_id],
+        ).fetchone()
+        return (
+            None if row is None else FinalCommitteeDecision.model_validate_json(row[0])
+        )
+
+    def save_final_decision(
+        self, record: FinalCommitteeDecision,
+    ) -> FinalCommitteeDecision:
+        # Revalidate model_copy callers and scrub an independent serialized copy.
+        payload = scrub_payload(record.model_dump(mode="json"))
+        checked = FinalCommitteeDecision.model_validate(payload)
+        if self._require_model_audit:
+            refs = self._decision_call_references(checked)
+            if checked.model_audit and checked.model_audit != refs:
+                raise ValueError("final decision model audit mismatch")
+            checked = checked.model_copy(update={
+                "model_audit": refs, "model_audit_verified": True,
+            })
+        elif checked.model_audit_verified:
+            raise ValueError("unverified store cannot assert model audit verification")
+        existing = self.get_final_decision(checked.decision_id)
+        if existing is not None:
+            if existing.model_dump(exclude={"created_at"}) != checked.model_dump(
+                exclude={"created_at"}
+            ):
+                raise ValueError("conflicting final decision")
+            return existing
+        self._conn.execute(
+            "INSERT INTO ai_final_decisions VALUES (?, ?, ?, ?::JSON, ?)",
+            [checked.decision_id, checked.cycle_id, checked.symbol,
+             checked.model_dump_json(), checked.created_at],
+        )
+        return checked
+
+    def _decision_call_references(
+        self, record: FinalCommitteeDecision,
+    ) -> dict[str, DecisionCallReference]:
+        votes = {vote.role: vote for vote in record.votes}
+        if len(record.votes) != 5 or set(votes) != set(CANONICAL_COMMITTEE_ROLES):
+            raise ValueError("final decision requires five actual opening opinions")
+        if record.plan.manager_call_id != votes["manager"].model_call_id:
+            raise ValueError("final decision manager call mismatch")
+        if any(
+            key.rpartition(":")[2] != sha256(body.encode("utf-8")).hexdigest()
+            for key, body in record.input_quality.evidence_catalog.items()
+        ):
+            raise ValueError("final decision input body hash mismatch")
+        refs: dict[str, DecisionCallReference] = {}
+        for role, vote in votes.items():
+            row = self._conn.execute(
+                "SELECT prompt_version, input_hash, output_hash, cycle_key, "
+                "audit_payload, status, model FROM model_call_records "
+                "WHERE call_id = ?",
+                [vote.model_call_id],
+            ).fetchone()
+            if row is None or row[5] != "succeeded" or row[6] != vote.model_name:
+                raise ValueError("final decision missing successful model response")
+            audit = {} if row[4] is None else json.loads(row[4])
+            metadata = audit.get("request_metadata", {})
+            if (
+                row[3] != (record.cycle_key or record.cycle_id)
+                or metadata.get("committee_role") != role
+                or metadata.get("symbol") != record.symbol
+                or metadata.get("phase") != "opening"
+                or audit.get("output_text") is None
+            ):
+                raise ValueError("final decision model provenance mismatch")
+            validations = [
+                ModelValidationRecord.model_validate_json(item[0])
+                for item in self._conn.execute(
+                    "SELECT payload FROM model_call_validations WHERE call_id = ?",
+                    [vote.model_call_id],
+                ).fetchall()
+            ]
+            accepted = [item for item in validations if item.verdict == "accepted"]
+            if len(accepted) != 1:
+                raise ValueError("final decision requires one accepted parsing verdict")
+            validation = accepted[0]
+            parsed = validation.parsed_output or {}
+            expected: dict[str, Any] = (
+                {"action": vote.manager_action, "rationale": vote.analysis,
+                 "stop_atr_multiple": str(vote.stop_atr_multiple),
+                 "take_profit_r_multiple": str(vote.take_profit_r_multiple)}
+                if role == "manager" else
+                {"stance": vote.analyst_stance, "horizon_hours": vote.horizon_hours,
+                 "key_points": vote.key_points, "veto": vote.veto}
+            )
+            expected.update({
+                "confidence": vote.confidence, "evidence_ids": vote.evidence,
+            })
+            if set(json.loads(metadata.get("available_evidence_ids", "[]"))) != set(
+                record.input_quality.evidence_catalog
+            ):
+                raise ValueError("final decision input catalog mismatch")
+            if validation.call_id != vote.model_call_id or any(
+                parsed.get(key) != value for key, value in expected.items()
+            ):
+                raise ValueError("final decision opinion differs from accepted output")
+            refs[role] = DecisionCallReference(
+                call_id=vote.model_call_id, validation_id=validation.validation_id,
+                prompt_version=row[0], input_hash=row[1], output_hash=row[2],
+                schema_hash=validation.schema_hash,
+            )
+        return refs
 
     # ------------------------------------------------------------------
     # Cycle persistence
@@ -166,31 +284,48 @@ class AiTradingStore:
     def count_daily_opens(self, *, trading_day: str) -> tuple[int, dict[str, int]]:
         """Count the entry orders this system opened on ``trading_day``.
 
-        An "open" is an attempt that actually submitted an order (outcome
-        ``executed``) for a symbol; the count is read from the durable
+        An "open" is an executed, non-reduce-only attempt for a symbol.
+        UTC bounds are compared as instants, independently of the DuckDB
+        connection's display timezone. The count is read from the durable
         attempt rows, so the daily intent caps (PROJECT_GUIDE 5.7 rule 7)
         are enforced against real history rather than a memory counter that
         resets when the process restarts.
         """
+        day_start = datetime.combine(
+            date.fromisoformat(trading_day), datetime.min.time(), tzinfo=UTC
+        )
+        day_end = day_start + timedelta(days=1)
         rows = self._conn.execute(
             """
             SELECT attempt_json
             FROM ai_order_attempts
             WHERE outcome = 'executed'
-              AND CAST(created_at AS DATE) = CAST(? AS DATE)
+              AND created_at >= ? AND created_at < ?
             """,
-            [trading_day],
+            [day_start, day_end],
         ).fetchall()
         per_symbol: dict[str, int] = {}
         for (payload,) in rows:
             try:
                 attempt = json.loads(str(payload))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                raise ValueError("daily entry history contains invalid JSON") from exc
+            if not isinstance(attempt, dict):
+                raise ValueError("daily entry history contains an invalid attempt")
+            intent = attempt.get("order_intent_json")
+            if not isinstance(intent, dict):
+                raise ValueError("daily entry history is missing an order intent")
+            # Old entries without the flag conservatively consume capacity;
+            # only an explicit true flag proves this was a closing order.
+            reduce_only = intent.get("reduce_only", False)
+            if not isinstance(reduce_only, bool):
+                raise ValueError("daily entry history has an invalid reduce-only flag")
+            symbol = intent.get("symbol")
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise ValueError("daily entry history is missing an instrument")
+            if reduce_only:
                 continue
-            intent = attempt.get("order_intent_json") or {}
-            symbol = str(intent.get("symbol") or "").strip()
-            if not symbol:
-                continue
+            symbol = symbol.strip()
             per_symbol[symbol] = per_symbol.get(symbol, 0) + 1
         return sum(per_symbol.values()), per_symbol
 

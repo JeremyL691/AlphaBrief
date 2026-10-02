@@ -16,7 +16,7 @@ from alphabrief_models.model_budget import ModelBudgetGuard, ModelCallKind
 from alphabrief_models.repair import repair_structured_output
 from alphabrief_trader import CommitteeInput, MarketSnapshot, model_factory
 from alphabrief_trader.committee import TradingCommittee
-from committee_provider import GroundedProvider
+from committee_provider import GroundedProvider, canonical_fixture_payload
 from pydantic import BaseModel
 from test_model_call_admission import NOW, Provider, guard, request, sink
 
@@ -268,15 +268,18 @@ def test_production_factory_shares_two_repairs_across_roles(
                 return response
             return response.model_copy(
                 update={
-                    "structured_output": {
-                        "analysis": "Observed test evidence",
-                        "view": "bullish",
-                        "confidence": 0.8,
-                        "evidence_ids": [],
-                        "risks": [],
-                        "suggested_action": "buy",
-                        "target_position_pct": "0.1",
-                    }
+                    "structured_output": canonical_fixture_payload(
+                        request,
+                        {
+                            "analysis": "Observed test evidence",
+                            "view": "bullish",
+                            "confidence": 0.8,
+                            "evidence_ids": [],
+                            "risks": [],
+                            "suggested_action": "buy",
+                            "target_position_pct": "0.1",
+                        },
+                    )
                 }
             )
 
@@ -310,6 +313,7 @@ def test_production_factory_shares_two_repairs_across_roles(
         assert [r.call_kind for r in seen].count("repair") == 2
         assert {r.cycle_key for r in seen} == {"round-1"}
         assert len(result.repair_attempts) == 2
+        assert all(attempt.ok for attempt in result.repair_attempts)
         assert not result.ok and result.plan is None
         assert "model_budget_exhausted" == result.error_message
         assert store.round_usage("round-1") == {"total": 7, "normal": 5, "repair": 2}

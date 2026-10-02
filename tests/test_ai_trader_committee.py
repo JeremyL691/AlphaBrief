@@ -10,10 +10,9 @@ import pytest
 from alphabrief_models import ModelGateway
 from alphabrief_trader.committee import (
     TradingCommittee,
-    _PartialCommitteeVote,
+    _PartialManagerDecision,
 )
 from alphabrief_trader.schemas import (
-    AnalystAction,
     CommitteeInput,
     MarketSnapshot,
 )
@@ -92,8 +91,7 @@ class TestTradingCommittee:
         # Every role call failed at the gateway → per-role stable codes.
         assert len(result.role_errors) == 5
         assert all(
-            error.endswith("provider_call_failed")
-            for error in result.role_errors
+            error.endswith("provider_call_failed") for error in result.role_errors
         )
         roles = {error.split(":")[0] for error in result.role_errors}
         assert roles == {
@@ -153,9 +151,7 @@ class TestTradingCommittee:
             gateway=ModelGateway(providers=[_build_provider(payload)]),
             roles=("manager",),
         )
-        result = committee.run(
-            CommitteeInput(snapshot=_snapshot(), roles=["manager"])
-        )
+        result = committee.run(CommitteeInput(snapshot=_snapshot(), roles=["manager"]))
         assert result.ok is True
         assert len(result.votes) == 1
         assert result.votes[0].role == "manager"
@@ -167,46 +163,38 @@ class TestTradingCommittee:
 
 class TestPartialSchema:
     def test_minimal(self) -> None:
-        v = _PartialCommitteeVote(
-            evidence_ids=[],
-            analysis="a",
-            view="bullish",
-            confidence=0.5,
-            suggested_action="buy",
-            target_position_pct=0.1,
+        decision = _PartialManagerDecision(
+            evidence_ids=[], action="open_long", confidence=0.5, rationale="a"
         )
-        assert v.veto is False
-        assert v.needs_human_review is False
+        assert decision.stop_atr_multiple == Decimal("1.5")
+        assert decision.take_profit_r_multiple == Decimal("2.0")
+        assert decision.veto is False and decision.needs_human_review is False
 
     def test_confidence_range(self) -> None:
         with pytest.raises(ValidationError):
-            _PartialCommitteeVote(
-            evidence_ids=[],
-                analysis="a",
-                view="bullish",
-                confidence=1.5,
-                suggested_action="buy",
-                target_position_pct=0.1,
+            _PartialManagerDecision(
+                evidence_ids=[], action="open_long", confidence=1.5, rationale="a"
             )
 
     def test_action_literal(self) -> None:
         with pytest.raises(ValidationError):
-            _PartialCommitteeVote(
-            evidence_ids=[],
-                analysis="a",
-                view="bullish",
-                confidence=0.5,
-                suggested_action=cast(AnalystAction, "liquidate"),
-                target_position_pct=0.1,
+            _PartialManagerDecision.model_validate(
+                {
+                    "evidence_ids": [],
+                    "action": "liquidate",
+                    "confidence": 0.5,
+                    "rationale": "a",
+                }
             )
 
-    def test_target_position_pct_range(self) -> None:
+    def test_target_position_pct_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            _PartialCommitteeVote(
-            evidence_ids=[],
-                analysis="a",
-                view="bullish",
-                confidence=0.5,
-                suggested_action="buy",
-                target_position_pct=2.0,
+            _PartialManagerDecision.model_validate(
+                {
+                    "evidence_ids": [],
+                    "action": "open_long",
+                    "confidence": 0.5,
+                    "rationale": "a",
+                    "target_position_pct": 2,
+                }
             )

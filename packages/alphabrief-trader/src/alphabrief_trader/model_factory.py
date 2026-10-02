@@ -15,6 +15,7 @@ this product.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
 from alphabrief_models import (
@@ -30,7 +31,7 @@ from alphabrief_models import (
     ProviderAdapter,
     build_channel_gateway,
 )
-from alphabrief_models.gateway import ModelValidationRecord
+from alphabrief_models.gateway import ModelRequest, ModelResponse, ModelValidationRecord
 
 from alphabrief_trader.committee import TradingCommittee
 from alphabrief_trader.rules import DisciplineConfig
@@ -144,23 +145,38 @@ def build_conservative_fake_provider() -> FakeProviderAdapter:
     environment selection or a direct test import. It is never used as a
     production fallback.
     """
-    return FakeProviderAdapter(
+
+    class CommitteeFake(FakeProviderAdapter):
+        def call(self, request: ModelRequest) -> ModelResponse:
+            response = super().call(request)
+            if request.metadata.get("committee_role") != "manager":
+                output = {
+                    "stance": "flat",
+                    "confidence": 0.62,
+                    "horizon_hours": 24,
+                    "key_points": ["Test fixture does not support an entry."],
+                    "evidence_ids": [],
+                    "veto": False,
+                }
+                return response.model_copy(
+                    update={
+                        "output_text": json.dumps(output),
+                        "structured_output": output,
+                    }
+                )
+            return response
+
+    return CommitteeFake(
         provider_name="fake",
         model_name="fake-ai-committee",
         capabilities=sorted(_STRUCTURED_CAPABILITIES),
         structured_output={
-            "analysis": (
-                "Trend remains constructive on improving breadth; downside risks "
-                "centered on macro headlines and crowded positioning."
-            ),
-            "view": "bullish",
+            "action": "no_trade",
             "confidence": 0.62,
+            "stop_atr_multiple": 1.5,
+            "take_profit_r_multiple": 2.0,
+            "rationale": "Test fixture does not support an entry.",
             "evidence_ids": [],
-            "risks": ["Macro headline tail-risk", "Crowded long positioning"],
-            "suggested_action": "watch",
-            "target_position_pct": "0.10",
-            "veto": False,
-            "needs_human_review": True,
         },
     )
 
