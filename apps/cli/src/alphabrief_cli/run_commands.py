@@ -52,6 +52,7 @@ PLANNER_TICK_SECONDS = 60.0
 QUOTE_POLL_SECONDS = 60.0
 SHADOW_SCORE_SECONDS = 900.0
 RECONCILE_SECONDS = 60.0
+MARKET_SYNC_SECONDS = 900.0
 
 #: Task timeouts (every task has one, per the guide).
 QUOTE_POLL_TIMEOUT = 60.0
@@ -59,6 +60,24 @@ SHADOW_SCORE_TIMEOUT = 300.0
 REPORT_TIMEOUT = 300.0
 BACKUP_TIMEOUT = 600.0
 CLOSE_OUT_TIMEOUT = 600.0
+MARKET_SYNC_TIMEOUT = 300.0
+
+
+def market_sync_once(*, symbols: tuple[str, ...]) -> None:
+    """Refresh real FX candles, with the connection owned by this worker."""
+    from alphabrief_api.db import MarketDataStore
+
+    from alphabrief_cli.cycle_commands import _refresh_market_bars
+
+    store = MarketDataStore(db_path=_paths.db_path())
+    try:
+        errors = _refresh_market_bars(store, symbols)
+        if errors:
+            # Values are classifications, never provider messages or URLs.
+            _LOGGER.warning("runtime: market refresh failures %s", errors)
+            raise RuntimeError("market_refresh_failed")
+    finally:
+        store.close()
 
 
 def _dump(payload: object, *, pretty: bool = True) -> None:
@@ -371,6 +390,7 @@ class Runtime:
         close_out: Callable[[str], Any] | None = None,
         quote_poller: Callable[[], Any] | None = None,
         shadow_scorer: Callable[[], Any] | None = None,
+        market_refresher: Callable[[], Any] | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -385,6 +405,10 @@ class Runtime:
             lambda: quote_poll_once(symbols=self._universe)
         )
         self._shadow_scorer = shadow_scorer or (lambda: score_shadow_once())
+        self._market_refresher = market_refresher or (
+            lambda: market_sync_once(symbols=self._universe)
+        )
+        self._market_sync_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._server: Any | None = None
         self._scheduler: Any | None = None
@@ -431,6 +455,16 @@ class Runtime:
         scored = await asyncio.to_thread(self._shadow_scorer)
         if scored:
             _LOGGER.info("runtime: scored %s shadow decision(s)", scored)
+
+    async def _run_market_sync(self) -> None:
+        async with self._market_sync_lock:
+            worker = asyncio.create_task(asyncio.to_thread(self._market_refresher))
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # Retain ownership until synchronous requests and DB writes finish.
+                await worker
+                raise
 
     # -- planner ----------------------------------------------------------
 
@@ -520,6 +554,14 @@ class Runtime:
         ]
         tasks.extend(
             [
+                ScheduledTask(
+                    name="market_sync",
+                    interval_seconds=MARKET_SYNC_SECONDS,
+                    handler=self._run_market_sync,
+                    timeout_seconds=MARKET_SYNC_TIMEOUT,
+                    max_retries=0,
+                    run_when_frozen=True,
+                ),
                 ScheduledTask(
                     name="quote_poll",
                     interval_seconds=QUOTE_POLL_SECONDS,

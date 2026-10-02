@@ -123,6 +123,7 @@ class MarketInputEvidence(_CommitteeSchema):
     counts: dict[str, int] = Field(default_factory=dict)
     series_hashes: dict[str, str] = Field(default_factory=dict)
     latest_h1_end: datetime | None = None
+    refresh_errors: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("latest_h1_end")
     @classmethod

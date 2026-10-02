@@ -84,6 +84,7 @@ def _snapshot_loader(
     market_store: MarketDataStore, news_store: NewsStore,
     news_health: NewsIngestionStore,
     signal_observation: SignalCandleObservation | None = None,
+    refresh_errors: dict[str, str] | None = None,
 ) -> SnapshotLoader:
     """Build snapshots from stored OANDA bars (no synthetic prices).
 
@@ -126,7 +127,13 @@ def _snapshot_loader(
             "atr": inputs.atr,
             "momentum_20d_pct": inputs.return_20d_pct,
             "volatility_20d_pct": inputs.volatility_20d_pct,
-            "market_evidence": inputs.evidence,
+            "market_evidence": inputs.evidence.model_copy(update={
+                "refresh_errors": {
+                    key.split(":", 1)[1]: error
+                    for key, error in (refresh_errors or {}).items()
+                    if key.startswith(f"{symbol}:")
+                },
+            }),
             "signal_evidence": (
                 SignalInputEvidence(observed_at=now, errors={"inputs": "not_observed"})
                 if signal_observation is None else build_signal_inputs(
@@ -147,6 +154,19 @@ def _snapshot_loader(
 def _signal_observation(market: MarketDataStore) -> SignalCandleObservation:
     """Read signals once per round through the same practice-only client."""
     return observe_signal_candles(build_oanda_paper_client(), store=market)
+
+
+def _refresh_market_bars(
+    market: MarketDataStore, symbols: tuple[str, ...],
+) -> dict[str, str]:
+    """Require an actual complete practice response for every FX window."""
+    from alphabrief_execution.broker.oanda.market_sync import sync_bars
+
+    _, errors = sync_bars(
+        build_oanda_paper_client(), instruments=symbols, store=market,
+        require_full_window=True,
+    )
+    return errors
 
 
 def _risk_gate(
@@ -576,6 +596,7 @@ def _open_trading_cycle(
         resources.callback(store.close)
         market = MarketDataStore(db_path=resolved)
         resources.callback(market.close)
+        refresh_errors = _refresh_market_bars(market, symbols)
         news = NewsStore(db_path=resolved)
         resources.callback(news.close)
         news_health = NewsIngestionStore(db_path=resolved)
@@ -604,7 +625,7 @@ def _open_trading_cycle(
             ),
             store=store,
             snapshot_loader=_snapshot_loader(
-                market, news, news_health, _signal_observation(market)
+                market, news, news_health, _signal_observation(market), refresh_errors
             ),
             snapshot_refresher=_snapshot_refresher(sources, store),
             enabled=enabled,

@@ -267,6 +267,10 @@ def _scheduler_ai_test_defaults(
     )
 
     # These tests explicitly model a broker that cannot read signal instruments.
+    # FX windows are explicitly seeded below; refresh behavior has its own cases.
+    monkeypatch.setattr(
+        cycle_commands, "_refresh_market_bars", lambda store, symbols: {}
+    )
     # Separate production-input tests supply available windows and reject defects.
     monkeypatch.setattr(cycle_commands, "_signal_observation", lambda store:
         SignalCandleObservation(
@@ -833,6 +837,7 @@ class TestSchedulerRunsAiTask:
 
     @pytest.mark.parametrize("defect", [
         "healthy", "short_h1", "correlation_gap", "fetch_failure", "broker_not_found",
+        "market_refresh_failure",
     ])
     def test_production_signal_evidence_controls_model_admission(
         self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, defect: str,
@@ -863,6 +868,12 @@ class TestSchedulerRunsAiTask:
         finally:
             market.close()
         observed = signal_fixture.observation()
+        if defect == "market_refresh_failure":
+            monkeypatch.setattr(
+                cycle_commands, "_refresh_market_bars", lambda store, symbols: {
+                    "EUR_USD:H1": "TimeoutError",
+                },
+            )
         if defect == "short_h1":
             observed.series["XAU_USD"]["H1"].pop(0)
         elif defect == "correlation_gap":
@@ -895,7 +906,13 @@ class TestSchedulerRunsAiTask:
                 assert not quality["passed"] and calls.list_calls() == []
                 assert record["outcome"] == "skipped_data_stale"
                 assert record["votes"] == record["plans"] == record["attempts"] == []
-                assert any("XAU_USD" in reason for reason in quality["reasons"])
+                if defect == "market_refresh_failure":
+                    assert "market_H1_refresh_failed" in quality["reasons"]
+                    assert quality["market_evidence"]["refresh_errors"] == {
+                        "H1": "TimeoutError",
+                    }
+                else:
+                    assert any("XAU_USD" in reason for reason in quality["reasons"])
         finally:
             calls.close()
             store.close()
