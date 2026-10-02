@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -34,6 +34,7 @@ from alphabrief_core import (
     load_settings,
 )
 from alphabrief_core import paths as _paths
+from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
 from alphabrief_execution.broker.runtime import (
     build_oanda_paper_client,
     get_broker_runtime,
@@ -132,7 +133,8 @@ def _snapshot_loader(
 
 
 def _risk_gate(
-    instruments: tuple[str, ...], *, nav: Decimal | None = None
+    instruments: tuple[str, ...], *, nav: Decimal | None = None,
+    require_nav: bool = False,
 ) -> RiskGate:
     """The reviewed risk boundary for one cycle (PROJECT_GUIDE 5.6/5.7).
 
@@ -159,7 +161,7 @@ def _risk_gate(
         switch_store.close()
     return RiskGate(
         limits=RiskLimitConfig(
-            trading_enabled=True,
+            trading_enabled=not require_nav or (nav is not None and nav > 0),
             symbol_allowlist=frozenset(instruments),
             max_order_value=max_order_value,
             max_total_exposure=max_total_exposure,
@@ -384,13 +386,42 @@ def _high_impact_event_map(news_store: Any) -> dict[str, str]:
     return window_reason_map(events, now=now, window_minutes=window_minutes)
 
 
-def _nav(sources: Any) -> Decimal:
+def _nav(sources: Any) -> Decimal | None:
     """The live account NAV used for the 5.6 exposure caps."""
-    context = sources.account_exposure_context()
+    try:
+        context = sources.account_exposure_context()
+    except Exception:  # noqa: BLE001 - missing NAV disables entries, facts explain why
+        return None
     nav: Decimal = context.equity if context.equity is not None else context.cash
     if nav <= 0:
-        _exit_error("the broker account reports no positive NAV")
+        return None
     return nav
+
+
+def _snapshot_refresher(
+    sources: Any, store: AiTradingStore,
+) -> Callable[[MarketSnapshot], MarketSnapshot]:
+    """Observe broker inputs at each model/submit boundary; never fill missing facts."""
+    def refresh(snapshot: MarketSnapshot) -> MarketSnapshot:
+        try:
+            facts: BrokerInputFacts = sources.decision_input_facts(snapshot.symbol)
+        except Exception as exc:  # noqa: BLE001 - safe refusal rather than zero facts
+            facts = BrokerInputFacts(
+                symbol=snapshot.symbol, errors={"inputs": type(exc).__name__}
+            )
+        try:
+            count, _ = store.count_daily_opens(
+                trading_day=datetime.now(UTC).date().isoformat()
+            )
+            facts = facts.model_copy(update={"daily_open_count": count})
+        except Exception as exc:  # noqa: BLE001 - an unknown counter is not zero
+            facts = facts.model_copy(update={
+                "daily_open_count": None,
+                "errors": {**facts.errors, "daily_opens": type(exc).__name__},
+            })
+        return snapshot.model_copy(update={"broker_evidence": facts})
+
+    return refresh
 
 
 def _sizing_provider(sources: Any) -> Any:
@@ -544,7 +575,9 @@ def _open_trading_cycle(
         nav = _nav(sources) if quantity_override is None else None
         yield DailyTradingCycle(
             committee=build_ai_trading_committee(record_sink=_call_recorder(calls)),
-            risk_gate=_risk_gate(symbols, nav=nav),
+            risk_gate=_risk_gate(
+                symbols, nav=nav, require_nav=quantity_override is None
+            ),
             execution_backend=(
                 _execution_backend(
                     symbols=symbols, sources=sources,
@@ -554,6 +587,7 @@ def _open_trading_cycle(
             ),
             store=store,
             snapshot_loader=_snapshot_loader(market, news, news_health),
+            snapshot_refresher=_snapshot_refresher(sources, store),
             enabled=enabled,
             quantity_override=quantity_override,
             direction_override=direction_override,

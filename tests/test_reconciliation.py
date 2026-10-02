@@ -134,7 +134,7 @@ def _our_order() -> dict[str, Any]:
 def _foreign_position() -> dict[str, Any]:
     return {
         "instrument": "EUR_USD",
-        "long": {"units": "5000", "averagePrice": "1.10000"},
+        "long": {"units": "5000", "averagePrice": "1.10000", "unrealizedPL": "0"},
         "short": {"units": "0"},
     }
 

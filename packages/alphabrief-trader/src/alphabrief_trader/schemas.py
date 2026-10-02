@@ -24,6 +24,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal, cast
 
+from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
@@ -149,6 +150,7 @@ class MarketSnapshot(_CommitteeSchema):
     momentum_20d_pct: Decimal | None = None
     volatility_20d_pct: Decimal | None = Field(default=None, ge=0)
     market_evidence: MarketInputEvidence | None = None
+    broker_evidence: BrokerInputFacts | None = None
     news_context: str | None = None
     news_evidence: NewsInputEvidence | None = None
     macro_context: str | None = None
@@ -477,6 +479,7 @@ class OrderAttempt(_CommitteeSchema):
     risk_decision_json: dict[str, Any] | None = None
     fill_json: dict[str, Any] | None = None
     broker_result_json: dict[str, Any] | None = None
+    broker_evidence: BrokerInputFacts | None = None
     created_at: datetime
 
     @field_validator("created_at")
@@ -502,6 +505,7 @@ class InputQualityRecord(_CommitteeSchema):
     data_version: str | None = None
     news_evidence: NewsInputEvidence | None = None
     market_evidence: MarketInputEvidence | None = None
+    broker_evidence: BrokerInputFacts | None = None
     evaluated_at: datetime
 
     @field_validator("snapshot_captured_at", "evaluated_at")
