@@ -59,3 +59,31 @@ def test_real_account_reconciles_clean(tmp_path: Path) -> None:
     assert [d.kind for d in result.report.diffs if d.severity != "INFO"] == []
     assert result.freeze_raised is False
     assert result.cursor is not None
+
+
+def test_real_open_holding_snapshot_is_complete_and_read_only() -> None:
+    """Validate the resident holding reader against the real native OPEN endpoint."""
+    from datetime import UTC, datetime
+
+    from alphabrief_cli.cycle_commands import close_due_positions
+    from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
+
+    env_path = REPO_ROOT / ".env"
+    if env_path.is_file():
+        load_env_file(env_path)
+    if not oanda_is_configured():
+        pytest.fail("OANDA practice credentials are required")
+    accounts = AccountOpsClient(build_oanda_paper_client())
+    before = accounts.account_summary()
+    report = close_due_positions(now=datetime.now(UTC), trading="off")
+    after = accounts.account_summary()
+    assert before.last_transaction_id == after.last_transaction_id
+    assert report["checked"] == after.open_trade_count
+    assert report["closed"] == [] and report["detail"] == "NO_TRADE_TRADING_OFF"
+    print(
+        {
+            "checked_open_trades": report["checked"],
+            "last_transaction_id": after.last_transaction_id,
+            "orders_submitted": 0,
+        }
+    )

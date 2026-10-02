@@ -207,6 +207,28 @@ class TradeOpsClient:
             request_id=request_id or f"list-{page}",
         )
 
+    def open_trade_history(
+        self, *, expected_watermark: str, page_size: int = 500,
+    ) -> tuple[TradeStateResult, ...]:
+        """Complete OPEN snapshot; changing watermark or truncation refuses exit."""
+        if (
+            not expected_watermark.isdigit() or int(expected_watermark) <= 0
+            or not 1 <= page_size <= 500
+        ):
+            raise TradeOperationError("invalid_request", "invalid snapshot bounds")
+        before: str | None = None
+        results: list[TradeStateResult] = []
+        for _ in range(50):
+            trades, _ = self._trade_page(
+                state="OPEN", count=page_size, before_id=before,
+                expected_watermark=expected_watermark,
+            )
+            results.extend(trades)
+            if not trades:
+                return tuple(results)
+            before = trades[-1].broker_trade_id
+        raise TradeOperationError("pagination_limit", "open snapshot is incomplete")
+
     def closed_trade_history(
         self,
         *,
@@ -502,7 +524,7 @@ def _parse_time(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        return None
     return parsed.astimezone(UTC)
 
 
