@@ -70,6 +70,7 @@ from alphabrief_trader.data_quality import (
     evaluate_snapshots,
 )
 from alphabrief_trader.db_store import AiTradingStore, CycleStateStore
+from alphabrief_trader.evidence_catalog import build_evidence_catalog
 from alphabrief_trader.execution_backend import (
     ExecutionBackend,
     ExecutionBackendError,
@@ -141,6 +142,8 @@ def _snapshot_fingerprint(snapshots: dict[str, MarketSnapshot]) -> str:
                         else ""
                     ),
                     snapshot.news_context or "",
+                    json.dumps(build_evidence_catalog(snapshot), sort_keys=True),
+                    json.dumps(snapshot.excluded_news_hashes),
                     snapshot.macro_context or "",
                     *([] if snapshot.news_evidence is None else [json.dumps(
                         snapshot.news_evidence.model_dump(mode="json"), sort_keys=True
@@ -362,6 +365,12 @@ class DailyTradingCycle:
                 market_evidence=None if snapshot is None else snapshot.market_evidence,
                 broker_evidence=None if snapshot is None else snapshot.broker_evidence,
                 signal_evidence=None if snapshot is None else snapshot.signal_evidence,
+                evidence_catalog=(
+                    {} if snapshot is None else build_evidence_catalog(snapshot)
+                ),
+                excluded_news_hashes=(
+                    [] if snapshot is None else snapshot.excluded_news_hashes
+                ),
                 evaluated_at=checked_at,
             ))
             if not quality.passed or snapshot is None:

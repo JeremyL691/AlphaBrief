@@ -17,6 +17,7 @@ from alphabrief_core import Bar
 from alphabrief_news import NewsHeadline
 from alphabrief_news.sentiment import RuleBasedSentimentAnalyzer, sentiment_summary
 
+from alphabrief_trader.evidence_catalog import headline_hash, prepare_headline
 from alphabrief_trader.schemas import MarketSnapshot
 
 BarLoader = Callable[[str], Sequence[Bar]]
@@ -72,7 +73,7 @@ class StoredMarketSnapshotBuilder:
             return None
 
         captured_at = self._ensure_utc(self._clock())
-        headlines = self._load_headlines(normalized, captured_at)
+        headlines, excluded = self._load_headlines(normalized, captured_at)
 
         return MarketSnapshot(
             symbol=normalized,
@@ -84,6 +85,8 @@ class StoredMarketSnapshotBuilder:
                 headlines=headlines,
             ),
             macro_context=None,
+            news_items=headlines,
+            excluded_news_hashes=excluded,
             data_version=self._data_version(bars=bars, headlines=headlines),
             captured_at=captured_at,
         )
@@ -92,7 +95,7 @@ class StoredMarketSnapshotBuilder:
         self,
         symbol: str,
         captured_at: datetime,
-    ) -> list[NewsHeadline]:
+    ) -> tuple[list[NewsHeadline], list[str]]:
         start = captured_at - self._news_window
         raw = list(
             self._headline_loader(
@@ -103,7 +106,17 @@ class StoredMarketSnapshotBuilder:
             )
         )
         annotated: list[NewsHeadline] = []
-        for headline in raw[: self._max_headlines]:
+        excluded: list[str] = []
+        for headline in sorted(raw, key=lambda item: item.published_at, reverse=True):
+            if not start <= headline.published_at <= captured_at:
+                continue
+            if symbol not in {value.upper() for value in headline.symbols}:
+                continue
+            safe = prepare_headline(headline)
+            if safe is None:
+                excluded.append(headline_hash(headline))
+                continue
+            headline = safe
             if headline.sentiment is None:
                 annotated.append(self._sentiment.annotate(headline))
             else:
@@ -112,7 +125,7 @@ class StoredMarketSnapshotBuilder:
             annotated,
             key=lambda headline: headline.published_at,
             reverse=True,
-        )
+        )[: self._max_headlines], sorted(set(excluded))
 
     @staticmethod
     def _recent_return_pct(bars: Sequence[Bar]) -> Decimal | None:
@@ -134,15 +147,11 @@ class StoredMarketSnapshotBuilder:
             hours = int(self._news_window.total_seconds() // 3600)
             return f"No recent headlines found for {symbol} in last {hours}h."
 
-        lines = [
-            f"Recent {symbol} news sentiment: {sentiment_summary(headlines)}."
-        ]
+        lines = [f"Recent {symbol} news sentiment: {sentiment_summary(headlines)}."]
         for headline in headlines:
             label = headline.sentiment or "unknown"
             published = self._ensure_utc(headline.published_at).isoformat()
-            lines.append(
-                f"- {published} [{label}] {headline.source}: {headline.title}"
-            )
+            lines.append(f"- {published} [{label}] {headline.source}: {headline.title}")
         return "\n".join(lines)
 
     @staticmethod

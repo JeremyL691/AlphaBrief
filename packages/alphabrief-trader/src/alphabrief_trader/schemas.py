@@ -25,6 +25,7 @@ from decimal import Decimal
 from typing import Any, Literal, cast
 
 from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
+from alphabrief_news import NewsHeadline
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
@@ -199,6 +200,8 @@ class MarketSnapshot(_CommitteeSchema):
     signal_evidence: SignalInputEvidence | None = None
     news_context: str | None = None
     news_evidence: NewsInputEvidence | None = None
+    news_items: list[NewsHeadline] = Field(default_factory=list, max_length=20)
+    excluded_news_hashes: list[str] = Field(default_factory=list)
     macro_context: str | None = None
     data_version: str = Field(default="ai-trader-v1", min_length=1)
     captured_at: datetime
@@ -260,6 +263,20 @@ class CommitteeInput(_CommitteeSchema):
         if len(set(value)) != len(value):
             raise ValueError("evidence_ids must not contain duplicates")
         return value
+
+    @property
+    def evidence_catalog(self) -> dict[str, str]:
+        from alphabrief_trader.evidence_catalog import build_evidence_catalog
+
+        return build_evidence_catalog(self.snapshot)
+
+    @model_validator(mode="after")
+    def _bind_evidence(self) -> CommitteeInput:
+        catalog = self.evidence_catalog
+        if self.evidence_ids and set(self.evidence_ids) != set(catalog):
+            raise ValueError("evidence_ids must match the actual snapshot catalog")
+        self.evidence_ids = list(catalog)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +569,8 @@ class InputQualityRecord(_CommitteeSchema):
     market_evidence: MarketInputEvidence | None = None
     broker_evidence: BrokerInputFacts | None = None
     signal_evidence: SignalInputEvidence | None = None
+    evidence_catalog: dict[str, str] = Field(default_factory=dict)
+    excluded_news_hashes: list[str] = Field(default_factory=list)
     evaluated_at: datetime
 
     @field_validator("snapshot_captured_at", "evaluated_at")

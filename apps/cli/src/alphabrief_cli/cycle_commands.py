@@ -161,7 +161,7 @@ def _snapshot_loader(
                         now=now
                     ),
                     related_published_at={
-                        h.headline_id: h.published_at for h in headlines
+                        h.headline_id: h.published_at for h in snapshot.news_items
                     },
                 ),
             }

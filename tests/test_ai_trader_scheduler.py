@@ -329,6 +329,30 @@ def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> No
 def _scheduler_ai_test_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import sys
+    from datetime import tzinfo
+
+    original_datetime = datetime
+
+    # Every success/refusal scenario shares one real trading-session instant.
+    # Keep the Friday/weekend rule enabled; its boundaries have dedicated tests.
+    class ClockMeta(type):
+        def __instancecheck__(cls, instance: object) -> bool:
+            # DuckDB returns native datetime instances, not our test subclass.
+            return isinstance(instance, original_datetime)
+
+    class TradingSessionDateTime(datetime, metaclass=ClockMeta):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> TradingSessionDateTime:
+            instant = cls(2026, 10, 1, 12, 30, tzinfo=UTC)
+            return (
+                instant.replace(tzinfo=None) if tz is None else instant.astimezone(tz)
+            )
+
+    for name, module in list(sys.modules.items()):
+        if name.startswith("alphabrief_") or name == __name__:
+            if getattr(module, "datetime", None) is original_datetime:
+                monkeypatch.setattr(module, "datetime", TradingSessionDateTime)
     from alphabrief_execution.broker.oanda.market_sync import (
         SIGNAL_INSTRUMENTS,
         SignalCandleObservation,
@@ -1618,10 +1642,12 @@ def test_default_backend_checks_budget_between_analyst_calls(
     from alphabrief_trader import model_factory
 
     sent: list[str] = []
+    sent_inputs: list[tuple[str, str]] = []
 
     class BudgetProvider(FakeProviderAdapter):
         def call(self, request: Any) -> Any:
             sent.append(request.request_id)
+            sent_inputs.append((request.metadata["symbol"], request.input_text))
             response = super().call(request)
             if (
                 full_round
@@ -1690,7 +1716,9 @@ def test_default_backend_checks_budget_between_analyst_calls(
     finally:
         calls.close()
     asyncio.run(
-        _ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="round-budget-production")
+        _ai_cycle_factory(db_path=isolated_data_dir)(
+            cycle_key="round-budget-production"
+        )
     )
     store = AiTradingStore(database)
     calls = ModelCallStore(database)
@@ -1698,6 +1726,15 @@ def test_default_backend_checks_budget_between_analyst_calls(
         record = store.get_latest_cycle()
         assert record is not None
         assert record["attempts"] == []
+        for item in record["input_quality"]:
+            catalog = item["evidence_catalog"]
+            assert any(key.startswith("news:") for key in catalog)
+            assert any(key.startswith("candle:") for key in catalog)
+            assert any(key.startswith("broker:") for key in catalog)
+            for symbol, prompt in sent_inputs:
+                if symbol == item["symbol"]:
+                    for key, body in catalog.items():
+                        assert f"{key}: {body}" in prompt
         usage = calls.daily_usage(
             datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         )
@@ -1706,11 +1743,15 @@ def test_default_backend_checks_budget_between_analyst_calls(
             assert len(record["plans"]) == 5
             assert usage["chatgpt_plan"].calls == 35
             assert calls.round_usage("round-budget-production") == {
-                "total": 35, "normal": 25, "repair": 10,
+                "total": 35,
+                "normal": 25,
+                "repair": 10,
             }
             for symbol in symbols:
                 assert calls.round_usage("round-budget-production", symbol=symbol) == {
-                    "total": 7, "normal": 5, "repair": 2,
+                    "total": 7,
+                    "normal": 5,
+                    "repair": 2,
                 }
         else:
             assert record["outcome"] == "skipped_model_budget"
