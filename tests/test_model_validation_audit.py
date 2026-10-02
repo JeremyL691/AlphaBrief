@@ -18,7 +18,7 @@ from alphabrief_trader import (
     TradingCommittee,
     model_factory,
 )
-from committee_provider import GroundedProvider
+from committee_provider import GroundedProvider, canonical_fixture_payload
 
 NOW = datetime(2026, 10, 2, tzinfo=UTC)
 
@@ -43,6 +43,7 @@ class PhaseProvider(GroundedProvider):
             )
         else:
             output["stance"] = "agreement"
+        output = canonical_fixture_payload(request, output)
         role = "manager" if phase == "summary" else "technical"
         targeted = phase == self.phase and request.metadata["committee_role"] == role
         if targeted and request.call_kind != "repair":

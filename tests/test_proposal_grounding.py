@@ -32,6 +32,7 @@ from alphabrief_trader.schemas import (
     MarketSnapshot,
     ResearchProposal,
 )
+from committee_provider import canonical_fixture_payload
 from pydantic import ValidationError
 from test_committee_transcript import _snapshot as transcript_snapshot
 
@@ -122,7 +123,7 @@ class _PhasedProvider(FakeProviderAdapter):
             provider=self.provider_name,
             model=self.model_name,
             output_text="{}",
-            structured_output=payload,
+            structured_output=canonical_fixture_payload(request, payload),
             status="succeeded",
             finish_reason="stop",
         )

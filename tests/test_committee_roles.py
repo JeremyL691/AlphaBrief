@@ -80,7 +80,7 @@ def _vote(role: str) -> CommitteeVote:
 def test_one_canonical_default_role_order() -> None:
     assert default_roles() == ROLES
     assert CommitteeInput(snapshot=_snapshot()).roles == ROLES
-    assert PROMPT_VERSION == "aitrader-roles-v4"
+    assert PROMPT_VERSION == "aitrader-analysts-v5"
 
 
 @pytest.mark.parametrize("legacy", ["news_sentiment", "fundamental"])

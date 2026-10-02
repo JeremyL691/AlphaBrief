@@ -27,7 +27,11 @@ from alphabrief_trader.daily_cycle import DailyTradingCycle, _snapshot_fingerpri
 from alphabrief_trader.db_store import AiTradingStore
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.schemas import MarketSnapshot
-from committee_provider import GroundedProvider, grounded_payload
+from committee_provider import (
+    GroundedProvider,
+    canonical_fixture_payload,
+    grounded_payload,
+)
 
 _BULLISH_PAYLOAD: dict[str, object] = {
     "analysis": "Bullish continuation.",
@@ -261,7 +265,9 @@ class TestDurableNoTrade:
                     provider=self.provider_name,
                     model=self.model_name,
                     output_text="{}",
-                    structured_output=grounded_payload(request, payload),
+                    structured_output=canonical_fixture_payload(
+                        request, grounded_payload(request, payload)
+                    ),
                     status="succeeded",
                     finish_reason="stop",
                 )
@@ -275,4 +281,5 @@ class TestDurableNoTrade:
         record = cycle.run(["SPY"], cycle_key="cycle-repair-ok")
 
         assert record.outcome in {"executed", "skipped_no_intent"}
-        assert record.votes
+        assert len(record.votes) == 5
+        assert record.plans

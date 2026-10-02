@@ -314,6 +314,9 @@ class CommitteeVote(_CommitteeSchema):
     model_call_id: str | None = None
     cited_evidence_ids: list[str] = Field(default_factory=list)
     created_at: datetime
+    analyst_stance: Literal["long", "short", "flat"] | None = None
+    horizon_hours: int | None = Field(default=None, gt=0)
+    key_points: list[str] = Field(default_factory=list)
 
     @field_validator("created_at")
     @classmethod

@@ -76,7 +76,7 @@ class _PartialEvidenceOutput(BaseModel):
 
 
 class _PartialCommitteeVote(_PartialEvidenceOutput):
-    """Strict schema for one role's opening model output (no metadata)."""
+    """Legacy manager output, pending the GUIDE action-protocol migration."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -88,6 +88,59 @@ class _PartialCommitteeVote(_PartialEvidenceOutput):
     target_position_pct: float = Field(ge=0.0, le=1.0)
     veto: bool = False
     needs_human_review: bool = False
+
+
+class _PartialAnalystVote(_PartialEvidenceOutput):
+    """GUIDE 5.4 analyst opening output; no execution or position-size fields."""
+
+    stance: Literal["long", "short", "flat"]
+    confidence: float = Field(ge=0.0, le=1.0, strict=True)
+    horizon_hours: int = Field(gt=0, strict=True)
+    key_points: list[str] = Field(min_length=1)
+    veto: bool = Field(strict=True)
+
+    @field_validator("key_points")
+    @classmethod
+    def _nonblank_points(cls, value: list[str]) -> list[str]:
+        if any(not point.strip() for point in value):
+            raise ValueError("key_points must be nonblank")
+        return value
+
+    @property
+    def analysis(self) -> str:
+        return "\n".join(self.key_points)
+
+    @property
+    def view(self) -> AnalystView:
+        return (
+            "bullish"
+            if self.stance == "long"
+            else "bearish"
+            if self.stance == "short"
+            else "neutral"
+        )
+
+    @property
+    def risks(self) -> list[str]:
+        return []
+
+    @property
+    def suggested_action(self) -> Literal["buy", "sell", "hold"]:
+        return (
+            "buy"
+            if self.stance == "long"
+            else "sell"
+            if self.stance == "short"
+            else "hold"
+        )
+
+    @property
+    def target_position_pct(self) -> float:
+        return 0.0
+
+    @property
+    def needs_human_review(self) -> bool:
+        return False
 
 
 class _PartialChallengeOutput(_PartialEvidenceOutput):
@@ -250,7 +303,16 @@ class TradingCommittee:
                 # In the production five-call protocol the manager is last
                 # and must see the four real analyst outputs before deciding.
                 analyst_outputs = [
-                    vote.model_dump(mode="json")
+                    {
+                        "role": vote.role,
+                        "model_call_id": vote.model_call_id,
+                        "stance": vote.analyst_stance,
+                        "confidence": vote.confidence,
+                        "horizon_hours": vote.horizon_hours,
+                        "key_points": vote.key_points,
+                        "evidence_ids": vote.cited_evidence_ids,
+                        "veto": vote.veto,
+                    }
                     for vote in votes
                     if vote.role != "manager"
                 ]
@@ -277,9 +339,12 @@ class TradingCommittee:
             if result.response is None or result.record.status != "succeeded":
                 role_errors.append(_failure_code(role, result.record))
                 continue
-            opening_parsed: StructuredOutputResult[_PartialCommitteeVote] = (
-                parse_structured_output(result.response, target=_PartialCommitteeVote)
+            opening_schema = (
+                _PartialCommitteeVote if role == "manager" else _PartialAnalystVote
             )
+            opening_parsed: StructuredOutputResult[
+                _PartialCommitteeVote | _PartialAnalystVote
+            ] = parse_structured_output(result.response, target=opening_schema)
             model_call_id = result.record.call_id
             model_name = result.response.model or "unknown"
             failure_reason: str | None = None
@@ -294,7 +359,7 @@ class TradingCommittee:
 
             self._gateway.record_validation(
                 result.record.call_id,
-                target=_PartialCommitteeVote,
+                target=opening_schema,
                 parsed=opening_parsed.parsed,
                 error_code=None
                 if opening_parsed.ok
@@ -313,13 +378,13 @@ class TradingCommittee:
                     role_errors.append(f"{role}: model_budget:symbol_repair_limit")
                     continue
 
-                def _grounding(parsed: _PartialCommitteeVote) -> list[str]:
+                def _grounding(parsed: _PartialEvidenceOutput) -> list[str]:
                     return _vote_grounding_violations(parsed, payload)
 
                 repaired = repair_structured_output(
                     gateway=self._gateway,
                     request=request,
-                    target=_PartialCommitteeVote,
+                    target=opening_schema,
                     raw_output=result.response.output_text,
                     failure_reason=failure_reason,
                     max_attempts=remaining_repairs,
@@ -350,7 +415,9 @@ class TradingCommittee:
                 model_name = repaired.response.model or "unknown"
                 opening_parsed = StructuredOutputResult(
                     ok=True,
-                    parsed=cast(_PartialCommitteeVote, repaired.parsed),
+                    parsed=cast(
+                        _PartialCommitteeVote | _PartialAnalystVote, repaired.parsed
+                    ),
                     error_code=None,
                 )
 
@@ -371,6 +438,11 @@ class TradingCommittee:
                 needs_human_review=p.needs_human_review,
                 model_call_id=model_call_id,
                 cited_evidence_ids=cited,
+                analyst_stance=p.stance if isinstance(p, _PartialAnalystVote) else None,
+                horizon_hours=p.horizon_hours
+                if isinstance(p, _PartialAnalystVote)
+                else None,
+                key_points=p.key_points if isinstance(p, _PartialAnalystVote) else [],
                 created_at=self._clock(),
             )
             votes.append(vote)
