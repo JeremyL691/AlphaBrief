@@ -108,6 +108,7 @@ class SizingInputs:
 
     nav: Decimal
     quote_to_home: Decimal = Decimal("1")
+    quote_position_to_home: Decimal | None = None
     trade_units_precision: int = 0
     minimum_trade_size: Decimal = Decimal("1")
     soak_day: int | None = None
@@ -143,6 +144,7 @@ def size_entry(
         nav=inputs.nav,
         stop_distance=stop_distance,
         quote_to_home=inputs.quote_to_home,
+        quote_position_to_home=inputs.quote_position_to_home,
         trade_units_precision=inputs.trade_units_precision,
         minimum_trade_size=inputs.minimum_trade_size,
         risk_pct=base_risk * inputs.risk_multiplier,
@@ -162,6 +164,7 @@ def compute_units(
     nav: Decimal,
     stop_distance: Decimal,
     quote_to_home: Decimal = Decimal("1"),
+    quote_position_to_home: Decimal | None = None,
     trade_units_precision: int = 0,
     minimum_trade_size: Decimal = Decimal("1"),
     risk_pct: Decimal = DEFAULT_RISK_PCT,
@@ -185,6 +188,11 @@ def compute_units(
     if risk_pct <= 0:
         raise SizingError("risk_pct must be positive")
 
+    value_factor = (
+        quote_to_home if quote_position_to_home is None else quote_position_to_home
+    )
+    if not value_factor.is_finite() or value_factor <= 0:
+        raise SizingError("position conversion must be finite and positive")
     risk_amount = nav * risk_pct
     risk_per_unit = stop_distance * quote_to_home
     if risk_per_unit <= 0:
@@ -211,12 +219,12 @@ def compute_units(
     # JPY-quoted pair is compared against the cap correctly.
     notional = units * (price if price is not None else stop_distance)
     if price is not None:
-        notional = notional * quote_to_home
+        notional = notional * value_factor
     if price is not None and max_order_notional_pct is not None:
         cap = nav * max_order_notional_pct
         if notional > cap:
             capped_units = _quantize_units(
-                cap / (price * quote_to_home), trade_units_precision
+                cap / (price * value_factor), trade_units_precision
             )
             if capped_units <= 0 or capped_units < minimum_trade_size:
                 return SizingResult(
@@ -229,7 +237,7 @@ def compute_units(
                     risk_per_unit=risk_per_unit,
                 )
             units = capped_units
-            notional = units * price * quote_to_home
+            notional = units * price * value_factor
             return SizingResult(
                 outcome="sized",
                 units=units,

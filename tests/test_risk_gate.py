@@ -597,9 +597,8 @@ def test_account_exposure_buy_one_cent_over_cap_is_rejected() -> None:
     assert "max_total_exposure" in decision.reason
 
 
-def test_account_exposure_sell_over_cap_is_not_rejected_on_exposure() -> None:
-    # Sells never increase gross exposure, so even at/over the cap a sell
-    # is not rejected on account-exposure grounds (other checks still apply).
+def test_account_exposure_short_entry_over_cap_is_rejected() -> None:
+    # A sell without reduce_only is a short entry, subject to the gross cap.
     gate = _exposure_gate(max_total_exposure=Decimal("300"))
     decision = gate.evaluate(
         _intent(side="sell", quantity=Decimal("1")),
@@ -607,7 +606,8 @@ def test_account_exposure_sell_over_cap_is_not_rejected_on_exposure() -> None:
         estimated_price=Decimal("100"),
         account_context=_account_context(current_total_exposure=Decimal("500")),
     )
-    assert "max_total_exposure" not in decision.risk_tags
+    assert not decision.approved
+    assert "max_total_exposure" in decision.risk_tags
 
 
 def test_account_exposure_fail_closed_when_context_missing() -> None:

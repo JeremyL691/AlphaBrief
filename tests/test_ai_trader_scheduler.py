@@ -74,9 +74,7 @@ class _NullAdapter(BrokerAdapter):
     ) -> list[OrderState]:
         return []
 
-    async def list_fills(
-        self, since: datetime | None = None
-    ) -> list[Fill]:
+    async def list_fills(self, since: datetime | None = None) -> list[Fill]:
         return []
 
     async def get_positions(self) -> list[Position]:
@@ -100,7 +98,8 @@ class _SubmittingAdapter(_NullAdapter):
 
     def instrument_metadata(self, symbol: str) -> SimpleNamespace:
         return SimpleNamespace(
-            raw_type="CURRENCY", trade_units_precision=0,
+            raw_type="CURRENCY",
+            trade_units_precision=0,
             minimum_trade_size=Decimal("1"),
         )
 
@@ -133,12 +132,23 @@ class _RiskSources:
     def account_exposure_context(self, **facts: Any) -> AccountExposureContext:
         facts.pop("symbol", None)
         return AccountExposureContext(
-            current_total_exposure=Decimal("0"), exposure_by_symbol={},
-            cash=Decimal("1000"), equity=Decimal("1000"), account_id="test-account",
-            captured_at=datetime.now(UTC), quote_captured_at=datetime.now(UTC),
-            quote_tradeable=True, open_position_count=0,
+            current_total_exposure=Decimal("0"),
+            exposure_by_symbol={},
+            cash=Decimal("1000"),
+            equity=Decimal("1000"),
+            account_id="test-account",
+            captured_at=datetime.now(UTC),
+            quote_captured_at=datetime.now(UTC),
+            quote_tradeable=True,
+            open_position_count=0,
             margin_used=Decimal(0),
-            reconciliation_state="clean", **facts,
+            exposure_complete=True,
+            quote_position_to_home={
+                s: Decimal(1)
+                for s in ("EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD")
+            },
+            reconciliation_state="clean",
+            **facts,
         )
 
     def __getattr__(self, name: str) -> Any:
@@ -154,13 +164,20 @@ class _RiskSources:
 
         now = datetime.now(UTC)
         return BrokerInputFacts(
-            symbol=symbol, bid=Decimal("1.1399"), ask=Decimal("1.1401"),
-            spread=Decimal("0.0002"), quote_to_home=Decimal(1),
+            symbol=symbol,
+            bid=Decimal("1.1399"),
+            ask=Decimal("1.1401"),
+            spread=Decimal("0.0002"),
+            quote_to_home=Decimal(1),
             quote_position_to_home=Decimal(1),
-            quote_captured_at=now, nav=Decimal(1000), margin_available=Decimal(1000),
+            quote_captured_at=now,
+            nav=Decimal(1000),
+            margin_available=Decimal(1000),
             margin_used=Decimal(0),
-            account_captured_at=now, positions_captured_at=now,
-            position_units=Decimal(0), position_unrealized_pnl=Decimal(0),
+            account_captured_at=now,
+            positions_captured_at=now,
+            position_units=Decimal(0),
+            position_unrealized_pnl=Decimal(0),
             reconciliation_captured_at=now,
         )
 
@@ -170,18 +187,28 @@ class _RiskSources:
 
 def _fake_committee(*, record_sink: Any = None) -> TradingCommittee:
     provider = FakeProviderAdapter(
-        provider_name="fake", model_name="fake-1", capabilities=["structured_output"],
+        provider_name="fake",
+        model_name="fake-1",
+        capabilities=["structured_output"],
         structured_output={
-            "analysis": "No direction supported.", "view": "neutral",
-            "confidence": 0.8, "evidence": ["trend"], "risks": [],
-            "suggested_action": "hold", "target_position_pct": "0",
-            "veto": False, "needs_human_review": False,
+            "analysis": "No direction supported.",
+            "view": "neutral",
+            "confidence": 0.8,
+            "evidence": ["trend"],
+            "risks": [],
+            "suggested_action": "hold",
+            "target_position_pct": "0",
+            "veto": False,
+            "needs_human_review": False,
         },
     )
     return TradingCommittee(
         gateway=ModelGateway(providers=[provider], record_sink=record_sink),
-        discipline=DisciplineConfig(), max_turns=5, challenge_rounds=0,
+        discipline=DisciplineConfig(),
+        max_turns=5,
+        challenge_rounds=0,
     )
+
 
 def _seed_news_quality_inputs(directory: Path, symbols: tuple[str, ...]) -> None:
     from alphabrief_news.pipeline import prepare_headlines
@@ -192,16 +219,25 @@ def _seed_news_quality_inputs(directory: Path, symbols: tuple[str, ...]) -> None
     health = NewsIngestionStore(directory / _paths.DATABASE_NAME)
     try:
         for feed in ("marketwatch-rss", "fxstreet-rss"):
-            headlines = [NewsHeadline(
-                headline_id=f"quality-{feed}-{symbol}",
-                published_at=now - timedelta(hours=1), symbols=[symbol],
-                category="macro", source=feed_source(feed).publisher,
-                title=f"Currency market outlook for {symbol}", summary="",
-                url=f"https://example.test/quality/{feed}/{symbol}",
-                sentiment="neutral", data_version="quality-test",
-            ) for symbol in symbols]
+            headlines = [
+                NewsHeadline(
+                    headline_id=f"quality-{feed}-{symbol}",
+                    published_at=now - timedelta(hours=1),
+                    symbols=[symbol],
+                    category="macro",
+                    source=feed_source(feed).publisher,
+                    title=f"Currency market outlook for {symbol}",
+                    summary="",
+                    url=f"https://example.test/quality/{feed}/{symbol}",
+                    sentiment="neutral",
+                    data_version="quality-test",
+                )
+                for symbol in symbols
+            ]
             prepared = prepare_headlines(
-                headlines, source=feed, correlation_id=f"quality-seed-{feed}",
+                headlines,
+                source=feed,
+                correlation_id=f"quality-seed-{feed}",
                 clock=lambda: now,
             )
             assert prepared.ingestion is not None
@@ -217,23 +253,36 @@ def _seed_market_quality_inputs(directory: Path, symbols: tuple[str, ...]) -> No
 
     market_store = MarketDataStore(db_path=directory / _paths.DATABASE_NAME)
     now = datetime.now(UTC)
-    durations = {"M15": timedelta(minutes=15), "H1": timedelta(hours=1),
-                 "H4": timedelta(hours=4), "D": timedelta(days=1)}
+    durations = {
+        "M15": timedelta(minutes=15),
+        "H1": timedelta(hours=1),
+        "H4": timedelta(hours=4),
+        "D": timedelta(days=1),
+    }
     try:
         for symbol in symbols:
             for index, (timeframe, count) in enumerate(TIMEFRAMES):
                 version = f"test:M:{timeframe}"
-                market_store.insert_bars([
-                    Bar(
-                        symbol=symbol,
-                        timestamp=now - durations[timeframe] * (count-i)
-                        - timedelta(microseconds=index + 1),
-                        open=Decimal("1.14"), high=Decimal("1.15"),
-                        low=Decimal("1.13"), close=Decimal("1.14"),
-                        volume=Decimal("1000"), source="oanda_practice",
-                        data_version=version,
-                    ) for i in range(count)
-                ], source="oanda_practice", data_version=version)
+                market_store.insert_bars(
+                    [
+                        Bar(
+                            symbol=symbol,
+                            timestamp=now
+                            - durations[timeframe] * (count - i)
+                            - timedelta(microseconds=index + 1),
+                            open=Decimal("1.14"),
+                            high=Decimal("1.15"),
+                            low=Decimal("1.13"),
+                            close=Decimal("1.14"),
+                            volume=Decimal("1000"),
+                            source="oanda_practice",
+                            data_version=version,
+                        )
+                        for i in range(count)
+                    ],
+                    source="oanda_practice",
+                    data_version=version,
+                )
     finally:
         market_store.close()
 
@@ -249,14 +298,18 @@ def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> No
     samples = QuoteSampleStore(db_path=directory / _paths.DATABASE_NAME)
     try:
         for i in range(5):
-            samples.record(QuoteSample(
-                symbol="EUR_USD", captured_at=now - timedelta(microseconds=i+1),
-                bid=Decimal("1.1399"), ask=Decimal("1.1401"),
-                spread=Decimal("0.0002"), mid=Decimal("1.14"),
-            ))
+            samples.record(
+                QuoteSample(
+                    symbol="EUR_USD",
+                    captured_at=now - timedelta(microseconds=i + 1),
+                    bid=Decimal("1.1399"),
+                    ask=Decimal("1.1401"),
+                    spread=Decimal("0.0002"),
+                    mid=Decimal("1.14"),
+                )
+            )
     finally:
         samples.close()
-
 
 
 @pytest.fixture(autouse=True)
@@ -274,28 +327,37 @@ def _scheduler_ai_test_defaults(
         cycle_commands, "_refresh_market_bars", lambda store, symbols: {}
     )
     # Separate production-input tests supply available windows and reject defects.
-    monkeypatch.setattr(cycle_commands, "_signal_observation", lambda store:
-        SignalCandleObservation(
-            {}, dict.fromkeys(SIGNAL_INSTRUMENTS, "broker_not_found"),
-            {}, datetime.now(UTC),
-        ))
+    monkeypatch.setattr(
+        cycle_commands,
+        "_signal_observation",
+        lambda store: SignalCandleObservation(
+            {},
+            dict.fromkeys(SIGNAL_INSTRUMENTS, "broker_not_found"),
+            {},
+            datetime.now(UTC),
+        ),
+    )
     monkeypatch.setattr(
         cycle_commands, "_risk_sources", lambda *a, **kw: _RiskSources()
     )
     monkeypatch.setattr(cycle_commands, "build_ai_trading_committee", _fake_committee)
-    monkeypatch.setattr(cycle_commands, "get_broker_runtime", lambda: SimpleNamespace(
-        adapter=scheduler_commands._build_adapter(),
-    ))
-    monkeypatch.setattr(cycle_commands, "_instrument_types", lambda symbols: {
-        symbol: "CURRENCY" for symbol in symbols
-    })
+    monkeypatch.setattr(
+        cycle_commands,
+        "get_broker_runtime",
+        lambda: SimpleNamespace(
+            adapter=scheduler_commands._build_adapter(),
+        ),
+    )
+    monkeypatch.setattr(
+        cycle_commands,
+        "_instrument_types",
+        lambda symbols: {symbol: "CURRENCY" for symbol in symbols},
+    )
     monkeypatch.setenv("ALPHABRIEF_AI_PRE_CYCLE_INGEST_ENABLED", "false")
     monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     # Keep AI-cycle observation exports out of the real ~/.alphabrief dir.
-    monkeypatch.setenv(
-        "ALPHABRIEF_OBSERVATION_DIR", str(tmp_path / "observation")
-    )
+    monkeypatch.setenv("ALPHABRIEF_OBSERVATION_DIR", str(tmp_path / "observation"))
     # The project's local ``.env`` is auto-loaded at CLI / API import
     # time (before pytest sets ``PYTEST_CURRENT_TEST``), so OANDA
     # credentials from the developer's machine would otherwise leak into
@@ -305,9 +367,7 @@ def _scheduler_ai_test_defaults(
 
 
 @pytest.fixture
-def isolated_data_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     return tmp_path
 
@@ -327,9 +387,7 @@ class TestBuildDefaultTasksAiHook:
         async def _ai_cycle() -> None:
             return None
 
-        tasks = build_default_tasks(
-            on_reconcile=_reconcile, on_ai_cycle=_ai_cycle
-        )
+        tasks = build_default_tasks(on_reconcile=_reconcile, on_ai_cycle=_ai_cycle)
         names = [t.name for t in tasks]
         assert "ai_daily_cycle" in names
         ai_task = next(t for t in tasks if t.name == "ai_daily_cycle")
@@ -382,14 +440,16 @@ class TestSchedulerRunsAiTask:
                 risk_gate=risk_gate,
                 execution_backend=backend,
                 store=store,
-                snapshot_loader=lambda s: MarketSnapshot(
-                    symbol=s,
-                    reference_price=Decimal("100"),
-                    data_version="test-v1",
-                    captured_at=datetime.now(UTC),
-                )
-                if s == "SPY"
-                else None,
+                snapshot_loader=lambda s: (
+                    MarketSnapshot(
+                        symbol=s,
+                        reference_price=Decimal("100"),
+                        data_version="test-v1",
+                        captured_at=datetime.now(UTC),
+                    )
+                    if s == "SPY"
+                    else None
+                ),
                 enabled=True,
             )
 
@@ -475,14 +535,10 @@ class TestSchedulerRunsAiTask:
             isolated_data_dir, ("EUR_USD", "GBP_USD", "USD_JPY")
         )
 
-        _seed_news_quality_inputs(
-            isolated_data_dir, ("EUR_USD", "GBP_USD", "USD_JPY")
-        )
+        _seed_news_quality_inputs(isolated_data_dir, ("EUR_USD", "GBP_USD", "USD_JPY"))
 
         class _NewsProvider:
-            def fetch_headlines(
-                self, query: NewsFetchQuery
-            ) -> list[NewsHeadline]:
+            def fetch_headlines(self, query: NewsFetchQuery) -> list[NewsHeadline]:
                 return [
                     # The provider supplies currency-relevance tags; the
                     # ingest path must not overwrite them with every symbol.
@@ -564,8 +620,7 @@ class TestSchedulerRunsAiTask:
                 fetches = ingestion.fetch_records()
                 assert len(fetches) == 3
                 fetches = [
-                    r for r in fetches
-                    if r["correlation_id"].startswith("precycle-")
+                    r for r in fetches if r["correlation_id"].startswith("precycle-")
                 ]
                 families = ingestion.successful_source_families(now=datetime.now(UTC))
             finally:
@@ -624,11 +679,23 @@ class TestSchedulerRunsAiTask:
         finally:
             store.close()
 
-    @pytest.mark.parametrize("condition", [
-        "clear", "event", "kill", "spread", "off", "margin", "margin_warning",
-    ])
+    @pytest.mark.parametrize(
+        "condition",
+        [
+            "clear",
+            "event",
+            "kill",
+            "spread",
+            "off",
+            "margin",
+            "margin_warning",
+        ],
+    )
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
-        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, condition: str,
+        self,
+        isolated_data_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        condition: str,
     ) -> None:
         # Round 0063: default paper broker is OANDA, so set OANDA credentials
         # to match the default policy. Insert a EUR_USD bar instead of SPY
@@ -662,7 +729,9 @@ class TestSchedulerRunsAiTask:
             "build_ai_trading_committee",
             lambda record_sink=None: TradingCommittee(
                 gateway=ModelGateway(providers=[provider], record_sink=record_sink),
-                discipline=DisciplineConfig(), max_turns=5, challenge_rounds=0,
+                discipline=DisciplineConfig(),
+                max_turns=5,
+                challenge_rounds=0,
             ),
         )
 
@@ -671,12 +740,20 @@ class TestSchedulerRunsAiTask:
         if condition == "event":
             news = NewsStore(db_path=database)
             try:
-                news.insert_headlines([NewsHeadline(
-                    headline_id="cpi-event", published_at=datetime.now(UTC),
-                    symbols=["EUR_USD"], category="macro", source="test-wire",
-                    title="US CPI release", summary="Inflation release",
-                    data_version="test",
-                )])
+                news.insert_headlines(
+                    [
+                        NewsHeadline(
+                            headline_id="cpi-event",
+                            published_at=datetime.now(UTC),
+                            symbols=["EUR_USD"],
+                            category="macro",
+                            source="test-wire",
+                            title="US CPI release",
+                            summary="Inflation release",
+                            data_version="test",
+                        )
+                    ]
+                )
             finally:
                 news.close()
         elif condition == "kill":
@@ -693,11 +770,14 @@ class TestSchedulerRunsAiTask:
             original_context = _RiskSources.account_exposure_context
 
             def margin_context(
-                self: _RiskSources, **facts: Any,
+                self: _RiskSources,
+                **facts: Any,
             ) -> AccountExposureContext:
-                return original_context(self, **facts).model_copy(update={
-                    "margin_used": Decimal(301 if condition == "margin" else 250),
-                })
+                return original_context(self, **facts).model_copy(
+                    update={
+                        "margin_used": Decimal(301 if condition == "margin" else 250),
+                    }
+                )
 
             monkeypatch.setattr(
                 _RiskSources, "account_exposure_context", margin_context
@@ -731,10 +811,17 @@ class TestSchedulerRunsAiTask:
                 assert attempt["execution_backend"] == "external_paper"
                 assert attempt["broker_order_id"] == attempt["order_id"]
                 assert attempt["client_order_id"] == attempt["intent_id"]
+                exposure = attempt["risk_decision_json"]["rule_evidence"]["exposure"]
+                assert exposure["complete"] == "True"
+                assert exposure["fresh"] == "True"
+                assert Decimal(exposure["order_notional"]) == Decimal("94.62")
+                assert Decimal(exposure["projected_gross"]) == Decimal("94.62")
             else:
                 expected = {
-                    "event": "EVENT_WINDOW", "kill": "test persisted stop",
-                    "spread": "SPREAD_WIDE", "off": "NO_TRADE_TRADING_OFF",
+                    "event": "EVENT_WINDOW",
+                    "kill": "test persisted stop",
+                    "spread": "SPREAD_WIDE",
+                    "off": "NO_TRADE_TRADING_OFF",
                     "margin": "MARGIN",
                 }[condition]
                 assert expected in attempt["reason"]
@@ -776,12 +863,21 @@ class TestSchedulerRunsAiTask:
         finally:
             store.close()
 
-    @pytest.mark.parametrize("timeframe,count", [
-        ("M15", 96), ("H1", 120), ("H4", 60), ("D", 60),
-    ])
+    @pytest.mark.parametrize(
+        "timeframe,count",
+        [
+            ("M15", 96),
+            ("H1", 120),
+            ("H4", 60),
+            ("D", 60),
+        ],
+    )
     def test_production_cycle_rejects_short_market_window_before_model(
-        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
-        timeframe: str, count: int,
+        self,
+        isolated_data_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        timeframe: str,
+        count: int,
     ) -> None:
         from alphabrief_api.db.model_call import ModelCallStore
 
@@ -796,11 +892,15 @@ class TestSchedulerRunsAiTask:
         original = MarketDataStore.get_bar_models
 
         def read_short(
-            store: MarketDataStore, symbol: str, *,
-            data_version_suffix: str | None = None, source: str | None = None,
+            store: MarketDataStore,
+            symbol: str,
+            *,
+            data_version_suffix: str | None = None,
+            source: str | None = None,
         ) -> list[Bar]:
-            bars = original(store, symbol, data_version_suffix=data_version_suffix,
-                            source=source)
+            bars = original(
+                store, symbol, data_version_suffix=data_version_suffix, source=source
+            )
             return bars[1:] if data_version_suffix == f":M:{timeframe}" else bars
 
         monkeypatch.setattr(MarketDataStore, "get_bar_models", read_short)
@@ -823,18 +923,24 @@ class TestSchedulerRunsAiTask:
             calls.close()
             store.close()
 
-    @pytest.mark.parametrize("field,reason", [
-        ("quote_captured_at", "quote_captured_at_stale_or_future"),
-        ("account_captured_at", "account_captured_at_stale_or_future"),
-        ("nav", "nav_missing_or_not_positive"),
-        ("margin_available", "margin_available_missing"),
-        ("position_units", "position_units_missing"),
-        ("quote_to_home", "quote_to_home_missing_or_not_positive"),
-        ("reconciliation_captured_at", "reconciliation_captured_at_missing"),
-    ])
+    @pytest.mark.parametrize(
+        "field,reason",
+        [
+            ("quote_captured_at", "quote_captured_at_stale_or_future"),
+            ("account_captured_at", "account_captured_at_stale_or_future"),
+            ("nav", "nav_missing_or_not_positive"),
+            ("margin_available", "margin_available_missing"),
+            ("position_units", "position_units_missing"),
+            ("quote_to_home", "quote_to_home_missing_or_not_positive"),
+            ("reconciliation_captured_at", "reconciliation_captured_at_missing"),
+        ],
+    )
     def test_production_refuses_bad_broker_inputs_before_model(
-        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
-        field: str, reason: str,
+        self,
+        isolated_data_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        field: str,
+        reason: str,
     ) -> None:
         from alphabrief_api.db.model_call import ModelCallStore
 
@@ -855,7 +961,9 @@ class TestSchedulerRunsAiTask:
             return original(source, symbol).model_copy(update={field: value})
 
         monkeypatch.setattr(_RiskSources, "decision_input_facts", bad_inputs)
-        asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="broker-bad"))
+        asyncio.run(
+            _ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="broker-bad")
+        )
         database = isolated_data_dir / _paths.DATABASE_NAME
         store, calls = AiTradingStore(database), ModelCallStore(database)
         try:
@@ -871,12 +979,22 @@ class TestSchedulerRunsAiTask:
             calls.close()
             store.close()
 
-    @pytest.mark.parametrize("defect", [
-        "healthy", "short_h1", "correlation_gap", "fetch_failure", "broker_not_found",
-        "market_refresh_failure",
-    ])
+    @pytest.mark.parametrize(
+        "defect",
+        [
+            "healthy",
+            "short_h1",
+            "correlation_gap",
+            "fetch_failure",
+            "broker_not_found",
+            "market_refresh_failure",
+        ],
+    )
     def test_production_signal_evidence_controls_model_admission(
-        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, defect: str,
+        self,
+        isolated_data_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        defect: str,
     ) -> None:
         import test_market_input_quality as market_fixture
         import test_signal_inputs as signal_fixture
@@ -899,14 +1017,17 @@ class TestSchedulerRunsAiTask:
             windows = market_fixture.windows()
             windows["D"] = signal_fixture.bars("EUR_USD", "D", 60)
             for tf, rows in windows.items():
-                market.insert_bars(rows, source="oanda_practice",
-                                   data_version=f"test:M:{tf}")
+                market.insert_bars(
+                    rows, source="oanda_practice", data_version=f"test:M:{tf}"
+                )
         finally:
             market.close()
         observed = signal_fixture.observation()
         if defect == "market_refresh_failure":
             monkeypatch.setattr(
-                cycle_commands, "_refresh_market_bars", lambda store, symbols: {
+                cycle_commands,
+                "_refresh_market_bars",
+                lambda store, symbols: {
                     "EUR_USD:H1": "TimeoutError",
                 },
             )
@@ -922,7 +1043,9 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setattr(
             cycle_commands, "_signal_observation", lambda store: observed
         )
-        asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="signal-round"))
+        asyncio.run(
+            _ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="signal-round")
+        )
         store, calls = AiTradingStore(database), ModelCallStore(database)
         try:
             record = store.get_latest_cycle()
@@ -976,10 +1099,10 @@ class TestSchedulerRunsAiTask:
                 "order_types: [market, limit]\n"
                 "timezone: America/New_York\n"
                 "trading_days: [mon, tue, wed, thu, fri]\n"
-                "session_start: \"09:30\"\n"
-                "session_end: \"16:00\"\n"
-                "max_order_notional: \"100\"\n"
-                "max_total_exposure: \"300\"\n"
+                'session_start: "09:30"\n'
+                'session_end: "16:00"\n'
+                'max_order_notional: "100"\n'
+                'max_total_exposure: "300"\n'
                 "require_human_review: true\n"
                 "automated_execution: false\n"
             ),
@@ -1011,7 +1134,9 @@ class TestSchedulerRunsAiTask:
 
 class TestRuntimeComposition:
     def test_disabled_model_channel_is_durable_and_records_shadows(
-        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_data_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from alphabrief_api.db.model_call import ModelCallStore
         from alphabrief_trader.shadow_store import ShadowStore
@@ -1025,8 +1150,11 @@ class TestRuntimeComposition:
         database = isolated_data_dir / _paths.DATABASE_NAME
         calls = ModelCallStore(db_path=database)
         try:
-            calls.disable_channel("chatgpt_plan", datetime.now(UTC).date().isoformat(),
-                                  "test provider unavailable")
+            calls.disable_channel(
+                "chatgpt_plan",
+                datetime.now(UTC).date().isoformat(),
+                "test provider unavailable",
+            )
         finally:
             calls.close()
         asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)())
@@ -1046,7 +1174,9 @@ class TestRuntimeComposition:
             cycles.close()
 
     def test_worker_does_not_block_event_loop_and_cancellation_waits_for_it(
-        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        isolated_data_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import threading
         from contextlib import contextmanager
@@ -1093,7 +1223,8 @@ class TestRuntimeComposition:
             finish.set()
 
     def test_single_round_cli_uses_the_same_cycle_composition(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from contextlib import contextmanager
 
@@ -1106,10 +1237,16 @@ class TestRuntimeComposition:
         class Cycle:
             def run(self, symbols: list[str]) -> DailyCycleRecord:
                 return DailyCycleRecord(
-                    cycle_id="test-cycle", trading_day="2026-10-01",
-                    symbols=symbols, plans=[], votes=[], attempts=[],
-                    outcome="skipped_no_intent", enabled=True,
-                    live_trading_enabled=False, summary="test",
+                    cycle_id="test-cycle",
+                    trading_day="2026-10-01",
+                    symbols=symbols,
+                    plans=[],
+                    votes=[],
+                    attempts=[],
+                    outcome="skipped_no_intent",
+                    enabled=True,
+                    live_trading_enabled=False,
+                    summary="test",
                     created_at=datetime.now(UTC),
                 )
 
@@ -1134,13 +1271,21 @@ class TestRuntimeComposition:
             cycle_commands._high_impact_event_map(BrokenNews())
 
 
-@pytest.mark.parametrize("failure,expected", [
-    ("network_error", "timeout"), ("parse_error", "malformed"),
-    ("rate_limited", "rate_limit"), ("unexpected", "source_failure"),
-])
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        ("network_error", "timeout"),
+        ("parse_error", "malformed"),
+        ("rate_limited", "rate_limit"),
+        ("unexpected", "source_failure"),
+    ],
+)
 def test_runtime_persists_news_failures_and_closes_health_store(
-    isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str], failure: str, expected: str,
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+    expected: str,
 ) -> None:
     from alphabrief_news.providers import NewsProviderError
 
@@ -1167,7 +1312,8 @@ def test_runtime_persists_news_failures_and_closes_health_store(
     )
     database = isolated_data_dir / _paths.DATABASE_NAME
     monkeypatch.setattr(
-        scheduler_commands, "_news_ingestion_store",
+        scheduler_commands,
+        "_news_ingestion_store",
         lambda: TrackingStore(db_path=database),
     )
     news = NewsStore(db_path=database)
@@ -1184,7 +1330,8 @@ def test_runtime_persists_news_failures_and_closes_health_store(
     try:
         rows = with_health.fetch_records()
         assert [(row["source"], row["fetch_outcome"]) for row in rows] == [
-            ("marketwatch-rss", expected), ("fxstreet-rss", "empty")
+            ("marketwatch-rss", expected),
+            ("fxstreet-rss", "empty"),
         ]
         assert all(row["item_count"] == 0 for row in rows)
         assert with_health.successful_source_families(now=now) == frozenset()
@@ -1241,13 +1388,18 @@ def test_production_cycle_rejects_bad_news_before_any_model_call(
         try:
             feeds = (
                 ("marketwatch-rss", "fxstreet-rss")
-                if bad_news == "no_health" else ("marketwatch-rss",)
+                if bad_news == "no_health"
+                else ("marketwatch-rss",)
             )
             for feed in feeds:
-                health.persist(NewsIngestionResult(
-                    source=feed, correlation_id="latest-failed-fetch",
-                    fetched_at=datetime.now(UTC), fetch_outcome="timeout",
-                ))
+                health.persist(
+                    NewsIngestionResult(
+                        source=feed,
+                        correlation_id="latest-failed-fetch",
+                        fetched_at=datetime.now(UTC),
+                        fetch_outcome="timeout",
+                    )
+                )
         finally:
             health.close()
     else:
@@ -1255,9 +1407,10 @@ def test_production_cycle_rejects_bad_news_before_any_model_call(
             if bad_news == "missing":
                 connection.execute("DELETE FROM news_headlines")
             else:
-                connection.execute("UPDATE news_headlines SET published_at = ?", [
-                    datetime.now(UTC) - timedelta(hours=7)
-                ])
+                connection.execute(
+                    "UPDATE news_headlines SET published_at = ?",
+                    [datetime.now(UTC) - timedelta(hours=7)],
+                )
     asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)())
     cycles = AiTradingStore(database)
     calls = ModelCallStore(database)

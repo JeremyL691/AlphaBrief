@@ -201,6 +201,7 @@ def _risk_gate(
         limits=RiskLimitConfig(
             trading_enabled=not require_nav or (nav is not None and nav > 0),
             symbol_allowlist=frozenset(instruments),
+            require_home_currency_exposure=True,
             max_order_value=max_order_value,
             max_total_exposure=max_total_exposure,
             max_margin_utilization_pct=Decimal("0.30"),
@@ -480,7 +481,8 @@ def _sizing_provider(sources: Any) -> Any:
         context = sources.account_exposure_context()
         nav = context.equity if context.equity is not None else context.cash
         factor = sources.home_conversion_factor(symbol)
-        if factor is None:
+        position_factor = context.quote_position_to_home.get(symbol)
+        if factor is None or position_factor is None:
             return None
         metadata = adapter.instrument_metadata(symbol)  # type: ignore[attr-defined]
         # Rule 11: after a 3% drawdown block expires the system resumes at
@@ -494,6 +496,7 @@ def _sizing_provider(sources: Any) -> Any:
         return SizingInputs(
             nav=nav,
             quote_to_home=factor,
+            quote_position_to_home=position_factor,
             trade_units_precision=int(metadata.trade_units_precision),
             minimum_trade_size=metadata.minimum_trade_size,
             risk_multiplier=multiplier,

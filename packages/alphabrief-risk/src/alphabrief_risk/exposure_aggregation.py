@@ -234,10 +234,23 @@ class ExposureLimits(BaseModel):
         return _reject_float(value)
 
 
-def _evidence_map(
-    items: tuple[BaseModel, ...], field: str
-) -> dict[str, Any]:
+def _evidence_map(items: tuple[BaseModel, ...], field: str) -> dict[str, Any]:
     return {getattr(item, field): item for item in items}
+
+
+def gross_home_notional(
+    long_units: Decimal,
+    short_units: Decimal,
+    price: Decimal,
+    factor: Decimal,
+) -> Decimal:
+    """Both legs carry notional, regardless of the broker short-unit convention."""
+    values = (long_units, short_units, price, factor)
+    if any(not isinstance(value, Decimal) or not value.is_finite() for value in values):
+        raise ValueError("notional inputs must be finite Decimal values")
+    if price <= 0 or factor <= 0:
+        raise ValueError("notional price and conversion must be positive")
+    return (abs(long_units) + abs(short_units)) * price * factor
 
 
 def compute_exposure(
@@ -272,9 +285,7 @@ def compute_exposure(
 
     for symbol in sorted(symbols):
         if symbol not in prices:
-            raise ExposureError(
-                "missing_price", f"no price evidence for {symbol}"
-            )
+            raise ExposureError("missing_price", f"no price evidence for {symbol}")
         if symbol not in conversions:
             raise ExposureError(
                 "missing_conversion", f"no conversion evidence for {symbol}"
@@ -305,9 +316,7 @@ def compute_exposure(
         group_membership: dict[str, str | None] = {}
         for symbol in sorted(symbols):
             matched = [
-                group
-                for group in inputs.correlation_groups
-                if symbol in group.symbols
+                group for group in inputs.correlation_groups if symbol in group.symbols
             ]
             if len(matched) != 1:
                 raise ExposureError(
@@ -352,7 +361,7 @@ def compute_exposure(
                 currency=currency,
                 pre_long=long * home,
                 pre_short=short * home,
-                pre_gross=(long + short) * home,
+                pre_gross=gross_home_notional(long, short, price, factor),
                 pre_net=pre_net * home,
                 post_long=post_long * home,
                 post_short=post_short * home,
@@ -374,20 +383,16 @@ def compute_exposure(
     short_total = Decimal("0")
     for exposure in symbol_exposures:
         category_gross[exposure.category] = (
-            category_gross.get(exposure.category, Decimal("0"))
-            + exposure.post_gross
+            category_gross.get(exposure.category, Decimal("0")) + exposure.post_gross
         )
         category_net[exposure.category] = (
-            category_net.get(exposure.category, Decimal("0"))
-            + exposure.post_net
+            category_net.get(exposure.category, Decimal("0")) + exposure.post_net
         )
         currency_gross[exposure.currency] = (
-            currency_gross.get(exposure.currency, Decimal("0"))
-            + exposure.post_gross
+            currency_gross.get(exposure.currency, Decimal("0")) + exposure.post_gross
         )
         currency_net[exposure.currency] = (
-            currency_net.get(exposure.currency, Decimal("0"))
-            + exposure.post_net
+            currency_net.get(exposure.currency, Decimal("0")) + exposure.post_net
         )
         if inputs.correlation_groups:
             group = group_membership[exposure.symbol]
@@ -468,9 +473,7 @@ def evaluate_exposure_limits(
                 value=str(value),
                 ceiling=str(ceiling),
                 detail=(
-                    f"{label} within ceiling"
-                    if passed
-                    else f"{label} exceeds ceiling"
+                    f"{label} within ceiling" if passed else f"{label} exceeds ceiling"
                 ),
             )
         )
