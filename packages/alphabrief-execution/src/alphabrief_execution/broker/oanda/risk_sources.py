@@ -48,6 +48,7 @@ from alphabrief_execution.broker.oanda.pricing import (
     fetch_pricing,
 )
 from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
+from alphabrief_execution.broker.oanda.transaction_ops import TransactionOpsClient
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.broker.risk_context import AccountSourceDatum
 
@@ -357,6 +358,7 @@ class OandaRiskContextSources:
         equity_high_water_mark: Decimal | None = None,
         day_start_equity: Decimal | None = None,
         day_realized_pnl: Decimal | None = None,
+        include_daily_loss: bool = False,
     ) -> AccountExposureContext:
         """Project the live account into the risk gate's context.
 
@@ -371,6 +373,46 @@ class OandaRiskContextSources:
         summary = AccountOpsClient(self._client).account_summary(
             request_id=f"{self._request_id}-exposure"
         )
+        loss_error: str | None = None
+        loss_captured: datetime | None = None
+        if include_daily_loss:
+            loss_captured = (now or self._captured_at()).astimezone(UTC)
+            try:
+                window = TransactionOpsClient(self._client).transactions_between(
+                    loss_captured.replace(hour=0, minute=0, second=0, microsecond=0),
+                    loss_captured,
+                )
+                if window.last_transaction_id != summary.last_transaction_id:
+                    raise ValueError("account changed during P&L observation")
+                day_realized_pnl = Decimal(0)
+                for transaction in window.transactions:
+                    if transaction.transaction_type == "ORDER_FILL":
+                        if (
+                            transaction.realized_pl is None
+                            or transaction.financing is None
+                        ):
+                            raise ValueError("fill P&L incomplete")
+                        day_realized_pnl += (
+                            transaction.realized_pl + transaction.financing
+                        )
+                        for fee in (
+                            transaction.commission,
+                            transaction.guaranteed_execution_fee,
+                        ):
+                            if fee is not None:
+                                if fee < 0:
+                                    raise ValueError("negative execution fee")
+                                day_realized_pnl -= fee
+                    elif transaction.transaction_type == "DAILY_FINANCING":
+                        if transaction.financing is None:
+                            raise ValueError("financing incomplete")
+                        day_realized_pnl += transaction.financing
+                    elif transaction.realized_pl is not None:
+                        day_realized_pnl += transaction.realized_pl
+            except Exception as exc:
+                # Partial loss evidence blocks entry; never expose broker IDs.
+                day_realized_pnl = None
+                loss_error = type(exc).__name__
         positions = self.fetch_positions()
         pending = self.fetch_pending_orders()
         prices = self._prices_by_symbol()
@@ -432,6 +474,12 @@ class OandaRiskContextSources:
             equity_high_water_mark=equity_high_water_mark,
             day_start_equity=day_start_equity,
             day_realized_pnl=day_realized_pnl,
+            day_unrealized_pnl=summary.unrealized_pl if include_daily_loss else None,
+            daily_loss_captured_at=loss_captured,
+            daily_loss_blocked=False
+            if include_daily_loss and loss_error is None
+            else None,
+            daily_loss_error=loss_error,
             open_position_count=(
                 open_position_count
                 if open_position_count is not None

@@ -20,6 +20,7 @@ from alphabrief_risk.entry_rules import (
     rejection_codes,
 )
 from alphabrief_risk.kill_switch import KillSwitch
+from alphabrief_risk.loss_state import daily_loss_breached
 
 
 def _is_close_intent(intent: OrderIntent) -> bool:
@@ -93,11 +94,9 @@ class RiskLimitConfig:
     duplicate_order_window_seconds: int | None = None
     duplicate_order_max_count: int = 1
     # --- Stateful account rules (R21.3, tighten-only / fail-closed) ---
-    # Max day-over-day equity loss as a fraction of ``day_start_equity``,
-    # 0..1. Requires ``account_context.day_start_equity`` (fail-closed
-    # ``missing_day_start_equity``). The day-start equity must be supplied
-    # by the caller from a persistent snapshot store so the check is
-    # restart-safe.
+    # Rule 10: today's realized + current unrealized loss must stay below
+    # this fraction of current NAV. Requires fresh broker evidence and a
+    # durable UTC-day block; both long and short entries are checked.
     max_daily_loss_pct: Decimal | None = None
     max_margin_utilization_pct: Decimal | None = None
     margin_warning_pct: Decimal | None = None
@@ -163,10 +162,12 @@ class RiskLimitConfig:
                 raise ValueError("duplicate_order_window_seconds must be positive")
             if self.duplicate_order_max_count < 1:
                 raise ValueError("duplicate_order_max_count must be >= 1")
-        if self.max_daily_loss_pct is not None and not (
-            Decimal("0") <= self.max_daily_loss_pct <= Decimal("1")
+        if self.max_daily_loss_pct is not None and (
+            not isinstance(self.max_daily_loss_pct, Decimal)
+            or not self.max_daily_loss_pct.is_finite()
+            or not Decimal(0) < self.max_daily_loss_pct <= Decimal(1)
         ):
-            raise ValueError("max_daily_loss_pct must be in [0, 1]")
+            raise ValueError("max_daily_loss_pct must be a finite Decimal in (0, 1]")
         if self.max_drawdown_floor_pct is not None and not (
             Decimal("0") <= self.max_drawdown_floor_pct <= Decimal("1")
         ):
@@ -392,7 +393,7 @@ class RiskGate:
             failures=failures,
             tags=tags,
         )
-        self._check_daily_loss(
+        daily_loss_evidence = self._check_daily_loss(
             intent=intent,
             estimated_price=estimated_price,
             account_context=account_context,
@@ -419,7 +420,12 @@ class RiskGate:
             tags,
             risk_context,
             (account_qty_clamp, symbol_qty_clamp),
-            {**margin_evidence, **exposure_evidence, **cap_evidence},
+            {
+                **margin_evidence,
+                **exposure_evidence,
+                **cap_evidence,
+                **daily_loss_evidence,
+            },
         )
 
     def _finalize(
@@ -999,43 +1005,62 @@ class RiskGate:
         account_context: AccountExposureContext | None,
         failures: list[str],
         tags: list[str],
-    ) -> None:
-        """Reject new buys when day-over-day equity loss exceeds the cap.
-
-        Tighten-only / fail-closed. Both ``day_start_equity`` and the
-        current ``equity`` must be supplied on the context; a missing
-        required input is a rejection (never a silent skip). Buys only —
-        a sell that realizes a loss is itself the protective action.
-        """
+    ) -> dict[str, dict[str, str]]:
+        """Both entry directions require fresh broker P&L and the durable latch."""
         pct = self.limits.max_daily_loss_pct
         if pct is None:
-            return
-        if account_context is None:
-            failures.append("daily-loss check required but no account context supplied")
-            tags.append("account_context_required")
-            return
-        if intent.side == "sell":
-            return
-        if account_context.day_start_equity is None:
-            failures.append(
-                "max_daily_loss_pct configured but day_start_equity missing"
+            return {}
+        context = account_context
+        now = self.clock().astimezone(UTC)
+        evidence = {"ceiling_pct": str(pct), "valid": "false"}
+        valid = False
+        breached = False
+        if context is not None:
+            stamp = context.daily_loss_captured_at
+            evidence.update(
+                {
+                    "realized_pnl": str(context.day_realized_pnl),
+                    "unrealized_pnl": str(context.day_unrealized_pnl),
+                    "nav": str(context.equity),
+                    "blocked_for_day": str(context.daily_loss_blocked),
+                    "observed_at": str(stamp),
+                    "error": context.daily_loss_error or "",
+                }
             )
-            tags.append("missing_day_start_equity")
-            return
-        if account_context.equity is None:
-            failures.append("max_daily_loss_pct configured but current equity missing")
-            tags.append("missing_equity")
-            return
-        if account_context.day_start_equity <= 0:
-            failures.append("day_start_equity must be positive for daily-loss check")
-            tags.append("missing_day_start_equity")
-            return
-        loss_pct = (
-            account_context.day_start_equity - account_context.equity
-        ) / account_context.day_start_equity
-        if loss_pct > pct:
-            failures.append("order would breach max_daily_loss_pct")
-            tags.append("max_daily_loss")
+            valid = (
+                stamp is not None
+                and stamp.tzinfo is not None
+                and stamp.astimezone(UTC).date() == now.date()
+                and 0 <= (now - stamp).total_seconds() <= 60
+                and context.daily_loss_blocked is not None
+                and context.daily_loss_error is None
+                and context.day_realized_pnl is not None
+                and context.day_unrealized_pnl is not None
+                and context.equity is not None
+            )
+            if valid:
+                assert context.day_realized_pnl is not None
+                assert context.day_unrealized_pnl is not None
+                assert context.equity is not None
+                try:
+                    breached = daily_loss_breached(
+                        context.day_realized_pnl,
+                        context.day_unrealized_pnl,
+                        context.equity,
+                        pct,
+                    ) or bool(context.daily_loss_blocked)
+                except ValueError:
+                    valid = False
+        evidence["valid"] = str(valid).lower()
+        evidence["breached"] = str(breached).lower()
+        if not valid or breached:
+            failures.append(
+                "daily loss evidence incomplete"
+                if not valid
+                else "daily loss blocks entries for this UTC day"
+            )
+            tags.extend(("DAILY_LOSS", "max_daily_loss"))
+        return {"daily_loss": evidence}
 
     def _check_entry_rules(
         self,

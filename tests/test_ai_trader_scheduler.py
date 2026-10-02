@@ -131,11 +131,16 @@ class _RiskSources:
 
     def account_exposure_context(self, **facts: Any) -> AccountExposureContext:
         facts.pop("symbol", None)
+        include_loss = facts.pop("include_daily_loss", False)
         return AccountExposureContext(
             current_total_exposure=Decimal("0"),
             exposure_by_symbol={},
             cash=Decimal("1000"),
             equity=Decimal("1000"),
+            day_realized_pnl=Decimal(0) if include_loss else None,
+            day_unrealized_pnl=Decimal(0) if include_loss else None,
+            daily_loss_captured_at=datetime.now(UTC) if include_loss else None,
+            daily_loss_blocked=False if include_loss else None,
             account_id="test-account",
             captured_at=datetime.now(UTC),
             quote_captured_at=datetime.now(UTC),
@@ -691,6 +696,8 @@ class TestSchedulerRunsAiTask:
             "margin_warning",
             "pending_exposure",
             "nav_drop",
+            "daily_loss",
+            "daily_loss_missing",
         ],
     )
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
@@ -785,26 +792,48 @@ class TestSchedulerRunsAiTask:
                 _RiskSources, "account_exposure_context", margin_context
             )
 
+        if condition in {"daily_loss", "daily_loss_missing"}:
+            original_loss_context = _RiskSources.account_exposure_context
+
+            def loss_context(
+                self: _RiskSources, **facts: Any
+            ) -> AccountExposureContext:
+                return original_loss_context(self, **facts).model_copy(
+                    update={
+                        "day_realized_pnl": Decimal(-5),
+                        "day_unrealized_pnl": Decimal(-5)
+                        if condition == "daily_loss"
+                        else None,
+                    }
+                )
+
+            monkeypatch.setattr(_RiskSources, "account_exposure_context", loss_context)
+
         if condition in {"pending_exposure", "nav_drop"}:
             original = _RiskSources.account_exposure_context
 
             def changed_context(
-                self: _RiskSources, **facts: Any,
+                self: _RiskSources,
+                **facts: Any,
             ) -> AccountExposureContext:
                 result = original(self, **facts)
                 if condition == "pending_exposure":
-                    return result.model_copy(update={
-                        "current_total_exposure": Decimal(1500),
-                        "exposure_by_symbol": {"EUR_USD": Decimal(1500)},
-                        "pending_exposure_by_symbol": {"EUR_USD": Decimal(1500)},
-                    })
+                    return result.model_copy(
+                        update={
+                            "current_total_exposure": Decimal(1500),
+                            "exposure_by_symbol": {"EUR_USD": Decimal(1500)},
+                            "pending_exposure_by_symbol": {"EUR_USD": Decimal(1500)},
+                        }
+                    )
                 # Sizing sees NAV 1000; the actual gate receives NAV 100.
                 if "symbol" in facts:
                     return result.model_copy(update={"equity": Decimal(100)})
                 return result
 
             monkeypatch.setattr(
-                _RiskSources, "account_exposure_context", changed_context,
+                _RiskSources,
+                "account_exposure_context",
+                changed_context,
             )
 
         handler = _ai_cycle_factory(db_path=isolated_data_dir)
@@ -849,6 +878,8 @@ class TestSchedulerRunsAiTask:
                     "margin": "MARGIN",
                     "pending_exposure": "max_total_exposure",
                     "nav_drop": "max_order_value",
+                    "daily_loss": "daily loss",
+                    "daily_loss_missing": "daily loss",
                 }[condition]
                 assert expected in attempt["reason"]
                 if condition == "kill":
@@ -856,6 +887,23 @@ class TestSchedulerRunsAiTask:
                 assert attempt["outcome"] == (
                     "blocked_trading_off" if condition == "off" else "blocked_risk_gate"
                 )
+            if condition in {"daily_loss", "daily_loss_missing"}:
+                assert "DAILY_LOSS" in attempt["risk_tags"]
+                evidence = attempt["risk_decision_json"]["rule_evidence"]["daily_loss"]
+                assert evidence["realized_pnl"] == "-5"
+                assert evidence["valid"] == (
+                    "true" if condition == "daily_loss" else "false"
+                )
+                from alphabrief_risk.loss_state import LossStateStore
+
+                restarted_losses = LossStateStore(database)
+                try:
+                    assert restarted_losses.daily_loss_blocked(
+                        "test-account",
+                        datetime.now(UTC).date(),
+                    ) is (condition == "daily_loss")
+                finally:
+                    restarted_losses.close()
             if condition in {"pending_exposure", "nav_drop"}:
                 evidence = attempt["risk_decision_json"]["rule_evidence"]
                 assert evidence["exposure_caps"]["nav"] == (

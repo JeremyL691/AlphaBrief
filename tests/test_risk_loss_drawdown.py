@@ -76,6 +76,16 @@ def _ctx(
         "equity": equity,
         "equity_high_water_mark": equity if hwm is _SENTINEL else hwm,
         "day_start_equity": equity if day_start is _SENTINEL else day_start,
+        "day_realized_pnl": (
+            None
+            if day_start is None
+            else Decimal(0)
+            if day_start is _SENTINEL or equity is None
+            else equity - Decimal(str(day_start))
+        ),
+        "day_unrealized_pnl": Decimal(0),
+        "daily_loss_captured_at": NOW,
+        "daily_loss_blocked": False,
     }
     return AccountExposureContext.model_validate(payload)
 
@@ -109,18 +119,19 @@ def test_max_daily_loss_rejects_over_cap() -> None:
     assert "max_daily_loss" in decision.risk_tags
 
 
-def test_max_daily_loss_boundary_at_cap_is_approved() -> None:
+def test_max_daily_loss_boundary_at_cap_is_rejected() -> None:
     gate = _gate(_base_limits(max_daily_loss_pct=Decimal("0.05")))
     decision = gate.evaluate(
         _intent(),
         estimated_price=Decimal("100"),
         account_context=_ctx(equity=Decimal("95000"), day_start=Decimal("100000")),
     )
-    # exactly 5% loss -> approved (strict >).
-    assert decision.approved is True
+    # Loss exceeds 5% of current NAV; rule 10 requires strict less-than.
+    assert decision.approved is False
+    assert "DAILY_LOSS" in decision.risk_tags
 
 
-def test_max_daily_loss_fails_closed_without_day_start_equity() -> None:
+def test_max_daily_loss_fails_closed_without_realized_pnl() -> None:
     gate = _gate(_base_limits(max_daily_loss_pct=Decimal("0.05")))
     decision = gate.evaluate(
         _intent(),
@@ -128,7 +139,7 @@ def test_max_daily_loss_fails_closed_without_day_start_equity() -> None:
         account_context=_ctx(equity=Decimal("100000"), day_start=None),
     )
     assert decision.approved is False
-    assert "missing_day_start_equity" in decision.risk_tags
+    assert "DAILY_LOSS" in decision.risk_tags
 
 
 def test_max_daily_loss_fails_closed_without_current_equity() -> None:
@@ -139,19 +150,19 @@ def test_max_daily_loss_fails_closed_without_current_equity() -> None:
         account_context=_ctx(equity=None, day_start=Decimal("100000")),
     )
     assert decision.approved is False
-    assert "missing_equity" in decision.risk_tags
+    assert "DAILY_LOSS" in decision.risk_tags
 
 
-def test_max_daily_loss_does_not_block_sells() -> None:
-    # A sell that realizes a loss is itself the protective action; the
-    # check applies to buys only.
+def test_max_daily_loss_blocks_short_entries() -> None:
+    # A non-reduce sell is an FX short entry and must obey rule 10.
     gate = _gate(_base_limits(max_daily_loss_pct=Decimal("0.01")))
     decision = gate.evaluate(
         _intent(side="sell"),
         estimated_price=Decimal("100"),
         account_context=_ctx(equity=Decimal("50000"), day_start=Decimal("100000")),
     )
-    assert "max_daily_loss" not in decision.risk_tags
+    assert "max_daily_loss" in decision.risk_tags
+    assert decision.approved is False
 
 
 # ---------------------------------------------------------------------------

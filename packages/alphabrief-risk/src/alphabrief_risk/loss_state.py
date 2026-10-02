@@ -41,6 +41,16 @@ CREATE TABLE IF NOT EXISTS account_day_results (
     recorded_at      TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (account_id, day_date)
 );
+CREATE TABLE IF NOT EXISTS daily_loss_blocks (
+    account_id TEXT NOT NULL,
+    day_date DATE NOT NULL,
+    triggered_at TIMESTAMPTZ NOT NULL,
+    realized_pnl TEXT NOT NULL,
+    unrealized_pnl TEXT NOT NULL,
+    nav TEXT NOT NULL,
+    ceiling_pct TEXT NOT NULL,
+    PRIMARY KEY (account_id, day_date)
+);
 """
 
 
@@ -69,6 +79,46 @@ class LossStateStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(_CREATE_TABLES)
+
+    def observe_daily_loss(
+        self,
+        account_id: str,
+        *,
+        observed_at: datetime,
+        realized_pnl: Decimal,
+        unrealized_pnl: Decimal,
+        nav: Decimal,
+        ceiling_pct: Decimal,
+    ) -> bool:
+        """Latch a broker-evidenced loss breach for the whole UTC day."""
+        if not account_id.strip() or observed_at.tzinfo is None:
+            raise ValueError("account and aware observation time required")
+        breached = daily_loss_breached(realized_pnl, unrealized_pnl, nav, ceiling_pct)
+        stamp = observed_at.astimezone(UTC)
+        if breached:
+            self._conn.execute(
+                """INSERT INTO daily_loss_blocks VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (account_id, day_date) DO NOTHING""",
+                [
+                    account_id,
+                    stamp.date(),
+                    stamp,
+                    str(realized_pnl),
+                    str(unrealized_pnl),
+                    str(nav),
+                    str(ceiling_pct),
+                ],
+            )
+        return self.daily_loss_blocked(account_id, stamp.date())
+
+    def daily_loss_blocked(self, account_id: str, day_date: date) -> bool:
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM daily_loss_blocks WHERE account_id = ? AND day_date = ?",
+                [account_id, day_date],
+            ).fetchone()
+            is not None
+        )
 
     def record_day_result(
         self,
@@ -128,9 +178,7 @@ class LossStateStore:
                 new_streak = 1 if pnl < 0 else 0
             else:
                 new_streak = current_streak + 1 if pnl < 0 else 0
-            new_hwm = (
-                end if current_hwm is None else max(current_hwm, end)
-            )
+            new_hwm = end if current_hwm is None else max(current_hwm, end)
             self._conn.execute(
                 """
                 INSERT INTO account_loss_state (
@@ -211,4 +259,19 @@ class LossStateStore:
             pass
 
 
-__all__ = ["DayResultSummary", "LossStateStore"]
+def daily_loss_breached(
+    realized_pnl: Decimal,
+    unrealized_pnl: Decimal,
+    nav: Decimal,
+    ceiling_pct: Decimal,
+) -> bool:
+    """Rule 10: loss must be strictly less than the current NAV fraction."""
+    values = (realized_pnl, unrealized_pnl, nav, ceiling_pct)
+    if any(not isinstance(v, Decimal) or not v.is_finite() for v in values):
+        raise ValueError("daily loss requires finite Decimal facts")
+    if nav <= 0 or not 0 < ceiling_pct <= 1:
+        raise ValueError("daily loss requires positive NAV and a valid fraction")
+    return -(realized_pnl + unrealized_pnl) >= nav * ceiling_pct
+
+
+__all__ = ["DayResultSummary", "LossStateStore", "daily_loss_breached"]
