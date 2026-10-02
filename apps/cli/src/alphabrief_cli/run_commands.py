@@ -328,44 +328,28 @@ def backup_once() -> str:
 
 def close_out_once(*, reason: str) -> int:
     """Close every open position (Friday close-out / kill switch)."""
-    from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
-    from alphabrief_execution.broker.runtime import (
-        build_oanda_paper_client,
-        oanda_is_configured,
-    )
+    return position_monitor_once(reason=reason)
 
-    from alphabrief_cli.cycle_commands import (
-        _close_through_the_cycle,
-        _risk_sources,
-    )
+
+def position_monitor_once(
+    *, now: datetime | None = None, reason: str | None = None
+) -> int:
+    """The resident exit task stays inert before any network or DB access in off."""
+    from alphabrief_cli.cycle_commands import close_due_positions
     from alphabrief_cli.scheduler_commands import trading_mode
 
     if trading_mode() != "on":
         return 0
-    if not oanda_is_configured():
-        from alphabrief_execution.broker.errors import BrokerAuthError
-
-        raise BrokerAuthError("OANDA credentials are required for scheduled close-out")
-    client = build_oanda_paper_client()
-    positions = PositionOpsClient(client).list_positions().positions
-    closed = 0
-    for position in positions:
-        units = position.long_units - position.short_units
-        if units == 0:
-            continue
-        mark = _risk_sources((position.instrument,)).mid_price(position.instrument)
-        if mark is None:
-            continue
-        result = _close_through_the_cycle(
-            instrument=position.instrument,
-            position_units=units,
-            reference_price=mark,
-            reason=reason,
-            trading="on",
-        )
-        if result.get("closed"):
-            closed += 1
-    return closed
+    report = close_due_positions(
+        now=now or datetime.now(UTC),
+        trading="on",
+        close_all_reason=reason,
+    )
+    if any(
+        result.get("outcome") not in {None, "executed"} for result in report["closed"]
+    ):
+        raise RuntimeError("position_exit_refused")
+    return sum(bool(result.get("closed")) for result in report["closed"])
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +375,7 @@ class Runtime:
         quote_poller: Callable[[], Any] | None = None,
         shadow_scorer: Callable[[], Any] | None = None,
         market_refresher: Callable[[], Any] | None = None,
+        position_monitor: Callable[[], Any] | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -408,6 +393,10 @@ class Runtime:
         self._market_refresher = market_refresher or (
             lambda: market_sync_once(symbols=self._universe)
         )
+        self._position_monitor = position_monitor or (
+            lambda: position_monitor_once(now=self._clock())
+        )
+        self._close_lock = asyncio.Lock()
         self._market_sync_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._server: Any | None = None
@@ -441,10 +430,23 @@ class Runtime:
 
     async def _run_close_out(self) -> None:
         _LOGGER.info("runtime: Friday close-out")
-        result = await asyncio.to_thread(
-            self._close_out, "Friday 19:00 UTC weekend close-out"
+        await self._run_exit_worker(
+            lambda: self._close_out("Friday 19:00 UTC weekend close-out")
         )
-        _LOGGER.info("runtime: closed %s position(s)", result)
+
+    async def _run_position_monitor(self) -> None:
+        await self._run_exit_worker(self._position_monitor)
+
+    async def _run_exit_worker(self, handler: Callable[[], Any]) -> None:
+        async with self._close_lock:
+            worker = asyncio.create_task(asyncio.to_thread(handler))
+            try:
+                result = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # A cancelled synchronous submission must finish before another exit.
+                await worker
+                raise
+            _LOGGER.info("runtime: closed %s position(s)", result)
 
     async def _run_quote_poll(self) -> None:
         recorded = await asyncio.to_thread(self._quote_poller)
@@ -476,9 +478,7 @@ class Runtime:
             now=now, last_runs=runs, catch_up_minutes=self._catch_up_minutes
         ):
             self._planner_log.append(verdict.to_dict())
-            event = next(
-                item for item in DEFAULT_SCHEDULE if item.name == verdict.name
-            )
+            event = next(item for item in DEFAULT_SCHEDULE if item.name == verdict.name)
             if verdict.kind == "decision_round":
                 await self._run_decision_round(event)
             elif verdict.kind == "report":
@@ -503,9 +503,7 @@ class Runtime:
             except Exception:  # noqa: BLE001 - one bad tick must not stop the loop
                 _LOGGER.exception("runtime: planner tick failed")
             try:
-                await asyncio.wait_for(
-                    self._stop.wait(), timeout=PLANNER_TICK_SECONDS
-                )
+                await asyncio.wait_for(self._stop.wait(), timeout=PLANNER_TICK_SECONDS)
             except TimeoutError:
                 continue
 
@@ -516,9 +514,7 @@ class Runtime:
         from alphabrief_api.main import create_app
 
         app = create_app()
-        config = uvicorn.Config(
-            app, host=self._host, port=self._port, log_level="info"
-        )
+        config = uvicorn.Config(app, host=self._host, port=self._port, log_level="info")
         self._server = uvicorn.Server(config)
         self._scheduler = await self._build_scheduler()
 
@@ -554,6 +550,14 @@ class Runtime:
         ]
         tasks.extend(
             [
+                ScheduledTask(
+                    name="position_monitor",
+                    interval_seconds=60,
+                    handler=self._run_position_monitor,
+                    timeout_seconds=CLOSE_OUT_TIMEOUT,
+                    max_retries=0,
+                    run_when_frozen=True,
+                ),
                 ScheduledTask(
                     name="market_sync",
                     interval_seconds=MARKET_SYNC_SECONDS,

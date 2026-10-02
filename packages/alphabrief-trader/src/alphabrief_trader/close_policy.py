@@ -57,13 +57,26 @@ def evaluate_close(
     max_hold_hours: int = DEFAULT_MAX_HOLD_HOURS,
 ) -> CloseDecision:
     """Decide whether one open position must be closed now."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("close policy clock must be timezone aware")
+    if (
+        isinstance(max_hold_hours, bool)
+        or not isinstance(max_hold_hours, int)
+        or max_hold_hours <= 0
+    ):
+        raise ValueError("holding limit must be a positive integer")
     if is_weekend_close_window(now):
         return CloseDecision(
             instrument=instrument,
             should_close=True,
             reason="weekend close-out (Friday 19:00 UTC onward)",
         )
-    if open_time is None:
+    if (
+        open_time is None
+        or open_time.tzinfo is None
+        or open_time.utcoffset() is None
+        or open_time > now
+    ):
         # Without an open time the hold age is unknown: fail closed and
         # close rather than carry an unbounded position through the gap.
         return CloseDecision(
