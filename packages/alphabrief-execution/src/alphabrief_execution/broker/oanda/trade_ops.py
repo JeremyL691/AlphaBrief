@@ -49,6 +49,7 @@ class TradeStateResult(BaseModel):
     financing: Decimal
     open_time: datetime | None = None
     close_time: datetime | None = None
+    closing_transaction_ids: tuple[str, ...] = ()
     request_id: str = Field(min_length=1)
 
 
@@ -123,6 +124,53 @@ class TradeOpsClient:
                 "protocol_error", f"trade parse failed: {exc}"
             ) from exc
 
+    def _trade_page(
+        self,
+        *,
+        state: TradeStateValue | None,
+        count: int,
+        before_id: str | None = None,
+        expected_watermark: str | None = None,
+    ) -> tuple[tuple[TradeStateResult, ...], str | None]:
+        params: dict[str, Any] = {"state": state or "ALL", "count": count}
+        if before_id is not None:
+            params["beforeID"] = before_id
+        response = self._client.request(
+            "GET",
+            self._client.account_path("/trades"),
+            params=params,
+        )
+        body = response.json_body
+        if not isinstance(body, dict) or not isinstance(body.get("trades"), list):
+            raise TradeOperationError("protocol_error", "trade page missing")
+        watermark = body.get("lastTransactionID")
+        if expected_watermark is not None and watermark != expected_watermark:
+            raise TradeOperationError("protocol_error", "trade page watermark changed")
+        rows = body["trades"]
+        if len(rows) > count or any(not isinstance(row, dict) for row in rows):
+            raise TradeOperationError("protocol_error", "invalid trade page rows")
+        trades: list[TradeStateResult] = []
+        seen: set[str] = set()
+        for row in rows:
+            trade = _trade_state_from_row(row, request_id="trade-page")
+            identity = trade.broker_trade_id
+            if (
+                not identity.isdigit()
+                or int(identity) <= 0
+                or identity in seen
+                or (before_id is not None and int(identity) >= int(before_id))
+                or (state is not None and trade.state != state)
+            ):
+                raise TradeOperationError(
+                    "protocol_error", "invalid trade page identity"
+                )
+            seen.add(identity)
+            if state == "CLOSED":
+                _validate_closed_trade(row, trade)
+            trades.append(trade)
+        trades.sort(key=lambda trade: int(trade.broker_trade_id), reverse=True)
+        return tuple(trades), watermark if isinstance(watermark, str) else None
+
     def list_trades(
         self,
         *,
@@ -131,30 +179,76 @@ class TradeOpsClient:
         page_size: int = 50,
         request_id: str | None = None,
     ) -> TradeListResult:
-        """List trades with deterministic bounded pagination."""
-        response = self._client.request(
-            "GET",
-            self._client.account_path("/trades"),
-            params={"state": "ALL", "count": page_size},
-        )
-        body = response.json_body
-        if not isinstance(body, dict) or not isinstance(body.get("trades"), list):
-            raise TradeOperationError("protocol_error", "list response is not JSON")
-        trades = [
-            _trade_state_from_row(row, request_id=f"list-row-{row.get('id', '')}")
-            for row in body["trades"]
-            if isinstance(row, dict)
-        ]
-        if state is not None:
-            trades = [trade for trade in trades if trade.state == state]
-        start = (page - 1) * page_size
-        page_trades = trades[start : start + page_size]
+        """Read real broker pages, rather than slicing a truncated first page."""
+        if not 1 <= page <= 50 or not 1 <= page_size <= 500:
+            raise TradeOperationError("invalid_page", "invalid trade page bounds")
+        before: str | None = None
+        trades: tuple[TradeStateResult, ...] = ()
+        for number in range(1, page + 1):
+            trades, _ = self._trade_page(state=state, count=page_size, before_id=before)
+            if number == page:
+                break
+            if len(trades) < page_size:
+                trades = ()
+                break
+            before = trades[-1].broker_trade_id
+        has_more = False
+        if len(trades) == page_size:
+            following, _ = self._trade_page(
+                state=state,
+                count=1,
+                before_id=trades[-1].broker_trade_id,
+            )
+            has_more = bool(following)
         return TradeListResult(
-            trades=tuple(page_trades),
+            trades=trades,
             page=page,
-            has_more=(start + page_size) < len(trades),
+            has_more=has_more,
             request_id=request_id or f"list-{page}",
         )
+
+    def closed_trade_history(
+        self,
+        *,
+        expected_watermark: str,
+        page_size: int = 500,
+    ) -> tuple[TradeStateResult, ...]:
+        """Complete CLOSED history at one account watermark, including partial P&L."""
+        if (
+            not expected_watermark.isdigit()
+            or int(expected_watermark) <= 0
+            or not 1 <= page_size <= 500
+        ):
+            raise TradeOperationError("invalid_request", "invalid history bounds")
+        before: str | None = None
+        results: list[TradeStateResult] = []
+        for _ in range(50):
+            trades, _ = self._trade_page(
+                state="CLOSED",
+                count=page_size,
+                before_id=before,
+                expected_watermark=expected_watermark,
+            )
+            for trade in trades:
+                if max(map(int, trade.closing_transaction_ids)) > int(
+                    expected_watermark
+                ):
+                    raise TradeOperationError(
+                        "protocol_error", "close beyond watermark"
+                    )
+            results.extend(trades)
+            if not trades:
+                return tuple(
+                    sorted(
+                        results,
+                        key=lambda t: (
+                            max(map(int, t.closing_transaction_ids)),
+                            int(t.broker_trade_id),
+                        ),
+                    )
+                )
+            before = trades[-1].broker_trade_id
+        raise TradeOperationError("pagination_limit", "closed history is incomplete")
 
     def close_trade(
         self,
@@ -298,9 +392,7 @@ class TradeOpsClient:
                 "protocol_error", "dependent response is not JSON"
             )
         create_tx = payload.get("orderCreateTransaction")
-        if not isinstance(create_tx, dict) or not isinstance(
-            create_tx.get("id"), str
-        ):
+        if not isinstance(create_tx, dict) or not isinstance(create_tx.get("id"), str):
             raise TradeOperationError(
                 "protocol_error", "dependent response missing transaction"
             )
@@ -328,8 +420,43 @@ def _trade_state_from_row(row: dict[str, Any], *, request_id: str) -> TradeState
         financing=_decimal(row.get("financing", "0")),
         open_time=_parse_time(row.get("openTime")),
         close_time=_parse_time(row.get("closeTime")),
+        closing_transaction_ids=_closing_ids(row),
         request_id=request_id,
     )
+
+
+def _closing_ids(row: dict[str, Any]) -> tuple[str, ...]:
+    ids = row.get("closingTransactionIDs", [])
+    if (
+        not isinstance(ids, list)
+        or any(not isinstance(i, str) or not i.isdigit() or int(i) <= 0 for i in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise TradeOperationError("protocol_error", "invalid closing transaction IDs")
+    return tuple(ids)
+
+
+def _validate_closed_trade(row: dict[str, Any], trade: TradeStateResult) -> None:
+    required = ("currentUnits", "initialUnits", "realizedPL", "financing", "closeTime")
+    if any(key not in row for key in required):
+        raise TradeOperationError("protocol_error", "closed trade facts missing")
+    stamp = row["closeTime"]
+    try:
+        aware = (
+            isinstance(stamp, str)
+            and datetime.fromisoformat(stamp.replace("Z", "+00:00")).tzinfo is not None
+        )
+    except ValueError:
+        aware = False
+    if (
+        not aware
+        or trade.close_time is None
+        or trade.current_units != 0
+        or trade.initial_units == 0
+        or not trade.closing_transaction_ids
+        or min(map(int, trade.closing_transaction_ids)) <= int(trade.broker_trade_id)
+    ):
+        raise TradeOperationError("protocol_error", "closed trade facts inconsistent")
 
 
 def _parse_state(raw: str) -> TradeStateValue:
@@ -349,13 +476,16 @@ def _client_extensions_id(row: dict[str, Any]) -> str | None:
 
 
 def _decimal(value: Any) -> Decimal:
-    return Decimal(str(value))
+    if isinstance(value, (float, bool)):
+        raise ValueError("trade money must not be float or bool")
+    result = Decimal(str(value))
+    if not result.is_finite():
+        raise ValueError("trade money must be finite")
+    return result
 
 
 def _tx_id(transaction: Any) -> str:
-    if not isinstance(transaction, dict) or not isinstance(
-        transaction.get("id"), str
-    ):
+    if not isinstance(transaction, dict) or not isinstance(transaction.get("id"), str):
         raise TradeOperationError(
             "protocol_error", "transaction id missing or malformed"
         )

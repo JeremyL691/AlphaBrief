@@ -258,6 +258,7 @@ def _risk_gate(
                 # same-period samples (5 samples minimum).
                 max_spread_median_multiplier=Decimal("2"),
                 min_spread_samples=5,
+                require_loss_streak=True,
                 # Rule 1 (freeze part) and rule 2 (CURRENCY classification).
                 require_unfrozen=True,
                 require_currency_type=True,
@@ -321,20 +322,21 @@ def _account_context_provider(
             current_spread=current_spread,
             recent_spreads=recent_spreads,
             include_daily_loss=True,
+            include_loss_streak=True,
         )
-        stamp = context.daily_loss_captured_at
         checked_at = datetime.now(UTC)
-        if (
-            stamp is None
-            or stamp.tzinfo is None
-            or stamp.astimezone(UTC).date() != checked_at.date()
-            or not 0 <= (checked_at - stamp).total_seconds() <= 60
-        ):
-            return context.model_copy(update={"daily_loss_blocked": None})
+        stamp = context.daily_loss_captured_at
+        daily_fresh = (
+            stamp is not None
+            and stamp.tzinfo is not None
+            and stamp.astimezone(UTC).date() == checked_at.date()
+            and 0 <= (checked_at - stamp).total_seconds() <= 60
+        )
+        context = context.model_copy(update={"daily_loss_blocked": None})
         if (
             loss_store is not None
+            and daily_fresh
             and context.daily_loss_error is None
-            and context.daily_loss_captured_at is not None
             and context.day_realized_pnl is not None
             and context.day_unrealized_pnl is not None
             and context.equity is not None
@@ -342,21 +344,75 @@ def _account_context_provider(
             try:
                 blocked = loss_store.observe_daily_loss(
                     context.account_id,
-                    observed_at=context.daily_loss_captured_at,
+                    observed_at=stamp,
                     realized_pnl=context.day_realized_pnl,
                     unrealized_pnl=context.day_unrealized_pnl,
                     nav=context.equity,
                     ceiling_pct=Decimal("0.01"),
                 )
-                return context.model_copy(update={"daily_loss_blocked": blocked})
+                context = context.model_copy(update={"daily_loss_blocked": blocked})
             except Exception:
-                return context.model_copy(
+                context = context.model_copy(
+                    update={"daily_loss_error": "loss_state_unavailable"}
+                )
+        streak_stamp = context.loss_streak_captured_at
+        if (
+            loss_store is not None
+            and context.closed_trade_results is not None
+            and context.loss_streak_error is None
+            and context.loss_streak_last_transaction_id is not None
+            and streak_stamp is not None
+            and streak_stamp.tzinfo is not None
+            and 0 <= (checked_at - streak_stamp).total_seconds() <= 60
+        ):
+            try:
+                states = loss_store.observe_closed_trades(
+                    context.account_id,
+                    trades=context.closed_trade_results,
+                    observed_at=streak_stamp,
+                    last_transaction_id=context.loss_streak_last_transaction_id,
+                )
+                frozen = dict(context.frozen_symbols)
+                evidence: dict[str, dict[str, str]] = {}
+                for instrument in set(universe) | set(states) | {symbol}:
+                    state = states.get(instrument)
+                    deadline = None if state is None else state.frozen_until
+                    blocked = deadline is not None and checked_at < deadline
+                    if blocked and deadline is not None:
+                        frozen[instrument] = (
+                            "three losing closed trades; frozen until "
+                            + deadline.isoformat()
+                        )
+                    evidence[instrument] = {
+                        "consecutive_losses": str(
+                            0 if state is None else state.consecutive_losses
+                        ),
+                        "frozen_until": str(deadline),
+                        "blocked": str(blocked).lower(),
+                        "last_trade_id": str(
+                            None if state is None else state.last_trade_id
+                        ),
+                        "last_close_transaction_id": str(
+                            None if state is None else state.last_close_transaction_id
+                        ),
+                    }
+                context = context.model_copy(
                     update={
-                        "daily_loss_blocked": None,
-                        "daily_loss_error": "loss_state_unavailable",
+                        "loss_streak_complete": True,
+                        "frozen_symbols": frozen,
+                        "loss_streak_evidence": evidence,
                     }
                 )
-        return context.model_copy(update={"daily_loss_blocked": None})
+            except Exception:
+                context = context.model_copy(
+                    update={
+                        "loss_streak_complete": False,
+                        "loss_streak_error": "loss_state_unavailable",
+                    }
+                )
+        else:
+            context = context.model_copy(update={"loss_streak_complete": False})
+        return context
 
     return _build
 

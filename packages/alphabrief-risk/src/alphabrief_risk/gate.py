@@ -414,6 +414,28 @@ class RiskGate:
             tags=tags,
         )
 
+        streak_evidence: dict[str, dict[str, str]] = {}
+        if self.limits.entry_rules and self.limits.entry_rules.require_loss_streak:
+            context = account_context
+            streak_evidence["loss_streak"] = {
+                **(
+                    {}
+                    if context is None
+                    else context.loss_streak_evidence.get(intent.symbol, {})
+                ),
+                "last_transaction_id": str(
+                    None if context is None else context.loss_streak_last_transaction_id
+                ),
+                "complete": str(
+                    context is not None and context.loss_streak_complete
+                ).lower(),
+                "observed_at": str(
+                    None if context is None else context.loss_streak_captured_at
+                ),
+                "error": "missing_context"
+                if context is None
+                else context.loss_streak_error or "",
+            }
         return self._finalize(
             intent,
             failures,
@@ -425,6 +447,7 @@ class RiskGate:
                 **exposure_evidence,
                 **cap_evidence,
                 **daily_loss_evidence,
+                **streak_evidence,
             },
         )
 

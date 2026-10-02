@@ -35,6 +35,7 @@ from alphabrief_risk.broker_context import (
     TradeDatum,
 )
 from alphabrief_risk.exposure_aggregation import gross_home_notional
+from alphabrief_risk.loss_state import ClosedTradeResult
 
 from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -359,6 +360,7 @@ class OandaRiskContextSources:
         day_start_equity: Decimal | None = None,
         day_realized_pnl: Decimal | None = None,
         include_daily_loss: bool = False,
+        include_loss_streak: bool = False,
     ) -> AccountExposureContext:
         """Project the live account into the risk gate's context.
 
@@ -413,6 +415,34 @@ class OandaRiskContextSources:
                 # Partial loss evidence blocks entry; never expose broker IDs.
                 day_realized_pnl = None
                 loss_error = type(exc).__name__
+        closed_results: tuple[ClosedTradeResult, ...] | None = None
+        streak_error: str | None = None
+        streak_captured: datetime | None = None
+        if include_loss_streak:
+            try:
+                closed = TradeOpsClient(self._client).closed_trade_history(
+                    expected_watermark=summary.last_transaction_id,
+                )
+                closed_results = tuple(
+                    ClosedTradeResult(
+                        trade_id=trade.broker_trade_id,
+                        symbol=trade.instrument,
+                        closed_at=trade.close_time,
+                        closing_transaction_id=str(
+                            max(map(int, trade.closing_transaction_ids))
+                        ),
+                        pnl=trade.realized_pl + trade.financing,
+                    )
+                    for trade in closed
+                    if trade.close_time is not None
+                )
+                if len(closed_results) != len(closed):
+                    raise ValueError("closed trade time unavailable")
+                streak_captured = (now or self._captured_at()).astimezone(UTC)
+            except Exception as exc:
+                # A failed history never becomes a zero-loss baseline.
+                closed_results = None
+                streak_error = type(exc).__name__
         positions = self.fetch_positions()
         pending = self.fetch_pending_orders()
         prices = self._prices_by_symbol()
@@ -490,6 +520,13 @@ class OandaRiskContextSources:
             quote_captured_at=quote.broker_time if quote is not None else None,
             quote_tradeable=(quote.tradeable if quote is not None else None),
             frozen_symbols=dict(frozen_symbols or {}),
+            closed_trade_results=closed_results,
+            loss_streak_captured_at=streak_captured,
+            loss_streak_last_transaction_id=(
+                summary.last_transaction_id if closed_results is not None else None
+            ),
+            loss_streak_error=streak_error,
+            # The provider sets complete only after durable state reconciliation.
             recent_high_impact_events=dict(recent_high_impact_events or {}),
             drawdown_block_reason=drawdown_block_reason,
             current_spread=current_spread,
