@@ -5,6 +5,7 @@ implement real provider SDK integrations, prompt templates, agents, research
 briefs, trading decisions, or risk controls.
 """
 
+import json
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -14,7 +15,7 @@ from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from alphabrief_core.secrets import scrub_payload
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alphabrief_models.model_budget import ModelBudgetGuard, ModelCallKind
 
@@ -217,6 +218,54 @@ class ModelGatewayResult(AlphaBriefModelSchema):
     record: ModelCallRecord
 
 
+class ModelValidationRecord(AlphaBriefModelSchema):
+    """Immutable post-response schema and grounding verdict for an actual call."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    validation_id: str = Field(min_length=64, max_length=64)
+    call_id: str = Field(min_length=1)
+    schema_hash: str = Field(min_length=64, max_length=64)
+    target_schema: dict[str, Any]
+    verdict: Literal["accepted", "schema_rejected", "grounding_rejected"]
+    parsed_output: dict[str, Any] | None
+    error_code: str | None = None
+    violation_hashes: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+    @field_validator("target_schema", "parsed_output")
+    @classmethod
+    def _scrub(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        scrubbed = scrub_payload(value)
+        assert isinstance(scrubbed, dict)
+        return scrubbed
+
+    @field_validator("created_at")
+    @classmethod
+    def _utc(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value).astimezone(UTC)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "ModelValidationRecord":
+        if self.validation_id != _hash_text(self.call_id + ":" + self.schema_hash):
+            raise ValueError("invalid validation identity")
+        if self.verdict == "schema_rejected":
+            if (
+                self.parsed_output is not None
+                or not self.error_code
+                or self.violation_hashes
+            ):
+                raise ValueError("invalid schema rejection")
+        elif self.parsed_output is None or self.error_code is not None:
+            raise ValueError(
+                "parsed verdict requires a parsed object without schema error"
+            )
+        if (self.verdict == "grounding_rejected") != bool(self.violation_hashes):
+            raise ValueError("invalid grounding verdict")
+        return self
+
+
 class ModelCallBudget:
     """Deterministic per-request, per-cycle, and daily model-call budget.
 
@@ -356,6 +405,7 @@ class ModelGateway:
         call_id_factory: Callable[[], str] | None = None,
         budget: ModelCallBudget | None = None,
         record_sink: Callable[[ModelCallRecord], None] | None = None,
+        validation_sink: Callable[[ModelValidationRecord], None] | None = None,
         fallback_enabled: bool = False,
         fallback_eligible: Callable[[ModelCallRecord], bool] | None = None,
         daily_budget: ModelBudgetGuard | None = None,
@@ -372,11 +422,54 @@ class ModelGateway:
         self._fallback_enabled = fallback_enabled
         self._fallback_eligible = fallback_eligible or _default_fallback_eligible
         self.call_records: list[ModelCallRecord] = []
+        self.validation_records: list[ModelValidationRecord] = []
+        self._validation_sink = validation_sink
         self._invoke_counts: dict[str, int] = {}
 
     def set_budget(self, budget: ModelCallBudget | None) -> None:
         """Attach or replace the call budget after construction."""
         self._budget = budget
+
+    def set_validation_sink(
+        self, sink: Callable[[ModelValidationRecord], None] | None
+    ) -> None:
+        self._validation_sink = sink
+
+    def record_validation(
+        self,
+        call_id: str,
+        *,
+        target: type[BaseModel],
+        parsed: BaseModel | None,
+        error_code: str | None = None,
+        violations: Sequence[str] = (),
+    ) -> None:
+        if not any(
+            r.call_id == call_id and r.status == "succeeded" for r in self.call_records
+        ):
+            raise ValueError("validation requires an actual successful response")
+        schema = target.model_json_schema()
+        schema_hash = _hash_text(json.dumps(schema, sort_keys=True))
+        record = ModelValidationRecord(
+            validation_id=_hash_text(call_id + ":" + schema_hash),
+            call_id=call_id,
+            schema_hash=schema_hash,
+            target_schema=schema,
+            verdict=(
+                "schema_rejected"
+                if parsed is None
+                else "grounding_rejected"
+                if violations
+                else "accepted"
+            ),
+            parsed_output=None if parsed is None else parsed.model_dump(mode="json"),
+            error_code=error_code,
+            violation_hashes=[_hash_text(v) for v in violations],
+            created_at=self._clock(),
+        )
+        if self._validation_sink is not None:
+            self._validation_sink(record)
+        self.validation_records.append(record)
 
     @property
     def fallback_channels(self) -> tuple[str, ...]:

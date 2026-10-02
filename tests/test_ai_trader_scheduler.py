@@ -196,7 +196,7 @@ class _RiskSources:
 
 
 def _fake_committee(
-    *, record_sink: Any = None, daily_budget: Any = None
+    *, record_sink: Any = None, daily_budget: Any = None, validation_sink: Any = None
 ) -> TradingCommittee:
     provider = GroundedProvider(
         provider_name="fake",
@@ -216,7 +216,10 @@ def _fake_committee(
     )
     return TradingCommittee(
         gateway=ModelGateway(
-            providers=[provider], record_sink=record_sink, daily_budget=daily_budget
+            providers=[provider],
+            record_sink=record_sink,
+            daily_budget=daily_budget,
+            validation_sink=validation_sink,
         ),
         discipline=DisciplineConfig(),
         max_turns=5,
@@ -772,15 +775,18 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setattr(
             cycle_commands,
             "build_ai_trading_committee",
-            lambda record_sink=None, daily_budget=None: TradingCommittee(
-                gateway=ModelGateway(
-                    providers=[provider],
-                    record_sink=record_sink,
-                    daily_budget=daily_budget,
-                ),
-                discipline=DisciplineConfig(),
-                max_turns=5,
-                challenge_rounds=0,
+            lambda record_sink=None, daily_budget=None, validation_sink=None: (
+                TradingCommittee(
+                    gateway=ModelGateway(
+                        providers=[provider],
+                        record_sink=record_sink,
+                        daily_budget=daily_budget,
+                        validation_sink=validation_sink,
+                    ),
+                    discipline=DisciplineConfig(),
+                    max_turns=5,
+                    challenge_rounds=0,
+                )
             ),
         )
 
@@ -1653,8 +1659,7 @@ def test_default_backend_checks_budget_between_analyst_calls(
             if (
                 full_round
                 and request.call_kind == "normal"
-                and request.metadata["committee_role"]
-                in {"technical", "macro_news"}
+                and request.metadata["committee_role"] in {"technical", "macro_news"}
             ):
                 return response.model_copy(
                     update={"structured_output": None, "output_text": "{"}

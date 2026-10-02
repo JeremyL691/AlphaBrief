@@ -30,6 +30,7 @@ from alphabrief_models import (
     ProviderAdapter,
     build_channel_gateway,
 )
+from alphabrief_models.gateway import ModelValidationRecord
 
 from alphabrief_trader.committee import TradingCommittee
 from alphabrief_trader.rules import DisciplineConfig
@@ -91,6 +92,7 @@ def build_ai_trading_committee(
     record_sink: Callable[[ModelCallRecord], None] | None = None,
     budget: ModelCallBudget | None = None,
     daily_budget: ModelBudgetGuard | None = None,
+    validation_sink: Callable[[ModelValidationRecord], None] | None = None,
 ) -> TradingCommittee:
     """Build the AI Trading Committee on the configured channels.
 
@@ -101,6 +103,7 @@ def build_ai_trading_committee(
     channels = build_ai_trading_channels(
         record_sink=record_sink, budget=budget, daily_budget=daily_budget
     )
+    channels.gateway.set_validation_sink(validation_sink)
     return TradingCommittee(
         gateway=channels.gateway,
         discipline=DisciplineConfig(),
