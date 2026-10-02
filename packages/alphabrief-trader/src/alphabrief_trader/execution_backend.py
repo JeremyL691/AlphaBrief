@@ -296,6 +296,7 @@ class ExternalPaperExecutionBackend:
             stop_loss=intent.stop_loss,
             take_profit=intent.take_profit,
             cycle_id=intent.intent_id,
+            reduce_only=intent.reduce_only,
         )
 
         # M08-W07: the approved decision is bound to the immutable

@@ -64,7 +64,14 @@ class RawProtocolProvider(FakeProviderAdapter):
         }
         role = request.metadata["committee_role"]
         if role == "manager":
-            output = legacy
+            output = {
+                "action": "open_long",
+                "confidence": 0.8,
+                "stop_atr_multiple": 1.5,
+                "take_profit_r_multiple": 2.0,
+                "rationale": "Observed reference price is 1.12.",
+                "evidence_ids": evidence,
+            }
         elif role == "technical" and request.call_kind != "repair":
             if self.legacy:
                 output = legacy

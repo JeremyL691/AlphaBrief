@@ -84,6 +84,7 @@ class SubmitRequest(BaseModel):
     stop_loss: Decimal | None = Field(default=None, gt=0)
     take_profit: Decimal | None = Field(default=None, gt=0)
     cycle_id: str | None = None
+    reduce_only: bool = Field(default=False, strict=True)
 
 
 class SubmitResult(BaseModel):

@@ -123,30 +123,8 @@ class DisciplineConfig:
 
 
 def _view_weight(view: AnalystView, action: str) -> Decimal:
-    """Return the directional weight for a single role vote.
-
-    ``buy`` on ``bullish`` → 1.0; ``buy`` on ``bearish`` → 0.5 (contrarian);
-    ``sell`` on ``bullish`` → 0.25; ``sell`` on ``bearish`` → 1.0;
-    everything else returns 0. This is a coarse numeric proxy — the
-    synthesis is intentionally conservative and deterministic.
-    """
-    if view == "uncertain":
-        return Decimal("0")
-    bull = view == "bullish"
-    bear = view == "bearish"
-    if action == "buy":
-        if bull:
-            return ONE
-        if bear:
-            return Decimal("0.5")
-        return Decimal("0")
-    if action == "sell":
-        if bear:
-            return ONE
-        if bull:
-            return Decimal("0.25")
-        return Decimal("0")
-    return Decimal("0")
+    """Only the same direction counts as support; opposition is never support."""
+    return ONE if (view, action) in {("bullish", "buy"), ("bearish", "sell")} else ZERO
 
 
 _CONSENSUS_RANK: dict[str, int] = {
@@ -188,6 +166,11 @@ class DisciplineGate:
             for v in [*analyst_list, manager_vote]
         ):
             raise ValueError("historical committee roles are read-only")
+        native_fields: dict[str, Any] = {
+            "manager_call_id": manager_vote.model_call_id,
+            "stop_atr_multiple": manager_vote.stop_atr_multiple,
+            "take_profit_r_multiple": manager_vote.take_profit_r_multiple,
+        }
         consensus_level = _compute_consensus(analyst_list, manager_vote)
         key_evidence = _collect_evidence(analyst_list)
         key_risks = _collect_risks(analyst_list + [manager_vote])
@@ -196,6 +179,8 @@ class DisciplineGate:
         blocked, reason = self._check_ethics(manager_vote)
         if blocked:
             return TradePlan(
+                **native_fields,
+                action="no_trade" if manager_vote.manager_action is not None else None,
                 symbol=symbol,
                 side="buy",
                 target_position_pct=ZERO,
@@ -213,8 +198,13 @@ class DisciplineGate:
             )
 
         # Confidence gate — below floor → hold with zero target.
-        if manager_vote.confidence < self.config.no_trade_below_confidence:
+        confidence_floor = self.config.no_trade_below_confidence
+        if manager_vote.manager_action is not None:
+            confidence_floor = max(confidence_floor, 0.55)
+        if manager_vote.confidence < confidence_floor:
             return TradePlan(
+                **native_fields,
+                action="no_trade" if manager_vote.manager_action is not None else None,
                 symbol=symbol,
                 side="buy",
                 target_position_pct=ZERO,
@@ -237,10 +227,13 @@ class DisciplineGate:
 
         # Consensus gate — below floor → hold + needs human review.
         if (
-            _CONSENSUS_RANK[consensus_level]
+            manager_vote.suggested_action in {"buy", "sell"}
+            and _CONSENSUS_RANK[consensus_level]
             < _CONSENSUS_RANK[self.config.require_min_consensus]
         ):
             return TradePlan(
+                **native_fields,
+                action="no_trade" if manager_vote.manager_action is not None else None,
                 symbol=symbol,
                 side="buy",
                 target_position_pct=ZERO,
@@ -262,13 +255,17 @@ class DisciplineGate:
 
         # Risk-role veto (PROJECT_GUIDE 5.4): the risk analyst can block
         # new exposure outright, not merely request human review.
-        if self.config.honour_risk_role_veto:
+        if manager_vote.manager_action is not None or self.config.honour_risk_role_veto:
             risk_veto = next(
                 (vote for vote in analyst_list if vote.role == "risk" and vote.veto),
                 None,
             )
             if risk_veto is not None:
                 return TradePlan(
+                    **native_fields,
+                    action="no_trade"
+                    if manager_vote.manager_action is not None
+                    else None,
                     symbol=symbol,
                     side="buy",
                     target_position_pct=ZERO,
@@ -292,13 +289,28 @@ class DisciplineGate:
         opening = manager_vote.suggested_action in {"buy", "sell"}
         if opening:
             required = self.config.min_analysts_supporting_direction
+            if manager_vote.manager_action is not None:
+                required = max(required, 2)
             supporters = [
                 vote
                 for vote in analyst_list
-                if _view_weight(vote.view, manager_vote.suggested_action) > ZERO
+                if (
+                    vote.analyst_stance
+                    == (
+                        "short"
+                        if manager_vote.manager_action == "open_short"
+                        else "long"
+                    )
+                    if manager_vote.manager_action is not None
+                    else _view_weight(vote.view, manager_vote.suggested_action) > ZERO
+                )
             ]
             if len(supporters) < required:
                 return TradePlan(
+                    **native_fields,
+                    action="no_trade"
+                    if manager_vote.manager_action is not None
+                    else None,
                     symbol=symbol,
                     side="buy",
                     target_position_pct=ZERO,
@@ -322,6 +334,8 @@ class DisciplineGate:
         # No-trade actions.
         if manager_vote.suggested_action in {"skip", "watch", "hold"}:
             return TradePlan(
+                **native_fields,
+                action=manager_vote.manager_action,
                 symbol=symbol,
                 side="buy",
                 target_position_pct=ZERO,
@@ -335,7 +349,11 @@ class DisciplineGate:
             )
 
         # Position size cap (clamp only — never inflate).
-        raw = manager_vote.target_position_pct
+        raw = (
+            self.config.max_position_pct
+            if manager_vote.manager_action in {"open_long", "open_short"}
+            else manager_vote.target_position_pct
+        )
         capped = min(raw, self.config.max_position_pct)
         capped = max(capped, ZERO)
 
@@ -344,6 +362,8 @@ class DisciplineGate:
         )
 
         return TradePlan(
+            **native_fields,
+            action=manager_vote.manager_action,
             symbol=symbol,
             side=side,
             target_position_pct=capped,
@@ -351,7 +371,11 @@ class DisciplineGate:
             consensus_level=consensus_level,
             rationale=self._rationale(manager_vote, consensus_level),
             needs_human_review=(
-                manager_vote.needs_human_review or any(v.veto for v in analyst_list)
+                manager_vote.needs_human_review
+                or (
+                    manager_vote.manager_action is None
+                    and any(v.veto for v in analyst_list)
+                )
             ),
             key_evidence=key_evidence,
             key_risks=key_risks,
@@ -380,7 +404,8 @@ class DisciplineGate:
     ) -> str:
         bits: list[str] = [
             f"manager_view={manager_vote.view}",
-            f"action={manager_vote.suggested_action}",
+            f"action={manager_vote.manager_action or manager_vote.suggested_action}",
+            manager_vote.analysis,
             f"confidence={manager_vote.confidence:.2f}",
             f"consensus={consensus}",
         ]

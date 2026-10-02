@@ -75,19 +75,81 @@ class _PartialEvidenceOutput(BaseModel):
         return value
 
 
-class _PartialCommitteeVote(_PartialEvidenceOutput):
-    """Legacy manager output, pending the GUIDE action-protocol migration."""
+class _PartialManagerDecision(_PartialEvidenceOutput):
+    """GUIDE 5.4 manager decision; sizing stays deterministic."""
 
-    model_config = ConfigDict(extra="forbid")
+    action: Literal["open_long", "open_short", "close", "hold", "no_trade"]
+    confidence: float = Field(ge=0, le=1, strict=True)
+    stop_atr_multiple: Decimal = Field(
+        default=Decimal("1.5"), json_schema_extra={"default": 1.5}
+    )
+    take_profit_r_multiple: Decimal = Field(
+        default=Decimal("2.0"), json_schema_extra={"default": 2.0}
+    )
+    rationale: str = Field(min_length=1)
 
-    analysis: str = Field(min_length=1)
-    view: AnalystView
-    confidence: float = Field(ge=0.0, le=1.0)
-    risks: list[str] = Field(default_factory=list)
-    suggested_action: Literal["buy", "sell", "hold", "watch", "skip"]
-    target_position_pct: float = Field(ge=0.0, le=1.0)
-    veto: bool = False
-    needs_human_review: bool = False
+    @field_validator(
+        "stop_atr_multiple",
+        "take_profit_r_multiple",
+        mode="before",
+        json_schema_input_type=float,
+    )
+    @classmethod
+    def _numeric_multiple(cls, value: Any) -> Decimal:
+        if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+            raise ValueError("multiples must be JSON numbers")
+        result = Decimal(str(value))
+        if not result.is_finite():
+            raise ValueError("multiples must be finite")
+        return result
+
+    @field_validator("rationale")
+    @classmethod
+    def _nonblank_rationale(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("rationale must be nonblank")
+        return value
+
+    @property
+    def analysis(self) -> str:
+        return self.rationale
+
+    @property
+    def view(self) -> AnalystView:
+        return (
+            "bullish"
+            if self.action == "open_long"
+            else "bearish"
+            if self.action == "open_short"
+            else "neutral"
+        )
+
+    @property
+    def risks(self) -> list[str]:
+        return []
+
+    @property
+    def suggested_action(self) -> Literal["buy", "sell", "hold"]:
+        return (
+            "buy"
+            if self.action == "open_long"
+            else "sell"
+            if self.action == "open_short"
+            else "hold"
+        )
+
+    @property
+    def target_position_pct(self) -> Decimal:
+        # Neither manager nor analysts have position-size authority.
+        return Decimal("0")
+
+    @property
+    def veto(self) -> bool:
+        return False
+
+    @property
+    def needs_human_review(self) -> bool:
+        return False
 
 
 class _PartialAnalystVote(_PartialEvidenceOutput):
@@ -135,8 +197,8 @@ class _PartialAnalystVote(_PartialEvidenceOutput):
         )
 
     @property
-    def target_position_pct(self) -> float:
-        return 0.0
+    def target_position_pct(self) -> Decimal:
+        return Decimal("0")
 
     @property
     def needs_human_review(self) -> bool:
@@ -340,10 +402,10 @@ class TradingCommittee:
                 role_errors.append(_failure_code(role, result.record))
                 continue
             opening_schema = (
-                _PartialCommitteeVote if role == "manager" else _PartialAnalystVote
+                _PartialManagerDecision if role == "manager" else _PartialAnalystVote
             )
             opening_parsed: StructuredOutputResult[
-                _PartialCommitteeVote | _PartialAnalystVote
+                _PartialManagerDecision | _PartialAnalystVote
             ] = parse_structured_output(result.response, target=opening_schema)
             model_call_id = result.record.call_id
             model_name = result.response.model or "unknown"
@@ -416,7 +478,7 @@ class TradingCommittee:
                 opening_parsed = StructuredOutputResult(
                     ok=True,
                     parsed=cast(
-                        _PartialCommitteeVote | _PartialAnalystVote, repaired.parsed
+                        _PartialManagerDecision | _PartialAnalystVote, repaired.parsed
                     ),
                     error_code=None,
                 )
@@ -443,6 +505,15 @@ class TradingCommittee:
                 if isinstance(p, _PartialAnalystVote)
                 else None,
                 key_points=p.key_points if isinstance(p, _PartialAnalystVote) else [],
+                manager_action=p.action
+                if isinstance(p, _PartialManagerDecision)
+                else None,
+                stop_atr_multiple=p.stop_atr_multiple
+                if isinstance(p, _PartialManagerDecision)
+                else None,
+                take_profit_r_multiple=p.take_profit_r_multiple
+                if isinstance(p, _PartialManagerDecision)
+                else None,
                 created_at=self._clock(),
             )
             votes.append(vote)
@@ -729,7 +800,7 @@ def _complete_repair_prompt(
     )
 
 
-def _as_decimal(value: float) -> Decimal:
+def _as_decimal(value: float | Decimal) -> Decimal:
     """Convert a model-supplied ``float`` percentage to a Decimal safely."""
     return Decimal(str(value))
 

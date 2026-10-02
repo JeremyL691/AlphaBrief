@@ -171,18 +171,12 @@ def build_conservative_fake_provider() -> FakeProviderAdapter:
         model_name="fake-ai-committee",
         capabilities=sorted(_STRUCTURED_CAPABILITIES),
         structured_output={
-            "analysis": (
-                "Trend remains constructive on improving breadth; downside risks "
-                "centered on macro headlines and crowded positioning."
-            ),
-            "view": "bullish",
+            "action": "no_trade",
             "confidence": 0.62,
+            "stop_atr_multiple": 1.5,
+            "take_profit_r_multiple": 2.0,
+            "rationale": "Test fixture does not support an entry.",
             "evidence_ids": [],
-            "risks": ["Macro headline tail-risk", "Crowded long positioning"],
-            "suggested_action": "watch",
-            "target_position_pct": "0.10",
-            "veto": False,
-            "needs_human_review": True,
         },
     )
 

@@ -189,7 +189,7 @@ class TestAiRules:
         import json as _json
 
         data = _json.loads(res.stdout)
-        assert data["prompt_version"] == "aitrader-analysts-v5"
+        assert data["prompt_version"] == "aitrader-manager-v6"
         assert data["roles"] == [
             "technical",
             "macro_news",
