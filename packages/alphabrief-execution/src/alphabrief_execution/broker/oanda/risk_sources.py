@@ -101,6 +101,7 @@ class OandaRiskContextSources:
                 request_id=f"{self._request_id}-decision-account"
             )
             facts.update(nav=summary.nav, margin_available=summary.margin_available,
+                         margin_used=summary.margin_used,
                          account_captured_at=self._captured_at())
         except Exception as exc:  # noqa: BLE001 - persist safe class, fail closed
             errors["account"] = type(exc).__name__
@@ -386,6 +387,7 @@ class OandaRiskContextSources:
             account_id=summary.account_id,
             captured_at=captured,
             equity=summary.nav,
+            margin_used=summary.margin_used,
             reference_mark_prices={
                 symbol: (price.bids[0].price + price.asks[0].price) / Decimal(2)
                 for symbol, price in prices.items()

@@ -30,6 +30,7 @@ from alphabrief_api.db import AiTradingStore, NewsStore
 from alphabrief_api.db.market_data import MarketDataStore
 from alphabrief_api.db.model_call import ModelCallStore
 from alphabrief_core import (
+    RiskDecision,
     load_paper_execution_policy,
     load_settings,
 )
@@ -202,6 +203,8 @@ def _risk_gate(
             symbol_allowlist=frozenset(instruments),
             max_order_value=max_order_value,
             max_total_exposure=max_total_exposure,
+            max_margin_utilization_pct=Decimal("0.30"),
+            margin_warning_pct=Decimal("0.20"),
             entry_rules=EntryRulePolicy(
                 # Rule 3: quotes must be fresh and tradeable.
                 max_quote_age_seconds=15,
@@ -586,6 +589,7 @@ def _open_trading_cycle(
 ) -> Iterator[DailyTradingCycle]:
     """One production composition and bounded resource lifetime for all rounds."""
     from alphabrief_execution.broker.recon_store import BrokerReconStore
+    from alphabrief_execution.operations.scheduler import HeartbeatStore
     from alphabrief_risk.decision_store import RiskDecisionStore
 
     resolved = database or _paths.db_path()
@@ -610,6 +614,17 @@ def _open_trading_cycle(
         sources = _risk_sources(symbols, recon_store=recon)
         decisions = RiskDecisionStore(db_path=resolved)
         resources.callback(decisions.close)
+        warnings = HeartbeatStore(db_path=resolved)
+        resources.callback(warnings.close)
+
+        def record_warning(decision: RiskDecision) -> None:
+            warnings.record_alert(
+                severity="warning", source="risk_gate", task_name="margin",
+                message="MARGIN_WARNING: margin utilization exceeds 20%",
+                payload={"decision_id": decision.decision_id,
+                         "rule_evidence": decision.rule_evidence},
+            )
+
         nav = _nav(sources) if quantity_override is None else None
         yield DailyTradingCycle(
             committee=build_ai_trading_committee(record_sink=_call_recorder(calls)),
@@ -640,6 +655,7 @@ def _open_trading_cycle(
             sizing_provider=_sizing_provider(sources),
             model_budget=_model_budget(calls),
             shadow_recorder=_shadow_recorder(shadows),
+            risk_warning_recorder=record_warning,
         )
 
 

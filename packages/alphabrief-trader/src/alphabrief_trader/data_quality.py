@@ -20,7 +20,7 @@ from typing import Literal
 from alphabrief_trader.schemas import MarketSnapshot
 
 #: Version of the quality rules; bump when a limit changes.
-QUALITY_POLICY_VERSION = "2026-10-02.3"
+QUALITY_POLICY_VERSION = "2026-10-02.4"
 NO_TRADE_DATA_STALE: Literal["NO_TRADE_DATA_STALE"] = "NO_TRADE_DATA_STALE"
 
 #: Maximum age of a snapshot's capture time (PROJECT_GUIDE 5.3: the latest
@@ -124,11 +124,14 @@ def evaluate_snapshot_quality(
             if broker.ask < broker.bid or broker.spread != broker.ask - broker.bid:
                 reasons.append("quote_spread_inconsistent")
         for field in (
-            "margin_available", "position_units", "position_unrealized_pnl",
+            "margin_available", "margin_used", "position_units",
+            "position_unrealized_pnl",
             "daily_open_count",
         ):
             if getattr(broker, field) is None:
                 reasons.append(f"{field}_missing")
+        if broker.margin_used is not None and broker.margin_used < 0:
+            reasons.append("margin_used_negative")
     if snapshot.signal_evidence is not None:
         from alphabrief_execution.broker.oanda.market_sync import (
             SIGNAL_INSTRUMENTS,

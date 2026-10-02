@@ -25,6 +25,7 @@ def facts() -> BrokerInputFacts:
         quote_captured_at=NOW,
         nav=Decimal(1000),
         margin_available=Decimal(0),
+        margin_used=Decimal(0),
         account_captured_at=NOW,
         position_units=Decimal(-10),
         position_unrealized_pnl=Decimal("-1.5"),
@@ -107,6 +108,8 @@ def test_freshness_boundary_expiry_future_and_missing(field: str, seconds: int) 
         ({"bid": Decimal(0)}, "bid_missing_or_not_positive"),
         ({"quote_to_home": Decimal(0)}, "quote_to_home_missing_or_not_positive"),
         ({"nav": Decimal(0)}, "nav_missing_or_not_positive"),
+        ({"margin_used": None}, "margin_used_missing"),
+        ({"margin_used": Decimal(-1)}, "margin_used_negative"),
         ({"spread": Decimal("0.001")}, "quote_spread_inconsistent"),
         ({"symbol": "GBP_USD"}, "broker_input_symbol_mismatch"),
         ({"errors": {"account": "TimeoutError"}}, "broker_account_unavailable"),
@@ -125,6 +128,7 @@ def test_broker_observation_values_and_time_enter_fingerprint() -> None:
     original = snapshot(facts())
     for update in (
         {"nav": Decimal(1001)},
+        {"margin_used": Decimal(1)},
         {"quote_captured_at": NOW - timedelta(seconds=1)},
     ):
         changed = snapshot(facts().model_copy(update=update))
@@ -144,6 +148,7 @@ def test_committee_gets_real_broker_values_without_an_account_identifier() -> No
 def test_facts_reject_float_naive_time_and_unknown_identity_fields() -> None:
     for update in (
         {"nav": 1000.0},
+        {"margin_used": 1000.0},
         {"quote_captured_at": NOW.replace(tzinfo=None)},
         {"account_id": "private-account"},
     ):

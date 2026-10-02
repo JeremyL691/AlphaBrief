@@ -40,6 +40,7 @@ def source(monkeypatch: pytest.MonkeyPatch) -> OandaRiskContextSources:
             return SimpleNamespace(
                 balance=Decimal("1000"), nav=Decimal("1000"),
                 margin_available=Decimal("950"),
+                margin_used=Decimal("50"),
                 account_id="test-account", open_position_count=0,
             )
 
