@@ -31,7 +31,7 @@ from alphabrief_news.untrusted import sanitize_external_text
 from alphabrief_trader.evidence_catalog import scrub_secrets as _scrub_secrets
 from alphabrief_trader.schemas import CommitteeInput, CommitteeRole, CommitteeTranscript
 
-PROMPT_VERSION = "aitrader-evidence-v2"
+PROMPT_VERSION = "aitrader-evidence-v3"
 
 # ---------------------------------------------------------------------------
 # Role prompts (Chinese — user's primary language)
@@ -41,7 +41,7 @@ _BASE_RETURN_BLOCK = (
     '{"analysis":"...",'
     '"view":"bullish|bearish|neutral|uncertain",'
     '"confidence":0.0-1.0,'
-    '"evidence":["..."],'
+    '"evidence_ids":[],'
     '"risks":["..."],'
     '"suggested_action":"buy|sell|hold|watch|skip",'
     '"target_position_pct":0.0-1.0,'
@@ -60,7 +60,7 @@ _TECHNICAL_PROMPT = (
     "- analysis: 200 字以内的技术面分析。\n"
     "- view: bullish / bearish / neutral / uncertain。\n"
     "- confidence: 0.0-1.0，反映你对技术判断的确信度。\n"
-    "- evidence: 支持你判断的技术证据（如 \"EMA20 上穿 EMA50\")。\n"
+    "- evidence_ids: 仅填本轮目录的完整 ID 数组，禁止附加解释、改写或虚构。\n"
     "- risks: 关键技术风险（如 \"接近前期阻力\"、\"成交量背离\"）。\n"
     "- suggested_action: buy / sell / hold / watch / skip。\n"
     "- target_position_pct: 0.0-1.0，建议占组合最大允许仓位的比例。\n"
@@ -79,7 +79,7 @@ _FUNDAMENTAL_PROMPT = (
     "- analysis: 200 字以内的基本面/宏观面分析。\n"
     "- view: bullish / bearish / neutral / uncertain。\n"
     "- confidence: 0.0-1.0。\n"
-    "- evidence: 财报、估值、宏观数据、新闻要点，优先引用可用证据 ID（如 ev-xxx）。\n"
+    "- evidence_ids: 仅填本轮目录的完整 ID 数组，禁止附加解释、改写或虚构。\n"
     "- risks: 估值过贵、盈利下修、宏观恶化、消息失真。\n"
     "- suggested_action: buy / sell / hold / watch / skip。\n"
     "- target_position_pct: 0.0-1.0。\n"
@@ -98,7 +98,7 @@ _NEWS_SENTIMENT_PROMPT = (
     "- analysis: 200 字以内的新闻/情绪面分析（情绪方向、强度、覆盖、分歧）。\n"
     "- view: bullish / bearish / neutral / uncertain。\n"
     "- confidence: 0.0-1.0。\n"
-    "- evidence: 新闻要点与情绪证据，优先引用可用证据 ID（如 ev-xxx）。\n"
+    "- evidence_ids: 仅填本轮目录的完整 ID 数组，禁止附加解释、改写或虚构。\n"
     "- risks: 头条反转、情绪极端、消息失真或过时。\n"
     "- suggested_action: buy / sell / hold / watch / skip。\n"
     "- target_position_pct: 0.0-1.0。\n"
@@ -119,7 +119,7 @@ _RISK_PROMPT = (
     "- analysis: 200 字以内的风险评估与下行情景。\n"
     "- view: bullish / bearish / neutral / uncertain。\n"
     "- confidence: 0.0-1.0。\n"
-    "- evidence: ATR、止损距离、相关系数、宏观尾部风险。\n"
+    "- evidence_ids: 仅填本轮目录的完整 ID 数组，禁止附加解释、改写或虚构。\n"
     "- risks: 流动性、回撤、跳空、政策黑天鹅。\n"
     "- suggested_action: buy / sell / hold / watch / skip。\n"
     "- target_position_pct: 0.0-1.0，建议保守下调原始信号。\n"
@@ -142,7 +142,7 @@ _MANAGER_PROMPT = (
     "- analysis: 200 字以内综合多角色后的执行建议与权衡。\n"
     "- view: bullish / bearish / neutral / uncertain。\n"
     "- confidence: 0.0-1.0，综合后的最终确信度。\n"
-    "- evidence: 多角色共识证据。\n"
+    "- evidence_ids: 仅填本轮目录的完整 ID 数组，禁止附加解释、改写或虚构。\n"
     "- risks: 多角色联合识别的最大下行风险。\n"
     "- suggested_action: buy / sell / hold / watch / skip。\n"
     "- target_position_pct: 0.0-1.0，最终建议仓位（通常为风险面建议的下限）。\n"
@@ -163,7 +163,7 @@ _CHALLENGE_RETURN_BLOCK = (
     '{"analysis":"...",'
     '"view":"bullish|bearish|neutral|uncertain",'
     '"confidence":0.0-1.0,'
-    '"evidence":["..."],'
+    '"evidence_ids":[],'
     '"risks":["..."],'
     '"stance":"agreement|contradiction|dissent|unknown",'
     '"challenged_claim":"<被质疑的前置论断，不超过 120 字>"}'
@@ -184,7 +184,7 @@ _CHALLENGE_PROMPT = (
     "- stance: agreement（同意）/ contradiction（反对）/ dissent（保留异议）"
     "/ unknown（证据不足）。\n"
     "- challenged_claim: 你质疑的前置论断摘要（不超过 120 字）。\n"
-    "- evidence: 支持你立场的证据，优先引用可用证据 ID。\n"
+    "- evidence_ids: 仅填本轮目录的完整 ID 数组，禁止附加解释、改写或虚构。\n"
     "- risks: 该论断如果错误可能带来的风险。\n"
 )
 
@@ -192,7 +192,7 @@ _SUMMARY_RETURN_BLOCK = (
     '{"analysis":"...",'
     '"view":"bullish|bearish|neutral|uncertain",'
     '"confidence":0.0-1.0,'
-    '"evidence":["..."],'
+    '"evidence_ids":[],'
     '"risks":["..."],'
     '"stance":"agreement|contradiction|dissent|unknown",'
     '"challenged_claim":null}'
@@ -210,7 +210,7 @@ _SUMMARY_PROMPT = (
     "字段说明：\n"
     "- analysis: 200 字以内的最终综合，必须提及主要 dissent。\n"
     "- stance: 你作为汇总者对整体证据的判断。\n"
-    "- evidence: 多角色共识证据，优先引用可用证据 ID。\n"
+    "- evidence_ids: 仅填本轮目录的完整 ID 数组，禁止附加解释、改写或虚构。\n"
     "- risks: 多角色联合识别的最大下行风险。\n"
     "- needs_human_review: 存在 dissent、置信度低或数据可疑时填 true。\n"
 )

@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from alphabrief_core import OrderIntent, RiskDecision
-from alphabrief_models import FakeProviderAdapter, ModelCallRecord, ModelGateway
+from alphabrief_models import ModelCallRecord, ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
@@ -33,6 +33,7 @@ from alphabrief_trader.data_quality import (
 from alphabrief_trader.db_store import AiTradingStore
 from alphabrief_trader.execution_backend import ExecutionBackendResult
 from alphabrief_trader.schemas import CommitteeInput
+from committee_provider import GroundedProvider
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
 
@@ -40,7 +41,7 @@ _BULLISH = {
     "analysis": "Bullish continuation.",
     "view": "bullish",
     "confidence": 0.8,
-    "evidence": ["trend"],
+    "evidence_ids": ["input-evidence"],
     "risks": [],
     "suggested_action": "buy",
     "target_position_pct": "0.10",
@@ -140,7 +141,7 @@ def _cycle(
     snapshots: dict[str, MarketSnapshot] | None = None,
     refresher: Callable[[MarketSnapshot], MarketSnapshot] | None = None,
 ) -> DailyTradingCycle:
-    provider = FakeProviderAdapter(
+    provider = GroundedProvider(
         provider_name="fake",
         model_name="fake-1",
         capabilities=["structured_output"],
@@ -232,7 +233,7 @@ class TestCycleUsesTheRealVerdict:
             nonlocal current
             current = NOW + timedelta(hours=3)
 
-        provider = FakeProviderAdapter(
+        provider = GroundedProvider(
             provider_name="fake", model_name="fake-1",
             capabilities=["structured_output"], structured_output=_BULLISH,
         )

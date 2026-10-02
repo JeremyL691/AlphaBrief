@@ -11,7 +11,6 @@ from typing import cast
 import pytest
 from _helpers import FakeExecutionBackend
 from alphabrief_models import (
-    FakeProviderAdapter,
     ModelGateway,
     ModelProviderError,
     ModelRequest,
@@ -28,12 +27,13 @@ from alphabrief_trader.daily_cycle import (
 from alphabrief_trader.db_store import AiTradingStore
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.schemas import MarketSnapshot
+from committee_provider import GroundedProvider
 
 _BULLISH_PAYLOAD = {
     "analysis": "Bullish continuation.",
     "view": "bullish",
     "confidence": 0.7,
-    "evidence": ["e1"],
+    "evidence_ids": ["input-evidence"],
     "risks": ["r1"],
     "suggested_action": "buy",
     "target_position_pct": 0.10,
@@ -45,7 +45,7 @@ _HOLD_PAYLOAD = {
     "analysis": "Insufficient data.",
     "view": "neutral",
     "confidence": 0.5,
-    "evidence": [],
+    "evidence_ids": [],
     "risks": [],
     "suggested_action": "hold",
     "target_position_pct": 0.0,
@@ -70,7 +70,7 @@ def _snapshot(symbol: str) -> MarketSnapshot:
 
 
 def _build_committee(payload: dict[str, object]) -> TradingCommittee:
-    provider = FakeProviderAdapter(
+    provider = GroundedProvider(
         provider_name="fake",
         model_name="fake-1",
         capabilities=["structured_output"],
@@ -255,7 +255,7 @@ class TestDailyTradingCycle:
         # Every role call fails at the gateway → the cycle must record a
         # visible provider_error outcome instead of a misleading
         # skipped_no_consensus.
-        provider = FakeProviderAdapter(
+        provider = GroundedProvider(
             provider_name="fake",
             model_name="fake-1",
             capabilities=["structured_output"],
@@ -286,12 +286,13 @@ class TestDailyTradingCycle:
         assert saved is not None
         assert saved["outcome"] == "provider_error"
 
+    @pytest.mark.parametrize("phase", ["opening", "challenge"])
     def test_partial_role_failure_does_not_mask_outcome(
-        self, store: AiTradingStore
+        self, store: AiTradingStore, phase: str,
     ) -> None:
-        # One role fails but the rest vote → normal synthesis continues
-        # and the outcome reflects the plan, not provider_error.
-        class _PartialFailProvider(FakeProviderAdapter):
+        # Missing required opening opinions cannot authorize an intent.
+        # Optional discussion failure preserves a complete valid decision.
+        class _PartialFailProvider(GroundedProvider):
             def __init__(self, payload: dict[str, object]) -> None:
                 super().__init__(
                     provider_name="fake",
@@ -301,7 +302,10 @@ class TestDailyTradingCycle:
                 )
 
             def call(self, request: ModelRequest) -> ModelResponse:
-                if request.metadata.get("committee_role") == "technical":
+                if (
+                    request.metadata.get("committee_role") == "technical"
+                    and request.metadata.get("phase", "opening") == phase
+                ):
                     raise ModelProviderError("technical down")
                 return super().call(request)
 
@@ -320,10 +324,15 @@ class TestDailyTradingCycle:
             clock=lambda: SNAPSHOT_NOW,
         )
         record = cycle.run(["SPY"])
-        assert record.outcome == "executed"
-        # Five roles total; one analyst fails → four votes remain.
-        assert len(record.votes) == 4
-        assert "provider_error" not in record.summary
+        if phase == "opening":
+            assert record.outcome == "provider_error"
+            assert len(record.votes) == 4
+            assert record.plans == [] and record.attempts == []
+            assert "technical: provider_call_failed" in record.summary
+        else:
+            assert record.outcome == "executed"
+            assert len(record.votes) == 5
+            assert "provider_error" not in record.summary
 
     def test_constructor_requires_all_dependencies(self) -> None:
         with pytest.raises(TypeError):

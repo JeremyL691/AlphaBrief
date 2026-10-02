@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from _helpers import FakeExecutionBackend
-from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_models import ModelGateway
 from alphabrief_risk import KillSwitch, RiskGate, RiskLimitConfig
 from alphabrief_risk.account_context import AccountExposureContext
 from alphabrief_risk.entry_rules import EntryRulePolicy
@@ -19,6 +19,7 @@ from alphabrief_trader.db_store import AiTradingStore
 from alphabrief_trader.intents import deterministic_intent_id
 from alphabrief_trader.schemas import MarketSnapshot
 from alphabrief_trader.sizing import SizingInputs
+from committee_provider import GroundedProvider
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
 
@@ -26,7 +27,7 @@ _BULLISH_PAYLOAD = {
     "analysis": "Bullish continuation.",
     "view": "bullish",
     "confidence": 0.7,
-    "evidence": ["e1"],
+    "evidence_ids": ["input-evidence"],
     "risks": ["r1"],
     "suggested_action": "buy",
     "target_position_pct": 0.10,
@@ -36,7 +37,7 @@ _BULLISH_PAYLOAD = {
 
 
 def _committee() -> TradingCommittee:
-    provider = FakeProviderAdapter(
+    provider = GroundedProvider(
         provider_name="fake",
         model_name="fake-1",
         capabilities=["structured_output"],

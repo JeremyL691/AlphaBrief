@@ -41,7 +41,7 @@ _OPENING_PAYLOAD: dict[str, object] = {
     "analysis": "Trend is constructive with improving breadth.",
     "view": "bullish",
     "confidence": 0.72,
-    "evidence": ["ev-price-1: ema20 above ema50", "ev-news-1: earnings beat"],
+    "evidence_ids": ["ev-price-1: ema20 above ema50", "ev-news-1: earnings beat"],
     "risks": ["crowded positioning"],
     "suggested_action": "buy",
     "target_position_pct": 0.10,
@@ -53,7 +53,7 @@ _CHALLENGE_PAYLOAD: dict[str, object] = {
     "analysis": "The bullish read overweights one headline.",
     "view": "neutral",
     "confidence": 0.6,
-    "evidence": ["ev-macro-1: cpi in line"],
+    "evidence_ids": ["ev-macro-1: cpi in line"],
     "risks": ["headline reversal"],
     "stance": "dissent",
     "challenged_claim": "earnings beat guarantees continuation",
@@ -63,7 +63,7 @@ _SUMMARY_PAYLOAD: dict[str, object] = {
     "analysis": "Mixed but constructive; keep dissent on record.",
     "view": "bullish",
     "confidence": 0.7,
-    "evidence": ["ev-price-1: uptrend"],
+    "evidence_ids": ["ev-price-1: uptrend"],
     "risks": ["headline reversal"],
     "stance": "agreement",
     "challenged_claim": None,
@@ -111,11 +111,11 @@ class _PhasedProvider(FakeProviderAdapter):
                 k for k in available if k.startswith("macro:")
             ),
         }
-        evidence = payload.get("evidence", [])
+        evidence = payload.get("evidence_ids", [])
         assert isinstance(evidence, list)
         payload = {
             **payload,
-            "evidence": [references.get(str(v), str(v)) for v in evidence],
+            "evidence_ids": [references.get(str(v), str(v)) for v in evidence],
         }
         return ModelResponse(
             request_id=request.request_id,
