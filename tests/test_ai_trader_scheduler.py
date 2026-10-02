@@ -1607,9 +1607,11 @@ def test_production_cycle_rejects_bad_news_before_any_model_call(
         cycles.close()
 
 
+@pytest.mark.parametrize("full_round", [False, True])
 def test_default_backend_checks_budget_between_analyst_calls(
     isolated_data_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
+    full_round: bool,
 ) -> None:
     from alphabrief_api.db.model_call import ModelCallStore
     from alphabrief_models.channels import ChannelGateway, ChannelState, ModelSettings
@@ -1620,7 +1622,17 @@ def test_default_backend_checks_budget_between_analyst_calls(
     class BudgetProvider(FakeProviderAdapter):
         def call(self, request: Any) -> Any:
             sent.append(request.request_id)
-            return super().call(request)
+            response = super().call(request)
+            if (
+                full_round
+                and request.call_kind == "normal"
+                and request.metadata["committee_role"]
+                in {"technical", "news_sentiment"}
+            ):
+                return response.model_copy(
+                    update={"structured_output": None, "output_text": "{"}
+                )
+            return response
 
     def channels(**kwargs: Any) -> ChannelGateway:
         provider = BudgetProvider(
@@ -1656,37 +1668,58 @@ def test_default_backend_checks_budget_between_analyst_calls(
     monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
     monkeypatch.setattr(scheduler_commands, "_build_adapter", _SubmittingAdapter)
     monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
-    monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD")
+    symbols = cycle_commands.DEFAULT_UNIVERSE if full_round else ("EUR_USD",)
+    monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", ",".join(symbols))
     monkeypatch.setattr(model_factory, "build_channel_gateway", channels)
     monkeypatch.setattr(
         cycle_commands,
         "build_ai_trading_committee",
         model_factory.build_ai_trading_committee,
     )
-    _seed_risk_sized_inputs(isolated_data_dir)
+    if full_round:
+        _seed_market_quality_inputs(isolated_data_dir, symbols)
+        _seed_news_quality_inputs(isolated_data_dir, symbols)
+    else:
+        _seed_risk_sized_inputs(isolated_data_dir)
     database = isolated_data_dir / _paths.DATABASE_NAME
     calls = ModelCallStore(database)
     try:
         budget = cycle_commands._model_budget(calls)
-        for i in range(149):
+        for i in range(0 if full_round else 149):
             assert budget.reserve("chatgpt_plan", f"seed-{i}").allowed
     finally:
         calls.close()
-    asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)())
+    asyncio.run(
+        _ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="round-budget-production")
+    )
     store = AiTradingStore(database)
     calls = ModelCallStore(database)
     try:
         record = store.get_latest_cycle()
-        assert record is not None and record["outcome"] == "skipped_model_budget"
-        assert "NO_TRADE_MODEL_BUDGET" in record["summary"]
-        assert len(sent) == 1 and len(record["votes"]) == 1
-        assert record["plans"] == [] and record["attempts"] == []
+        assert record is not None
+        assert record["attempts"] == []
         usage = calls.daily_usage(
             datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         )
-        assert usage["chatgpt_plan"].calls == 150
-        assert len(calls.list_calls()) == 5
-        assert sum(c["status"] == "rejected" for c in calls.list_calls()) == 4
+        if full_round:
+            assert len(sent) == 35 and len(record["votes"]) == 25
+            assert len(record["plans"]) == 5
+            assert usage["chatgpt_plan"].calls == 35
+            assert calls.round_usage("round-budget-production") == {
+                "total": 35, "normal": 25, "repair": 10,
+            }
+            for symbol in symbols:
+                assert calls.round_usage("round-budget-production", symbol=symbol) == {
+                    "total": 7, "normal": 5, "repair": 2,
+                }
+        else:
+            assert record["outcome"] == "skipped_model_budget"
+            assert "NO_TRADE_MODEL_BUDGET" in record["summary"]
+            assert len(sent) == 1 and len(record["votes"]) == 1
+            assert record["plans"] == []
+            assert usage["chatgpt_plan"].calls == 150
+            assert len(calls.list_calls()) == 5
+            assert sum(c["status"] == "rejected" for c in calls.list_calls()) == 4
     finally:
         calls.close()
         store.close()

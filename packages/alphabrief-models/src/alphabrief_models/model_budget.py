@@ -24,7 +24,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 #: Channel identifiers as recorded on model-call rows.
 CHATGPT_PLAN_CHANNEL = "chatgpt_plan"
@@ -37,6 +37,10 @@ NO_TRADE_MODEL_UNAVAILABLE = "NO_TRADE_MODEL_UNAVAILABLE"
 #: Default limits from PROJECT_GUIDE 5.13.
 DEFAULT_CHATGPT_DAILY_CALLS = 150
 DEFAULT_FALLBACK_DAILY_USD = Decimal("2.00")
+MAX_COMMITTEE_NORMAL_CALLS = 5
+MAX_COMMITTEE_REPAIR_CALLS = 2
+MAX_ROUND_CALLS = 35
+ModelCallKind = Literal["normal", "repair"]
 
 
 @dataclass(frozen=True)
@@ -189,7 +193,14 @@ class ModelBudgetGuard:
         self._usage.disable_channel(channel, now.date().isoformat(), detail)
 
     def reserve(
-        self, channel: str, call_id: str, *, estimated_cost: Decimal | None = None
+        self,
+        channel: str,
+        call_id: str,
+        *,
+        estimated_cost: Decimal | None = None,
+        round_key: str | None = None,
+        symbol: str | None = None,
+        call_kind: ModelCallKind = "normal",
     ) -> BudgetVerdict:
         """Persist admission before dispatch; an unknown outcome keeps its slot."""
         try:
@@ -201,6 +212,9 @@ class ModelBudgetGuard:
                 call_limit=self._policy.call_limit(channel),
                 cost_limit=self._policy.cost_limit(channel),
                 estimated_cost=estimated_cost,
+                round_key=round_key,
+                symbol=symbol,
+                call_kind=call_kind,
             )
         except Exception:
             return BudgetVerdict(
@@ -224,6 +238,9 @@ class ModelAdmissionSource(ModelUsageSource, Protocol):
         call_limit: int | None,
         cost_limit: Decimal | None,
         estimated_cost: Decimal | None,
+        round_key: str | None = None,
+        symbol: str | None = None,
+        call_kind: ModelCallKind = "normal",
     ) -> BudgetVerdict: ...
 
 

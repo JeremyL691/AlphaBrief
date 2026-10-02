@@ -106,6 +106,7 @@ def build_ai_trading_committee(
         discipline=DisciplineConfig(),
         max_turns=5,
         challenge_rounds=0,
+        repair_attempts=2,
     )
 
 

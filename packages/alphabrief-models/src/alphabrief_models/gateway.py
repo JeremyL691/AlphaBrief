@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from alphabrief_models.model_budget import ModelBudgetGuard
+from alphabrief_models.model_budget import ModelBudgetGuard, ModelCallKind
 
 ModelCapability = Literal[
     "text_generation",
@@ -119,6 +119,7 @@ class ModelRequest(AlphaBriefModelSchema):
     input_text: str = Field(min_length=1)
     required_capabilities: list[ModelCapability] = Field(min_length=1)
     cycle_key: str | None = None
+    call_kind: ModelCallKind = "normal"
     snapshot_id: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
 
@@ -421,7 +422,14 @@ class ModelGateway:
                 except Exception:
                     cost = None
                 verdict = self._daily_budget.reserve(
-                    provider.provider_name, call_id, estimated_cost=cost
+                    provider.provider_name,
+                    call_id,
+                    estimated_cost=cost,
+                    round_key=request.cycle_key,
+                    symbol=request.metadata.get("symbol")
+                    if request.cycle_key
+                    else None,
+                    call_kind=request.call_kind,
                 )
                 if not verdict.allowed:
                     record = self._build_record(

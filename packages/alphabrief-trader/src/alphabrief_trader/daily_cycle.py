@@ -390,7 +390,10 @@ class DailyTradingCycle:
                 )
                 continue
 
-            payload = CommitteeInput(snapshot=snapshot, time_horizon=time_horizon)
+            payload = CommitteeInput(
+                snapshot=snapshot, time_horizon=time_horizon,
+                cycle_key=cycle_key or cycle_id,
+            )
             result = self._committee.run(payload)
             all_votes.extend(result.votes)
             if not result.ok or result.plan is None:
@@ -1234,6 +1237,7 @@ class DurableDailyCycle:
             payload = CommitteeInput(
                 snapshot=snapshots[symbol],
                 time_horizon=time_horizon,
+                cycle_key=cycle_id,
             )
             result = self._trading._committee.run(payload)
             votes.extend(v.model_dump(mode="json") for v in result.votes)

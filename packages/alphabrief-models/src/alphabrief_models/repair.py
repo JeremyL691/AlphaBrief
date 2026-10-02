@@ -106,6 +106,7 @@ def repair_structured_output[TargetModel: BaseModel](
         repair_request = request.model_copy(
             update={
                 "request_id": f"{request.request_id}_repair_{attempt}",
+                "call_kind": "repair",
                 "input_text": builder(request, current_raw, current_reason),
             }
         )
