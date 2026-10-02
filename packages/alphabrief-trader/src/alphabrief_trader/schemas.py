@@ -20,8 +20,10 @@ Safety contract (mirrors AGENTS.md):
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from hashlib import sha256
 from typing import Any, Literal
 
 from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
@@ -596,6 +598,63 @@ class InputQualityRecord(_CommitteeSchema):
     @classmethod
     def _tz(cls, value: datetime | None) -> datetime | None:
         return None if value is None else _validate_timezone_aware(value)
+
+
+def final_decision_id(cycle_id: str, symbol: str) -> str:
+    identity = json.dumps([cycle_id, symbol], separators=(",", ":")).encode()
+    return sha256(identity).hexdigest()
+
+
+class DecisionCallReference(_CommitteeSchema):
+    call_id: str = Field(min_length=1)
+    validation_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    input_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    output_hash: str = Field(pattern=r"^(?:[0-9a-f]{64})?$")
+    prompt_version: str = Field(min_length=1)
+    schema_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class FinalCommitteeDecision(_CommitteeSchema):
+    """Append-only decision evidence, committed before any execution attempt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    decision_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    cycle_id: str = Field(min_length=1)
+    cycle_key: str | None = None
+    symbol: str = Field(min_length=1)
+    plan: TradePlan
+    votes: list[CommitteeVote]
+    input_quality: InputQualityRecord
+    broker_evidence: BrokerInputFacts | None = None
+    model_audit: dict[str, DecisionCallReference] = Field(default_factory=dict)
+    model_audit_verified: bool = False
+    direction_override: Literal["long", "short"] | None = None
+    quantity_override: Decimal | None = None
+    override_reason: str | None = None
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _utc(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value).astimezone(UTC)
+
+    @field_validator("quantity_override", mode="before")
+    @classmethod
+    def _decimal(cls, value: Any) -> Any:
+        return _reject_float(value)
+
+    @model_validator(mode="after")
+    def _identity(self) -> FinalCommitteeDecision:
+        if self.decision_id != final_decision_id(self.cycle_id, self.symbol):
+            raise ValueError("final decision identity mismatch")
+        if self.plan.symbol != self.symbol or self.input_quality.symbol != self.symbol:
+            raise ValueError("final decision instrument mismatch")
+        if (
+            self.broker_evidence is not None
+            and self.broker_evidence.symbol != self.symbol
+        ):
+            raise ValueError("final decision broker instrument mismatch")
+        return self
 
 
 class DailyCycleRecord(_CommitteeSchema):

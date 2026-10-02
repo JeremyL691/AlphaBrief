@@ -137,7 +137,9 @@ class TestExternalPaperExecutionBackend:
     def test_submit_uses_intent_id_as_client_order_id(self, reduce_only: bool) -> None:
         adapter = _FakeAdapter()
         backend = ExternalPaperExecutionBackend(adapter)
-        intent = _intent().model_copy(update={"reduce_only": reduce_only})
+        intent = _intent().model_copy(update={
+            "reduce_only": reduce_only, "committee_decision_id": "d" * 64,
+        })
 
         result = backend.submit(
             intent,
@@ -158,6 +160,15 @@ class TestExternalPaperExecutionBackend:
         assert adapter.requests[0].side == BrokerOrderSide.BUY
         assert adapter.requests[0].quantity == Decimal("2")
         assert adapter.requests[0].reduce_only is reduce_only
+        from alphabrief_risk.decision_store import RiskDecisionStore
+
+        saved_store = RiskDecisionStore(db_path=_paths.db_path())
+        try:
+            saved = saved_store.get("risk_test")
+            assert saved is not None
+            assert "committee_decision:" + "d" * 64 in saved.source_ids
+        finally:
+            saved_store.close()
 
     def test_submit_clamps_to_risk_max_quantity(self) -> None:
         adapter = _FakeAdapter()
