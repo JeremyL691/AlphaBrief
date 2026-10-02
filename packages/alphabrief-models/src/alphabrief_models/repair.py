@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from alphabrief_models.gateway import ModelGateway, ModelRequest
+from alphabrief_models.gateway import ModelGateway, ModelRequest, ModelResponse
 from alphabrief_models.structured_output import (
     StructuredOutputResult,
     parse_structured_output,
@@ -52,6 +52,7 @@ class StructuredRepairResult(BaseModel):
     parsed: BaseModel | None = None
     attempts: list[RepairVerdict] = Field(default_factory=list)
     exhausted: bool = False
+    response: ModelResponse | None = None
 
 
 def default_repair_prompt_builder(
@@ -138,6 +139,18 @@ def repair_structured_output[TargetModel: BaseModel](
         parsed: StructuredOutputResult[TargetModel] = parse_structured_output(
             result.response, target=target
         )
+        violations = (
+            []
+            if parsed.parsed is None or grounding_check is None
+            else list(grounding_check(parsed.parsed))
+        )
+        gateway.record_validation(
+            result.record.call_id,
+            target=target,
+            parsed=parsed.parsed,
+            error_code=None if parsed.ok else str(parsed.error_code),
+            violations=violations,
+        )
         if not parsed.ok or parsed.parsed is None:
             code = parsed.error_code or "schema_validation_failed"
             attempts.append(
@@ -154,7 +167,6 @@ def repair_structured_output[TargetModel: BaseModel](
             continue
 
         if grounding_check is not None:
-            violations = list(grounding_check(parsed.parsed))
             if violations:
                 attempts.append(
                     RepairVerdict(
@@ -182,6 +194,7 @@ def repair_structured_output[TargetModel: BaseModel](
             parsed=parsed.parsed,
             attempts=attempts,
             exhausted=False,
+            response=result.response,
         )
 
     return StructuredRepairResult(

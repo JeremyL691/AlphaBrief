@@ -22,7 +22,7 @@ from alphabrief_execution.broker.port import (
     SubmitRequest,
     SubmitResult,
 )
-from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_models import ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     AiTradingStore,
@@ -32,6 +32,7 @@ from alphabrief_trader import (
     MarketSnapshot,
     TradingCommittee,
 )
+from committee_provider import GroundedProvider
 
 
 class _FakeAdapter(BrokerAdapter):
@@ -209,7 +210,7 @@ class TestExternalPaperExecutionBackend:
 
     def test_daily_cycle_records_external_broker_metadata(self, tmp_path: Path) -> None:
         adapter = _FakeAdapter()
-        provider = FakeProviderAdapter(
+        provider = GroundedProvider(
             provider_name="fake",
             model_name="fake-1",
             capabilities=["structured_output"],
@@ -217,7 +218,7 @@ class TestExternalPaperExecutionBackend:
                 "analysis": "Bullish continuation.",
                 "view": "bullish",
                 "confidence": 0.8,
-                "evidence": ["trend"],
+                "evidence_ids": ["input-evidence"],
                 "risks": [],
                 "suggested_action": "buy",
                 "target_position_pct": "0.10",

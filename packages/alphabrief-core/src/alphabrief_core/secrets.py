@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -34,6 +35,47 @@ def redact(value: str) -> str:
     if len(value) <= 6:
         return "*" * len(value)
     return f"{value[:3]}...{value[-2:]} (len={len(value)})"
+
+
+def scrub_secrets(text: str) -> str:
+    """Preserve evidence text while removing credential-shaped values."""
+    patterns = (
+        (r"Bearer\s+[A-Za-z0-9._~+/=-]+", "[REDACTED-TOKEN]"),
+        (
+            r"(?:api[_-]?key|secret|token|password|authorization)[\"']?"
+            r"\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]+",
+            "[REDACTED-SECRET]",
+        ),
+        (r"\bsk-[A-Za-z0-9_-]{12,}\b", "[REDACTED-SECRET]"),
+        (r"\b[0-9a-f]{32}-[0-9a-f]{32}\b", "[REDACTED-TOKEN]"),
+        (r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", "[REDACTED-TOKEN]"),
+        (r"\b\d{3}-\d{3}-\d{7,}-\d{3}\b", "[REDACTED-ACCOUNT-ID]"),
+    )
+    for pattern, replacement in patterns:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
+def scrub_payload(value: Any) -> Any:
+    """Copy a JSON audit payload, scrubbing strings and credential fields."""
+    if isinstance(value, str):
+        return scrub_secrets(value)
+    if isinstance(value, dict):
+        return {
+            scrub_secrets(str(key)): (
+                "[REDACTED-SECRET]"
+                if re.search(
+                    r"(?:api[_-]?key|secret|token|password|authorization|account[_-]?id)",
+                    str(key),
+                    re.IGNORECASE,
+                )
+                else scrub_payload(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [scrub_payload(item) for item in value]
+    return value
 
 
 def _secret_path(name: str) -> Path:

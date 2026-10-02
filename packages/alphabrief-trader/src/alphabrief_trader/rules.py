@@ -31,6 +31,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from alphabrief_trader.schemas import (
+    CANONICAL_COMMITTEE_ROLES,
     AnalystView,
     CommitteeVote,
     ConsensusLevel,
@@ -98,9 +99,7 @@ class DisciplineConfig:
             "split",
             "no_consensus",
         }:
-            raise ValueError(
-                "require_min_consensus must be a valid ConsensusLevel"
-            )
+            raise ValueError("require_min_consensus must be a valid ConsensusLevel")
         if any(not kw.strip() for kw in self.ethics_keywords):
             raise ValueError("ethics_keywords must not contain blank entries")
 
@@ -180,10 +179,15 @@ class DisciplineGate:
 
         The manager vote is the **executive** vote: it owns the final
         view, action, confidence, target size, and any ethics veto. The
-        analyst votes (``technical``, ``fundamental``, ``risk``) only
+        analyst votes (``technical``, ``intermarket``, ``risk``) only
         contribute evidence and a consensus quality score.
         """
         analyst_list = list(analyst_votes)
+        if any(
+            v.role not in CANONICAL_COMMITTEE_ROLES
+            for v in [*analyst_list, manager_vote]
+        ):
+            raise ValueError("historical committee roles are read-only")
         consensus_level = _compute_consensus(analyst_list, manager_vote)
         key_evidence = _collect_evidence(analyst_list)
         key_risks = _collect_risks(analyst_list + [manager_vote])
@@ -205,8 +209,7 @@ class DisciplineGate:
                 ethics_reason=reason,
                 key_evidence=key_evidence,
                 key_risks=key_risks,
-                assigned_roles=[v.role for v in analyst_list]
-                + [manager_vote.role],
+                assigned_roles=[v.role for v in analyst_list] + [manager_vote.role],
             )
 
         # Confidence gate — below floor → hold with zero target.
@@ -229,8 +232,7 @@ class DisciplineGate:
                 needs_human_review=True,
                 key_evidence=key_evidence,
                 key_risks=key_risks,
-                assigned_roles=[v.role for v in analyst_list]
-                + [manager_vote.role],
+                assigned_roles=[v.role for v in analyst_list] + [manager_vote.role],
             )
 
         # Consensus gate — below floor → hold + needs human review.
@@ -255,19 +257,14 @@ class DisciplineGate:
                 needs_human_review=True,
                 key_evidence=key_evidence,
                 key_risks=key_risks,
-                assigned_roles=[v.role for v in analyst_list]
-                + [manager_vote.role],
+                assigned_roles=[v.role for v in analyst_list] + [manager_vote.role],
             )
 
         # Risk-role veto (PROJECT_GUIDE 5.4): the risk analyst can block
         # new exposure outright, not merely request human review.
         if self.config.honour_risk_role_veto:
             risk_veto = next(
-                (
-                    vote
-                    for vote in analyst_list
-                    if vote.role == "risk" and vote.veto
-                ),
+                (vote for vote in analyst_list if vote.role == "risk" and vote.veto),
                 None,
             )
             if risk_veto is not None:
@@ -285,8 +282,7 @@ class DisciplineGate:
                     needs_human_review=True,
                     key_evidence=key_evidence,
                     key_risks=key_risks,
-                    assigned_roles=[v.role for v in analyst_list]
-                    + [manager_vote.role],
+                    assigned_roles=[v.role for v in analyst_list] + [manager_vote.role],
                 )
 
         # Direction agreement (PROJECT_GUIDE 5.4): an opening needs at
@@ -320,8 +316,7 @@ class DisciplineGate:
                     needs_human_review=True,
                     key_evidence=key_evidence,
                     key_risks=key_risks,
-                    assigned_roles=[v.role for v in analyst_list]
-                    + [manager_vote.role],
+                    assigned_roles=[v.role for v in analyst_list] + [manager_vote.role],
                 )
 
         # No-trade actions.
@@ -332,14 +327,11 @@ class DisciplineGate:
                 target_position_pct=ZERO,
                 confidence=manager_vote.confidence,
                 consensus_level=consensus_level,
-                rationale=self._rationale(
-                    manager_vote, consensus_level
-                ),
+                rationale=self._rationale(manager_vote, consensus_level),
                 needs_human_review=manager_vote.needs_human_review,
                 key_evidence=key_evidence,
                 key_risks=key_risks,
-                assigned_roles=[v.role for v in analyst_list]
-                + [manager_vote.role],
+                assigned_roles=[v.role for v in analyst_list] + [manager_vote.role],
             )
 
         # Position size cap (clamp only — never inflate).
@@ -359,13 +351,11 @@ class DisciplineGate:
             consensus_level=consensus_level,
             rationale=self._rationale(manager_vote, consensus_level),
             needs_human_review=(
-                manager_vote.needs_human_review
-                or any(v.veto for v in analyst_list)
+                manager_vote.needs_human_review or any(v.veto for v in analyst_list)
             ),
             key_evidence=key_evidence,
             key_risks=key_risks,
-            assigned_roles=[v.role for v in analyst_list]
-            + [manager_vote.role],
+            assigned_roles=[v.role for v in analyst_list] + [manager_vote.role],
         )
 
     # ------------------------------------------------------------------

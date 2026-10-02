@@ -161,7 +161,7 @@ def _snapshot_loader(
                         now=now
                     ),
                     related_published_at={
-                        h.headline_id: h.published_at for h in headlines
+                        h.headline_id: h.published_at for h in snapshot.news_items
                     },
                 ),
             }
@@ -771,7 +771,8 @@ def _open_trading_cycle(
         model_budget = _model_budget(calls)
         yield DailyTradingCycle(
             committee=build_ai_trading_committee(
-                record_sink=_call_recorder(calls), daily_budget=model_budget
+                record_sink=_call_recorder(calls), daily_budget=model_budget,
+                validation_sink=calls.save_validation,
             ),
             risk_gate=_risk_gate(
                 symbols, nav=nav, require_nav=quantity_override is None

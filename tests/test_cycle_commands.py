@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 from alphabrief_cli.cycle_commands import _parse_units, _require_instrument
-from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_models import ModelGateway
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_trader import (
     DailyTradingCycle,
@@ -28,6 +28,7 @@ from alphabrief_trader import (
     TradingCommittee,
 )
 from alphabrief_trader.db_store import AiTradingStore
+from committee_provider import GroundedProvider
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
 
@@ -35,7 +36,7 @@ _BULLISH = {
     "analysis": "Bullish continuation.",
     "view": "bullish",
     "confidence": 0.8,
-    "evidence": ["trend"],
+    "evidence_ids": ["input-evidence"],
     "risks": [],
     "suggested_action": "buy",
     "target_position_pct": "0.10",
@@ -87,7 +88,7 @@ class _RecordingBackend:
 
 
 def _committee() -> TradingCommittee:
-    provider = FakeProviderAdapter(
+    provider = GroundedProvider(
         provider_name="fake",
         model_name="fake-1",
         capabilities=["structured_output"],

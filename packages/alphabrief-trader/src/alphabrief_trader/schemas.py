@@ -22,9 +22,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
+from alphabrief_news import NewsHeadline
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
@@ -33,11 +34,32 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 CommitteeRole = Literal[
     "technical",
-    "news_sentiment",
-    "fundamental",
+    "macro_news",
+    "intermarket",
     "risk",
     "manager",
 ]
+# Recorded identities preserve history; they are never aliases for new roles.
+RecordedCommitteeRole = CommitteeRole | Literal["news_sentiment", "fundamental"]
+CANONICAL_COMMITTEE_ROLES: tuple[CommitteeRole, ...] = (
+    "technical",
+    "macro_news",
+    "intermarket",
+    "risk",
+    "manager",
+)
+
+
+def validate_committee_roles(value: list[CommitteeRole]) -> list[CommitteeRole]:
+    if not value or len(value) != len(set(value)):
+        raise ValueError("roles must be nonempty and unique")
+    if any(role not in CANONICAL_COMMITTEE_ROLES for role in value):
+        raise ValueError("unknown committee role")
+    if "manager" in value and value[-1] != "manager":
+        raise ValueError("manager must read the analysts and run last")
+    return value
+
+
 CommitteeTurnPhase = Literal["opening", "challenge", "summary"]
 CommitteeStance = Literal["agreement", "contradiction", "dissent", "unknown"]
 AnalystView = Literal["bullish", "bearish", "neutral", "uncertain"]
@@ -199,6 +221,8 @@ class MarketSnapshot(_CommitteeSchema):
     signal_evidence: SignalInputEvidence | None = None
     news_context: str | None = None
     news_evidence: NewsInputEvidence | None = None
+    news_items: list[NewsHeadline] = Field(default_factory=list, max_length=20)
+    excluded_news_hashes: list[str] = Field(default_factory=list)
     macro_context: str | None = None
     data_version: str = Field(default="ai-trader-v1", min_length=1)
     captured_at: datetime
@@ -229,30 +253,14 @@ class CommitteeInput(_CommitteeSchema):
     cycle_key: str | None = Field(default=None, min_length=1)
     time_horizon: str = Field(default="5 trading days", min_length=1)
     roles: list[CommitteeRole] = Field(
-        default_factory=lambda: cast(
-            "list[CommitteeRole]",
-            ["technical", "news_sentiment", "fundamental", "risk", "manager"],
-        )
+        default_factory=lambda: list(CANONICAL_COMMITTEE_ROLES)
     )
     evidence_ids: list[str] = Field(default_factory=list)
 
     @field_validator("roles")
     @classmethod
-    def _roles_non_empty_unique(cls, value: list[str]) -> list[str]:
-        if not value:
-            raise ValueError("roles must not be empty")
-        if len(set(value)) != len(value):
-            raise ValueError("roles must not contain duplicates")
-        for role in value:
-            if role not in {
-                "technical",
-                "news_sentiment",
-                "fundamental",
-                "risk",
-                "manager",
-            }:
-                raise ValueError(f"unknown role: {role!r}")
-        return value
+    def _roles_non_empty_unique(cls, value: list[CommitteeRole]) -> list[CommitteeRole]:
+        return validate_committee_roles(value)
 
     @field_validator("evidence_ids")
     @classmethod
@@ -260,6 +268,20 @@ class CommitteeInput(_CommitteeSchema):
         if len(set(value)) != len(value):
             raise ValueError("evidence_ids must not contain duplicates")
         return value
+
+    @property
+    def evidence_catalog(self) -> dict[str, str]:
+        from alphabrief_trader.evidence_catalog import build_evidence_catalog
+
+        return build_evidence_catalog(self.snapshot)
+
+    @model_validator(mode="after")
+    def _bind_evidence(self) -> CommitteeInput:
+        catalog = self.evidence_catalog
+        if self.evidence_ids and set(self.evidence_ids) != set(catalog):
+            raise ValueError("evidence_ids must match the actual snapshot catalog")
+        self.evidence_ids = list(catalog)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +300,7 @@ class CommitteeVote(_CommitteeSchema):
     ``RiskGate``.
     """
 
-    role: CommitteeRole
+    role: RecordedCommitteeRole
     model_name: str = Field(min_length=1)
     analysis: str = Field(min_length=1)
     view: AnalystView
@@ -331,7 +353,7 @@ class CommitteeTurn(_CommitteeSchema):
     turn_id: str = Field(min_length=1)
     turn_number: int = Field(ge=1)
     phase: CommitteeTurnPhase
-    role: CommitteeRole
+    role: RecordedCommitteeRole
     model_call_id: str | None = None
     analysis: str = Field(min_length=1)
     view: AnalystView
@@ -469,7 +491,7 @@ class TradePlan(_CommitteeSchema):
     ethics_reason: str | None = None
     key_evidence: list[str] = Field(default_factory=list)
     key_risks: list[str] = Field(default_factory=list)
-    assigned_roles: list[CommitteeRole] = Field(default_factory=list)
+    assigned_roles: list[RecordedCommitteeRole] = Field(default_factory=list)
 
     @field_validator("target_position_pct", mode="before")
     @classmethod
@@ -552,6 +574,8 @@ class InputQualityRecord(_CommitteeSchema):
     market_evidence: MarketInputEvidence | None = None
     broker_evidence: BrokerInputFacts | None = None
     signal_evidence: SignalInputEvidence | None = None
+    evidence_catalog: dict[str, str] = Field(default_factory=dict)
+    excluded_news_hashes: list[str] = Field(default_factory=list)
     evaluated_at: datetime
 
     @field_validator("snapshot_captured_at", "evaluated_at")

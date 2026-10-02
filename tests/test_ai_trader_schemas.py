@@ -170,8 +170,8 @@ class TestCommitteeInput:
         payload = CommitteeInput(snapshot=_snapshot())
         assert payload.roles == [
             "technical",
-            "news_sentiment",
-            "fundamental",
+            "macro_news",
+            "intermarket",
             "risk",
             "manager",
         ]

@@ -37,7 +37,7 @@ from alphabrief_execution.operations.scheduler import (
     SchedulerConfig,
     build_default_tasks,
 )
-from alphabrief_models import FakeProviderAdapter, ModelGateway
+from alphabrief_models import ModelGateway
 from alphabrief_news.ingestion import NewsIngestionStore
 from alphabrief_news.types import NewsFetchQuery, NewsHeadline
 from alphabrief_risk import AccountExposureContext, RiskGate, RiskLimitConfig
@@ -48,6 +48,7 @@ from alphabrief_trader import (
     TradingCommittee,
     is_ai_trading_enabled,
 )
+from committee_provider import GroundedProvider
 
 
 class _NullAdapter(BrokerAdapter):
@@ -195,9 +196,9 @@ class _RiskSources:
 
 
 def _fake_committee(
-    *, record_sink: Any = None, daily_budget: Any = None
+    *, record_sink: Any = None, daily_budget: Any = None, validation_sink: Any = None
 ) -> TradingCommittee:
-    provider = FakeProviderAdapter(
+    provider = GroundedProvider(
         provider_name="fake",
         model_name="fake-1",
         capabilities=["structured_output"],
@@ -205,7 +206,7 @@ def _fake_committee(
             "analysis": "No direction supported.",
             "view": "neutral",
             "confidence": 0.8,
-            "evidence": ["trend"],
+            "evidence_ids": ["input-evidence"],
             "risks": [],
             "suggested_action": "hold",
             "target_position_pct": "0",
@@ -215,7 +216,10 @@ def _fake_committee(
     )
     return TradingCommittee(
         gateway=ModelGateway(
-            providers=[provider], record_sink=record_sink, daily_budget=daily_budget
+            providers=[provider],
+            record_sink=record_sink,
+            daily_budget=daily_budget,
+            validation_sink=validation_sink,
         ),
         discipline=DisciplineConfig(),
         max_turns=5,
@@ -329,6 +333,30 @@ def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> No
 def _scheduler_ai_test_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import sys
+    from datetime import tzinfo
+
+    original_datetime = datetime
+
+    # Every success/refusal scenario shares one real trading-session instant.
+    # Keep the Friday/weekend rule enabled; its boundaries have dedicated tests.
+    class ClockMeta(type):
+        def __instancecheck__(cls, instance: object) -> bool:
+            # DuckDB returns native datetime instances, not our test subclass.
+            return isinstance(instance, original_datetime)
+
+    class TradingSessionDateTime(datetime, metaclass=ClockMeta):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> TradingSessionDateTime:
+            instant = cls(2026, 10, 1, 12, 30, tzinfo=UTC)
+            return (
+                instant.replace(tzinfo=None) if tz is None else instant.astimezone(tz)
+            )
+
+    for name, module in list(sys.modules.items()):
+        if name.startswith("alphabrief_") or name == __name__:
+            if getattr(module, "datetime", None) is original_datetime:
+                monkeypatch.setattr(module, "datetime", TradingSessionDateTime)
     from alphabrief_execution.broker.oanda.market_sync import (
         SIGNAL_INSTRUMENTS,
         SignalCandleObservation,
@@ -421,14 +449,14 @@ class TestSchedulerRunsAiTask:
             "analysis": "Bullish continuation.",
             "view": "bullish",
             "confidence": 0.7,
-            "evidence": ["e"],
+            "evidence_ids": ["input-evidence"],
             "risks": [],
             "suggested_action": "buy",
             "target_position_pct": 0.10,
             "veto": False,
             "needs_human_review": False,
         }
-        provider = FakeProviderAdapter(
+        provider = GroundedProvider(
             provider_name="fake",
             model_name="fake-1",
             capabilities=["structured_output"],
@@ -728,7 +756,7 @@ class TestSchedulerRunsAiTask:
         adapter = _SubmittingAdapter()
         monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
 
-        provider = FakeProviderAdapter(
+        provider = GroundedProvider(
             provider_name="fake",
             model_name="fake-1",
             capabilities=["structured_output"],
@@ -736,7 +764,7 @@ class TestSchedulerRunsAiTask:
                 "analysis": "Bullish continuation.",
                 "view": "bullish",
                 "confidence": 0.8,
-                "evidence": ["trend"],
+                "evidence_ids": ["input-evidence"],
                 "risks": [],
                 "suggested_action": "buy",
                 "target_position_pct": "0.10",
@@ -747,15 +775,18 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setattr(
             cycle_commands,
             "build_ai_trading_committee",
-            lambda record_sink=None, daily_budget=None: TradingCommittee(
-                gateway=ModelGateway(
-                    providers=[provider],
-                    record_sink=record_sink,
-                    daily_budget=daily_budget,
-                ),
-                discipline=DisciplineConfig(),
-                max_turns=5,
-                challenge_rounds=0,
+            lambda record_sink=None, daily_budget=None, validation_sink=None: (
+                TradingCommittee(
+                    gateway=ModelGateway(
+                        providers=[provider],
+                        record_sink=record_sink,
+                        daily_budget=daily_budget,
+                        validation_sink=validation_sink,
+                    ),
+                    discipline=DisciplineConfig(),
+                    max_turns=5,
+                    challenge_rounds=0,
+                )
             ),
         )
 
@@ -1618,16 +1649,17 @@ def test_default_backend_checks_budget_between_analyst_calls(
     from alphabrief_trader import model_factory
 
     sent: list[str] = []
+    sent_inputs: list[tuple[str, str]] = []
 
-    class BudgetProvider(FakeProviderAdapter):
+    class BudgetProvider(GroundedProvider):
         def call(self, request: Any) -> Any:
             sent.append(request.request_id)
+            sent_inputs.append((request.metadata["symbol"], request.input_text))
             response = super().call(request)
             if (
                 full_round
                 and request.call_kind == "normal"
-                and request.metadata["committee_role"]
-                in {"technical", "news_sentiment"}
+                and request.metadata["committee_role"] in {"technical", "macro_news"}
             ):
                 return response.model_copy(
                     update={"structured_output": None, "output_text": "{"}
@@ -1643,7 +1675,7 @@ def test_default_backend_checks_budget_between_analyst_calls(
                 "analysis": "No direction supported.",
                 "view": "neutral",
                 "confidence": 0.8,
-                "evidence": [],
+                "evidence_ids": [],
                 "risks": [],
                 "suggested_action": "hold",
                 "target_position_pct": "0",
@@ -1690,7 +1722,9 @@ def test_default_backend_checks_budget_between_analyst_calls(
     finally:
         calls.close()
     asyncio.run(
-        _ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="round-budget-production")
+        _ai_cycle_factory(db_path=isolated_data_dir)(
+            cycle_key="round-budget-production"
+        )
     )
     store = AiTradingStore(database)
     calls = ModelCallStore(database)
@@ -1698,6 +1732,15 @@ def test_default_backend_checks_budget_between_analyst_calls(
         record = store.get_latest_cycle()
         assert record is not None
         assert record["attempts"] == []
+        for item in record["input_quality"]:
+            catalog = item["evidence_catalog"]
+            assert any(key.startswith("news:") for key in catalog)
+            assert any(key.startswith("candle:") for key in catalog)
+            assert any(key.startswith("broker:") for key in catalog)
+            for symbol, prompt in sent_inputs:
+                if symbol == item["symbol"]:
+                    for key, body in catalog.items():
+                        assert f"{key}: {body}" in prompt
         usage = calls.daily_usage(
             datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         )
@@ -1706,11 +1749,15 @@ def test_default_backend_checks_budget_between_analyst_calls(
             assert len(record["plans"]) == 5
             assert usage["chatgpt_plan"].calls == 35
             assert calls.round_usage("round-budget-production") == {
-                "total": 35, "normal": 25, "repair": 10,
+                "total": 35,
+                "normal": 25,
+                "repair": 10,
             }
             for symbol in symbols:
                 assert calls.round_usage("round-budget-production", symbol=symbol) == {
-                    "total": 7, "normal": 5, "repair": 2,
+                    "total": 7,
+                    "normal": 5,
+                    "repair": 2,
                 }
         else:
             assert record["outcome"] == "skipped_model_budget"
@@ -1723,3 +1770,106 @@ def test_default_backend_checks_budget_between_analyst_calls(
     finally:
         calls.close()
         store.close()
+
+
+@pytest.mark.parametrize("bad_role", ["risk", "manager"])
+def test_default_backend_rejects_fabricated_citations_before_intents(
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_role: str,
+) -> None:
+    import json
+
+    from alphabrief_api.db.model_call import ModelCallStore
+    from alphabrief_models.channels import ChannelGateway, ChannelState, ModelSettings
+    from alphabrief_trader import model_factory
+
+    sent: list[Any] = []
+
+    class InvalidCitationProvider(GroundedProvider):
+        def call(self, request: Any) -> Any:
+            sent.append(request)
+            response = super().call(request)
+            assert response.structured_output is not None
+            payload = dict(response.structured_output)
+            available = json.loads(request.metadata["available_evidence_ids"])
+            payload["evidence_ids"] = (
+                ["news:invented"]
+                if request.metadata["committee_role"] == bad_role
+                else [available[0]]
+            )
+            return response.model_copy(update={"structured_output": payload})
+
+    def channels(**kwargs: Any) -> ChannelGateway:
+        provider = InvalidCitationProvider(
+            provider_name="chatgpt_plan",
+            model_name="test",
+            capabilities=["structured_output"],
+            structured_output={
+                "analysis": "Actual input facts support the proposed direction.",
+                "view": "bullish",
+                "confidence": 0.8,
+                "evidence_ids": [],
+                "risks": [],
+                "suggested_action": "buy",
+                "target_position_pct": "0.1",
+                "veto": False,
+                "needs_human_review": False,
+            },
+        )
+        return ChannelGateway(
+            gateway=ModelGateway(
+                [provider],
+                record_sink=kwargs["record_sink"],
+                daily_budget=kwargs["daily_budget"],
+            ),
+            state=ChannelState(),
+            settings=ModelSettings(),
+            primary_channel="chatgpt_plan",
+            fallback_channel=None,
+        )
+
+    adapter = _SubmittingAdapter()
+    monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "chatgpt_plan")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+    monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+    monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "on")
+    monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD")
+    monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
+    monkeypatch.setattr(model_factory, "build_channel_gateway", channels)
+    monkeypatch.setattr(
+        cycle_commands,
+        "build_ai_trading_committee",
+        model_factory.build_ai_trading_committee,
+    )
+    _seed_risk_sized_inputs(isolated_data_dir)
+    asyncio.run(
+        _ai_cycle_factory(db_path=isolated_data_dir)(
+            cycle_key=f"invalid-citation-{bad_role}"
+        )
+    )
+    database = isolated_data_dir / _paths.DATABASE_NAME
+    cycles = AiTradingStore(database)
+    calls = ModelCallStore(database)
+    try:
+        record = cycles.get_latest_cycle()
+        assert record is not None
+        assert record["plans"] == record["attempts"] == adapter.requests == []
+        assert len(record["votes"]) == 4
+        assert not any(v["role"] == bad_role for v in record["votes"])
+        assert "repair_exhausted" in record["summary"]
+        assert len(sent) == 7
+        assert calls.round_usage(f"invalid-citation-{bad_role}") == {
+            "total": 7,
+            "normal": 5,
+            "repair": 2,
+        }
+        assert len(calls.list_calls()) == 7
+        catalog = record["input_quality"][0]["evidence_catalog"]
+        assert all(
+            set(v["cited_evidence_ids"]) <= set(catalog) for v in record["votes"]
+        )
+    finally:
+        calls.close()
+        cycles.close()

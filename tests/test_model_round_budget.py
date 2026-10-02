@@ -11,12 +11,12 @@ from typing import Any
 import duckdb
 import pytest
 from alphabrief_api.db.model_call import ModelCallStore
-from alphabrief_models import FakeProviderAdapter
 from alphabrief_models.gateway import ModelGateway, ModelRequest, ModelResponse
 from alphabrief_models.model_budget import ModelBudgetGuard, ModelCallKind
 from alphabrief_models.repair import repair_structured_output
 from alphabrief_trader import CommitteeInput, MarketSnapshot, model_factory
 from alphabrief_trader.committee import TradingCommittee
+from committee_provider import GroundedProvider
 from pydantic import BaseModel
 from test_model_call_admission import NOW, Provider, guard, request, sink
 
@@ -272,7 +272,7 @@ def test_production_factory_shares_two_repairs_across_roles(
                         "analysis": "Observed test evidence",
                         "view": "bullish",
                         "confidence": 0.8,
-                        "evidence": [],
+                        "evidence_ids": [],
                         "risks": [],
                         "suggested_action": "buy",
                         "target_position_pct": "0.1",
@@ -391,14 +391,14 @@ def test_optional_discussion_cannot_hide_an_outbound_budget_refusal(
 ) -> None:
     store = ModelCallStore(tmp_path / "calls.duckdb")
     try:
-        provider = FakeProviderAdapter(
+        provider = GroundedProvider(
             provider_name="chatgpt_plan",
             capabilities=["structured_output"],
             structured_output={
                 "analysis": "Observed test inputs",
                 "view": "bullish",
                 "confidence": 0.8,
-                "evidence": [],
+                "evidence_ids": [],
                 "risks": [],
                 "suggested_action": "buy",
                 "target_position_pct": "0.1",
