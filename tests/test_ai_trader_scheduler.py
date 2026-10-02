@@ -132,6 +132,7 @@ class _RiskSources:
     def account_exposure_context(self, **facts: Any) -> AccountExposureContext:
         facts.pop("symbol", None)
         include_loss = facts.pop("include_daily_loss", False)
+        include_streak = facts.pop("include_loss_streak", False)
         return AccountExposureContext(
             current_total_exposure=Decimal("0"),
             exposure_by_symbol={},
@@ -141,6 +142,9 @@ class _RiskSources:
             day_unrealized_pnl=Decimal(0) if include_loss else None,
             daily_loss_captured_at=datetime.now(UTC) if include_loss else None,
             daily_loss_blocked=False if include_loss else None,
+            closed_trade_results=() if include_streak else None,
+            loss_streak_captured_at=datetime.now(UTC) if include_streak else None,
+            loss_streak_last_transaction_id="1000" if include_streak else None,
             account_id="test-account",
             captured_at=datetime.now(UTC),
             quote_captured_at=datetime.now(UTC),
@@ -698,6 +702,9 @@ class TestSchedulerRunsAiTask:
             "nav_drop",
             "daily_loss",
             "daily_loss_missing",
+            "loss_streak",
+            "loss_streak_unknown",
+            "loss_streak_expired",
         ],
     )
     def test_ai_cycle_factory_submits_to_external_paper_when_enabled(
@@ -809,6 +816,44 @@ class TestSchedulerRunsAiTask:
 
             monkeypatch.setattr(_RiskSources, "account_exposure_context", loss_context)
 
+        if condition in {"loss_streak", "loss_streak_unknown", "loss_streak_expired"}:
+            from alphabrief_risk.loss_state import ClosedTradeResult
+
+            anchor = datetime.now(UTC)
+            age_offset = 24 if condition == "loss_streak_expired" else 0
+            closures = tuple(
+                ClosedTradeResult(
+                    trade_id=str(i),
+                    symbol="EUR_USD",
+                    pnl=Decimal(-1),
+                    closing_transaction_id=str(100 + i),
+                    closed_at=anchor - timedelta(hours=age_offset + 4 - i),
+                )
+                for i in range(1, 4)
+            )
+            original_streak_context = _RiskSources.account_exposure_context
+
+            def streak_context(
+                self: _RiskSources, **facts: Any
+            ) -> AccountExposureContext:
+                result = original_streak_context(self, **facts)
+                if not facts.get("include_loss_streak"):
+                    return result
+                return result.model_copy(
+                    update={
+                        "closed_trade_results": None
+                        if condition == "loss_streak_unknown"
+                        else closures,
+                        "loss_streak_error": "protocol"
+                        if condition == "loss_streak_unknown"
+                        else None,
+                    }
+                )
+
+            monkeypatch.setattr(
+                _RiskSources, "account_exposure_context", streak_context
+            )
+
         if condition in {"pending_exposure", "nav_drop"}:
             original = _RiskSources.account_exposure_context
 
@@ -843,7 +888,7 @@ class TestSchedulerRunsAiTask:
 
         asyncio.run(_run_handler())
 
-        if condition in {"clear", "margin_warning"}:
+        if condition in {"clear", "margin_warning", "loss_streak_expired"}:
             assert len(adapter.requests) == 1
             assert adapter.requests[0].symbol == "EUR_USD"
             # NAV 1000 x 0.25% / (ATR .02 x 1.5) = floor(83.333...) units.
@@ -860,7 +905,7 @@ class TestSchedulerRunsAiTask:
             latest = store.get_latest_cycle()
             assert latest is not None
             attempt = latest["attempts"][0]
-            if condition in {"clear", "margin_warning"}:
+            if condition in {"clear", "margin_warning", "loss_streak_expired"}:
                 assert attempt["execution_backend"] == "external_paper"
                 assert attempt["broker_order_id"] == attempt["order_id"]
                 assert attempt["client_order_id"] == attempt["intent_id"]
@@ -880,6 +925,8 @@ class TestSchedulerRunsAiTask:
                     "nav_drop": "max_order_value",
                     "daily_loss": "daily loss",
                     "daily_loss_missing": "daily loss",
+                    "loss_streak": "LOSS_STREAK",
+                    "loss_streak_unknown": "LOSS_STREAK",
                 }[condition]
                 assert expected in attempt["reason"]
                 if condition == "kill":
@@ -887,6 +934,32 @@ class TestSchedulerRunsAiTask:
                 assert attempt["outcome"] == (
                     "blocked_trading_off" if condition == "off" else "blocked_risk_gate"
                 )
+            if condition in {
+                "loss_streak",
+                "loss_streak_unknown",
+                "loss_streak_expired",
+            }:
+                evidence = attempt["risk_decision_json"]["rule_evidence"]["loss_streak"]
+                assert evidence["complete"] == (
+                    "false" if condition == "loss_streak_unknown" else "true"
+                )
+                if condition != "loss_streak_unknown":
+                    assert evidence["consecutive_losses"] == "3"
+                    assert evidence["last_close_transaction_id"] == "103"
+                    assert evidence["blocked"] == (
+                        "true" if condition == "loss_streak" else "false"
+                    )
+                    from alphabrief_risk.loss_state import LossStateStore
+
+                    reopened = LossStateStore(database)
+                    try:
+                        saved = reopened.symbol_state("test-account", "EUR_USD")
+                        assert saved is not None and saved.consecutive_losses == 3
+                        assert saved.frozen_until == closures[-1].closed_at + timedelta(
+                            hours=24
+                        )
+                    finally:
+                        reopened.close()
             if condition in {"daily_loss", "daily_loss_missing"}:
                 assert "DAILY_LOSS" in attempt["risk_tags"]
                 evidence = attempt["risk_decision_json"]["rule_evidence"]["daily_loss"]

@@ -74,6 +74,7 @@ class EntryRulePolicy:
     max_spread_median_multiplier: Decimal | None = None
     #: Minimum same-period samples before rule 4 can judge a spread.
     min_spread_samples: int = 5
+    require_loss_streak: bool = False
 
 
 def _is_open_intent(intent: OrderIntent) -> bool:
@@ -197,8 +198,7 @@ def evaluate_entry_rules(
             rejections.append(
                 RuleRejection(
                     "INSTRUMENT_NOT_ALLOWED",
-                    f"{intent.symbol} is classified {instrument_type}, "
-                    "not CURRENCY",
+                    f"{intent.symbol} is classified {instrument_type}, not CURRENCY",
                 )
             )
 
@@ -273,6 +273,22 @@ def evaluate_entry_rules(
                 )
 
     # Rule 12 — losing-streak instrument freeze.
+    if policy.require_loss_streak:
+        stamp = None if context is None else context.loss_streak_captured_at
+        if (
+            context is None
+            or not context.loss_streak_complete
+            or context.loss_streak_error is not None
+            or stamp is None
+            or stamp.tzinfo is None
+            or not 0 <= (now - stamp).total_seconds() <= 60
+        ):
+            rejections.append(
+                RuleRejection(
+                    "LOSS_STREAK",
+                    "complete fresh closed-trade state unavailable",
+                )
+            )
     if context is not None:
         reason = context.frozen_symbols.get(intent.symbol)
         if reason is not None:
@@ -310,9 +326,7 @@ def evaluate_entry_rules(
                 )
             )
         elif context.drawdown_block_reason is not None:
-            rejections.append(
-                RuleRejection("DRAWDOWN", context.drawdown_block_reason)
-            )
+            rejections.append(RuleRejection("DRAWDOWN", context.drawdown_block_reason))
 
     # Rule 13 — Friday 13:00 UTC onward and weekends.
     if policy.block_weekend_and_late_friday:

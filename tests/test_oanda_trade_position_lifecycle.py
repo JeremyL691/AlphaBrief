@@ -19,6 +19,7 @@ from decimal import Decimal
 from email.message import Message
 from typing import Any
 from urllib.error import HTTPError
+from urllib.parse import parse_qs
 from urllib.request import Request
 
 import pytest
@@ -266,11 +267,17 @@ def _send_factory(broker: _FakeBroker, captured: list[dict[str, Any]]) -> Any:
         path, _, query = path.partition("?")
 
         if method == "GET" and path == "/trades":
+            params = parse_qs(query)
+            count = int(params.get("count", ["50"])[0])
+            before = int(params.get("beforeID", [str(10**12)])[0])
+            state = params.get("state", ["ALL"])[0]
             ordered: list[dict[str, Any]] = [
                 broker.trades[tid]
-                for tid in sorted(broker.trades, key=lambda t: int(t))
+                for tid in sorted(broker.trades, key=lambda t: int(t), reverse=True)
+                if int(tid) < before
+                and (state == "ALL" or broker.trades[tid]["state"] == state)
             ]
-            return json.dumps({"trades": ordered}).encode("utf-8")
+            return json.dumps({"trades": ordered[:count]}).encode("utf-8")
         if method == "GET" and path.startswith("/trades/"):
             trade_id = path.split("/trades/", 1)[1]
             found = broker.trades.get(trade_id)
@@ -413,10 +420,11 @@ def test_trade_get_and_list_flow() -> None:
     assert listing.page == 1
     assert listing.has_more is True
     assert len(listing.trades) == 1
-    assert listing.trades[0].broker_trade_id == "1"
+    assert listing.trades[0].broker_trade_id == "2"
     page_two = trades.list_trades(page=2, page_size=1)
     assert page_two.has_more is False
-    assert page_two.trades[0].current_units == Decimal("-500")
+    assert page_two.trades[0].broker_trade_id == "1"
+    assert page_two.trades[0].current_units == Decimal("1000")
 
 
 def test_trade_full_close_all_semantics() -> None:

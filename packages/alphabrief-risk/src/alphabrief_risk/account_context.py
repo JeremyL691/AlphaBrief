@@ -28,6 +28,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from alphabrief_risk.loss_state import ClosedTradeResult
+
 
 def _reject_float(value: Any) -> Any:
     """Reject ``float`` inputs so exposure figures stay Decimal-first.
@@ -138,6 +140,12 @@ class AccountExposureContext(BaseModel):
     quote_captured_at: datetime | None = None
     quote_tradeable: bool | None = None
     frozen_symbols: dict[str, str] = Field(default_factory=dict)
+    closed_trade_results: tuple[ClosedTradeResult, ...] | None = None
+    loss_streak_captured_at: datetime | None = None
+    loss_streak_last_transaction_id: str | None = None
+    loss_streak_complete: bool = False
+    loss_streak_error: str | None = None
+    loss_streak_evidence: dict[str, dict[str, str]] = Field(default_factory=dict)
     recent_high_impact_events: dict[str, str] = Field(default_factory=dict)
     drawdown_block_reason: str | None = None
     current_spread: Decimal | None = Field(default=None, ge=0)
