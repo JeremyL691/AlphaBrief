@@ -178,7 +178,8 @@ def _risk_gate(
 
     ``nav`` selects the exposure-cap regime. With a live NAV (the
     risk-sized production path) the caps are the guide's fractions of NAV:
-    50% of NAV per order and 150% of NAV of total notional. Without one
+    50% of current NAV per order and 150% of current NAV of total notional,
+    recomputed from each gate account context. Without one
     (the S9 fixed-units pre-run) the reviewed absolute caps from
     ``config/paper_execution_policy.yaml`` apply instead.
     """
@@ -186,9 +187,11 @@ def _risk_gate(
     from alphabrief_risk.entry_rules import EntryRulePolicy
 
     policy = load_paper_execution_policy(load_settings().execution_policy_file)
+    max_order_value: Decimal | None
+    max_total_exposure: Decimal | None
     if nav is not None and nav > 0:
-        max_order_value = nav * MAX_ORDER_NOTIONAL_PCT
-        max_total_exposure = nav * MAX_TOTAL_EXPOSURE_PCT
+        max_order_value = None
+        max_total_exposure = None
     else:
         max_order_value = policy.max_order_notional
         max_total_exposure = policy.max_total_exposure
@@ -202,6 +205,12 @@ def _risk_gate(
             trading_enabled=not require_nav or (nav is not None and nav > 0),
             symbol_allowlist=frozenset(instruments),
             require_home_currency_exposure=True,
+            max_order_value_pct=(
+                MAX_ORDER_NOTIONAL_PCT if nav is not None and nav > 0 else None
+            ),
+            max_total_exposure_pct=(
+                MAX_TOTAL_EXPOSURE_PCT if nav is not None and nav > 0 else None
+            ),
             max_order_value=max_order_value,
             max_total_exposure=max_total_exposure,
             max_margin_utilization_pct=Decimal("0.30"),

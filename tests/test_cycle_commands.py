@@ -177,9 +177,9 @@ class TestQuantityOverride:
     def test_fixed_units_replace_position_sizing(self, store: AiTradingStore) -> None:
         backend = _RecordingBackend()
 
-        record = _cycle(
-            store, backend, quantity_override=Decimal("1000")
-        ).run(["EUR_USD"])
+        record = _cycle(store, backend, quantity_override=Decimal("1000")).run(
+            ["EUR_USD"]
+        )
 
         assert record.outcome == "executed"
         assert backend.submissions[0]["quantity"] == Decimal("1000")
@@ -200,9 +200,7 @@ class TestDirectionOverride:
         with pytest.raises(ValueError, match="requires a non-empty reason"):
             _cycle(store, _RecordingBackend(), direction_override="short")
 
-    def test_override_rejects_an_unknown_direction(
-        self, store: AiTradingStore
-    ) -> None:
+    def test_override_rejects_an_unknown_direction(self, store: AiTradingStore) -> None:
         with pytest.raises(ValueError, match="must be 'long' or 'short'"):
             _cycle(
                 store,
@@ -261,17 +259,42 @@ class TestExposureCapRegime:
 
         nav = Decimal("100000")
         gate = _risk_gate(("EUR_USD",), nav=nav)
+        from test_oanda_gate_context import NOW
 
-        assert gate.limits.max_order_value == nav * MAX_ORDER_NOTIONAL_PCT
-        assert gate.limits.max_total_exposure == nav * MAX_TOTAL_EXPOSURE_PCT
+        gate.clock = lambda: NOW
+
+        from test_production_exposure_rule import context
+        from test_production_margin_rule import _intent
+
+        assert gate.limits.max_order_value_pct == MAX_ORDER_NOTIONAL_PCT
+        assert gate.limits.max_total_exposure_pct == MAX_TOTAL_EXPOSURE_PCT
+        assert gate.limits.max_order_value is None
+        assert gate.limits.max_total_exposure is None
+        # Same built gate, different live NAV: the cap must change at evaluation.
+        for current_nav in (nav, nav / Decimal(2)):
+            result = gate.evaluate(
+                _intent("buy").model_copy(update={"quantity": Decimal(30000)}),
+                estimated_price=Decimal("1.1"),
+                account_context=context(
+                    equity=current_nav,
+                    current_total_exposure=Decimal(0),
+                    quote_position_to_home={"EUR_USD": Decimal(1)},
+                ),
+            )
+            evidence = result.rule_evidence["exposure_caps"]
+            assert (
+                Decimal(evidence["order_cap"]) == current_nav * MAX_ORDER_NOTIONAL_PCT
+            )
+            assert (
+                Decimal(evidence["total_cap"]) == current_nav * MAX_TOTAL_EXPOSURE_PCT
+            )
+            assert ("max_order_value" in result.risk_tags) is (current_nav < nav)
 
     def test_without_nav_the_reviewed_absolute_caps_apply(self) -> None:
         from alphabrief_cli.cycle_commands import _risk_gate
         from alphabrief_core import load_paper_execution_policy, load_settings
 
-        policy = load_paper_execution_policy(
-            load_settings().execution_policy_file
-        )
+        policy = load_paper_execution_policy(load_settings().execution_policy_file)
         gate = _risk_gate(("EUR_USD",))
 
         assert gate.limits.max_order_value == policy.max_order_notional

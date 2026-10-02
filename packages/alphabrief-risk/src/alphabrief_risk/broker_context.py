@@ -84,9 +84,10 @@ class PendingOrderDatum(BaseModel):
     broker_order_id: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
     units: Decimal = Decimal("0")
+    price: Decimal | None = None
     state: str = Field(min_length=1)
 
-    @field_validator("units", mode="before")
+    @field_validator("units", "price", mode="before")
     @classmethod
     def units_must_not_be_float(cls, value: Any) -> Any:
         return _reject_float(value)

@@ -46,6 +46,7 @@ def source(monkeypatch: pytest.MonkeyPatch) -> OandaRiskContextSources:
 
     monkeypatch.setattr(module, "AccountOpsClient", AccountOps)
     monkeypatch.setattr(sources, "fetch_positions", lambda: [])
+    monkeypatch.setattr(sources, "fetch_pending_orders", lambda: [])
     monkeypatch.setattr(sources, "fetch_conversions", lambda: [])
     monkeypatch.setattr(sources, "fetch_reconciliation_state", lambda: "clean")
     return sources
