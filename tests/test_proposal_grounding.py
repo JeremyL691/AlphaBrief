@@ -33,6 +33,7 @@ from alphabrief_trader.schemas import (
     ResearchProposal,
 )
 from pydantic import ValidationError
+from test_committee_transcript import _snapshot as transcript_snapshot
 
 _SNAPSHOT_AT = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
@@ -95,6 +96,27 @@ class _PhasedProvider(FakeProviderAdapter):
             "challenge": self._challenge,
             "summary": self._summary,
         }.get(phase, self._opening)
+        available = list(_payload().evidence_catalog)
+        references = {
+            "ev-price-1: ema20 above ema50": next(
+                k for k in available if k.startswith("market:")
+            ),
+            "ev-price-1: uptrend": next(
+                k for k in available if k.startswith("market:")
+            ),
+            "ev-news-1: earnings beat": next(
+                k for k in available if k.startswith("news:")
+            ),
+            "ev-macro-1: cpi in line": next(
+                k for k in available if k.startswith("macro:")
+            ),
+        }
+        evidence = payload.get("evidence", [])
+        assert isinstance(evidence, list)
+        payload = {
+            **payload,
+            "evidence": [references.get(str(v), str(v)) for v in evidence],
+        }
         return ModelResponse(
             request_id=request.request_id,
             provider=self.provider_name,
@@ -107,18 +129,12 @@ class _PhasedProvider(FakeProviderAdapter):
 
 
 def _snapshot(*, captured_at: datetime = _SNAPSHOT_AT) -> MarketSnapshot:
-    return MarketSnapshot(
-        symbol="SPY",
-        reference_price=Decimal("100"),
-        data_version="test-v1",
-        captured_at=captured_at,
-    )
+    return transcript_snapshot().model_copy(update={"captured_at": captured_at})
 
 
 def _payload(*, captured_at: datetime = _SNAPSHOT_AT) -> CommitteeInput:
     return CommitteeInput(
         snapshot=_snapshot(captured_at=captured_at),
-        evidence_ids=["ev-price-1", "ev-news-1", "ev-macro-1"],
     )
 
 
@@ -146,9 +162,7 @@ def _proposal(**overrides: object) -> ResearchProposal:
         "entry_rationale": "Breakout above resistance.",
         "invalidation": "Close below support.",
         "suggested_exposure": Decimal("0.1"),
-        "citations": [
-            EvidenceCitation(evidence_id="ev-price-1", claim="uptrend")
-        ],
+        "citations": [EvidenceCitation(evidence_id="ev-price-1", claim="uptrend")],
         "dissent": "risk: headline reversal risk.",
         "data_freshness": _SNAPSHOT_AT,
         "uncertainty": 0.3,
@@ -258,9 +272,7 @@ class TestGroundingValidation:
 
     def test_unsupported_citation_fails_grounding(self) -> None:
         proposal = _proposal(
-            citations=[
-                EvidenceCitation(evidence_id="ev-fake-99", claim="invented")
-            ]
+            citations=[EvidenceCitation(evidence_id="ev-fake-99", claim="invented")]
         )
         violations = validate_proposal_grounding(
             proposal,
@@ -278,8 +290,7 @@ class TestGroundingValidation:
             now=_SNAPSHOT_AT + timedelta(days=2),
         )
         assert any(
-            violation.startswith("stale_critical_evidence:")
-            for violation in violations
+            violation.startswith("stale_critical_evidence:") for violation in violations
         )
 
     def test_fresh_evidence_passes_grounding(self) -> None:

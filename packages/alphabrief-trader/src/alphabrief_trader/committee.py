@@ -209,6 +209,8 @@ class TradingCommittee:
         is never flattened; the plan is synthesized only from the opening
         votes through the deterministic ``DisciplineGate``.
         """
+        # Revalidate even model_copy inputs at the trusted model boundary.
+        payload = CommitteeInput.model_validate(payload.model_dump())
         snapshot = payload.snapshot
         roles = payload.roles or self._roles
         votes: list[CommitteeVote] = []
