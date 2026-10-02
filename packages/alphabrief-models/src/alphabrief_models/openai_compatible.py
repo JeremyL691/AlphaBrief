@@ -22,7 +22,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from urllib.parse import urlparse
 
 from alphabrief_models.chatgpt_plan import (
@@ -55,6 +55,20 @@ class FallbackConfig:
     model: str
     input_cost_per_million: Decimal | None = None
     output_cost_per_million: Decimal | None = None
+    max_output_tokens: int = 2048
+
+    def __post_init__(self) -> None:
+        for value in (self.input_cost_per_million, self.output_cost_per_million):
+            if value is not None and (
+                not isinstance(value, Decimal) or not value.is_finite() or value < 0
+            ):
+                raise ValueError("token prices must be finite nonnegative Decimal")
+        if (
+            not isinstance(self.max_output_tokens, int)
+            or isinstance(self.max_output_tokens, bool)
+            or self.max_output_tokens <= 0
+        ):
+            raise ValueError("max output tokens must be positive")
 
     @property
     def host(self) -> str:
@@ -63,7 +77,12 @@ class FallbackConfig:
     def estimate_cost(
         self, *, input_tokens: int | None, output_tokens: int | None
     ) -> Decimal | None:
-        if self.input_cost_per_million is None and self.output_cost_per_million is None:
+        if (
+            self.input_cost_per_million is None
+            or self.output_cost_per_million is None
+            or input_tokens is None
+            or output_tokens is None
+        ):
             return None
         million = Decimal(1_000_000)
         cost = Decimal(0)
@@ -71,7 +90,7 @@ class FallbackConfig:
             cost += self.input_cost_per_million * Decimal(input_tokens) / million
         if output_tokens is not None and self.output_cost_per_million is not None:
             cost += self.output_cost_per_million * Decimal(output_tokens) / million
-        return cost.quantize(Decimal("0.000001"))
+        return cost.quantize(Decimal("0.000000000000000001"), rounding=ROUND_CEILING)
 
 
 def _reject_forbidden_host(base_url: str) -> None:
@@ -139,11 +158,19 @@ class OpenAiCompatibleAdapter:
     def config(self) -> FallbackConfig:
         return self._config
 
+    def budget_cost(self, request: ModelRequest) -> Decimal | None:
+        """Conservative prompt-byte estimate plus capped completion allowance."""
+        return self._config.estimate_cost(
+            input_tokens=len(request.input_text.encode("utf-8")) + 256,
+            output_tokens=self._config.max_output_tokens,
+        )
+
     def call(self, request: ModelRequest) -> ModelResponse:
         payload = {
             "model": self._config.model,
             "messages": [{"role": "user", "content": request.input_text}],
             "stream": False,
+            "max_completion_tokens": self._config.max_output_tokens,
         }
         response = self._http_send(
             "POST",
@@ -183,8 +210,20 @@ class OpenAiCompatibleAdapter:
         if isinstance(usage, dict):
             raw_in = usage.get("prompt_tokens")
             raw_out = usage.get("completion_tokens")
-            input_tokens = int(raw_in) if isinstance(raw_in, int) else None
-            output_tokens = int(raw_out) if isinstance(raw_out, int) else None
+            input_tokens = (
+                raw_in
+                if isinstance(raw_in, int)
+                and not isinstance(raw_in, bool)
+                and raw_in >= 0
+                else None
+            )
+            output_tokens = (
+                raw_out
+                if isinstance(raw_out, int)
+                and not isinstance(raw_out, bool)
+                and raw_out >= 0
+                else None
+            )
         finish = ""
         if isinstance(choices[0], dict):
             finish = str(choices[0].get("finish_reason") or "")
@@ -198,6 +237,9 @@ class OpenAiCompatibleAdapter:
             finish_reason=finish or "stop",
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cost_estimate=self._config.estimate_cost(
+                input_tokens=input_tokens, output_tokens=output_tokens
+            ),
         )
 
 

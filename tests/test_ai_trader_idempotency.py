@@ -217,7 +217,7 @@ class TestDurableNoTrade:
     ) -> None:
         # One call per UTC day: the first role call is allowed, every
         # following committee call is rejected by the budget, so the
-        # cycle records a durable provider_error with no plan or intent.
+        # cycle records a durable model-budget refusal with no plan or intent.
         budget = ModelCallBudget(
             max_calls_per_request=100,
             max_calls_per_cycle=100,
@@ -227,12 +227,12 @@ class TestDurableNoTrade:
         cycle = _cycle(store, committee=committee)
         record = cycle.run(["SPY"], cycle_key="cycle-budget")
 
-        assert record.outcome == "provider_error"
+        assert record.outcome == "skipped_model_budget"
         assert record.plans == []
         assert record.attempts == []
         stored = store.get_cycle(record.cycle_id)
         assert stored is not None
-        assert stored["outcome"] == "provider_error"
+        assert stored["outcome"] == "skipped_model_budget"
         assert stored["attempts"] == []
 
     def test_repair_success_produces_tradeable_proposal_path(

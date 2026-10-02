@@ -52,6 +52,7 @@ from alphabrief_models import ModelBudgetGuard
 from alphabrief_models.model_budget import (
     CHATGPT_PLAN_CHANNEL,
     NO_TRADE_MODEL_BUDGET,
+    NO_TRADE_MODEL_UNAVAILABLE,
 )
 from alphabrief_risk import RiskGate
 
@@ -394,7 +395,14 @@ class DailyTradingCycle:
             all_votes.extend(result.votes)
             if not result.ok or result.plan is None:
                 committee_role_errors.extend(result.role_errors)
-                self._record_channel_unavailability(result.role_errors)
+                if any(": model_budget:" in error for error in result.role_errors):
+                    overall_outcome = "skipped_model_budget"
+                    committee_role_errors.append(NO_TRADE_MODEL_BUDGET)
+                elif any(
+                    ": provider_unavailable:" in error for error in result.role_errors
+                ):
+                    overall_outcome = "skipped_model_unavailable"
+                    committee_role_errors.append(NO_TRADE_MODEL_UNAVAILABLE)
                 self._record_shadow(
                     cycle_id=cycle_id,
                     snapshot=snapshot,
@@ -668,6 +676,11 @@ class DailyTradingCycle:
         if self._model_budget is None:
             return None
         verdict = self._model_budget.admit(self._model_channel)
+        if not verdict.allowed and any(
+            self._model_budget.admit(channel).allowed
+            for channel in self._committee.fallback_channels
+        ):
+            return None
         if verdict.allowed:
             return None
         outcome: CycleOutcome = (
@@ -676,26 +689,6 @@ class DailyTradingCycle:
             else "skipped_model_unavailable"
         )
         return outcome, f"{verdict.reason}: {verdict.detail}"
-
-    def _record_channel_unavailability(self, role_errors: list[str]) -> None:
-        """Disable the channel for the day when the provider said no.
-
-        The committee reports stable codes; a rate limit or quota error is
-        recorded as ``provider_unavailable:<code>`` so the remaining
-        symbols of this round stop calling the channel (PROJECT_GUIDE
-        5.13) and the next rounds do too.
-        """
-        if self._model_budget is None:
-            return
-        marker = ": provider_unavailable:"
-        for error in role_errors:
-            if marker not in error:
-                continue
-            detail = error.split(marker, 1)[1]
-            self._model_budget.record_channel_unavailable(
-                self._model_channel, detail=detail
-            )
-            return
 
     def _account_context(self, symbol: str) -> Any | None:
         """Fetch the broker-fresh account context for one evaluation.

@@ -573,6 +573,10 @@ electron/       桌面外壳与打包配置
 | `openai_compatible` | 按配置的单价（每百万 input/output token）估算，每天 $2 | 同上 |
 | 两者 | 收到 429 或额度错误 → 当天停用该通道 | 有备用通道且已明确开启时切换，否则 `NO_TRADE_MODEL_UNAVAILABLE` |
 
+每次实际出站调用前，在唯一数据库中原子预留该通道的额度；已预留但结果未知的调用仍占用额度，重启不能释放。预留日使用发出请求前的 UTC 日期，跨日响应归入原预留日。预算拒绝仍记录审计结果，但不作为实际调用再次扣次数。订阅次数与付费费用各按实际通道计算，备用通道仍必须明确开启。
+
+付费通道的 `model.input_cost_per_million`、`model.output_cost_per_million` 使用非负有限十进制字符串（USD/百万 token），默认均为空；缺少任一价格或旧付费记录缺少费用证据时拒绝付费调用。`model.max_output_tokens` 默认为 2048，传给兼容接口的 `max_completion_tokens`；请求前用 UTF-8 提示词字节数加 256 的封装余量及输出上限估算预留费用。响应有完整整数 token 用量时按配置单价结算；用量缺失或请求失败时保留预留费用，并停用该付费通道至下一 UTC 日。这是按配置价格的保守预算估算，不替代服务商账单。输出上限包含不可见 token，接口语义见[OpenAI token 计数说明](https://developers.openai.com/api/docs/guides/token-counting)。
+
 ---
 
 ## 6. 代码处置清单

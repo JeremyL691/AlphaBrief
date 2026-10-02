@@ -24,7 +24,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Protocol, cast
 
 #: Channel identifiers as recorded on model-call rows.
 CHATGPT_PLAN_CHANNEL = "chatgpt_plan"
@@ -45,6 +45,7 @@ class ChannelUsage:
 
     calls: int = 0
     cost: Decimal = Decimal("0")
+    cost_known: bool = True
 
 
 @dataclass(frozen=True)
@@ -55,22 +56,24 @@ class ModelBudgetPolicy:
         default_factory=lambda: {CHATGPT_PLAN_CHANNEL: DEFAULT_CHATGPT_DAILY_CALLS}
     )
     daily_cost_limits: Mapping[str, Decimal] = field(
-        default_factory=lambda: {
-            OPENAI_COMPATIBLE_CHANNEL: DEFAULT_FALLBACK_DAILY_USD
-        }
+        default_factory=lambda: {OPENAI_COMPATIBLE_CHANNEL: DEFAULT_FALLBACK_DAILY_USD}
     )
 
     def __post_init__(self) -> None:
         for channel, call_limit in self.daily_call_limits.items():
-            if call_limit <= 0:
-                raise ValueError(
-                    f"daily call limit for {channel!r} must be positive"
-                )
+            if (
+                isinstance(call_limit, bool)
+                or not isinstance(call_limit, int)
+                or call_limit <= 0
+            ):
+                raise ValueError(f"daily call limit for {channel!r} must be positive")
         for channel, cost_limit in self.daily_cost_limits.items():
-            if cost_limit <= 0:
-                raise ValueError(
-                    f"daily cost limit for {channel!r} must be positive"
-                )
+            if (
+                not isinstance(cost_limit, Decimal)
+                or not cost_limit.is_finite()
+                or cost_limit <= 0
+            ):
+                raise ValueError(f"daily cost limit for {channel!r} must be positive")
 
     @classmethod
     def default(cls) -> ModelBudgetPolicy:
@@ -149,21 +152,21 @@ class ModelBudgetGuard:
                 allowed=False,
                 channel=channel,
                 reason=NO_TRADE_MODEL_BUDGET,
-                detail=(
-                    f"{channel} used {usage.calls} of {call_limit} daily calls"
-                ),
+                detail=(f"{channel} used {usage.calls} of {call_limit} daily calls"),
                 calls_today=usage.calls,
                 cost_today=usage.cost,
             )
         cost_limit = self._policy.cost_limit(channel)
+        if cost_limit is not None and not usage.cost_known:
+            return BudgetVerdict(
+                False, channel, NO_TRADE_MODEL_BUDGET, "paid usage has no cost evidence"
+            )
         if cost_limit is not None and usage.cost >= cost_limit:
             return BudgetVerdict(
                 allowed=False,
                 channel=channel,
                 reason=NO_TRADE_MODEL_BUDGET,
-                detail=(
-                    f"{channel} spent {usage.cost} of {cost_limit} USD today"
-                ),
+                detail=(f"{channel} spent {usage.cost} of {cost_limit} USD today"),
                 calls_today=usage.calls,
                 cost_today=usage.cost,
             )
@@ -184,6 +187,44 @@ class ModelBudgetGuard:
         """Disable a channel for the rest of the UTC day (rate limit/quota)."""
         now = self._clock().astimezone(UTC)
         self._usage.disable_channel(channel, now.date().isoformat(), detail)
+
+    def reserve(
+        self, channel: str, call_id: str, *, estimated_cost: Decimal | None = None
+    ) -> BudgetVerdict:
+        """Persist admission before dispatch; an unknown outcome keeps its slot."""
+        try:
+            source = cast(ModelAdmissionSource, self._usage)
+            return source.reserve_call(
+                channel=channel,
+                call_id=call_id,
+                observed_at=self._clock().astimezone(UTC),
+                call_limit=self._policy.call_limit(channel),
+                cost_limit=self._policy.cost_limit(channel),
+                estimated_cost=estimated_cost,
+            )
+        except Exception:
+            return BudgetVerdict(
+                False,
+                channel,
+                NO_TRADE_MODEL_BUDGET,
+                "durable model admission unavailable",
+            )
+
+    def cost_limited(self, channel: str) -> bool:
+        return self._policy.cost_limit(channel) is not None
+
+
+class ModelAdmissionSource(ModelUsageSource, Protocol):
+    def reserve_call(
+        self,
+        *,
+        channel: str,
+        call_id: str,
+        observed_at: datetime,
+        call_limit: int | None,
+        cost_limit: Decimal | None,
+        estimated_cost: Decimal | None,
+    ) -> BudgetVerdict: ...
 
 
 __all__ = [

@@ -14,7 +14,7 @@ Rules from the product spec:
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -40,6 +40,7 @@ from alphabrief_models.model_budget import (
     DEFAULT_CHATGPT_DAILY_CALLS,
     DEFAULT_FALLBACK_DAILY_USD,
     OPENAI_COMPATIBLE_CHANNEL,
+    ModelBudgetGuard,
     ModelBudgetPolicy,
 )
 from alphabrief_models.openai_compatible import (
@@ -60,14 +61,15 @@ class ModelSettings:
     #: PROJECT_GUIDE 5.13 daily limits, configurable per installation.
     daily_call_limit: int = DEFAULT_CHATGPT_DAILY_CALLS
     daily_cost_limit_usd: Decimal = DEFAULT_FALLBACK_DAILY_USD
+    input_cost_per_million: Decimal | None = None
+    output_cost_per_million: Decimal | None = None
+    max_output_tokens: int = 2048
 
     def budget_policy(self) -> ModelBudgetPolicy:
         """The per-channel daily budget policy this configuration implies."""
         return ModelBudgetPolicy(
             daily_call_limits={CHATGPT_PLAN_CHANNEL: self.daily_call_limit},
-            daily_cost_limits={
-                OPENAI_COMPATIBLE_CHANNEL: self.daily_cost_limit_usd
-            },
+            daily_cost_limits={OPENAI_COMPATIBLE_CHANNEL: self.daily_cost_limit_usd},
         )
 
 
@@ -91,19 +93,13 @@ def load_model_settings(path: Path | None = None) -> ModelSettings:
         raise ValueError(f"{config_path}: model section must be a mapping")
     fallback = section.get("fallback_enabled", False)
     if not isinstance(fallback, bool):
-        raise ValueError(
-            f"{config_path}: model.fallback_enabled must be true or false"
-        )
+        raise ValueError(f"{config_path}: model.fallback_enabled must be true or false")
     primary_model = section.get("primary_model")
     if primary_model is not None and not isinstance(primary_model, str):
         raise ValueError(f"{config_path}: model.primary_model must be a string")
-    daily_call_limit = section.get(
-        "daily_call_limit", DEFAULT_CHATGPT_DAILY_CALLS
-    )
+    daily_call_limit = section.get("daily_call_limit", DEFAULT_CHATGPT_DAILY_CALLS)
     if isinstance(daily_call_limit, bool) or not isinstance(daily_call_limit, int):
-        raise ValueError(
-            f"{config_path}: model.daily_call_limit must be an integer"
-        )
+        raise ValueError(f"{config_path}: model.daily_call_limit must be an integer")
     if daily_call_limit <= 0:
         raise ValueError(f"{config_path}: model.daily_call_limit must be positive")
     raw_cost_limit = section.get(
@@ -115,15 +111,40 @@ def load_model_settings(path: Path | None = None) -> ModelSettings:
         raise ValueError(
             f"{config_path}: model.daily_cost_limit_usd must be a decimal"
         ) from exc
-    if daily_cost_limit <= 0:
-        raise ValueError(
-            f"{config_path}: model.daily_cost_limit_usd must be positive"
-        )
+    if not daily_cost_limit.is_finite() or daily_cost_limit <= 0:
+        raise ValueError(f"{config_path}: model.daily_cost_limit_usd must be positive")
+    prices: dict[str, Decimal | None] = {}
+    for key in ("input_cost_per_million", "output_cost_per_million"):
+        raw = section.get(key)
+        if raw is None:
+            prices[key] = None
+            continue
+        if not isinstance(raw, str):
+            raise ValueError(f"{config_path}: model.{key} must be a decimal string")
+        try:
+            value = Decimal(raw)
+        except ArithmeticError as exc:
+            raise ValueError(f"{config_path}: model.{key} must be a decimal") from exc
+        if not value.is_finite() or value < 0:
+            raise ValueError(
+                f"{config_path}: model.{key} must be nonnegative and finite"
+            )
+        prices[key] = value
+    output_limit = section.get("max_output_tokens", 2048)
+    if (
+        isinstance(output_limit, bool)
+        or not isinstance(output_limit, int)
+        or output_limit <= 0
+    ):
+        raise ValueError("model.max_output_tokens must be a positive integer")
     return ModelSettings(
         fallback_enabled=fallback,
         primary_model=primary_model,
         daily_call_limit=daily_call_limit,
         daily_cost_limit_usd=daily_cost_limit,
+        input_cost_per_million=prices["input_cost_per_million"],
+        output_cost_per_million=prices["output_cost_per_million"],
+        max_output_tokens=output_limit,
     )
 
 
@@ -231,6 +252,7 @@ def build_channel_gateway(
     clock: Callable[[], datetime] | None = None,
     record_sink: Callable[[ModelCallRecord], None] | None = None,
     allow_fallback: bool | None = None,
+    daily_budget: ModelBudgetGuard | None = None,
 ) -> ChannelGateway:
     """Build the gateway with the subscription channel first.
 
@@ -273,6 +295,12 @@ def build_channel_gateway(
                 "configured (set ALPHABRIEF_LLM_BASE_URL, ALPHABRIEF_LLM_API_KEY, "
                 "ALPHABRIEF_LLM_MODEL)"
             )
+        fallback = replace(
+            fallback,
+            input_cost_per_million=resolved.input_cost_per_million,
+            output_cost_per_million=resolved.output_cost_per_million,
+            max_output_tokens=resolved.max_output_tokens,
+        )
         adapter = OpenAiCompatibleAdapter(fallback, http_send=http_send, clock=current)
         fallback_channel = adapter.provider_name
         providers = [*providers, adapter]
@@ -282,6 +310,7 @@ def build_channel_gateway(
         clock=current,
         record_sink=record_sink,
         fallback_enabled=fallback_channel is not None,
+        daily_budget=daily_budget,
     )
     return ChannelGateway(
         gateway=gateway,

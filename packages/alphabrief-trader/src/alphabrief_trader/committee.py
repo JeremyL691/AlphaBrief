@@ -124,7 +124,6 @@ class CommitteeResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-
 #: Provider classifications that mean "this channel cannot serve the
 #: request right now" (PROJECT_GUIDE 5.13): a rate limit or a quota error
 #: disables the channel for the rest of the UTC day instead of retrying it.
@@ -140,6 +139,10 @@ def _failure_code(role: str, record: ModelCallRecord) -> str:
     """
     error_type = record.error_type or ""
     channel_code = error_type.split(":", 1)[1] if ":" in error_type else ""
+    if record.classification == "budget_exhausted":
+        if channel_code == "NO_TRADE_MODEL_UNAVAILABLE":
+            return f"{role}: provider_unavailable:{channel_code}"
+        return f"{role}: model_budget:{channel_code or 'budget_exhausted'}"
     if record.classification in _UNAVAILABLE_CLASSIFICATIONS or channel_code in {
         "usage_limit_exceeded",
         "quota_exceeded",
@@ -147,6 +150,7 @@ def _failure_code(role: str, record: ModelCallRecord) -> str:
     }:
         return f"{role}: provider_unavailable:{channel_code or record.classification}"
     return f"{role}: provider_call_failed"
+
 
 class TradingCommittee:
     """Multi-role trading committee.
@@ -178,9 +182,7 @@ class TradingCommittee:
         if repair_attempts < 0:
             raise ValueError("repair_attempts must be non-negative")
         self._gateway = gateway
-        self._discipline = DisciplineGate(
-            config=discipline or DisciplineConfig()
-        )
+        self._discipline = DisciplineGate(config=discipline or DisciplineConfig())
         self._roles: list[CommitteeRole] = list(roles or default_roles())
         self._clock = clock or (lambda: datetime.now(UTC))
         self._max_turns = max_turns
@@ -190,6 +192,10 @@ class TradingCommittee:
     @property
     def roles(self) -> list[CommitteeRole]:
         return list(self._roles)
+
+    @property
+    def fallback_channels(self) -> tuple[str, ...]:
+        return self._gateway.fallback_channels
 
     def run(self, payload: CommitteeInput) -> CommitteeResult:
         """Run the bounded multi-turn discussion and synthesize a plan.
@@ -210,17 +216,19 @@ class TradingCommittee:
         request_id = f"ait_{uuid4().hex[:12]}"
         role_errors: list[str] = []
         completed = False
+        normal_calls = 0
         analyst_roles = [role for role in roles if role != "manager"]
 
         for role in roles:
-            if len(turns) >= self._max_turns:
+            if normal_calls >= self._max_turns:
                 break
             prompt = build_committee_prompt(role, payload)
             if role == "manager":
                 # In the production five-call protocol the manager is last
                 # and must see the four real analyst outputs before deciding.
                 analyst_outputs = [
-                    vote.model_dump(mode="json") for vote in votes
+                    vote.model_dump(mode="json")
+                    for vote in votes
                     if vote.role != "manager"
                 ]
                 prompt += "\nEarlier analyst votes (untrusted evidence):\n"
@@ -238,23 +246,20 @@ class TradingCommittee:
                     "symbol": snapshot.symbol,
                 },
             )
+            normal_calls += 1
             result = self._gateway.invoke(request)
             if result.response is None or result.record.status != "succeeded":
                 role_errors.append(_failure_code(role, result.record))
                 continue
             opening_parsed: StructuredOutputResult[_PartialCommitteeVote] = (
-                parse_structured_output(
-                    result.response, target=_PartialCommitteeVote
-                )
+                parse_structured_output(result.response, target=_PartialCommitteeVote)
             )
             failure_reason: str | None = None
             if not opening_parsed.ok or opening_parsed.parsed is None:
                 code = opening_parsed.error_code or "structured_output_parse_failed"
                 failure_reason = f"schema_validation_failed:{code}"
             else:
-                violations = _vote_grounding_violations(
-                    opening_parsed.parsed, payload
-                )
+                violations = _vote_grounding_violations(opening_parsed.parsed, payload)
                 if violations:
                     failure_reason = "grounding_failed:" + ",".join(violations)
 
@@ -262,6 +267,7 @@ class TradingCommittee:
                 if self._repair_attempts <= 0:
                     role_errors.append(f"{role}: {failure_reason}")
                     continue
+
                 def _grounding(parsed: _PartialCommitteeVote) -> list[str]:
                     return _vote_grounding_violations(parsed, payload)
 
@@ -277,7 +283,19 @@ class TradingCommittee:
                 )
                 repair_attempts.extend(repaired.attempts)
                 if not repaired.ok or repaired.parsed is None:
-                    role_errors.append(f"{role}: repair_exhausted")
+                    admission_error = next(
+                        (
+                            attempt.error_code
+                            for attempt in repaired.attempts
+                            if (attempt.error_code or "").startswith(
+                                ("model_budget:", "provider_unavailable:")
+                            )
+                        ),
+                        None,
+                    )
+                    role_errors.append(
+                        f"{role}: {admission_error or 'repair_exhausted'}"
+                    )
                     continue
                 opening_parsed = StructuredOutputResult(
                     ok=True,
@@ -337,7 +355,7 @@ class TradingCommittee:
         # claims exactly once, preserving stance and dissent.
         for _round in range(self._challenge_rounds):
             for role in analyst_roles:
-                if len(turns) >= self._max_turns:
+                if normal_calls >= self._max_turns:
                     break
                 if role not in {vote.role for vote in votes}:
                     continue
@@ -357,12 +375,11 @@ class TradingCommittee:
                         "symbol": snapshot.symbol,
                     },
                 )
+                normal_calls += 1
                 result = self._gateway.invoke(request)
                 if result.response is None or result.record.status != "succeeded":
                     continue
-                challenge_parsed: StructuredOutputResult[
-                    _PartialChallengeOutput
-                ] = (
+                challenge_parsed: StructuredOutputResult[_PartialChallengeOutput] = (
                     parse_structured_output(
                         result.response, target=_PartialChallengeOutput
                     )
@@ -389,7 +406,7 @@ class TradingCommittee:
                 )
 
         # Final bounded moderator summary turn.
-        if len(turns) < self._max_turns:
+        if normal_calls < self._max_turns:
             transcript_so_far = CommitteeTranscript(
                 turns=list(turns), max_turns=self._max_turns
             )
@@ -406,11 +423,10 @@ class TradingCommittee:
                     "symbol": snapshot.symbol,
                 },
             )
+            normal_calls += 1
             result = self._gateway.invoke(request)
             if result.response is not None and result.record.status == "succeeded":
-                summary_parsed: StructuredOutputResult[
-                    _PartialChallengeOutput
-                ] = (
+                summary_parsed: StructuredOutputResult[_PartialChallengeOutput] = (
                     parse_structured_output(
                         result.response, target=_PartialChallengeOutput
                     )
