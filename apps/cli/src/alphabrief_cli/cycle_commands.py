@@ -768,8 +768,11 @@ def _open_trading_cycle(
             )
 
         nav = _nav(sources) if quantity_override is None else None
+        model_budget = _model_budget(calls)
         yield DailyTradingCycle(
-            committee=build_ai_trading_committee(record_sink=_call_recorder(calls)),
+            committee=build_ai_trading_committee(
+                record_sink=_call_recorder(calls), daily_budget=model_budget
+            ),
             risk_gate=_risk_gate(
                 symbols, nav=nav, require_nav=quantity_override is None
             ),
@@ -801,7 +804,7 @@ def _open_trading_cycle(
                 loss_store=losses,
             ),
             sizing_provider=_sizing_provider(sources),
-            model_budget=_model_budget(calls),
+            model_budget=model_budget,
             shadow_recorder=_shadow_recorder(shadows),
             risk_warning_recorder=record_warning,
         )

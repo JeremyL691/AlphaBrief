@@ -194,7 +194,9 @@ class _RiskSources:
         return Decimal("1")
 
 
-def _fake_committee(*, record_sink: Any = None) -> TradingCommittee:
+def _fake_committee(
+    *, record_sink: Any = None, daily_budget: Any = None
+) -> TradingCommittee:
     provider = FakeProviderAdapter(
         provider_name="fake",
         model_name="fake-1",
@@ -212,7 +214,9 @@ def _fake_committee(*, record_sink: Any = None) -> TradingCommittee:
         },
     )
     return TradingCommittee(
-        gateway=ModelGateway(providers=[provider], record_sink=record_sink),
+        gateway=ModelGateway(
+            providers=[provider], record_sink=record_sink, daily_budget=daily_budget
+        ),
         discipline=DisciplineConfig(),
         max_turns=5,
         challenge_rounds=0,
@@ -743,8 +747,12 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setattr(
             cycle_commands,
             "build_ai_trading_committee",
-            lambda record_sink=None: TradingCommittee(
-                gateway=ModelGateway(providers=[provider], record_sink=record_sink),
+            lambda record_sink=None, daily_budget=None: TradingCommittee(
+                gateway=ModelGateway(
+                    providers=[provider],
+                    record_sink=record_sink,
+                    daily_budget=daily_budget,
+                ),
                 discipline=DisciplineConfig(),
                 max_turns=5,
                 challenge_rounds=0,
@@ -1597,3 +1605,88 @@ def test_production_cycle_rejects_bad_news_before_any_model_call(
     finally:
         calls.close()
         cycles.close()
+
+
+def test_default_backend_checks_budget_between_analyst_calls(
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from alphabrief_api.db.model_call import ModelCallStore
+    from alphabrief_models.channels import ChannelGateway, ChannelState, ModelSettings
+    from alphabrief_trader import model_factory
+
+    sent: list[str] = []
+
+    class BudgetProvider(FakeProviderAdapter):
+        def call(self, request: Any) -> Any:
+            sent.append(request.request_id)
+            return super().call(request)
+
+    def channels(**kwargs: Any) -> ChannelGateway:
+        provider = BudgetProvider(
+            provider_name="chatgpt_plan",
+            model_name="test",
+            capabilities=["structured_output"],
+            structured_output={
+                "analysis": "No direction supported.",
+                "view": "neutral",
+                "confidence": 0.8,
+                "evidence": [],
+                "risks": [],
+                "suggested_action": "hold",
+                "target_position_pct": "0",
+                "veto": False,
+                "needs_human_review": False,
+            },
+        )
+        return ChannelGateway(
+            gateway=ModelGateway(
+                [provider],
+                record_sink=kwargs["record_sink"],
+                daily_budget=kwargs["daily_budget"],
+            ),
+            state=ChannelState(),
+            settings=ModelSettings(),
+            primary_channel="chatgpt_plan",
+            fallback_channel=None,
+        )
+
+    monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "chatgpt_plan")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+    monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+    monkeypatch.setattr(scheduler_commands, "_build_adapter", _SubmittingAdapter)
+    monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+    monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD")
+    monkeypatch.setattr(model_factory, "build_channel_gateway", channels)
+    monkeypatch.setattr(
+        cycle_commands,
+        "build_ai_trading_committee",
+        model_factory.build_ai_trading_committee,
+    )
+    _seed_risk_sized_inputs(isolated_data_dir)
+    database = isolated_data_dir / _paths.DATABASE_NAME
+    calls = ModelCallStore(database)
+    try:
+        budget = cycle_commands._model_budget(calls)
+        for i in range(149):
+            assert budget.reserve("chatgpt_plan", f"seed-{i}").allowed
+    finally:
+        calls.close()
+    asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)())
+    store = AiTradingStore(database)
+    calls = ModelCallStore(database)
+    try:
+        record = store.get_latest_cycle()
+        assert record is not None and record["outcome"] == "skipped_model_budget"
+        assert "NO_TRADE_MODEL_BUDGET" in record["summary"]
+        assert len(sent) == 1 and len(record["votes"]) == 1
+        assert record["plans"] == [] and record["attempts"] == []
+        usage = calls.daily_usage(
+            datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        )
+        assert usage["chatgpt_plan"].calls == 150
+        assert len(calls.list_calls()) == 5
+        assert sum(c["status"] == "rejected" for c in calls.list_calls()) == 4
+    finally:
+        calls.close()
+        store.close()

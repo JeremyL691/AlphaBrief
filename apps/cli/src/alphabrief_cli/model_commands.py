@@ -29,6 +29,7 @@ from alphabrief_models.chatgpt_plan import (
     clear_credentials,
     load_credentials,
 )
+from alphabrief_models.model_budget import ModelBudgetGuard
 from pydantic import BaseModel, ConfigDict
 
 model_app = typer.Typer(help="ChatGPT subscription channel and fallback channel.")
@@ -177,6 +178,9 @@ def test_cmd(
     channels = build_channel_gateway(
         record_sink=_persist,
         credentials=load_credentials(),
+        daily_budget=ModelBudgetGuard(
+            call_store, policy=load_model_settings().budget_policy()
+        ),
     )
     credentials = load_credentials()
     if credentials is not None and credentials.is_expired():

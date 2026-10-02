@@ -15,6 +15,11 @@ model:
   # by call count, the optional paid fallback by estimated USD cost.
   daily_call_limit: 150
   daily_cost_limit_usd: "2.00"
+  # Paid channel admission requires both configured prices. Unknown prices
+  # fail closed, even when fallback is enabled. Values are USD per million.
+  input_cost_per_million: null
+  output_cost_per_million: null
+  max_output_tokens: 2048
 
 trading:
   # off | on. `off` runs the whole cycle but stops before submitting.

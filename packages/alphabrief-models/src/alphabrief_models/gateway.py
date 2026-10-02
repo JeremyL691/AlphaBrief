@@ -15,6 +15,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from alphabrief_models.model_budget import ModelBudgetGuard
+
 ModelCapability = Literal[
     "text_generation",
     "structured_output",
@@ -151,6 +153,16 @@ class ModelResponse(AlphaBriefModelSchema):
     finish_reason: str = Field(min_length=1)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    cost_estimate: Decimal | None = None
+
+    @field_validator("cost_estimate", mode="before")
+    @classmethod
+    def _cost(cls, value: Any) -> Any:
+        if value is not None and (
+            not isinstance(value, Decimal) or not value.is_finite() or value < 0
+        ):
+            raise ValueError("cost estimate must be a finite nonnegative Decimal")
+        return value
 
 
 class ModelCallRecord(AlphaBriefModelSchema):
@@ -334,11 +346,13 @@ class ModelGateway:
         record_sink: Callable[[ModelCallRecord], None] | None = None,
         fallback_enabled: bool = False,
         fallback_eligible: Callable[[ModelCallRecord], bool] | None = None,
+        daily_budget: ModelBudgetGuard | None = None,
     ) -> None:
         self._providers = list(providers)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._call_id_factory = call_id_factory or (lambda: f"model_call_{uuid4().hex}")
         self._budget = budget
+        self._daily_budget = daily_budget
         self._record_sink = record_sink
         # Channel fallback is opt-in: it is only used when the caller
         # explicitly allows switching billing channels, and only for
@@ -351,6 +365,14 @@ class ModelGateway:
     def set_budget(self, budget: ModelCallBudget | None) -> None:
         """Attach or replace the call budget after construction."""
         self._budget = budget
+
+    @property
+    def fallback_channels(self) -> tuple[str, ...]:
+        return (
+            tuple(p.provider_name for p in self._providers[1:])
+            if self._fallback_enabled
+            else ()
+        )
 
     def invoke(self, request: ModelRequest) -> ModelGatewayResult:
         retry_count = self._invoke_counts.get(request.request_id, 0)
@@ -391,6 +413,34 @@ class ModelGateway:
 
         last_result: ModelGatewayResult | None = None
         for index, provider in enumerate(candidates):
+            call_id = self._call_id_factory()
+            if self._daily_budget is not None:
+                estimate = getattr(provider, "budget_cost", None)
+                try:
+                    cost = estimate(request) if estimate is not None else None
+                except Exception:
+                    cost = None
+                verdict = self._daily_budget.reserve(
+                    provider.provider_name, call_id, estimated_cost=cost
+                )
+                if not verdict.allowed:
+                    record = self._build_record(
+                        request=request,
+                        provider=provider.provider_name,
+                        model=provider.model_name,
+                        output_text="",
+                        latency_ms=0,
+                        status="rejected",
+                        classification="budget_exhausted",
+                        error_type=f"BudgetExhausted:{verdict.reason}",
+                        retry_count=retry_count,
+                        call_id=call_id,
+                    )
+                    self._emit(record)
+                    last_result = ModelGatewayResult(response=None, record=record)
+                    if index + 1 < len(candidates):
+                        continue
+                    return last_result
             started_at = perf_counter()
             try:
                 response = provider.call(request)
@@ -406,8 +456,19 @@ class ModelGateway:
                     error_type=_error_type_for(exc),
                     classification=classify_provider_error(exc, str(exc)),
                     retry_count=retry_count,
+                    call_id=call_id,
                 )
                 self._emit(record)
+                channel_code = (record.error_type or "").split(":")[-1]
+                if self._daily_budget is not None and (
+                    self._daily_budget.cost_limited(provider.provider_name)
+                    or record.classification == "rate_limit"
+                    or channel_code
+                    in {"usage_limit_exceeded", "quota_exceeded", "rate_limit_exceeded"}
+                ):
+                    self._daily_budget.record_channel_unavailable(
+                        provider.provider_name, detail=channel_code
+                    )
                 last_result = ModelGatewayResult(response=None, record=record)
                 if index + 1 < len(candidates) and self._fallback_eligible(record):
                     continue
@@ -425,8 +486,18 @@ class ModelGateway:
                 retry_count=retry_count,
                 input_tokens=response.input_tokens,
                 output_tokens=response.output_tokens,
+                cost_estimate=response.cost_estimate,
+                call_id=call_id,
             )
             self._emit(record)
+            if (
+                self._daily_budget is not None
+                and self._daily_budget.cost_limited(provider.provider_name)
+                and response.cost_estimate is None
+            ):
+                self._daily_budget.record_channel_unavailable(
+                    provider.provider_name, detail="paid_usage_unknown"
+                )
             return ModelGatewayResult(response=response, record=record)
 
         assert last_result is not None  # every candidate was attempted
@@ -466,9 +537,11 @@ class ModelGateway:
         retry_count: int = 0,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        cost_estimate: Decimal | None = None,
+        call_id: str | None = None,
     ) -> ModelCallRecord:
         return ModelCallRecord(
-            call_id=self._call_id_factory(),
+            call_id=call_id or self._call_id_factory(),
             request_id=request.request_id,
             provider=provider,
             model=model,
@@ -477,7 +550,7 @@ class ModelGateway:
             input_hash=_hash_text(request.input_text),
             output_hash=_hash_text(output_text) if output_text else "",
             latency_ms=latency_ms,
-            cost_estimate=None,
+            cost_estimate=cost_estimate,
             status=status,
             classification=classification,
             error_type=error_type,

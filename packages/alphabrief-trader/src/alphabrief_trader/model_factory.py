@@ -21,6 +21,7 @@ from alphabrief_models import (
     ChannelGateway,
     ChannelState,
     FakeProviderAdapter,
+    ModelBudgetGuard,
     ModelCallBudget,
     ModelCallRecord,
     ModelCapability,
@@ -57,6 +58,7 @@ def build_ai_trading_channels(
     *,
     record_sink: Callable[[ModelCallRecord], None] | None = None,
     budget: ModelCallBudget | None = None,
+    daily_budget: ModelBudgetGuard | None = None,
 ) -> ChannelGateway:
     """Return the configured channel gateway for the trading committee.
 
@@ -69,6 +71,7 @@ def build_ai_trading_channels(
             [build_conservative_fake_provider()],
             record_sink=record_sink,
             budget=budget,
+            daily_budget=daily_budget,
         )
         return ChannelGateway(
             gateway=gateway,
@@ -77,7 +80,7 @@ def build_ai_trading_channels(
             primary_channel="fake",
             fallback_channel=None,
         )
-    channels = build_channel_gateway(record_sink=record_sink)
+    channels = build_channel_gateway(record_sink=record_sink, daily_budget=daily_budget)
     if budget is not None:
         channels.gateway.set_budget(budget)
     return channels
@@ -87,6 +90,7 @@ def build_ai_trading_committee(
     *,
     record_sink: Callable[[ModelCallRecord], None] | None = None,
     budget: ModelCallBudget | None = None,
+    daily_budget: ModelBudgetGuard | None = None,
 ) -> TradingCommittee:
     """Build the AI Trading Committee on the configured channels.
 
@@ -94,10 +98,14 @@ def build_ai_trading_committee(
     production callers persist every terminal call record and bound
     per-request/cycle/daily model usage.
     """
-    channels = build_ai_trading_channels(record_sink=record_sink, budget=budget)
+    channels = build_ai_trading_channels(
+        record_sink=record_sink, budget=budget, daily_budget=daily_budget
+    )
     return TradingCommittee(
-        gateway=channels.gateway, discipline=DisciplineConfig(),
-        max_turns=5, challenge_rounds=0,
+        gateway=channels.gateway,
+        discipline=DisciplineConfig(),
+        max_turns=5,
+        challenge_rounds=0,
     )
 
 
@@ -122,9 +130,7 @@ def _selection() -> str:
         return "chatgpt_plan"
     if requested in _EXPLICIT_SELECTIONS:
         return requested
-    raise ValueError(
-        f"{AI_MODEL_PROVIDER_ENV} must be one of auto, chatgpt, fake"
-    )
+    raise ValueError(f"{AI_MODEL_PROVIDER_ENV} must be one of auto, chatgpt, fake")
 
 
 def build_conservative_fake_provider() -> FakeProviderAdapter:
