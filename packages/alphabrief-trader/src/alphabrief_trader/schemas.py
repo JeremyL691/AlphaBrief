@@ -20,7 +20,7 @@ Safety contract (mirrors AGENTS.md):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal, cast
 
@@ -130,6 +130,48 @@ class MarketInputEvidence(_CommitteeSchema):
         return None if value is None else _validate_timezone_aware(value)
 
 
+class SignalMarketEvidence(_CommitteeSchema):
+    """Actual completed signal windows and aligned daily-return correlation."""
+
+    counts: dict[str, int] = Field(default_factory=dict)
+    series_hashes: dict[str, str] = Field(default_factory=dict)
+    latest_h1_end: datetime | None = None
+    latest_daily_end: datetime | None = None
+    h1_return_pct: Decimal | None = None
+    daily_return_pct: Decimal | None = None
+    correlation_20d: Decimal | None = Field(default=None, ge=-1, le=1)
+    correlation_samples: int = Field(default=0, ge=0, le=20)
+    correlation_input_hash: str = ""
+    correlation_reason: Literal[
+        "insufficient_aligned_returns", "daily_end_mismatch", "zero_variance"
+    ] | None = None
+
+    @field_validator("latest_h1_end", "latest_daily_end")
+    @classmethod
+    def _tz(cls, value: datetime | None) -> datetime | None:
+        return (None if value is None
+                else _validate_timezone_aware(value).astimezone(UTC))
+
+    @field_validator(
+        "h1_return_pct", "daily_return_pct", "correlation_20d", mode="before"
+    )
+    @classmethod
+    def _no_float(cls, value: Any) -> Any:
+        return _reject_float(value)
+
+
+class SignalInputEvidence(_CommitteeSchema):
+    signals: dict[str, SignalMarketEvidence] = Field(default_factory=dict)
+    excluded: dict[str, Literal["broker_not_found"]] = Field(default_factory=dict)
+    errors: dict[str, str] = Field(default_factory=dict)
+    observed_at: datetime
+
+    @field_validator("observed_at")
+    @classmethod
+    def _tz(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value).astimezone(UTC)
+
+
 class MarketSnapshot(_CommitteeSchema):
     """A compact market snapshot fed into the committee.
 
@@ -151,6 +193,7 @@ class MarketSnapshot(_CommitteeSchema):
     volatility_20d_pct: Decimal | None = Field(default=None, ge=0)
     market_evidence: MarketInputEvidence | None = None
     broker_evidence: BrokerInputFacts | None = None
+    signal_evidence: SignalInputEvidence | None = None
     news_context: str | None = None
     news_evidence: NewsInputEvidence | None = None
     macro_context: str | None = None
@@ -506,6 +549,7 @@ class InputQualityRecord(_CommitteeSchema):
     news_evidence: NewsInputEvidence | None = None
     market_evidence: MarketInputEvidence | None = None
     broker_evidence: BrokerInputFacts | None = None
+    signal_evidence: SignalInputEvidence | None = None
     evaluated_at: datetime
 
     @field_validator("snapshot_captured_at", "evaluated_at")

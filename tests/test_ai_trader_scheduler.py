@@ -261,6 +261,18 @@ def _seed_risk_sized_inputs(directory: Path, *, seed_spreads: bool = True) -> No
 def _scheduler_ai_test_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from alphabrief_execution.broker.oanda.market_sync import (
+        SIGNAL_INSTRUMENTS,
+        SignalCandleObservation,
+    )
+
+    # These tests explicitly model a broker that cannot read signal instruments.
+    # Separate production-input tests supply available windows and reject defects.
+    monkeypatch.setattr(cycle_commands, "_signal_observation", lambda store:
+        SignalCandleObservation(
+            {}, dict.fromkeys(SIGNAL_INSTRUMENTS, "broker_not_found"),
+            {}, datetime.now(UTC),
+        ))
     monkeypatch.setattr(
         cycle_commands, "_risk_sources", lambda *a, **kw: _RiskSources()
     )
@@ -815,6 +827,75 @@ class TestSchedulerRunsAiTask:
             assert reason in quality["reasons"]
             assert quality["broker_evidence"]["symbol"] == "EUR_USD"
             assert quality["broker_evidence"]["daily_open_count"] == 0
+        finally:
+            calls.close()
+            store.close()
+
+    @pytest.mark.parametrize("defect", [
+        "healthy", "short_h1", "correlation_gap", "fetch_failure", "broker_not_found",
+    ])
+    def test_production_signal_evidence_controls_model_admission(
+        self, isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch, defect: str,
+    ) -> None:
+        import test_market_input_quality as market_fixture
+        import test_signal_inputs as signal_fixture
+        from alphabrief_api.db.model_call import ModelCallStore
+
+        now = datetime.now(UTC)
+        monkeypatch.setattr(market_fixture, "NOW", now)
+        monkeypatch.setattr(signal_fixture, "NOW", now)
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "on")
+        monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", "EUR_USD")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        adapter = _SubmittingAdapter()
+        monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
+        _seed_news_quality_inputs(isolated_data_dir, ("EUR_USD",))
+        database = isolated_data_dir / _paths.DATABASE_NAME
+        market = MarketDataStore(database)
+        try:
+            windows = market_fixture.windows()
+            windows["D"] = signal_fixture.bars("EUR_USD", "D", 60)
+            for tf, rows in windows.items():
+                market.insert_bars(rows, source="oanda_practice",
+                                   data_version=f"test:M:{tf}")
+        finally:
+            market.close()
+        observed = signal_fixture.observation()
+        if defect == "short_h1":
+            observed.series["XAU_USD"]["H1"].pop(0)
+        elif defect == "correlation_gap":
+            del observed.series["XAU_USD"]["D"][-5]
+        elif defect == "fetch_failure":
+            observed.errors["XAU_USD:H1"] = "TimeoutError"
+        elif defect == "broker_not_found":
+            del observed.series["XAU_USD"]
+            observed.excluded["XAU_USD"] = "broker_not_found"
+        monkeypatch.setattr(
+            cycle_commands, "_signal_observation", lambda store: observed
+        )
+        asyncio.run(_ai_cycle_factory(db_path=isolated_data_dir)(cycle_key="signal-round"))
+        store, calls = AiTradingStore(database), ModelCallStore(database)
+        try:
+            record = store.get_latest_cycle()
+            assert record is not None
+            quality = record["input_quality"][0]
+            saved = quality["signal_evidence"]
+            assert saved["observed_at"] == now.isoformat().replace("+00:00", "Z")
+            assert adapter.requests == []  # Healthy committees deliberately hold.
+            if defect in {"healthy", "broker_not_found"}:
+                assert quality["passed"] and len(calls.list_calls()) == 5
+                assert saved["signals"]["SPX500_USD"]["correlation_samples"] == 20
+                if defect == "broker_not_found":
+                    assert saved["excluded"] == {"XAU_USD": "broker_not_found"}
+                    summary = record["summary"]
+                    assert "signal_excluded=[XAU_USD:broker_not_found]" in summary
+            else:
+                assert not quality["passed"] and calls.list_calls() == []
+                assert record["outcome"] == "skipped_data_stale"
+                assert record["votes"] == record["plans"] == record["attempts"] == []
+                assert any("XAU_USD" in reason for reason in quality["reasons"])
         finally:
             calls.close()
             store.close()

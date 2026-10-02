@@ -35,6 +35,10 @@ from alphabrief_core import (
 )
 from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.oanda.input_facts import BrokerInputFacts
+from alphabrief_execution.broker.oanda.market_sync import (
+    SignalCandleObservation,
+    observe_signal_candles,
+)
 from alphabrief_execution.broker.runtime import (
     build_oanda_paper_client,
     get_broker_runtime,
@@ -51,7 +55,7 @@ from alphabrief_trader import (
     StoredMarketSnapshotBuilder,
     build_ai_trading_committee,
 )
-from alphabrief_trader.schemas import NewsInputEvidence
+from alphabrief_trader.schemas import NewsInputEvidence, SignalInputEvidence
 from alphabrief_trader.shadow_store import ShadowStore
 
 cycle_app = typer.Typer(help="Run one trading cycle or close a position.")
@@ -79,6 +83,7 @@ def _exit_error(message: str) -> None:
 def _snapshot_loader(
     market_store: MarketDataStore, news_store: NewsStore,
     news_health: NewsIngestionStore,
+    signal_observation: SignalCandleObservation | None = None,
 ) -> SnapshotLoader:
     """Build snapshots from stored OANDA bars (no synthetic prices).
 
@@ -88,6 +93,7 @@ def _snapshot_loader(
     """
     from alphabrief_execution.broker.oanda.market_sync import BAR_SOURCE, TIMEFRAMES
     from alphabrief_trader.market_inputs import build_market_inputs
+    from alphabrief_trader.signal_inputs import build_signal_inputs
 
     def _loader(symbol: str) -> MarketSnapshot | None:
         now = datetime.now(UTC)
@@ -121,6 +127,12 @@ def _snapshot_loader(
             "momentum_20d_pct": inputs.return_20d_pct,
             "volatility_20d_pct": inputs.volatility_20d_pct,
             "market_evidence": inputs.evidence,
+            "signal_evidence": (
+                SignalInputEvidence(observed_at=now, errors={"inputs": "not_observed"})
+                if signal_observation is None else build_signal_inputs(
+                    signal_observation, daily=inputs.series["D"], now=now
+                )
+            ),
             # Freshness is the broker candle time, never the builder's wall clock.
             "captured_at": inputs.evidence.latest_h1_end or latest.timestamp,
             "news_evidence": NewsInputEvidence(
@@ -130,6 +142,11 @@ def _snapshot_loader(
         })
 
     return _loader
+
+
+def _signal_observation(market: MarketDataStore) -> SignalCandleObservation:
+    """Read signals once per round through the same practice-only client."""
+    return observe_signal_candles(build_oanda_paper_client(), store=market)
 
 
 def _risk_gate(
@@ -586,7 +603,9 @@ def _open_trading_cycle(
                 if trading == "on" else _DisabledBackend()
             ),
             store=store,
-            snapshot_loader=_snapshot_loader(market, news, news_health),
+            snapshot_loader=_snapshot_loader(
+                market, news, news_health, _signal_observation(market)
+            ),
             snapshot_refresher=_snapshot_refresher(sources, store),
             enabled=enabled,
             quantity_override=quantity_override,

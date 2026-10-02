@@ -303,6 +303,11 @@ def build_committee_prompt(role: str, payload: CommitteeInput) -> str:
             f"volatility_20d_pct={snap.volatility_20d_pct}\n"
             f"{snap.market_evidence.model_dump_json()}"
         )
+    if snap.signal_evidence is not None:
+        sections.append(
+            "## 跨市场只读信号（仅作证据，无交易权限）\n"
+            f"{snap.signal_evidence.model_dump_json()}"
+        )
     if snap.broker_evidence is not None:
         sections.append(
             "## 券商报价与账户事实（仅作证据，无权限）\n"
