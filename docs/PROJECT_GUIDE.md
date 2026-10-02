@@ -510,7 +510,8 @@ electron/       桌面外壳与打包配置
 
 ### 5.8 下单与结果未知
 
-- 订单：`MARKET` + `timeInForce=FOK` + `positionFill=DEFAULT` + `stopLossOnFill` + `takeProfitOnFill` + `clientExtensions`。
+- 开仓订单：`MARKET` + `timeInForce=FOK` + `positionFill=DEFAULT` + `stopLossOnFill` + `takeProfitOnFill` + `clientExtensions`。
+- 减仓订单：带实际持仓反向的 units、`timeInForce=FOK`、`positionFill=REDUCE_ONLY` 与 `clientExtensions`；减仓标记必须由 OrderIntent 贯穿到券商请求，不能在持仓变化后反手开仓。OANDA 的 REDUCE_ONLY 语义为仅减少既有持仓，见[官方订单定义](https://developer.oanda.com/rest-live-v20/order-df/#OrderPositionFill)。
 - 提交前把意图和决策落库；提交后无论成功、拒绝还是超时，都落库。
 - **超时或连接中断 → 状态 `SUBMIT_UNKNOWN`**：按 `clientExtensions.id` 查询订单，并扫描流水。找到就按真实结果记账；查询窗口（默认 120 秒）内找不到，就标记为未成交并告警。**绝不直接重发。**
 - 重启后，先处理所有 `SUBMIT_UNKNOWN`，再允许新的下单。

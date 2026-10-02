@@ -314,6 +314,11 @@ class CommitteeVote(_CommitteeSchema):
     model_call_id: str | None = None
     cited_evidence_ids: list[str] = Field(default_factory=list)
     created_at: datetime
+    manager_action: (
+        Literal["open_long", "open_short", "close", "hold", "no_trade"] | None
+    ) = None
+    stop_atr_multiple: Decimal | None = None
+    take_profit_r_multiple: Decimal | None = None
     analyst_stance: Literal["long", "short", "flat"] | None = None
     horizon_hours: int | None = Field(default=None, gt=0)
     key_points: list[str] = Field(default_factory=list)
@@ -495,6 +500,12 @@ class TradePlan(_CommitteeSchema):
     key_evidence: list[str] = Field(default_factory=list)
     key_risks: list[str] = Field(default_factory=list)
     assigned_roles: list[RecordedCommitteeRole] = Field(default_factory=list)
+    action: Literal["open_long", "open_short", "close", "hold", "no_trade"] | None = (
+        None
+    )
+    manager_call_id: str | None = None
+    stop_atr_multiple: Decimal | None = None
+    take_profit_r_multiple: Decimal | None = None
 
     @field_validator("target_position_pct", mode="before")
     @classmethod

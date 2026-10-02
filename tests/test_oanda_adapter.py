@@ -328,3 +328,32 @@ def test_final_attempt_logs_giving_up_warning(
 
     log_blob = "\n".join(record.getMessage() for record in caplog.records)
     assert "giving up" in log_blob
+
+
+@pytest.mark.parametrize(
+    "side,signed", [(BrokerOrderSide.BUY, "1000"), (BrokerOrderSide.SELL, "-1000")]
+)
+def test_reduce_only_is_enforced_in_actual_oanda_payload(
+    side: BrokerOrderSide,
+    signed: str,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    adapter = OandaPaperAdapter(
+        client=OandaHttpClient(config=_config(), http_send=_routing_sender(calls))
+    )
+    asyncio.run(
+        adapter.submit(
+            SubmitRequest(
+                symbol="EUR_USD",
+                side=side,
+                order_type=BrokerOrderType.MARKET,
+                quantity=Decimal("1000"),
+                reduce_only=True,
+            ),
+            client_order_id="close-only",
+        )
+    )
+    order = _submitted_order(calls)
+    assert order["positionFill"] == "REDUCE_ONLY"
+    assert order["units"] == signed and order["timeInForce"] == "FOK"
+    assert "stopLossOnFill" not in order and "takeProfitOnFill" not in order
