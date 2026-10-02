@@ -190,6 +190,7 @@ def _build_default_committee() -> TradingCommittee:
     """
     return build_ai_trading_committee(
         record_sink=_persist_call_record,
+        validation_sink=_get_call_store().save_validation,
         budget=ModelCallBudget(),
         daily_budget=ModelBudgetGuard(
             _get_call_store(), policy=load_model_settings().budget_policy()

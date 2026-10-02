@@ -267,6 +267,7 @@ class TradingCommittee:
                 required_capabilities=["structured_output"],
                 metadata={
                     "committee_role": role,
+                    "phase": "opening",
                     "available_evidence_ids": json.dumps(payload.evidence_ids),
                     "symbol": snapshot.symbol,
                 },
@@ -282,6 +283,7 @@ class TradingCommittee:
             model_call_id = result.record.call_id
             model_name = result.response.model or "unknown"
             failure_reason: str | None = None
+            violations: list[str] = []
             if not opening_parsed.ok or opening_parsed.parsed is None:
                 code = opening_parsed.error_code or "structured_output_parse_failed"
                 failure_reason = f"schema_validation_failed:{code}"
@@ -289,6 +291,16 @@ class TradingCommittee:
                 violations = _vote_grounding_violations(opening_parsed.parsed, payload)
                 if violations:
                     failure_reason = "grounding_failed:" + ",".join(violations)
+
+            self._gateway.record_validation(
+                result.record.call_id,
+                target=_PartialCommitteeVote,
+                parsed=opening_parsed.parsed,
+                error_code=None
+                if opening_parsed.ok
+                else str(opening_parsed.error_code),
+                violations=violations,
+            )
 
             if failure_reason is not None:
                 if self._repair_attempts <= 0:
@@ -426,11 +438,24 @@ class TradingCommittee:
                         result.response, target=_PartialChallengeOutput
                     )
                 )
+                violations = (
+                    []
+                    if challenge_parsed.parsed is None
+                    else _vote_grounding_violations(challenge_parsed.parsed, payload)
+                )
+                self._gateway.record_validation(
+                    result.record.call_id,
+                    target=_PartialChallengeOutput,
+                    parsed=challenge_parsed.parsed,
+                    error_code=None
+                    if challenge_parsed.ok
+                    else str(challenge_parsed.error_code),
+                    violations=violations,
+                )
                 if not challenge_parsed.ok or challenge_parsed.parsed is None:
                     role_errors.append(f"{role}: challenge:schema_validation_failed")
                     continue
                 cp = challenge_parsed.parsed
-                violations = _vote_grounding_violations(cp, payload)
                 if violations:
                     role_errors.append(f"{role}: challenge:grounding_failed")
                     continue
@@ -482,9 +507,23 @@ class TradingCommittee:
                         result.response, target=_PartialChallengeOutput
                     )
                 )
+                violations = (
+                    []
+                    if summary_parsed.parsed is None
+                    else _vote_grounding_violations(summary_parsed.parsed, payload)
+                )
+                self._gateway.record_validation(
+                    result.record.call_id,
+                    target=_PartialChallengeOutput,
+                    parsed=summary_parsed.parsed,
+                    error_code=None
+                    if summary_parsed.ok
+                    else str(summary_parsed.error_code),
+                    violations=violations,
+                )
                 if summary_parsed.ok and summary_parsed.parsed is not None:
                     sp = summary_parsed.parsed
-                    if _vote_grounding_violations(sp, payload):
+                    if violations:
                         role_errors.append("manager: summary:grounding_failed")
                     else:
                         cited = _extract_cited_evidence_ids(

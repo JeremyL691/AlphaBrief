@@ -27,7 +27,7 @@ from typing import Any
 
 import duckdb
 from alphabrief_core import paths as _paths
-from alphabrief_models.gateway import ModelCallRecord
+from alphabrief_models.gateway import ModelCallRecord, ModelValidationRecord
 from alphabrief_models.model_budget import (
     MAX_COMMITTEE_NORMAL_CALLS,
     MAX_COMMITTEE_REPAIR_CALLS,
@@ -111,6 +111,9 @@ class ModelCallStore:
         self._conn = duckdb.connect(str(self._db_path), read_only=read_only)
         if not read_only:
             self._conn.execute(_CREATE_TABLE_SQL)
+            self._conn.execute("""CREATE TABLE IF NOT EXISTS model_call_validations (
+                validation_id TEXT PRIMARY KEY, call_id TEXT NOT NULL,
+                payload JSON NOT NULL)""")
             self._conn.execute(
                 "ALTER TABLE model_call_records "
                 "ADD COLUMN IF NOT EXISTS audit_payload JSON"
@@ -213,6 +216,42 @@ class ModelCallStore:
         if row is None:
             return None
         return _row_to_dict(row)
+
+    def save_validation(self, record: ModelValidationRecord) -> None:
+        """Append a verdict without changing the immutable provider response."""
+        record = ModelValidationRecord.model_validate(record.model_dump())
+        payload = record.model_dump(mode="json")
+        with self._lock:
+            call = self.get_call(record.call_id)
+            if call is None or call["status"] != "succeeded":
+                raise ValueError("validation requires a persisted successful response")
+            existing = self._conn.execute(
+                "SELECT payload FROM model_call_validations WHERE validation_id = ?",
+                [record.validation_id],
+            ).fetchone()
+            if existing is not None:
+                prior = json.loads(existing[0])
+                prior.pop("created_at")
+                comparable = dict(payload)
+                comparable.pop("created_at")
+                if prior != comparable:
+                    raise ValueError("conflicting immutable model validation")
+                return
+            self._conn.execute(
+                "INSERT INTO model_call_validations VALUES (?, ?, ?)",
+                [record.validation_id, record.call_id, json.dumps(payload)],
+            )
+
+    def list_validations(self, call_id: str) -> list[dict[str, Any]]:
+        tables = {row[0] for row in self._conn.execute("SHOW TABLES").fetchall()}
+        if "model_call_validations" not in tables:
+            return []
+        rows = self._conn.execute(
+            "SELECT payload FROM model_call_validations WHERE call_id = ? "
+            "ORDER BY validation_id",
+            [call_id],
+        ).fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def list_calls(
         self,
@@ -471,6 +510,7 @@ class ModelCallStore:
     def clear(self) -> None:
         """Drop only the model-call tables (for test isolation)."""
         self._conn.execute(_DROP_TABLE_SQL)
+        self._conn.execute("DELETE FROM model_call_validations")
         self._conn.execute(_CREATE_TABLE_SQL)
         self._conn.execute(_DROP_CHANNEL_STATE_SQL)
         self._conn.execute(_CREATE_CHANNEL_STATE_SQL)
