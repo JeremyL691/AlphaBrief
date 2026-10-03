@@ -294,7 +294,9 @@ class TestClosePath:
             "cyc_close_1", "EUR_USD", "close:sell"
         )
 
-    def test_close_is_blocked_by_the_kill_switch(self, store: AiTradingStore) -> None:
+    def test_close_remains_executable_under_kill_switch(
+        self, store: AiTradingStore
+    ) -> None:
         gate = _risk_gate(
             ("EUR_USD",), kill_switch=KillSwitch(active=True, reason="manual halt")
         )
@@ -309,9 +311,10 @@ class TestClosePath:
             reason="operator close",
         )
 
-        assert attempt.outcome == "blocked_risk_gate"
-        assert "kill_switch" in attempt.risk_tags
-        assert backend.submission_count == 0
+        assert attempt.outcome == "executed"
+        assert "kill_switch_reduce_only" in attempt.risk_tags
+        assert backend.submission_count == 1
+        assert backend.submissions[0].intent.reduce_only is True
 
     def test_frozen_symbol_and_trading_off_do_not_block_a_close(
         self, store: AiTradingStore

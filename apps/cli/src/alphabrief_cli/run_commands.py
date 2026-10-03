@@ -349,6 +349,8 @@ def position_monitor_once(
         result.get("outcome") not in {None, "executed"} for result in report["closed"]
     ):
         raise RuntimeError("position_exit_refused")
+    if report.get("drawdown_error") is not None:
+        raise RuntimeError("drawdown_observation_unavailable")
     return sum(bool(result.get("closed")) for result in report["closed"])
 
 
@@ -514,6 +516,10 @@ class Runtime:
         from alphabrief_api.main import create_app
 
         app = create_app()
+        from alphabrief_api.routes.risk import configure_runtime_risk
+
+        configure_runtime_risk()
+        app.state.request_position_exit = self._run_position_monitor
         config = uvicorn.Config(app, host=self._host, port=self._port, log_level="info")
         self._server = uvicorn.Server(config)
         self._scheduler = await self._build_scheduler()

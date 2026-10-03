@@ -101,6 +101,9 @@ class TestNoLiveControl:
 class TestNoUndocumentedMutation:
     def test_every_mutation_route_is_classified(self) -> None:
         known_operator = {"freeze", "unfreeze"}
+        # GUIDE 5.10: this exact endpoint has a separate strict confirmation
+        # contract and persists the stop before dispatching the resident worker.
+        known_emergency = {"risk.py:/kill-switch"}
         known_non_operator = {
             "",
             "check",
@@ -125,7 +128,10 @@ class TestNoUndocumentedMutation:
                 r'@router\.(?:post|put|delete|patch)\(\s*"([^"]*)"', text
             ):
                 operation = match.group(1).strip("/").split("/")[0] or ""
-                assert operation in known_operator or operation in known_non_operator, (
+                assert (
+                    operation in known_operator or operation in known_non_operator
+                    or f"{source.name}:{match.group(1)}" in known_emergency
+                ), (
                     f"{source.name} has undocumented mutation {operation!r}"
                 )
 

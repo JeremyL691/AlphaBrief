@@ -85,7 +85,10 @@ def test_missing_context_rejects_entries_but_margin_does_not_block_closes() -> N
         assert result.approved and result.rule_evidence == {}
     gate = _gate()
     gate.kill_switch.activate(reason="stop")
-    assert not gate.evaluate(_intent("sell", close=True)).approved
+    result = gate.evaluate(_intent("sell", close=True))
+    assert result.approved and "kill_switch_reduce_only" in result.risk_tags
+    entry = gate.evaluate(_intent("sell"))
+    assert not entry.approved and "kill_switch" in entry.risk_tags
 
 
 @pytest.mark.parametrize("value", [Decimal(0), Decimal("1.1"), Decimal("NaN"), 0.3])

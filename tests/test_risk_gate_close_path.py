@@ -1,7 +1,7 @@
 """Gate-level tests for the reduced close path (PROJECT_GUIDE 5.7).
 
-A reduce-only close is checked against the kill switch (rule 1) and rule 3
-(a fresh, tradeable quote) only. Everything that guards new exposure —
+A reduce-only close remains available under the kill switch and requires
+rule 3 (a fresh, tradeable quote). Everything that guards new exposure —
 trading mode, the freeze, the allowlist, the daily caps, the weekend
 window, exposure and order-value limits — must not stop a position from
 being closed.
@@ -112,7 +112,7 @@ class TestCloseOnlyChecksKillSwitchAndQuote:
         ):
             assert tag not in decision.risk_tags
 
-    def test_kill_switch_still_blocks(self) -> None:
+    def test_kill_switch_allows_verified_reduction(self) -> None:
         gate = _hostile_gate(
             kill_switch=KillSwitch(active=True, reason="manual halt")
         )
@@ -124,8 +124,8 @@ class TestCloseOnlyChecksKillSwitchAndQuote:
             account_context=_context(),
         )
 
-        assert decision.approved is False
-        assert "kill_switch" in decision.risk_tags
+        assert decision.approved is True
+        assert "kill_switch_reduce_only" in decision.risk_tags
 
     def test_a_stale_quote_blocks(self) -> None:
         decision = _hostile_gate().evaluate(
