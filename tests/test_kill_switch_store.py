@@ -82,7 +82,7 @@ class TestStore:
 
 
 class TestGate:
-    def test_active_switch_rejects_every_order(self) -> None:
+    def test_active_switch_rejects_new_exposure(self) -> None:
         gate = _gate(KillSwitch(active=True, reason="manual halt"))
 
         decision = gate.evaluate(_intent(), estimated_price=Decimal("1.13"))
@@ -91,13 +91,20 @@ class TestGate:
         assert "kill_switch" in decision.risk_tags
         assert "manual halt" in decision.reason
 
-    def test_active_switch_also_blocks_a_close(self) -> None:
-        """Rule 1 is the one rule a reduce-only order cannot bypass."""
+    def test_active_switch_allows_explicit_reduce_only(self) -> None:
+        """Emergency exits cannot be blocked by the stop that requested them."""
         gate = _gate(KillSwitch(active=True, reason="manual halt"))
         close = _intent().model_copy(update={"reduce_only": True, "side": "sell"})
 
         decision = gate.evaluate(close, estimated_price=Decimal("1.13"))
 
+        assert decision.approved is True
+        assert "kill_switch_reduce_only" in decision.risk_tags
+
+    def test_zero_target_without_reduce_only_cannot_bypass_stop(self) -> None:
+        gate = _gate(KillSwitch(active=True, reason="manual halt"))
+        intent = _intent().model_copy(update={"target_position_pct": Decimal(0)})
+        decision = gate.evaluate(intent, estimated_price=Decimal("1.13"))
         assert decision.approved is False
         assert "kill_switch" in decision.risk_tags
 

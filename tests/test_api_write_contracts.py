@@ -113,6 +113,9 @@ class TestApprovedMutationSurface:
             "freeze": "freeze_paper_execution",
             "unfreeze": "unfreeze_paper_execution",
         }
+        # The emergency switch is a separate typed confirmation contract
+        # (GUIDE 5.10), not an arbitrary broker mutation or a payload proxy.
+        known_emergency = {"risk.py:/kill-switch"}
         # Non-operator classes: data ingestion, model calls, research,
         # registry writes, runs, reconcile, and strategy-driven paper
         # order submission (RiskGate-gated, not manual operator control).
@@ -147,7 +150,10 @@ class TestApprovedMutationSurface:
         for decorated in mutation_paths:
             route_name = decorated.split(":", 1)[1].strip("/")
             operation = route_name.split("/")[0] or ""
-            assert operation in known_operator or operation in known_non_operator, (
+            assert (
+                operation in known_operator or operation in known_non_operator
+                or decorated in known_emergency
+            ), (
                 f"unclassified mutation route {decorated}"
             )
 

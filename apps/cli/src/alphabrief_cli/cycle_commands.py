@@ -208,7 +208,6 @@ def _risk_gate(
     (the S9 fixed-units pre-run) the reviewed absolute caps from
     ``config/paper_execution_policy.yaml`` apply instead.
     """
-    from alphabrief_risk import KillSwitch, KillSwitchStore
     from alphabrief_risk.entry_rules import EntryRulePolicy
 
     policy = load_paper_execution_policy(load_settings().execution_policy_file)
@@ -220,12 +219,11 @@ def _risk_gate(
     else:
         max_order_value = policy.max_order_notional
         max_total_exposure = policy.max_total_exposure
-    switch_store = KillSwitchStore(db_path=_paths.db_path())
-    try:
-        kill_switch = KillSwitch.from_store(switch_store)
-    finally:
-        switch_store.close()
+    from alphabrief_risk.kill_switch import load_persisted_kill_switch
+
     return RiskGate(
+        kill_switch=load_persisted_kill_switch(),
+        kill_switch_provider=load_persisted_kill_switch,
         limits=RiskLimitConfig(
             trading_enabled=not require_nav or (nav is not None and nav > 0),
             symbol_allowlist=frozenset(instruments),
@@ -270,7 +268,6 @@ def _risk_gate(
                 require_protective_orders=True,
             ),
         ),
-        kill_switch=kill_switch,
     )
 
 
@@ -300,6 +297,7 @@ def _account_context_provider(
     news_store: Any | None = None,
     universe: tuple[str, ...] = (),
     loss_store: Any | None = None,
+    reduce_only: bool = False,
 ) -> Any:
     """Fetch the broker-fresh account context for each risk evaluation.
 
@@ -310,6 +308,10 @@ def _account_context_provider(
     """
 
     def _build(symbol: str) -> Any:
+        if reduce_only:
+            # Rule-3 facts come from the same native account/quote source.
+            # Entry history, drawdown, news and spread stores cannot block exits.
+            return sources.account_exposure_context(symbol=symbol)
         total: int | None
         symbol_count: int | None
         try:
@@ -498,25 +500,15 @@ def _drawdown_verdict(sources: Any) -> Any:
     reset a drawdown block. The account id is used only as the state key.
     """
     from alphabrief_execution.broker.oanda.config import read_oanda_credentials
-    from alphabrief_risk import DrawdownStateStore, evaluate_drawdown
+    from alphabrief_risk.kill_switch import observe_drawdown
 
     context = sources.account_exposure_context()
-    nav = context.equity if context.equity is not None else context.cash
-    try:
-        _, account_id = read_oanda_credentials()
-    except Exception:  # noqa: BLE001 - no credentials means no state key
-        account_id = "unknown"
-    store = DrawdownStateStore(db_path=_paths.db_path())
-    try:
-        previous = store.load(account_id)
-        high_water = previous.high_water if previous and previous.high_water else nav
-        verdict = evaluate_drawdown(
-            equity=nav, high_water=high_water, now=datetime.now(UTC), previous=previous
-        )
-        store.save(account_id, verdict.state)
-    finally:
-        store.close()
-    return verdict
+    _, account_id = read_oanda_credentials()
+    if context.account_id != account_id:
+        raise ValueError("drawdown_account_mismatch")
+    return observe_drawdown(
+        account_id=account_id, nav=context.equity, now=datetime.now(UTC)
+    )
 
 
 def _high_impact_event_map(news_store: Any) -> dict[str, str]:
@@ -711,12 +703,14 @@ def _execution_backend(
             "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
         )
     from alphabrief_execution.broker.risk_context import BrokerRiskContextBuilder
+    from alphabrief_risk.kill_switch import load_persisted_kill_switch
 
     return ExternalPaperExecutionBackend(
         get_broker_runtime().adapter,
         risk_symbols=symbols,
         risk_context_builder=(BrokerRiskContextBuilder(sources) if sources else None),
         decision_binding=decision_binding,
+        kill_switch_provider=load_persisted_kill_switch,
     )
 
 
@@ -965,8 +959,8 @@ def _close_through_the_cycle(
 ) -> dict[str, Any]:
     """Close one position via decision → RiskGate → OANDA (PROJECT_GUIDE 5.5).
 
-    The reduce-only intent is checked only against the kill switch and
-    rule 3, its RiskDecision is persisted with the attempt, and the order
+    The explicit reduce-only intent stays available under the emergency stop,
+    requires rule 3, and its RiskDecision is persisted with the attempt. The order
     carries the intent's deterministic client order ID.
     """
     from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -997,6 +991,7 @@ def _close_through_the_cycle(
             trading_day=now.date().isoformat(),
             store=store,
             universe=(instrument,),
+            reduce_only=True,
         )(instrument)
         backend = (
             _execution_backend(
@@ -1101,6 +1096,10 @@ def close_due_positions(
     from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
     from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
     from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
+    from alphabrief_risk.kill_switch import (
+        load_persisted_kill_switch,
+        observe_drawdown,
+    )
     from alphabrief_trader.close_policy import CloseDecision, evaluate_close
 
     if now.tzinfo is None or now.utcoffset() is None:
@@ -1111,7 +1110,10 @@ def close_due_positions(
         raise BrokerAuthError("OANDA credentials are required for scheduled close-out")
     client = build_oanda_paper_client()
     accounts = AccountOpsClient(client)
-    watermark = accounts.account_summary().last_transaction_id
+    summary = accounts.account_summary()
+    if summary.account_id != client.account_id:
+        raise ValueError("holding_account_mismatch")
+    watermark = summary.last_transaction_id
     trades = TradeOpsClient(client).open_trade_history(expected_watermark=watermark)
     positions = PositionOpsClient(client)
     observed: dict[str, Decimal] = {}
@@ -1146,6 +1148,22 @@ def close_due_positions(
         raise ValueError("trade_position_snapshot_mismatch")
     if accounts.account_summary().last_transaction_id != watermark:
         raise ValueError("holding_snapshot_changed")
+    drawdown_error: str | None = None
+    if trading == "on":
+        switch = load_persisted_kill_switch()
+        try:
+            observe_drawdown(account_id=summary.account_id, nav=summary.nav, now=now)
+        except Exception:  # noqa: BLE001 - known stop still exits before reporting failure
+            # Keep valid time-based reductions available even before a stop is
+            # known. Unknown drawdown never authorizes closing young holdings.
+            drawdown_error = "drawdown_observation_unavailable"
+        switch = load_persisted_kill_switch()
+        if switch.active:
+            close_all_reason = f"kill switch: {switch.reason}"
+            due = {
+                symbol: CloseDecision(symbol, True, close_all_reason)
+                for symbol, units in observed.items() if units != 0
+            }
     results: list[dict[str, Any]] = []
     if trading == "on":
         for instrument, decision in sorted(due.items()):
@@ -1193,6 +1211,7 @@ def close_due_positions(
         "due": [d.to_dict() for _, d in sorted(due.items())],
         "closed": results,
         "checked": len(trades),
+        "drawdown_error": drawdown_error,
         "detail": "NO_TRADE_TRADING_OFF"
         if trading == "off"
         else "holding policy checked",

@@ -180,6 +180,7 @@ class RiskGate:
 
     limits: RiskLimitConfig
     kill_switch: KillSwitch = field(default_factory=KillSwitch)
+    kill_switch_provider: Callable[[], KillSwitch] | None = None
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     decision_id_factory: Callable[[], str] = field(
         default=lambda: f"risk_{uuid4().hex}"
@@ -245,17 +246,25 @@ class RiskGate:
         failures: list[str] = []
         tags: list[str] = []
 
-        if self.kill_switch.active:
+        if self.kill_switch_provider is not None:
+            try:
+                self.kill_switch = self.kill_switch_provider()
+            except Exception:  # noqa: BLE001 - unreadable authority fails closed
+                failures.append("kill switch state unavailable")
+                tags.append("kill_switch_unavailable")
+        if self.kill_switch.active and not intent.reduce_only:
             failures.append(self.kill_switch.reason)
             tags.append("kill_switch")
+        elif self.kill_switch.active:
+            tags.append("kill_switch_reduce_only")
 
         if self.limits.live_trading_enabled:
             failures.append("live trading is not allowed in MVP")
             tags.append("live_trading_locked")
 
         if _is_close_intent(intent):
-            # PROJECT_GUIDE 5.7: a reduce-only close is checked only against
-            # the kill switch (rule 1) and rule 3 (a fresh, tradeable quote).
+            # Explicit REDUCE_ONLY exits remain available under the emergency
+            # stop, but still require a fresh, tradeable quote (rule 3).
             # Trading off, a freeze, the daily caps or the weekend window
             # never prevent a position from being closed, and no exposure or
             # order-value limit can block a reduction.

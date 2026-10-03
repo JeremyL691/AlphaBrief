@@ -32,7 +32,7 @@ def status_cmd() -> None:
     gate = RiskGate(
         limits=RiskLimitConfig(trading_enabled=True),
     )
-    kill_switch_active = gate.kill_switch.active
+    switch = _read_kill_switch()
     payload = {
         "trading_enabled": gate.limits.trading_enabled,
         "live_trading_enabled": gate.limits.live_trading_enabled,
@@ -48,8 +48,8 @@ def status_cmd() -> None:
             else None
         ),
         "require_human_review": gate.limits.require_human_review,
-        "kill_switch_active": kill_switch_active,
-        "kill_switch_reason": gate.kill_switch.reason,
+        "kill_switch_active": switch["active"],
+        "kill_switch_reason": switch["reason"],
     }
     json.dump(payload, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -138,7 +138,7 @@ def kill_switch_cmd(
     activate: bool = typer.Option(  # noqa: B008
         False,
         "--activate",
-        help="Block all order flow (requires --reason).",
+        help="Block new exposure and request all position exits (requires --reason).",
     ),
     deactivate: bool = typer.Option(  # noqa: B008
         False,
@@ -153,38 +153,48 @@ def kill_switch_cmd(
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Show or change the persisted kill switch."""
-    from alphabrief_cli.api_client import require_local_write
-
-    require_local_write("risk kill-switch")
-
-    from alphabrief_core import paths as _paths
-    from alphabrief_risk import KillSwitchStore
+    from alphabrief_cli.api_client import api_kill_switch, is_api_running
 
     if activate and deactivate:
         print("error: choose either --activate or --deactivate", file=sys.stderr)
         sys.exit(1)
 
-    store = KillSwitchStore(db_path=_paths.db_path())
-    try:
-        if activate:
-            if not reason.strip():
-                print("error: --activate requires --reason", file=sys.stderr)
-                sys.exit(1)
-            state = store.activate(reason=reason)
-        elif deactivate:
-            state = store.deactivate(
-                reason=reason.strip() or "manual deactivate"
-            )
-        else:
-            state = store.load() or {
-                "active": False,
-                "reason": "kill switch inactive",
-                "updated_at": None,
-            }
-    finally:
-        store.close()
+    if activate or deactivate:
+        if activate and not reason.strip():
+            print("error: --activate requires --reason", file=sys.stderr)
+            sys.exit(1)
+        if not is_api_running():
+            print("error: start the resident backend before changing the kill switch",
+                  file=sys.stderr)
+            sys.exit(3)
+        state = api_kill_switch(
+            active=activate, reason=reason.strip() or "manual deactivate"
+        )
+    else:
+        state = _read_kill_switch()
     json.dump(state, sys.stdout, indent=2 if pretty else None, sort_keys=True)
     sys.stdout.write("\n")
+
+
+def _read_kill_switch() -> dict[str, Any]:
+    from alphabrief_core import paths as _paths
+    from alphabrief_risk import KillSwitchStore
+
+    from alphabrief_cli.api_client import api_kill_switch, is_api_running
+
+    if is_api_running():
+        return api_kill_switch()
+    default = {
+        "active": False, "reason": "kill switch inactive",
+        "updated_at": None, "automatic": False,
+    }
+    if not _paths.db_path().exists():
+        return default
+    store = KillSwitchStore(db_path=_paths.db_path(), read_only=True)
+    try:
+        return store.load() or default
+    finally:
+        store.close()
 
 
 @risk_app.command("check")

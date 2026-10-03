@@ -80,6 +80,29 @@ def require_local_write(command: str) -> None:
 # Strategy spec CRUD
 # ---------------------------------------------------------------------------
 
+def api_kill_switch(
+    *, active: bool | None = None, reason: str = ""
+) -> dict[str, Any]:
+    """Read or explicitly change the resident switch without local fallback."""
+    url = f"{_base_url()}/api/v1/risk/kill-switch"
+    data = None if active is None else json.dumps({
+        "active": active, "reason": reason, "confirmed": True,
+    }).encode()
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return _decode(response)
+    except urllib.error.HTTPError as exc:
+        print(f"error: kill switch rejected ({exc.code}): {_try_detail(exc)}",
+              file=sys.stderr)
+        sys.exit(1)
+    except (urllib.error.URLError, OSError, TimeoutError):
+        print("error: backend unreachable; kill switch was not changed locally",
+              file=sys.stderr)
+        sys.exit(1)
+
 
 def api_strategy_create(
     spec: dict[str, Any],

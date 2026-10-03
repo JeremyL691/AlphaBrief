@@ -393,14 +393,18 @@ class TestCloseExemptionMatrix:
         assert decision.approved is False
         assert "QUOTE_STALE" in decision.risk_tags
 
-    def test_close_is_blocked_by_the_kill_switch(self) -> None:
+    def test_kill_switch_only_allows_explicit_reduction(self) -> None:
         gate = _gate(kill_switch=KillSwitch(active=True, reason="manual halt"))
         close = _intent(reduce_only=True, side="sell", stop_loss=None, take_profit=None)
 
         decision = _evaluate(gate, intent=close, context=_context())
 
-        assert decision.approved is False
-        assert "kill_switch" in decision.risk_tags
+        assert decision.approved is True
+        assert "kill_switch_reduce_only" in decision.risk_tags
+        entry = close.model_copy(update={"reduce_only": False})
+        blocked = _evaluate(gate, intent=entry, context=_context())
+        assert blocked.approved is False
+        assert "kill_switch" in blocked.risk_tags
 
 
 class TestSizingMatrix:

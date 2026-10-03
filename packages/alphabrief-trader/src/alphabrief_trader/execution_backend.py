@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from collections.abc import Coroutine, Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -44,6 +44,7 @@ from alphabrief_risk.decision_binding import (
     hash_inputs,
 )
 from alphabrief_risk.decision_store import RiskDecisionStore
+from alphabrief_risk.kill_switch import KillSwitch, load_persisted_kill_switch
 
 
 class ExecutionBackendError(ValueError):
@@ -131,8 +132,15 @@ class ExternalPaperExecutionBackend:
         risk_symbols: Sequence[str] = (),
         unknown_outcome_resolver: UnknownOutcomeResolver | None = None,
         policy_hash: str | None = None,
+        kill_switch_provider: Callable[[], KillSwitch] | None = None,
     ) -> None:
         self._adapter = adapter
+        from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+
+        self._kill_switch_provider = kill_switch_provider or (
+            load_persisted_kill_switch
+            if isinstance(adapter, OandaPaperAdapter) else None
+        )
         self._max_order_value = max_order_value
         # The persisted decision records the hash of the reviewed
         # configuration files it was approved under (PROJECT_GUIDE 5.7).
@@ -369,6 +377,14 @@ class ExternalPaperExecutionBackend:
                 f"RiskDecision not executable: {validation.kind}: "
                 f"{validation.detail}"
             )
+
+        if not request.reduce_only and self._kill_switch_provider is not None:
+            try:
+                switch = self._kill_switch_provider()
+            except Exception as exc:  # noqa: BLE001 - never trade on unknown stop state
+                raise ExecutionBackendError("KILL_SWITCH_UNAVAILABLE") from exc
+            if switch.active:
+                raise ExecutionBackendError("KILL_SWITCH: new exposure is blocked")
 
         try:
             result = _run_blocking(

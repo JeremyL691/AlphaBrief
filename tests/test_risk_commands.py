@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from alphabrief_cli.risk_commands import risk_app
 from typer.testing import CliRunner
 
@@ -60,7 +61,10 @@ def _high_macro_payload(count: int = 6) -> list[dict[str, object]]:
     ]
 
 
-def test_risk_status_prints_placeholder() -> None:
+def test_risk_status_prints_current_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     result = runner.invoke(risk_app, ["status"])
 
     assert result.exit_code == 0

@@ -46,6 +46,8 @@ def trade(identity: int, *, age: int = 48, units: str = "1000") -> dict[str, Any
 
 class Client:
     def __init__(self, trades: list[dict[str, Any]], *, units: str = "1000") -> None:
+        self.account_id = "test-account"
+        self.nav = "100000"
         self.trades = trades
         self.units = units
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -74,7 +76,7 @@ class Client:
                     "id": "test-account",
                     "currency": "USD",
                     "balance": "100000",
-                    "NAV": "100000",
+                    "NAV": self.nav,
                     "unrealizedPL": "0",
                     "marginUsed": "20",
                     "marginAvailable": "99980",
@@ -321,17 +323,21 @@ def test_actual_close_orchestration_persists_attempt_without_models(
             attempt["risk_decision_json"]["decision_id"] == result["risk_decision_id"]
         )
         assert saved["votes"] == [] and saved["plans"] == []
-        assert backend.submission_count == (1 if state in {"filled", "unknown"} else 0)
+        assert backend.submission_count == (
+            1 if state in {"filled", "unknown", "kill"} else 0
+        )
         assert saved["outcome"] == (
             "executed"
-            if state == "filled"
+            if state in {"filled", "kill"}
             else "error"
             if state == "unknown"
             else "blocked_trading_off"
             if state == "off"
             else "blocked_risk_gate"
         )
-        if state in {"filled", "unknown"}:
+        if state == "kill":
+            assert "kill_switch_reduce_only" in attempt["risk_tags"]
+        if state in {"filled", "unknown", "kill"}:
             replay = commands._close_through_the_cycle(
                 instrument="EUR_USD",
                 position_units=D("-1000"),
