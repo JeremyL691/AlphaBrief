@@ -66,9 +66,12 @@ class ShadowStore:
     def __init__(self, db_path: Path | str | None = None) -> None:
         self._db_path = Path(db_path) if db_path is not None else _paths.db_path()
         self._conn = duckdb.connect(str(self._db_path))
-        self._conn.execute(CREATE_SHADOW_TABLE)
-        self._conn.execute(CREATE_SHADOW_SCORES_TABLE)
-        self._conn.execute(CREATE_SHADOW_INDEX)
+        try:
+            self._conn.execute(CREATE_SHADOW_TABLE)
+            self._conn.execute(CREATE_SHADOW_SCORES_TABLE)
+            self._conn.execute(CREATE_SHADOW_INDEX)
+        except duckdb.TransactionException:
+            pass
 
     # ------------------------------------------------------------------
     # Decisions

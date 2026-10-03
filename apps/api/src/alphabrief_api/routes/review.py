@@ -7,10 +7,13 @@ contained hardcoded sample data.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
+from alphabrief_core import paths as _paths
 from alphabrief_review import (
     BacktestReportSummary,
     DailyBriefSummary,
@@ -233,6 +236,53 @@ def get_weekly_journal(
 
     entry = generate_weekly_review(snapshot, week_start=start)
     return entry.model_dump(mode="json")
+
+
+@router.get("/reports")
+def list_daily_reports() -> dict[str, Any]:
+    """List available daily reports from storage."""
+    daily_dir = _paths.daily_reports_dir()
+    reports: list[dict[str, Any]] = []
+    if daily_dir.is_dir():
+        for json_file in sorted(daily_dir.glob("*.json"), reverse=True):
+            date_str = json_file.stem
+            md_file = daily_dir / f"{date_str}.md"
+            summary_info: dict[str, Any] = {
+                "date": date_str,
+                "has_markdown": md_file.exists(),
+            }
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+                summary_info["summary"] = data.get("summary", "")
+                summary_info["nav"] = data.get("nav")
+                summary_info["cycles_count"] = len(data.get("cycles", []))
+            except Exception:
+                pass
+            reports.append(summary_info)
+    return {"reports": reports}
+
+
+@router.get("/reports/{report_date}")
+def get_daily_report(report_date: str) -> dict[str, Any]:
+    """Get a specific daily report content."""
+    daily_dir = _paths.daily_reports_dir()
+    json_file = daily_dir / f"{report_date}.json"
+    md_file = daily_dir / f"{report_date}.md"
+    if not json_file.exists() and not md_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Report for {report_date} not found",
+        )
+
+    payload: dict[str, Any] = {"date": report_date}
+    if json_file.exists():
+        try:
+            payload["data"] = json.loads(json_file.read_text(encoding="utf-8"))
+        except Exception:
+            payload["data"] = None
+    if md_file.exists():
+        payload["markdown"] = md_file.read_text(encoding="utf-8")
+    return payload
 
 
 __all__ = [
