@@ -225,11 +225,11 @@ def daily_cmd(
     from alphabrief_cli.cycle_commands import DEFAULT_UNIVERSE
 
     day = _day(report_date)
+    doctor_summary = _doctor_summary()
     store = AiTradingStore(db_path=_paths.db_path())
     model_calls = ModelCallStore(db_path=_paths.db_path())
     shadow = ShadowStore(db_path=_paths.db_path())
     try:
-        doctor_summary = _doctor_summary()
         data = DailyReportData(
             trading_day=day,
             generated_at=datetime.now(UTC),

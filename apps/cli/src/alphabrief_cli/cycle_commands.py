@@ -724,6 +724,7 @@ def _open_trading_cycle(
     quantity_override: Decimal | None = None,
     direction_override: str | None = None,
     override_reason: str | None = None,
+    single_call_runner: Any = None,
 ) -> Iterator[DailyTradingCycle]:
     """One production composition and bounded resource lifetime for all rounds."""
     from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -773,12 +774,13 @@ def _open_trading_cycle(
 
         nav = _nav(sources) if quantity_override is None else None
         model_budget = _model_budget(calls)
+        committee = build_ai_trading_committee(
+            record_sink=_call_recorder(calls),
+            daily_budget=model_budget,
+            validation_sink=calls.save_validation,
+        )
         yield DailyTradingCycle(
-            committee=build_ai_trading_committee(
-                record_sink=_call_recorder(calls),
-                daily_budget=model_budget,
-                validation_sink=calls.save_validation,
-            ),
+            committee=committee,
             risk_gate=_risk_gate(
                 symbols, nav=nav, require_nav=quantity_override is None
             ),
@@ -812,6 +814,7 @@ def _open_trading_cycle(
             sizing_provider=_sizing_provider(sources),
             model_budget=model_budget,
             shadow_recorder=_shadow_recorder(shadows),
+            single_call_runner=single_call_runner,
             risk_warning_recorder=record_warning,
         )
 

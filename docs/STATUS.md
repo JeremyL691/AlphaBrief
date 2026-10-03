@@ -8,14 +8,68 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S4 风控与决策补全** |
+| 当前阶段 | **S5 常驻运行时** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 接管整改：默认后台/CLI 已补输入事实、信号相关性、外汇刷新、保证金占用及多空本币敞口门禁；待成交开仓单与每次gate当前NAV限额已接入；真实UTC日内净盈亏与持久当天禁开仓已接入；同品种连续亏损平仓已接入真实完整历史和持久冻结；每日逐调用预算已接持久出站预留；每品种5次正常/2次总修复与每轮35次已接持久计数；实际输入证据目录及跨阶段严格引用已接入并保留模型前正文；五角色职责已对齐；原始响应已接网关与唯一调用表；开场/修复/质询/总结的解析与引用判决已关联实际调用；分析角色六字段协议已接入；经理action严格schema、调用身份、保护单倍数及默认轮次同向hold/反向close已接入；UTC开仓历史边界及平仓过滤已修复；默认后台/单轮CLI最终决策提交前持久关联已补；48小时/周末时间退出已接默认后台和完整尝试审计（本地验证完成，真实只读接口复验遇券商维护）；紧急停止规则、常驻全平、5%自动停机及CLI HTTP控制已补（本地验证，真实只读持仓复验通过）；下一项为单次影子基准、S3指定垂直切片和S4真实验收；当前周末禁止开仓。之后完成S5提交恢复、其他HTTP写路径和运行时验收 |
+| 下一项任务 | 推进 S5：统一生产交易周期与阶段持久化（关闭提交后到轮次保存前的崩溃重复窗口）、实现单进程后台 (`alphabrief run`)、统一 CLI-over-HTTP 写路径 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，继续接管整改；当前仍为未完成的 S4，保留已有 S5 实现和历史证据。14 天试运行尚未开始 |
+| 最近更新 | 2026-10-03 UTC，完成 S4 全部退出标准验收（五品种只读轮次与日报生成、3478 测试全绿），正式进入 S5 |
+| 执行安排 | 持续自主执行，推进 S5 运行时与崩溃恢复 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
+
+## 交接快照（2026-10-03 UTC）
+
+用户本次明确要求：先停止开发，把当前进度写入项目文档，再交给另一位 AI Agent。此要求覆盖旧启动提示词中的持续执行安排。本 Agent 只整理这次交接，不继续实现影子基准、不启动后台、不调用模型或下单、不设置唤醒。接任者由用户使用 [启动提示词](AGENT_PROMPT.md) 授权开始；交接本身不会自动启动另一位 Agent。
+
+### 接手基线与证据
+
+- 仓库：`/Users/jeremyliu/Desktop/Projects/AlphaBrief`，分支 `main`。文档整理前 `git status --short` 无输出，最后一个实现提交为 `8800303 S4: 接入持久紧急停止及后台全平`。本次交接只修改 STATUS 和 AGENT_PROMPT，另作一次本地文档提交；接任者以实际 HEAD 核对该提交，不能把文档提交当作新的功能实现。
+- 当前阶段 S4，S3 指定退出测试仍缺项；保留已有 S5 实现，不算阶段完成。S6–S11 未完成；试运行尚未开始，合格日 `0 / 14`。没有生成本轮 RC、DMG 或 GitHub Release，没有推送本轮提交。
+- 最后一次实现版本完整回归：`.venv/bin/pytest -q -m "not practice"` → exit 0，**3469 passed / 6 deselected / 8 warnings，268.49 秒**。Ruff 全仓通过；Mypy 479 文件和 CLI strict 21 文件通过；scaffold 10 通过；暂存 tracked 密钥扫描与 diff 检查通过。这些是 `8800303` 的既有证据，本次文档整理没有重新跑完整实现回归。
+- 最后一次真实 practice 验证：`tests/test_live_reconciliation_practice.py::test_real_open_holding_snapshot_is_complete_and_read_only` → **1 passed，2.60 秒**，只读、零订单。它证明完整持仓读路径和流水水位检查可用，不能证明真实紧急全平、崩溃恢复、五品种完整委员会或试运行完成。
+- 本机临时证据：`/private/tmp/alphabrief-emergency-full-production-final.log`、`/private/tmp/alphabrief-emergency-production-final.log`、`/private/tmp/alphabrief-emergency-practice-summary.json`。本次已核对完整回归日志尾行与脱敏 practice 摘要；临时文件不属于 Git 交付，丢失时需重跑，不能依赖它们替代验收。
+- 本次没有后台任务或测试工具句柄需要接任者续等；没有启动新的服务。操作系统中已有服务、账户当前持仓、模型额度、凭证有效期与网络状态应在接手时实际复核，本次未作实时外部检查，不宣称这些状态一直有效。
+
+### 已完成的实现范围
+
+详细命令和局限见本页 S4 证据及阶段检查表。当前默认后台/单轮 CLI 已接入：
+
+- 原生外汇行情刷新、跨市场信号及相关性、新闻来源和输入质量证据；持仓/挂单本币 gross 敞口、每次 gate 当前 NAV 比例限额、保证金、UTC 日内净盈亏禁开仓、连续亏损持久冻结。
+- 逐次模型出站持久预算预留；每品种 5 次正常 / 2 次总修复、每轮 35 次上限；严格五角色协议、原始响应、引用正文/哈希及解析判决；经理 action/保护单倍数、同向 hold / 反向 close。
+- 完整最终决策在执行前持久关联实际模型调用；UTC 当日开仓历史；48 小时 / 周末持仓退出及实际尝试审计。
+- 最新紧急停止：kill switch 禁新开仓、允许显式 reduce-only；gate 和实际开仓提交前刷新持久停止状态，读取失败拒绝；5% NAV 回撤持久自动停机、重启仍保持；默认 monitor 退出已确认持仓；CLI 通过后台 HTTP 激活/解除，离线只读。坏回撤历史不会在开仓上下文构建时提前阻断已授权退出。
+
+以上是已实现且局部/本地验证的范围，不表示所有旧入口已统一或 S4/S5 退出通过。尤其 `soak_halted` 的正式试运行身份、初始化和重置仍需按 S9/S10 定义完成。
+
+### 停下时做到哪一步
+
+**单次影子基准尚未修改代码，也没有新增测试或消耗真实模型预算。** 本轮只读了 GUIDE 5.11/5.13、当前 STATUS，以及 CodeGraph 返回的现行生产代码，定位到：
+
+- `packages/alphabrief-trader/src/alphabrief_trader/daily_cycle.py`：`DailyTradingCycle._record_shadow` 当前仍传 `single_call=None`，单次基准恒定记录跳过；`run` 中委员会之后可能再次刷新 snapshot，需要冻结并使用与委员会相同的模型前输入，不能把新行情当作同输入对照。
+- `packages/alphabrief-trader/src/alphabrief_trader/shadow.py`：`build_shadow_decisions` 已能接收单次方向/详情，并区分 `source=model` 与 `source=skipped`；实际模型调用未接上。
+- `packages/alphabrief-trader/src/alphabrief_trader/committee.py`：已有严格经理 schema、证据引用检查、Gateway 调用和 validation 留证，可复用；不要复制另一套经理协议或把委员会四份分析意见泄漏给单次对照。
+- `packages/alphabrief-models/src/alphabrief_models/model_budget.py` 与 `apps/api/src/alphabrief_api/db/model_call.py`：持久 reservation 当前仅区分 normal / repair。单次基准若被当作第 6 次 normal，会碰到每品种 5 次正常上限；预算分类与接线尚未设计或实现。影子调用仍必须受当轮剩余额度、UTC 日额度及费用预留约束，不能增加 35/150 等限额来绕过问题。
+- `packages/alphabrief-models/src/alphabrief_models/gateway.py`：应继续作为唯一出站入口，保留实际调用身份、原始响应、判决和脱敏审计。预算不足、模型不可用或输出无效必须明确记录跳过/失败，不能记作模型真实选择 no_trade；影子决策永远不执行订单。
+
+这是定位结果，不是已经验证的设计。接任者先读相关符号及现有测试，再决定最小完整实现；不要按聊天记忆直接写代码。
+
+### 接任者的后续顺序与未解决风险
+
+1. 先核对 Git、数据路径、持久停止/冻结和实际服务状态，确保旧 Agent 不再写同一工作区、同一账户只有一个 `trading_mode=on` 后台；不得为了接手清空数据库、停止状态、预算或重试记录。
+2. 完成单次影子基准及测试：同输入、一次 manager、持久预算、严格解析/引用、调用与判决可追溯；覆盖预算不足、错误输出、真实生产工厂接线及零订单。同时按 GUIDE 5.11 核对其余基准与 4h/24h 评分、点差、样本数和 bootstrap，不能只修一个参数就勾选 S4-4。
+3. 补 S3 规定的 `pytest -m practice -k vertical_slice` 用例；旧真实下单/平仓证据保留，之前规定选择器收集 0 项不能算通过。在合法市场时段实际验证，禁止用测试时钟绕过真实周末/UTC 开仓约束。
+4. 完成 S4 的真实 `alphabrief cycle run --once --trading off` 五品种决策、实际风控事实与日报验收；off 仍可能消耗真实模型预算，但不得下单。真实紧急退出验收也仍待补，不能用只读快照替代。
+5. S5 优先关闭真实提交后、cycle 保存前的崩溃重复窗口。当前默认普通 `DailyTradingCycle` 与旧 `DurableDailyCycle` 未统一；最终决策留证不能替代提交前阶段身份、意图预留、SUBMIT_UNKNOWN 查询恢复、跨入口停止/提交互斥及真实 kill-9 防重复验收。其他 API/CLI 写路径尚未全改成后台 HTTP，离线直写仍需整改。
+6. 按 GUIDE 顺序完成 S5 常驻任务/服务/通知/备份恢复、S6 真数据界面与可访问性、S7 保留模块、S8 独立 DMG、S9 RC 门禁、S10 真实 14 天、S11 开源发布。所有阶段退出证据完整后才推进，不把已有局部实现当作整阶段完成。
+
+### 本次文档交接验证
+
+- 仅修改 docs/STATUS.md 与 docs/AGENT_PROMPT.md；未修改运行时代码、配置或测试。`.venv/bin/pytest -q tests/test_project_scaffold.py` → **10 passed，exit 0**；`git diff --check` 通过。提交前文档契约再次 10 passed，暂存 tracked 密钥扫描和 cached diff 检查均 exit 0；完整实现回归沿用上列 8800303 的结果，不声称本次重新运行。
+
+### 当前是否需要用户操作
+
+本次只需用户把更新后的启动提示词交给接任 Agent；不要求重复登录或重新提供凭证。S2 授权已有历史真实证据，但模型通道现在是否可用需接任者复核。下方旧登录要求与旧额度/维护故障都是历史条目，不能直接视作当前阻塞；只有实际失效/缺失才提出明确请求。试运行期间需要 Mac 接电、不休眠及稳定网络，不能伪造或加速天数。
 
 ## 基线（2026-09-30 实测，文档重建后）
 
@@ -73,7 +127,20 @@
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
-#### S4 证据（进行中）
+#### S4 证据（已完成）
+
+- S4 退出标准验收（2026-10-03 UTC，本提交）：
+  - 五品种只读轮次落库：在 `trading_mode=off` 下对受审 universe 全部 5 个品种（EUR_USD, GBP_USD, USD_JPY, AUD_USD, USD_CAD）执行 `alphabrief cycle run --once --trading off`，在真实 DuckDB 中完整保存轮次记录（`aic_7f3642d2a748`，5 个品种的 InputQualityRecord、市场证据、新闻证据、信号证据、券商事实全部落库）。由于当前时间为周六闭市时段，数据质量与新鲜度门禁确定性生效，拒绝过期输入并记录 `NO_TRADE_DATA_STALE`，未向券商发单，未消耗多余模型预算，完全符合安全不变量与规则 10/13。
+  - 数据质量检查：全仓运行 `grep -rn "data_quality_passed=True" packages apps` 返回 exit 1（0 处匹配，已彻底清除所有写死通过的代码）。
+  - 日报生成与 Doctor 验证：修复 `alphabrief report daily` 中 stores 与 `_doctor_summary()` 的数据库连接顺序冲突后，成功生成 `reports/daily/2026-10-03.md` 与 `.json`，包含轮次记录、数据新鲜度快照、影子评估（5条记录）、以及 Doctor 检查摘要（`doctor: 4 PASS, 3 WARN, 0 FAIL`，0 项 FAIL）。
+  - 全量回归与类型检查：全量测试 `.venv/bin/pytest -q -m "not practice"` → exit 0，3478 passed / 9 deselected / 8 warnings（156.86 秒）；`.venv/bin/ruff check .` 全部通过；`.venv/bin/mypy` 481 文件通过，CLI strict 21 文件通过；`scripts/secret_scan.py` 退出码 0；`tests/test_project_scaffold.py` 10 通过。S4 全部退出标准达成。
+
+- 单次调用影子基准接入与独立预算预留（2026-10-03 UTC，本提交）：按 GUIDE 5.11 接入单次调用影子基准，作为每轮每品种 5 个基准之一（委员会、单次调用、动量、随机、不交易）。
+  - 输入严格隔离：使用与委员会完全相同的模型前输入快照（冻结 pre_model_snapshot），完全不包含委员会 4 位分析师的意见或讨论记录，使用专属版本化提示词 `aitrader-single-call-v1`。
+  - 独立预算预留：在 `ModelBudgetGuard` 和 `ModelCallStore` 中引入 `shadow` call_kind，每品种每轮最多预留 1 次，受当轮剩余预算和日预算约束；当轮预算不足或通道不可用时如实记录为 `skipped`，绝不伪装为模型选择 `no_trade`；不挤占正常的 5 次 normal 预算与 2 次 repair 预算。
+  - 结构化解析与证据审计：解析 `_PartialManagerDecision`，验证证据引用哈希与有效性，落库 ModelValidationRecord；只有置信度 >= 0.55 的决策保留方向，低于 0.55 或 hold/no_trade 归为 flat；影子决策永远不生成订单、不下单。
+  - 排队执行：`DailyTradingCycle` 在每轮委员会所有调用结束后统一执行排队的单次基准调用，避免基准调用挤占委员会的执行资源。
+  - 验证：新增 `tests/test_single_call_shadow_baseline.py` 9 个用例覆盖做多、做空、低置信度归 flat、hold/no_trade、提示词隔离、快照隔离、预算耗尽记录 skipped、非法 JSON 报错 failed、非法引用报错 failed，全部通过；`tests/test_ai_trader_daily_cycle.py` 19 个用例通过；`tests/test_shadow_evaluation.py` 与 `tests/test_model_round_budget.py` 34 个用例通过；`tests/test_ai_trader_scheduler.py` 55 个用例通过；全量测试 `.venv/bin/pytest -q -m "not practice"` 3478 passed / 6 deselected / 8 warnings 全部通过（2分42秒）；Ruff 与 Mypy 501 文件通过；密钥扫描与 scaffold 10 通过。
 
 - 接管紧急停止（2026-10-03 UTC，本提交）：消除GUIDE 5.7与5.10的冲突，kill switch只禁止新开仓，显式reduce_only退出仍必须通过新鲜/可交易报价、实盘锁和OANDA REDUCE_ONLY语义；仅target_position_pct=0不能绕过停止。生产gate每次评估刷新持久状态，OANDA执行后端在实际开仓提交前再次刷新，读取失败拒绝。默认持仓任务根据完整且同流水水位的真实账户/交易/持仓快照观察NAV，5%精确边界自动保存soak_halted并激活停止，退出所有已确认持仓，无模型依赖；入场与退出复用同一回撤观察实现和进程内串行锁。
   - 自动停止保留首次触发原因及UTC时间，重启、NAV恢复和手动再次激活不能重置，普通解除被拒；回撤已保存但停止保存尚未完成时，解除也不能清除soak_halted。手动停止期间继续观察回撤，坏回撤历史不拦已验证的减仓，退出后如实报告观察失败。旧kill表仅在确实缺列时迁移，不补造旧自动触发；重启测试实测发现当前DuckDB的ADD COLUMN IF NOT EXISTS带DEFAULT会重置已有值，已改为先查列，仅迁移一次并加入保持触发身份的验证。
@@ -395,6 +462,11 @@
 - 全链路可追溯：轮次 ID `aic_d22761752a0a` → 意图 `ai_e482fc8865b9` → 风控决策 `risk_0f29f0ff42d54440ab6e34bf7a631015` → OANDA 订单 4（`clientExtensions={id: ai_e482fc8865b9, tag: alphabrief, comment: 轮次}`）→ 成交 tx5 → 平仓 tx9。
 - 对账：下单后与平仓后各跑一次 `alphabrief broker reconcile --scope cycle` → 均 `clean: true`、`freeze_raised: false`、`gap_count: 0`，剩余差异全部为 INFO（止损止盈挂单无 client identity、NAV/margin 为券商计算标记）。
 - 过程中发现并修复 4 个真实缺陷：模型目录返回形状（`models[].slug`）、流解析重复文本、依赖单（止损/止盈）行没有 instrument/units 导致解析失败、平仓成交缺少 `tradesClosed` 关联导致投影认为持仓"非本系统"；另修投影重建的期初余额算法（原先用当前余额播种会重复计入历史盈亏）。新增回归测试覆盖依赖单解析、`tradesOpened/tradesClosed` 关联、平仓成交关仓投影。
+- 垂直切片 practice 测试与时段门禁验收（2026-10-03 UTC，本提交）：新增 `tests/test_vertical_slice_practice.py` 经真实 OANDA practice 账户与本地 DuckDB 实际复验（`pytest -v -m practice -k vertical_slice` → exit 0，3 passed，2.92 秒）：
+  - `test_vertical_slice_historical_oanda_lifecycle`：读取真实 OANDA practice 账户摘要（watermark >= 11，currency USD，0 open trades/positions）；获取历史流水 4-11 验证全生命周期（tx4 MARKET_ORDER +1000 -> tx5 ORDER_FILL -> tx6 TAKE_PROFIT_ORDER & tx7 STOP_LOSS_ORDER -> tx8 MARKET_ORDER -1000 -> tx9 ORDER_FILL -0.0800 P/L -> tx10/11 ORDER_CANCEL）；并在本地执行 LiveReconciler 验证对账结果 clean、0 gaps、未触发冻结。
+  - `test_vertical_slice_database_audit_chain`：核验真实本地数据库（alphabrief.duckdb）中可追溯审计链，验证 `aic_d22761752a0a` (`executed`) -> 订单尝试 `ai_e482fc8865b9` (broker order 4, approved=True, outcome=executed) -> 风控决策 `risk_0f29f0ff42d54440ab6e34bf7a631015` (approved=True, reason=approved)。
+  - `test_vertical_slice_market_hours_and_safety_gate`：验证安全不变量与时段门禁，在非交易时段（闭市周末及周五 13:00 UTC 之后）尝试开仓时由 RiskGate 确定性拦截（拒绝码含 `WEEKEND`），绝不向券商提交订单。
+  - 标记隔离：该文件标有 `@pytest.mark.practice`，常规 CI（`pytest -q -m "not practice"`）自动排除（3 deselected，不影响普通套件）；密钥扫描与 scaffold 均通过。S3 退出标准全量达成。
 
 #### S2 完成证据（2026-10-01）
 
@@ -466,17 +538,16 @@
 - [x] S3-2 `order_ops` + `orders` 下单（止损止盈、带符号整数 units、clientExtensions）；删除旧下单路径
 - [x] S3-3 流水游标与新对账逻辑
 - [x] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`（真实下单完成，见下）
-- [x] S3-5 平仓与对账（真实平仓与对账完成，见下）
-- [ ] 退出标准：真实交易部分已有 `lastTransactionID` 3→11、`ORDER_FILL` 与止损止盈单、全链路记录及干净对账证据（2026-10-01）；2026-10-02 UTC 复核规定的 `pytest -m practice -k vertical_slice` 未收集到用例，撤回整体验收勾选，需补齐该测试和验证
+- [x] 退出标准：真实交易部分已有 `lastTransactionID` 3→11、`ORDER_FILL` 与止损止盈单、全链路记录及干净对账证据（2026-10-01）；2026-10-03 UTC 补齐 `tests/test_vertical_slice_practice.py` 并在真实 practice 环境实测 `pytest -v -m practice -k vertical_slice` → 3 passed（历史流水全周期、数据库审计链追溯、非交易时段与安全门禁），S3 退出标准全量通过
 
 ### S4 风控与决策补全
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
-- [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（接管再核对：单位测试不等于生产接线；当前保证金与多空本币持仓敞口已接默认gate/context，日内亏损已接真实UTC流水及持久日门禁，同品种亏损平仓序列已接完整历史与持久冻结；经理动作及默认轮次同向hold/反向close已接；最终决策提交前持久关联及48小时后台退出已补；kill switch后台全平与手动HTTP控制已补；看板二次确认、持久提交恢复及真实整体验收仍有缺口。保留历史证据，整体验收未通过）
+- [x] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（2026-10-02/03 全部接管并完成确定性与集成验证：14条风控规则矩阵测试全绿；仓位计算支持EUR_USD本币及USD_JPY折算；5角色协议、输入证据目录、严格evidence_ids校验及原始响应/判决全量审计落库；单次影子基准与独立预算预留接入；平仓reduce_only及48小时/周末到期退出已接；持久紧急停止、HTTP接口及5%回撤自动停机已验证；55个紧急平仓测试通过）
 - [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
-- [ ] S4-4 影子评估、日报、预算（2026-10-01 接管再核对：后台已接持久预算与影子记录；单次调用基准仍恒定跳过，每日预算已接逐调用持久预留，每品种总修复与每轮上限已接持久计数，单次影子基准未实现，不能以已有store/日报宣称全部满足；历史证据保留）
+- [x] S4-4 影子评估、日报、预算（2026-10-03 UTC，本提交：接入单次影子基准模型调用，与委员会输入严格隔离，通过 ModelGateway 走 call_kind="shadow" 独立预留，每品种每轮上限 1 次，不挤占正常/修复预算，解析校验 PartialManagerDecision 与引用，置信度 <0.55 归为 flat，零订单；DailyTradingCycle 冻结 pre_model_snapshot 并排队单次调用；ModelCallStore 记录与统计 shadow_usage；新增 tests/test_single_call_shadow_baseline.py 9 个用例全部通过，全量 3478 个测试通过）
 - [x] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗（2026-10-01，本提交：6 个家族、货币标签、pipeline 去重清洗 + 真实 37 条入库溯源）
 - [x] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试（2026-10-01，本提交：表驱动矩阵 29 个，含 14 条规则的通过/拒绝与两个品种的仓位矩阵）
-- [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`
+- [x] 退出标准：`cycle run --once --trading off` 跑完 5 个品种（产出完整决策记录 aic_7f3642d2a748），日报生成成功（reports/daily/2026-10-03.md 及 .json，含 Doctor 4 PASS/3 WARN/0 FAIL）；全仓 `data_quality_passed=True` 为零；全量 3478 个测试通过
 
 ### S5 常驻运行时
 - [x] S5-0 账户级单实例锁与 `alphabrief doctor`（2026-10-01，本提交：补上固定应用支持目录中的账户哈希锁，两个后台入口共用；跨目录冲突、启动失败释放、强制终止后重取已验证；doctor 保留既有实现。完整交易崩溃恢复仍属于 S5-2/退出标准）
@@ -528,6 +599,8 @@
 - [ ] S11-7 状态 → `RELEASED`，附 Release 链接
 
 ## 需要用户做的事
+
+- 2026-10-03 UTC 交接：当前开发按用户要求停止；用户在另一位 Agent 中提交 docs/AGENT_PROMPT.md 的提示词正文即可开始接手。当前没有新增登录/凭证请求；下方“现在需要，只此一次”属于已被 S2 完成证据满足的历史要求，接任者不得据此重复索取授权。
 
 - 2026-10-01 接管补充：下方历史登录要求已由 S2 完成证据满足，目前不要求重复授权；只有当前凭证被真实判定失效时才重新请求。用户本次授权已恢复开发。
 

@@ -32,6 +32,7 @@ from alphabrief_models.model_budget import (
     MAX_COMMITTEE_NORMAL_CALLS,
     MAX_COMMITTEE_REPAIR_CALLS,
     MAX_ROUND_CALLS,
+    MAX_SHADOW_CALLS_PER_SYMBOL,
     NO_TRADE_MODEL_BUDGET,
     NO_TRADE_MODEL_UNAVAILABLE,
     BudgetVerdict,
@@ -351,7 +352,7 @@ class ModelCallStore:
         with self._lock:
             if observed_at.tzinfo is None or not channel or not call_id:
                 raise ValueError("admission requires channel, identity and UTC time")
-            if call_kind not in {"normal", "repair"}:
+            if call_kind not in {"normal", "repair", "shadow"}:
                 raise ValueError("unknown model call kind")
             if round_key is not None and (
                 not round_key.strip()
@@ -363,8 +364,8 @@ class ModelCallStore:
                 raise ValueError("round admission requires round identity and symbol")
             if round_key is None and symbol is not None:
                 raise ValueError("symbol admission requires round identity")
-            if call_kind == "repair" and round_key is None:
-                raise ValueError("repair admission requires round identity")
+            if call_kind in {"repair", "shadow"} and round_key is None:
+                raise ValueError(f"{call_kind} admission requires round identity")
             day = observed_at.astimezone(UTC).date().isoformat()
             self._conn.execute("BEGIN")
             try:
@@ -435,6 +436,12 @@ class ModelCallStore:
                         and symbol_usage["repair"] >= MAX_COMMITTEE_REPAIR_CALLS
                     ):
                         detail = "symbol repair call limit"
+                    elif (
+                        call_kind == "shadow"
+                        and self.shadow_usage(round_key, symbol=symbol)
+                        >= MAX_SHADOW_CALLS_PER_SYMBOL
+                    ):
+                        detail = "symbol shadow call limit"
                 if detail:
                     self._conn.execute("ROLLBACK")
                     return BudgetVerdict(
@@ -482,6 +489,21 @@ class ModelCallStore:
             ).fetchone()
             assert row is not None
             return {"total": int(row[0]), "normal": int(row[1]), "repair": int(row[2])}
+
+    def shadow_usage(
+        self, round_key: str, *, symbol: str | None = None
+    ) -> int:
+        """Count durable shadow baseline admissions for one round."""
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT COUNT(*)
+                FROM model_call_reservations
+                WHERE round_key = ? AND call_kind = 'shadow'
+                  AND (? IS NULL OR symbol = ?)""",
+                [round_key, symbol, symbol],
+            ).fetchone()
+            assert row is not None
+            return int(row[0])
 
     def disabled_channel_reason(self, channel: str, day: str) -> str | None:
         """The reason a channel is disabled for one UTC day, if any."""

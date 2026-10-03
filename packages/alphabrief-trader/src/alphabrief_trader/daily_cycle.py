@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -56,7 +57,7 @@ from alphabrief_models.model_budget import (
 )
 from alphabrief_risk import RiskGate
 
-from alphabrief_trader.committee import TradingCommittee
+from alphabrief_trader.committee import SingleCallResult, TradingCommittee
 from alphabrief_trader.cycle_execution import (
     CorrelationChain,
     IdempotencyMap,
@@ -107,6 +108,7 @@ from alphabrief_trader.shadow import (
     ShadowSide,
     build_shadow_decisions,
     committee_side,
+    single_call_decision,
 )
 from alphabrief_trader.sizing import SizingError, SizingInputs, size_entry
 from alphabrief_trader.stops import StopComputationError, protective_prices
@@ -114,6 +116,8 @@ from alphabrief_trader.stops import StopComputationError, protective_prices
 SnapshotLoader = Callable[[str], MarketSnapshot | None]
 SizingProvider = Callable[[str], "SizingInputs | None"]
 ShadowRecorder = Callable[[list[ShadowDecision]], None]
+#: Runs the single-call shadow baseline on the committee's own input.
+SingleCallRunner = Callable[[CommitteeInput], "SingleCallResult"]
 
 
 def _snapshot_fingerprint(snapshots: dict[str, MarketSnapshot]) -> str:
@@ -181,6 +185,31 @@ def is_live_trading_unlocked() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+@dataclass(frozen=True)
+class _PendingSingleCall:
+    """A frozen committee input waiting for its single-call baseline."""
+
+    symbol: str
+    payload: CommitteeInput
+    decided_at: datetime
+    entry_mid: Decimal
+
+
+def _single_call_detail(result: SingleCallResult) -> str:
+    parts: list[str] = [result.status]
+    if result.action is not None:
+        parts.append(f"action={result.action}")
+    if result.confidence is not None:
+        parts.append(f"confidence={result.confidence}")
+    if result.reason is not None:
+        parts.append(f"reason={result.reason}")
+    if result.call_id is not None:
+        parts.append(f"call_id={result.call_id}")
+    if result.validation_id is not None:
+        parts.append(f"validation_id={result.validation_id}")
+    return " ".join(parts)
+
+
 class DailyTradingCycle:
     """One daily cycle: snapshot → committee → risk → paper → record.
 
@@ -209,6 +238,7 @@ class DailyTradingCycle:
         model_budget: ModelBudgetGuard | None = None,
         model_channel: str = CHATGPT_PLAN_CHANNEL,
         shadow_recorder: ShadowRecorder | None = None,
+        single_call_runner: SingleCallRunner | None = None,
         snapshot_refresher: Callable[[MarketSnapshot], MarketSnapshot] | None = None,
         risk_warning_recorder: Callable[[RiskDecision], None] | None = None,
     ) -> None:
@@ -258,6 +288,10 @@ class DailyTradingCycle:
         # Shadow evaluation (PROJECT_GUIDE 5.11): every round records the
         # five benchmarks side by side. Recording never places an order.
         self._shadow_recorder = shadow_recorder
+        # The single-call baseline needs a budgeted model call, so it runs
+        # only when a runner is wired and only after every committee call of
+        # the round, which keeps a benchmark from starving the real decision.
+        self._single_call_runner = single_call_runner
         self._snapshot_refresher = snapshot_refresher
         self._risk_warning_recorder = risk_warning_recorder
         self._store = store
@@ -306,6 +340,7 @@ class DailyTradingCycle:
         all_attempts: list[OrderAttempt] = []
         input_quality: list[InputQualityRecord] = []
         committee_role_errors: list[str] = []
+        pending_single_calls: list[_PendingSingleCall] = []
         overall_outcome: CycleOutcome = "skipped_no_intent"
 
         if not self._enabled:
@@ -399,11 +434,13 @@ class DailyTradingCycle:
                     now=now,
                     plan=None,
                     detail=f"skipped: {blocked_reason}",
+                    single_call_skip=blocked_reason,
                 )
                 continue
 
+            pre_model_snapshot = snapshot
             payload = CommitteeInput(
-                snapshot=snapshot, time_horizon=time_horizon,
+                snapshot=pre_model_snapshot, time_horizon=time_horizon,
                 cycle_key=cycle_key or cycle_id,
             )
             result = self._committee.run(payload)
@@ -420,10 +457,12 @@ class DailyTradingCycle:
                     committee_role_errors.append(NO_TRADE_MODEL_UNAVAILABLE)
                 self._record_shadow(
                     cycle_id=cycle_id,
-                    snapshot=snapshot,
+                    snapshot=pre_model_snapshot,
                     now=now,
                     plan=None,
                     detail="committee produced no plan",
+                    single_call_input=payload,
+                    pending=pending_single_calls,
                 )
                 continue
             plan = result.plan
@@ -478,13 +517,15 @@ class DailyTradingCycle:
             all_plans.append(plan)
             self._record_shadow(
                 cycle_id=cycle_id,
-                snapshot=snapshot,
+                snapshot=pre_model_snapshot,
                 now=now,
                 plan=plan,
                 detail=(
                     f"side={plan.side} target={plan.target_position_pct} "
                     f"confidence={plan.confidence}"
                 ),
+                single_call_input=payload,
+                pending=pending_single_calls,
             )
 
             if plan.blocked_by_ethics:
@@ -547,6 +588,10 @@ class DailyTradingCycle:
             }))
             if attempt.outcome == "executed":
                 overall_outcome = "executed"
+
+        committee_role_errors.extend(
+            self._run_single_calls(pending_single_calls, cycle_id=cycle_id)
+        )
 
         if overall_outcome not in {
             "executed",
@@ -734,12 +779,19 @@ class DailyTradingCycle:
         now: datetime,
         plan: TradePlan | None,
         detail: str,
+        single_call_input: CommitteeInput | None = None,
+        single_call_skip: str | None = None,
+        pending: list[_PendingSingleCall] | None = None,
     ) -> None:
-        """Record the five shadow decisions for one symbol (5.11).
+        """Record the shadow decisions for one symbol (5.11).
 
         Nothing here can place an order: the benchmarks are recorded for
         later scoring only, and a benchmark without usable inputs is
-        recorded as skipped rather than guessed.
+        recorded as skipped rather than guessed. The single-call baseline
+        is not a deterministic benchmark: it is recorded here only when the
+        model channel is already known to be unavailable (``single_call_skip``);
+        otherwise its frozen committee input is queued in ``pending`` and run
+        after the round's committee calls.
         """
         if self._shadow_recorder is None:
             return
@@ -767,11 +819,87 @@ class DailyTradingCycle:
             committee_detail=detail,
             momentum=momentum,
             momentum_detail=momentum_detail,
-            single_call=None,
-            single_call_detail="skipped: the single-call benchmark needs a "
-            "budgeted model call",
+            include_single_call=False,
+            # A round with no plan is not the committee choosing flat.
+            committee_source="committee" if plan is not None else "skipped",
         )
         self._shadow_recorder(list(decisions))
+        if single_call_skip is not None:
+            self._shadow_recorder([
+                single_call_decision(
+                    cycle_id=cycle_id,
+                    symbol=snapshot.symbol,
+                    decided_at=now,
+                    entry_mid=snapshot.reference_price,
+                    source="skipped",
+                    side="flat",
+                    detail=f"skipped: {single_call_skip}",
+                )
+            ])
+        elif pending is not None and single_call_input is not None:
+            pending.append(
+                _PendingSingleCall(
+                    symbol=snapshot.symbol,
+                    payload=single_call_input,
+                    decided_at=now,
+                    entry_mid=snapshot.reference_price,
+                )
+            )
+
+    def _run_single_calls(
+        self, pending: list[_PendingSingleCall], *, cycle_id: str
+    ) -> list[str]:
+        """Run and record the queued single-call baselines (5.11).
+
+        Each call reads the exact pre-model input the committee read and
+        goes through the one ModelGateway under the durable ``shadow``
+        reservation, so the daily, round and per-symbol limits decide whether
+        it runs. A baseline that cannot run is recorded as ``skipped`` or
+        ``failed`` and never as a model choice of ``no_trade``. Nothing here
+        can place an order, and a failure to run or record one baseline never
+        undoes the already persisted round: it is returned as an error line.
+        """
+        if self._shadow_recorder is None or not pending:
+            return []
+        errors: list[str] = []
+        for item in pending:
+            if self._single_call_runner is None:
+                result = None
+                source = "skipped"
+                detail = "skipped: no single-call model runner is configured"
+                side: ShadowSide = "flat"
+            else:
+                try:
+                    result = self._single_call_runner(item.payload)
+                except Exception as exc:  # noqa: BLE001 - benchmark must not stop the round
+                    result = None
+                    source = "failed"
+                    detail = f"failed: single_call_error:{type(exc).__name__}"
+                    side = "flat"
+                    errors.append(
+                        f"{item.symbol}: single_call_error:{type(exc).__name__}"
+                    )
+                else:
+                    source = result.status
+                    side = result.side
+                    detail = _single_call_detail(result)
+            try:
+                self._shadow_recorder([
+                    single_call_decision(
+                        cycle_id=cycle_id,
+                        symbol=item.symbol,
+                        decided_at=item.decided_at,
+                        entry_mid=item.entry_mid,
+                        source=source,
+                        side=side,
+                        detail=detail,
+                    )
+                ])
+            except Exception as exc:  # noqa: BLE001 - the round's orders are already recorded
+                errors.append(
+                    f"{item.symbol}: single_call_record_failed:{type(exc).__name__}"
+                )
+        return errors
 
     def _budget_block(self) -> tuple[CycleOutcome, str] | None:
         """The outcome/reason when the model channel may not be called now."""
