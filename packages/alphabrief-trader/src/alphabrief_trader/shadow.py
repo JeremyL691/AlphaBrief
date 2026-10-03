@@ -45,6 +45,12 @@ MOMENTUM_WINDOW_DAYS = 20
 
 ShadowSide = Literal["long", "short", "flat"]
 
+#: Where a single-call row came from: a real answer, or why there is none.
+SINGLE_CALL_SOURCES = ("model", "skipped", "failed")
+
+#: Row sources that are not decisions and must never be scored as samples.
+UNSCORED_SOURCES = ("skipped", "failed")
+
 #: The caveat every statistics payload must carry (PROJECT_GUIDE 5.11).
 SMALL_SAMPLE_CAVEAT = (
     "14 days of samples is not enough to judge whether any benchmark is "
@@ -169,6 +175,40 @@ def committee_side(
     return "long" if side == "buy" else "short"
 
 
+def single_call_decision(
+    *,
+    cycle_id: str,
+    symbol: str,
+    decided_at: datetime,
+    entry_mid: Decimal | None,
+    source: str,
+    side: ShadowSide,
+    detail: str,
+) -> ShadowDecision:
+    """The single-call benchmark row (PROJECT_GUIDE 5.11).
+
+    ``source`` is ``model`` for a real, parsed manager answer, ``skipped``
+    when the budget or channel did not allow the call, and ``failed`` when a
+    call produced no usable answer. Only ``model`` carries a real side: a
+    skipped or failed baseline is flat and is never scored as a sample, so it
+    cannot pass for the model choosing ``no_trade``.
+    """
+    if source not in SINGLE_CALL_SOURCES:
+        raise ShadowError(f"unknown single-call source {source!r}")
+    if source != "model" and side != "flat":
+        raise ShadowError("a skipped or failed single call cannot carry a side")
+    return ShadowDecision(
+        cycle_id=cycle_id,
+        symbol=symbol,
+        benchmark="single_call",
+        side=side,
+        source=source,
+        detail=detail,
+        decided_at=decided_at,
+        entry_mid=entry_mid,
+    )
+
+
 def build_shadow_decisions(
     *,
     cycle_id: str,
@@ -181,28 +221,34 @@ def build_shadow_decisions(
     momentum_detail: str,
     single_call: ShadowSide | None = None,
     single_call_detail: str = "not attempted",
+    include_single_call: bool = True,
+    committee_source: str = "committee",
 ) -> tuple[ShadowDecision, ...]:
-    """Build the five shadow decisions for one symbol in one round."""
-    return (
+    """Build the shadow decisions for one symbol in one round.
+
+    All five by default. The daily cycle passes ``include_single_call=False``
+    because that baseline needs a budgeted model call that only runs after
+    the round's committee calls, so its row is written separately.
+    """
+    decisions = (
         ShadowDecision(
             cycle_id=cycle_id,
             symbol=symbol,
             benchmark="committee",
             side=committee,
-            source="committee",
+            source=committee_source,
             detail=committee_detail,
             decided_at=decided_at,
             entry_mid=entry_mid,
         ),
-        ShadowDecision(
+        single_call_decision(
             cycle_id=cycle_id,
             symbol=symbol,
-            benchmark="single_call",
-            side=single_call if single_call is not None else "flat",
-            source="model" if single_call is not None else "skipped",
-            detail=single_call_detail,
             decided_at=decided_at,
             entry_mid=entry_mid,
+            source="model" if single_call is not None else "skipped",
+            side=single_call if single_call is not None else "flat",
+            detail=single_call_detail,
         ),
         ShadowDecision(
             cycle_id=cycle_id,
@@ -235,6 +281,9 @@ def build_shadow_decisions(
             entry_mid=entry_mid,
         ),
     )
+    if include_single_call:
+        return decisions
+    return tuple(item for item in decisions if item.benchmark != "single_call")
 
 
 def directional_return_pct(
@@ -324,7 +373,9 @@ __all__ = [
     "MOMENTUM_WINDOW_DAYS",
     "SHADOW_BENCHMARKS",
     "SHADOW_HORIZONS_HOURS",
+    "SINGLE_CALL_SOURCES",
     "SMALL_SAMPLE_CAVEAT",
+    "UNSCORED_SOURCES",
     "ShadowDecision",
     "ShadowError",
     "ShadowScore",
@@ -335,5 +386,6 @@ __all__ = [
     "directional_return_pct",
     "momentum_side",
     "random_side",
+    "single_call_decision",
     "summarize",
 ]

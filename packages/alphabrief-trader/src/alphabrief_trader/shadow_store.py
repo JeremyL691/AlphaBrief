@@ -152,7 +152,12 @@ class ShadowStore:
     def due_for_scoring(
         self, *, now: datetime, horizons: tuple[int, ...] = SHADOW_HORIZONS_HOURS
     ) -> list[dict[str, Any]]:
-        """Decisions whose horizon has passed but which have no score yet."""
+        """Decisions whose horizon has passed but which have no score yet.
+
+        Rows that are not decisions (a skipped or failed benchmark) are never
+        due: scoring one as a flat decision would add a fake zero-return
+        sample and make a missing benchmark look like a real ``no_trade``.
+        """
         due: list[dict[str, Any]] = []
         for row in self.list_decisions(limit=10000):
             decided_at = row["decided_at"]
