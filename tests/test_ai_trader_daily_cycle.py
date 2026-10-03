@@ -27,6 +27,7 @@ from alphabrief_trader.daily_cycle import (
 from alphabrief_trader.db_store import AiTradingStore
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.schemas import MarketSnapshot
+from alphabrief_trader.shadow import SHADOW_BENCHMARKS, ShadowDecision
 from committee_provider import GroundedProvider
 
 _BULLISH_PAYLOAD = {
@@ -442,22 +443,23 @@ class TestShadowRecording:
     def test_five_benchmarks_are_recorded_per_symbol(
         self, store: AiTradingStore
     ) -> None:
-        recorded: list[object] = []
+        recorded: list[ShadowDecision] = []
         self._cycle(store, recorded.extend).run(["SPY"])
 
         assert len(recorded) == 5
-        benchmarks = [decision.benchmark for decision in recorded]  # type: ignore[attr-defined]
-        assert benchmarks == [
-            "committee",
-            "single_call",
-            "momentum",
-            "random",
-            "no_trade",
-        ]
-        committee = recorded[0]
-        assert committee.side == "long"  # type: ignore[attr-defined]
+        by_benchmark = {decision.benchmark: decision for decision in recorded}
+        # The single-call baseline is written after the round's committee
+        # calls, so the list order is not the guide order; the set is.
+        assert sorted(by_benchmark, key=SHADOW_BENCHMARKS.index) == list(
+            SHADOW_BENCHMARKS
+        )
+        assert by_benchmark["committee"].side == "long"
         # Recording never submits: trading is off and nothing was attempted.
-        assert recorded[0].entry_mid == Decimal("100")  # type: ignore[attr-defined]
+        assert by_benchmark["committee"].entry_mid == Decimal("100")
+        # Without a wired model runner the baseline is a recorded skip, never
+        # a flat decision that could pass for the model choosing no_trade.
+        assert by_benchmark["single_call"].source == "skipped"
+        assert by_benchmark["single_call"].side == "flat"
 
     def test_no_plan_still_records_the_benchmarks(
         self, store: AiTradingStore

@@ -37,8 +37,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from alphabrief_trader.committee_prompts import (
     PROMPT_VERSION,
+    SINGLE_CALL_PROMPT_VERSION,
     build_challenge_prompt,
     build_committee_prompt,
+    build_single_call_prompt,
     build_summary_prompt,
     default_roles,
 )
@@ -249,6 +251,29 @@ class CommitteeResult(BaseModel):
     repair_attempts: list[RepairVerdict] = Field(default_factory=list)
 
 
+class SingleCallResult(BaseModel):
+    """Outcome of the one-call shadow baseline for one symbol (GUIDE 5.11).
+
+    ``status`` separates the three things the benchmark must never blur:
+    ``model`` is a real, parsed, grounded manager answer (a flat side from a
+    ``hold``/``no_trade`` answer is the model's own choice and a legitimate
+    sample); ``skipped`` means the budget or channel did not allow the call;
+    ``failed`` means a call was dispatched but gave no usable answer. Only a
+    ``model`` result may carry a side; the other two always read ``flat``
+    with ``call_id``/``reason`` explaining why.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["model", "skipped", "failed"]
+    side: Literal["long", "short", "flat"] = "flat"
+    action: str | None = None
+    confidence: float | None = None
+    call_id: str | None = None
+    validation_id: str | None = None
+    reason: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Committee
 # ---------------------------------------------------------------------------
@@ -328,6 +353,98 @@ class TradingCommittee:
     @property
     def fallback_channels(self) -> tuple[str, ...]:
         return self._gateway.fallback_channels
+
+    def run_single_call(self, payload: CommitteeInput) -> SingleCallResult:
+        """The single-call shadow baseline: same input, one manager call.
+
+        The prompt is rendered from the same :class:`CommitteeInput` as the
+        committee's openings, with no analyst opinion. The call goes through
+        the one ModelGateway under the ``shadow`` call kind, so the durable
+        reservation enforces the daily, round and per-symbol limits; it is
+        never repaired or retried. It cannot place an order: the caller
+        records the result as a shadow decision only.
+        """
+        # Revalidate even model_copy inputs at the trusted model boundary.
+        payload = CommitteeInput.model_validate(payload.model_dump())
+        snapshot = payload.snapshot
+        request_id = f"ait_{uuid4().hex[:12]}"
+        request = ModelRequest(
+            request_id=f"{request_id}_single_call",
+            cycle_key=payload.cycle_key or request_id,
+            task_type="symbol_research",
+            prompt_version=SINGLE_CALL_PROMPT_VERSION,
+            input_text=build_single_call_prompt(payload),
+            required_capabilities=["structured_output"],
+            call_kind="shadow",
+            metadata={
+                "committee_role": "manager",
+                "phase": "single_call",
+                "available_evidence_ids": json.dumps(payload.evidence_ids),
+                "symbol": snapshot.symbol,
+            },
+        )
+        result = self._gateway.invoke(request)
+        if result.response is None or result.record.status != "succeeded":
+            code = _failure_code("single_call", result.record)
+            blocked = ": model_budget:" in code or ": provider_unavailable:" in code
+            # A rejected admission never left the machine: it has no outbound
+            # call identity to point at.
+            dispatched = result.record.status != "rejected"
+            return SingleCallResult(
+                status="skipped" if blocked else "failed",
+                call_id=result.record.call_id if dispatched else None,
+                reason=code.split(": ", 1)[1],
+            )
+        parsed: StructuredOutputResult[_PartialManagerDecision] = (
+            parse_structured_output(result.response, target=_PartialManagerDecision)
+        )
+        violations = (
+            []
+            if parsed.parsed is None
+            else _vote_grounding_violations(parsed.parsed, payload)
+        )
+        self._gateway.record_validation(
+            result.record.call_id,
+            target=_PartialManagerDecision,
+            parsed=parsed.parsed,
+            error_code=None if parsed.ok else str(parsed.error_code),
+            violations=violations,
+        )
+        validation_id = self._gateway.validation_records[-1].validation_id
+        call_id = result.record.call_id
+        if not parsed.ok or parsed.parsed is None:
+            return SingleCallResult(
+                status="failed",
+                call_id=call_id,
+                validation_id=validation_id,
+                reason=(
+                    "schema_validation_failed:" + (parsed.error_code or "parse_failed")
+                ),
+            )
+        if violations:
+            return SingleCallResult(
+                status="failed",
+                call_id=call_id,
+                validation_id=validation_id,
+                reason="grounding_failed",
+            )
+        decision = parsed.parsed
+        side: Literal["long", "short", "flat"] = "flat"
+        # GUIDE 5.4: confidence below 0.55 is no_trade whatever the config says.
+        floor = max(self._discipline.config.no_trade_below_confidence, 0.55)
+        if decision.confidence >= floor:
+            if decision.action == "open_long":
+                side = "long"
+            elif decision.action == "open_short":
+                side = "short"
+        return SingleCallResult(
+            status="model",
+            side=side,
+            action=decision.action,
+            confidence=decision.confidence,
+            call_id=call_id,
+            validation_id=validation_id,
+        )
 
     def run(self, payload: CommitteeInput) -> CommitteeResult:
         """Run the bounded multi-turn discussion and synthesize a plan.
@@ -807,5 +924,6 @@ def _as_decimal(value: float | Decimal) -> Decimal:
 
 __all__ = [
     "CommitteeResult",
+    "SingleCallResult",
     "TradingCommittee",
 ]

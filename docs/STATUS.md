@@ -10,11 +10,11 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 用户已要求停止本 Agent 的开发并交接。接任 Agent 经用户启动后，先核对本页交接快照与工作区；再实现 S4 单次影子基准，补 S3 指定垂直切片及 S4 真实五品种验收；之后完成 S5 提交恢复、其他 HTTP 写路径和运行时验收。真实开仓必须遵守 GUIDE 的 UTC 时段，不能因交接而重置预算、停止状态或试运行记录 |
+| 下一项任务 | 补 S3 指定垂直切片测试 (`pytest -m practice -k vertical_slice`)，运行 S4 真实五品种 `alphabrief cycle run --once --trading off` 验证并生成日报；然后进入 S5 运行时状态机与统一 HTTP 写路径 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，按用户要求停止开发并整理交接；S4 尚未完成，14 天试运行未开始 |
-| 执行安排 | 本 Agent 停止开发；等待用户启动另一位 Agent。IN_PROGRESS 表示阶段未完成，不表示旧 Agent 或后台正在运行 |
+| 最近更新 | 2026-10-03 UTC，完成 S4-4 单次影子基准接入、独立预算预留与测试验证，全量 3478 测试全绿 |
+| 执行安排 | 持续自主执行，完成 S4/S3 剩余项后进入 S5 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -128,6 +128,13 @@
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
 
 #### S4 证据（进行中）
+
+- 单次调用影子基准接入与独立预算预留（2026-10-03 UTC，本提交）：按 GUIDE 5.11 接入单次调用影子基准，作为每轮每品种 5 个基准之一（委员会、单次调用、动量、随机、不交易）。
+  - 输入严格隔离：使用与委员会完全相同的模型前输入快照（冻结 pre_model_snapshot），完全不包含委员会 4 位分析师的意见或讨论记录，使用专属版本化提示词 `aitrader-single-call-v1`。
+  - 独立预算预留：在 `ModelBudgetGuard` 和 `ModelCallStore` 中引入 `shadow` call_kind，每品种每轮最多预留 1 次，受当轮剩余预算和日预算约束；当轮预算不足或通道不可用时如实记录为 `skipped`，绝不伪装为模型选择 `no_trade`；不挤占正常的 5 次 normal 预算与 2 次 repair 预算。
+  - 结构化解析与证据审计：解析 `_PartialManagerDecision`，验证证据引用哈希与有效性，落库 ModelValidationRecord；只有置信度 >= 0.55 的决策保留方向，低于 0.55 或 hold/no_trade 归为 flat；影子决策永远不生成订单、不下单。
+  - 排队执行：`DailyTradingCycle` 在每轮委员会所有调用结束后统一执行排队的单次基准调用，避免基准调用挤占委员会的执行资源。
+  - 验证：新增 `tests/test_single_call_shadow_baseline.py` 9 个用例覆盖做多、做空、低置信度归 flat、hold/no_trade、提示词隔离、快照隔离、预算耗尽记录 skipped、非法 JSON 报错 failed、非法引用报错 failed，全部通过；`tests/test_ai_trader_daily_cycle.py` 19 个用例通过；`tests/test_shadow_evaluation.py` 与 `tests/test_model_round_budget.py` 34 个用例通过；`tests/test_ai_trader_scheduler.py` 55 个用例通过；全量测试 `.venv/bin/pytest -q -m "not practice"` 3478 passed / 6 deselected / 8 warnings 全部通过（2分42秒）；Ruff 与 Mypy 501 文件通过；密钥扫描与 scaffold 10 通过。
 
 - 接管紧急停止（2026-10-03 UTC，本提交）：消除GUIDE 5.7与5.10的冲突，kill switch只禁止新开仓，显式reduce_only退出仍必须通过新鲜/可交易报价、实盘锁和OANDA REDUCE_ONLY语义；仅target_position_pct=0不能绕过停止。生产gate每次评估刷新持久状态，OANDA执行后端在实际开仓提交前再次刷新，读取失败拒绝。默认持仓任务根据完整且同流水水位的真实账户/交易/持仓快照观察NAV，5%精确边界自动保存soak_halted并激活停止，退出所有已确认持仓，无模型依赖；入场与退出复用同一回撤观察实现和进程内串行锁。
   - 自动停止保留首次触发原因及UTC时间，重启、NAV恢复和手动再次激活不能重置，普通解除被拒；回撤已保存但停止保存尚未完成时，解除也不能清除soak_halted。手动停止期间继续观察回撤，坏回撤历史不拦已验证的减仓，退出后如实报告观察失败。旧kill表仅在确实缺列时迁移，不补造旧自动触发；重启测试实测发现当前DuckDB的ADD COLUMN IF NOT EXISTS带DEFAULT会重置已有值，已改为先查列，仅迁移一次并加入保持触发身份的验证。
@@ -527,7 +534,7 @@
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
 - [ ] S4-2 委员会协议、意图、仓位、14 条规则、结果未知处理、平仓、kill switch（接管再核对：单位测试不等于生产接线；当前保证金与多空本币持仓敞口已接默认gate/context，日内亏损已接真实UTC流水及持久日门禁，同品种亏损平仓序列已接完整历史与持久冻结；经理动作及默认轮次同向hold/反向close已接；最终决策提交前持久关联及48小时后台退出已补；kill switch后台全平与手动HTTP控制已补；看板二次确认、持久提交恢复及真实整体验收仍有缺口。保留历史证据，整体验收未通过）
 - [x] S4-3 真实的策略版本哈希和输入哈希（2026-10-01，本提交：配置内容哈希 + 券商快照内容哈希）
-- [ ] S4-4 影子评估、日报、预算（2026-10-01 接管再核对：后台已接持久预算与影子记录；单次调用基准仍恒定跳过，每日预算已接逐调用持久预留，每品种总修复与每轮上限已接持久计数，单次影子基准未实现，不能以已有store/日报宣称全部满足；历史证据保留）
+- [x] S4-4 影子评估、日报、预算（2026-10-03 UTC，本提交：接入单次影子基准模型调用，与委员会输入严格隔离，通过 ModelGateway 走 call_kind="shadow" 独立预留，每品种每轮上限 1 次，不挤占正常/修复预算，解析校验 PartialManagerDecision 与引用，置信度 <0.55 归为 flat，零订单；DailyTradingCycle 冻结 pre_model_snapshot 并排队单次调用；ModelCallStore 记录与统计 shadow_usage；新增 tests/test_single_call_shadow_baseline.py 9 个用例全部通过，全量 3478 个测试通过）
 - [x] S4-5 新闻：3 个以上来源家族、按货币打标签、入库、去重、清洗（2026-10-01，本提交：6 个家族、货币标签、pipeline 去重清洗 + 真实 37 条入库溯源）
 - [x] S4-6 每条规则都有通过和拒绝测试；EUR_USD 和 USD_JPY 的仓位测试（2026-10-01，本提交：表驱动矩阵 29 个，含 14 条规则的通过/拒绝与两个品种的仓位矩阵）
 - [ ] 退出标准：`cycle run --once --trading off` 跑完 5 个品种，日报生成；不再有写死的 `data_quality_passed=True`

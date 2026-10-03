@@ -39,8 +39,13 @@ DEFAULT_CHATGPT_DAILY_CALLS = 150
 DEFAULT_FALLBACK_DAILY_USD = Decimal("2.00")
 MAX_COMMITTEE_NORMAL_CALLS = 5
 MAX_COMMITTEE_REPAIR_CALLS = 2
+#: The single-call shadow baseline (PROJECT_GUIDE 5.11) is one manager call
+#: per symbol per round. It is a third kind: it never borrows a normal or a
+#: repair slot, but it counts toward the round total and the daily budget, so
+#: it only runs when the round still has budget left.
+MAX_SHADOW_CALLS_PER_SYMBOL = 1
 MAX_ROUND_CALLS = 35
-ModelCallKind = Literal["normal", "repair"]
+ModelCallKind = Literal["normal", "repair", "shadow"]
 
 
 @dataclass(frozen=True)
