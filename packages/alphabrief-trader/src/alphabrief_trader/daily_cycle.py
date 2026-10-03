@@ -83,11 +83,12 @@ from alphabrief_trader.execution_gate import (
 )
 from alphabrief_trader.intents import (
     IntentSizing,
-    build_close_intent,
     build_entry_intent,
     deterministic_intent_id,
     intent_action,
 )
+from alphabrief_trader.position_close import close_position as execute_close_position
+from alphabrief_trader.position_close import record_attempt
 from alphabrief_trader.runtime_truth import RuntimeTruthStore
 from alphabrief_trader.schemas import (
     CommitteeInput,
@@ -980,63 +981,14 @@ class DailyTradingCycle:
         5.5), so it is checked only against the kill switch and rule 3
         (5.7) and the persisted RiskDecision can be replayed.
         """
-        now = now or self._clock()
-        intent = build_close_intent(
-            cycle_id=cycle_id,
-            symbol=symbol,
-            position_units=position_units,
-            now=now,
-            reason=reason,
-        ).model_copy(update={"committee_decision_id": committee_decision_id})
-        # Rule 5 (data quality) is one of the entry-only rules: a close is
-        # checked against the kill switch and rule 3 only, and rule 3 reads
-        # the quote from the account context.
-        decision = self._risk_gate.evaluate(
-            intent,
-            estimated_price=reference_price,
-            estimated_quantity=abs(position_units),
-            account_context=self._account_context(intent.symbol),
-        )
-        if not decision.approved:
-            return self._attempt_record(
-                intent=intent,
-                decision=decision,
-                outcome="blocked_risk_gate",
-                execution_result=None,
-                now=now,
-            )
-        if not submit or self._trading_mode != "on":
-            return self._attempt_record(
-                intent=intent,
-                decision=decision,
-                outcome="blocked_trading_off",
-                execution_result=None,
-                now=now,
-                error_message="NO_TRADE_TRADING_OFF",
-            )
-        try:
-            execution_result = self._execution_backend.submit(
-                intent,
-                decision,
-                reference_price=reference_price,
-                now=now,
-                estimated_quantity=abs(position_units),
-            )
-        except ExecutionBackendError as exc:
-            return self._attempt_record(
-                intent=intent,
-                decision=decision,
-                outcome="error",
-                execution_result=None,
-                now=now,
-                error_message=str(exc),
-            )
-        return self._attempt_record(
-            intent=intent,
-            decision=decision,
-            outcome="executed",
-            execution_result=execution_result,
-            now=now,
+        return execute_close_position(
+            symbol=symbol, position_units=position_units,
+            reference_price=reference_price, cycle_id=cycle_id,
+            now=now or self._clock(), reason=reason, submit=submit,
+            committee_decision_id=committee_decision_id,
+            risk_gate=self._risk_gate, execution_backend=self._execution_backend,
+            account_context=self._account_context(symbol),
+            trading_mode=self._trading_mode,
         )
 
     def _attempt_record(
@@ -1049,67 +1001,10 @@ class DailyTradingCycle:
         now: datetime,
         error_message: str | None = None,
     ) -> OrderAttempt:
-        return OrderAttempt(
-            intent_id=intent.intent_id,
-            risk_decision_id=decision.decision_id,
-            approved=decision.approved,
-            reason=(
-                error_message
-                if error_message is not None
-                else decision.reason or outcome
-            ),
-            requires_human_review=decision.requires_human_review,
-            risk_tags=list(decision.risk_tags),
-            max_quantity=decision.max_quantity,
-            filled=execution_result.filled if execution_result is not None else False,
-            order_id=(
-                execution_result.order_id if execution_result is not None else None
-            ),
-            fill_price=(
-                execution_result.fill_price
-                if execution_result is not None
-                else None
-            ),
-            fill_quantity=(
-                execution_result.fill_quantity if execution_result is not None else None
-            ),
-            execution_backend=(
-                execution_result.execution_backend
-                if execution_result is not None
-                else None
-            ),
-            client_order_id=(
-                execution_result.client_order_id
-                if execution_result is not None
-                else None
-            ),
-            broker_order_id=(
-                execution_result.broker_order_id
-                if execution_result is not None
-                else None
-            ),
-            broker_status=(
-                execution_result.broker_status
-                if execution_result is not None
-                else None
-            ),
-            outcome=outcome,
-            order_intent_json=intent.model_dump(mode="json"),
-            risk_decision_json=decision.model_dump(mode="json"),
-            fill_json=(
-                execution_result.fill_json if execution_result is not None else None
-            ),
-            broker_result_json=(
-                execution_result.broker_result_json
-                if execution_result is not None
-                else None
-            ),
-            created_at=now,
+        return record_attempt(
+            intent=intent, decision=decision, outcome=outcome,
+            execution_result=execution_result, now=now, error_message=error_message,
         )
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     def _load_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         """Load one snapshot per symbol (skipping symbols without one)."""

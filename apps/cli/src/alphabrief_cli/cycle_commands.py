@@ -22,6 +22,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
@@ -40,6 +41,7 @@ from alphabrief_execution.broker.oanda.market_sync import (
     SignalCandleObservation,
     observe_signal_candles,
 )
+from alphabrief_execution.broker.oanda.position_ops import PositionResult
 from alphabrief_execution.broker.runtime import (
     build_oanda_paper_client,
     get_broker_runtime,
@@ -206,7 +208,6 @@ def _risk_gate(
     (the S9 fixed-units pre-run) the reviewed absolute caps from
     ``config/paper_execution_policy.yaml`` apply instead.
     """
-    from alphabrief_risk import KillSwitch, KillSwitchStore
     from alphabrief_risk.entry_rules import EntryRulePolicy
 
     policy = load_paper_execution_policy(load_settings().execution_policy_file)
@@ -218,12 +219,11 @@ def _risk_gate(
     else:
         max_order_value = policy.max_order_notional
         max_total_exposure = policy.max_total_exposure
-    switch_store = KillSwitchStore(db_path=_paths.db_path())
-    try:
-        kill_switch = KillSwitch.from_store(switch_store)
-    finally:
-        switch_store.close()
+    from alphabrief_risk.kill_switch import load_persisted_kill_switch
+
     return RiskGate(
+        kill_switch=load_persisted_kill_switch(),
+        kill_switch_provider=load_persisted_kill_switch,
         limits=RiskLimitConfig(
             trading_enabled=not require_nav or (nav is not None and nav > 0),
             symbol_allowlist=frozenset(instruments),
@@ -268,7 +268,6 @@ def _risk_gate(
                 require_protective_orders=True,
             ),
         ),
-        kill_switch=kill_switch,
     )
 
 
@@ -298,6 +297,7 @@ def _account_context_provider(
     news_store: Any | None = None,
     universe: tuple[str, ...] = (),
     loss_store: Any | None = None,
+    reduce_only: bool = False,
 ) -> Any:
     """Fetch the broker-fresh account context for each risk evaluation.
 
@@ -308,6 +308,10 @@ def _account_context_provider(
     """
 
     def _build(symbol: str) -> Any:
+        if reduce_only:
+            # Rule-3 facts come from the same native account/quote source.
+            # Entry history, drawdown, news and spread stores cannot block exits.
+            return sources.account_exposure_context(symbol=symbol)
         total: int | None
         symbol_count: int | None
         try:
@@ -496,25 +500,15 @@ def _drawdown_verdict(sources: Any) -> Any:
     reset a drawdown block. The account id is used only as the state key.
     """
     from alphabrief_execution.broker.oanda.config import read_oanda_credentials
-    from alphabrief_risk import DrawdownStateStore, evaluate_drawdown
+    from alphabrief_risk.kill_switch import observe_drawdown
 
     context = sources.account_exposure_context()
-    nav = context.equity if context.equity is not None else context.cash
-    try:
-        _, account_id = read_oanda_credentials()
-    except Exception:  # noqa: BLE001 - no credentials means no state key
-        account_id = "unknown"
-    store = DrawdownStateStore(db_path=_paths.db_path())
-    try:
-        previous = store.load(account_id)
-        high_water = previous.high_water if previous and previous.high_water else nav
-        verdict = evaluate_drawdown(
-            equity=nav, high_water=high_water, now=datetime.now(UTC), previous=previous
-        )
-        store.save(account_id, verdict.state)
-    finally:
-        store.close()
-    return verdict
+    _, account_id = read_oanda_credentials()
+    if context.account_id != account_id:
+        raise ValueError("drawdown_account_mismatch")
+    return observe_drawdown(
+        account_id=account_id, nav=context.equity, now=datetime.now(UTC)
+    )
 
 
 def _high_impact_event_map(news_store: Any) -> dict[str, str]:
@@ -709,12 +703,14 @@ def _execution_backend(
             "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
         )
     from alphabrief_execution.broker.risk_context import BrokerRiskContextBuilder
+    from alphabrief_risk.kill_switch import load_persisted_kill_switch
 
     return ExternalPaperExecutionBackend(
         get_broker_runtime().adapter,
         risk_symbols=symbols,
         risk_context_builder=(BrokerRiskContextBuilder(sources) if sources else None),
         decision_binding=decision_binding,
+        kill_switch_provider=load_persisted_kill_switch,
     )
 
 
@@ -779,7 +775,8 @@ def _open_trading_cycle(
         model_budget = _model_budget(calls)
         yield DailyTradingCycle(
             committee=build_ai_trading_committee(
-                record_sink=_call_recorder(calls), daily_budget=model_budget,
+                record_sink=_call_recorder(calls),
+                daily_budget=model_budget,
                 validation_sink=calls.save_validation,
             ),
             risk_gate=_risk_gate(
@@ -958,48 +955,79 @@ def _close_through_the_cycle(
     reference_price: Decimal,
     reason: str,
     trading: TradingMode,
+    close_key: str | None = None,
 ) -> dict[str, Any]:
     """Close one position via decision → RiskGate → OANDA (PROJECT_GUIDE 5.5).
 
-    The reduce-only intent is checked only against the kill switch and
-    rule 3, its RiskDecision is persisted with the attempt, and the order
+    The explicit reduce-only intent stays available under the emergency stop,
+    requires rule 3, and its RiskDecision is persisted with the attempt. The order
     carries the intent's deterministic client order ID.
     """
-    store = AiTradingStore(db_path=_paths.db_path())
-    try:
-        sources = _risk_sources((instrument,))
-        cycle = DailyTradingCycle(
-            # The close path never runs the committee (no snapshot), so no
-            # model call can happen here and no sink is needed.
-            committee=build_ai_trading_committee(),
-            risk_gate=_risk_gate((instrument,)),
-            execution_backend=(
-                _execution_backend(symbols=(instrument,))
-                if trading == "on"
-                else _DisabledBackend()
-            ),
+    from alphabrief_execution.broker.recon_store import BrokerReconStore
+    from alphabrief_risk.decision_store import RiskDecisionStore
+    from alphabrief_trader.position_close import close_position
+    from alphabrief_trader.schemas import DailyCycleRecord
+
+    now = datetime.now(UTC)
+    cycle_id = f"close_{instrument}_{now.strftime('%Y%m%dT%H%M%S%fZ')}"
+    with ExitStack() as resources:
+        store = AiTradingStore(db_path=_paths.db_path())
+        resources.callback(store.close)
+        previous = store.get_cycle_by_key(close_key) if close_key is not None else None
+        if previous is not None and previous["outcome"] in {"executed", "error"}:
+            return {
+                "instrument": instrument,
+                "outcome": "exit_already_submitted",
+                "closed": False,
+                "cycle_id": previous["cycle_id"],
+            }
+        recon = BrokerReconStore(db_path=_paths.db_path())
+        resources.callback(recon.close)
+        decisions = RiskDecisionStore(db_path=_paths.db_path())
+        resources.callback(decisions.close)
+        sources = _risk_sources((instrument,), recon_store=recon)
+        context = _account_context_provider(
+            sources,
+            trading_day=now.date().isoformat(),
             store=store,
-            snapshot_loader=lambda symbol: None,
-            enabled=True,
-            trading_mode="on",
-            account_context_provider=_account_context_provider(
-                sources,
-                trading_day=datetime.now(UTC).date().isoformat(),
-                store=store,
-                universe=(instrument,),
-            ),
+            universe=(instrument,),
+            reduce_only=True,
+        )(instrument)
+        backend = (
+            _execution_backend(
+                symbols=(instrument,),
+                sources=sources,
+                decision_binding=DecisionBindingService(decisions),
+            )
+            if trading == "on"
+            else _DisabledBackend()
         )
-        cycle_id = f"close_{instrument}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
-        attempt = cycle.close_position(
+        attempt = close_position(
             symbol=instrument,
             position_units=position_units,
             reference_price=reference_price,
             cycle_id=cycle_id,
+            now=now,
             reason=reason,
             submit=trading == "on",
+            trading_mode=trading,
+            risk_gate=_risk_gate((instrument,)),
+            execution_backend=backend,
+            account_context=context,
         )
-    finally:
-        store.close()
+        store.save_cycle(
+            DailyCycleRecord(
+                cycle_id=cycle_id,
+                trading_day=now.date().isoformat(),
+                symbols=[instrument],
+                attempts=[attempt],
+                outcome=attempt.outcome,
+                enabled=True,
+                cycle_key=close_key,
+                summary=f"system/operator close: {reason}",
+                created_at=now,
+            )
+        )
     return {
         "instrument": instrument,
         "outcome": attempt.outcome,
@@ -1033,67 +1061,161 @@ def close_due_cmd(
 
     require_local_write("cycle close-due")
 
-    if not oanda_is_configured():
-        _exit_error(
-            "OANDA practice credentials are required "
-            "(ALPHABRIEF_OANDA_TOKEN / ALPHABRIEF_OANDA_ACCOUNT_ID)"
-        )
+    _dump(close_due_positions(now=datetime.now(UTC), trading=trading), pretty=pretty)
+
+
+def _position_mark(instrument: str) -> Decimal | None:
+    from alphabrief_execution.broker.recon_store import BrokerReconStore
+
+    recon = BrokerReconStore(db_path=_paths.db_path())
+    try:
+        value = _risk_sources((instrument,), recon_store=recon).mid_price(instrument)
+        return value if isinstance(value, Decimal) else None
+    finally:
+        recon.close()
+
+
+def _position_units(position: PositionResult) -> Decimal:
+    """Native OANDA short units are negative; hedged positions need two sides."""
+    long, short = position.long_units, position.short_units
+    if not long.is_finite() or not short.is_finite() or long < 0 or short > 0:
+        raise ValueError("invalid_position_units")
+    if long != 0 and short != 0:
+        raise ValueError("hedged_position_requires_side_exit")
+    return long + short
+
+
+def close_due_positions(
+    *,
+    now: datetime,
+    trading: TradingMode,
+    close_all_reason: str | None = None,
+) -> dict[str, Any]:
+    """Observe complete broker holding facts and reduce each due instrument once."""
+    from alphabrief_execution.broker.errors import BrokerAuthError
+    from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
+    from alphabrief_execution.broker.oanda.position_ops import PositionOpsClient
     from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
-    from alphabrief_trader.close_policy import positions_due_for_close
-
-    client = build_oanda_paper_client()
-    trades = TradeOpsClient(client).list_trades().trades
-    # Only open trades can be closed; the broker also reports closed ones.
-    open_trades = [trade for trade in trades if str(trade.state) == "OPEN"]
-    decisions = positions_due_for_close(
-        [(trade.instrument, trade.open_time) for trade in open_trades],
-        now=datetime.now(UTC),
+    from alphabrief_risk.kill_switch import (
+        load_persisted_kill_switch,
+        observe_drawdown,
     )
-    due = [decision for decision in decisions if decision.should_close]
-    if not due:
-        _dump(
-            {
-                "due": [],
-                "detail": "no position is due for close",
-                "checked": len(decisions),
-            },
-            pretty=pretty,
-        )
-        return
-    if trading == "off":
-        _dump(
-            {
-                "due": [decision.to_dict() for decision in due],
-                "closed": [],
-                "detail": "NO_TRADE_TRADING_OFF: trading is off",
-            },
-            pretty=pretty,
-        )
-        return
+    from alphabrief_trader.close_policy import CloseDecision, evaluate_close
 
-    positions = _open_positions()
-    results: list[dict[str, Any]] = []
-    for decision in due:
-        position = positions.get(decision.instrument)
-        if position is None or position[0] == 0:
-            results.append(
-                {
-                    "instrument": decision.instrument,
-                    "closed": False,
-                    "detail": "no position",
-                }
-            )
-            continue
-        results.append(
-            _close_through_the_cycle(
-                instrument=decision.instrument,
-                position_units=position[0],
-                reference_price=position[1],
-                reason=decision.reason,
-                trading=trading,
-            )
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("close policy clock must be timezone aware")
+    if trading not in {"on", "off"}:
+        raise ValueError("invalid_trading_mode")
+    if not oanda_is_configured():
+        raise BrokerAuthError("OANDA credentials are required for scheduled close-out")
+    client = build_oanda_paper_client()
+    accounts = AccountOpsClient(client)
+    summary = accounts.account_summary()
+    if summary.account_id != client.account_id:
+        raise ValueError("holding_account_mismatch")
+    watermark = summary.last_transaction_id
+    trades = TradeOpsClient(client).open_trade_history(expected_watermark=watermark)
+    positions = PositionOpsClient(client)
+    observed: dict[str, Decimal] = {}
+    for position in positions.list_positions().positions:
+        if position.instrument in observed:
+            raise ValueError("duplicate_position")
+        observed[position.instrument] = _position_units(position)
+    trade_ids: dict[str, list[str]] = {}
+    trade_units: dict[str, Decimal] = {}
+    due: dict[str, Any] = {}
+    for trade in trades:
+        trade_ids.setdefault(trade.instrument, []).append(trade.broker_trade_id)
+        units = trade.current_units
+        if not units.is_finite() or units == 0:
+            raise ValueError("invalid_open_trade_units")
+        trade_units[trade.instrument] = (
+            trade_units.get(trade.instrument, Decimal(0)) + units
         )
-    _dump({"due": [d.to_dict() for d in due], "closed": results}, pretty=pretty)
+        decision = evaluate_close(
+            instrument=trade.instrument,
+            open_time=trade.open_time,
+            now=now,
+        )
+        if decision.should_close or close_all_reason is not None:
+            due.setdefault(
+                trade.instrument,
+                CloseDecision(trade.instrument, True, close_all_reason)
+                if close_all_reason is not None
+                else decision,
+            )
+    if {s: u for s, u in observed.items() if u != 0} != trade_units:
+        raise ValueError("trade_position_snapshot_mismatch")
+    if accounts.account_summary().last_transaction_id != watermark:
+        raise ValueError("holding_snapshot_changed")
+    drawdown_error: str | None = None
+    if trading == "on":
+        switch = load_persisted_kill_switch()
+        try:
+            observe_drawdown(account_id=summary.account_id, nav=summary.nav, now=now)
+        except Exception:  # noqa: BLE001 - known stop still exits before reporting failure
+            # Keep valid time-based reductions available even before a stop is
+            # known. Unknown drawdown never authorizes closing young holdings.
+            drawdown_error = "drawdown_observation_unavailable"
+        switch = load_persisted_kill_switch()
+        if switch.active:
+            close_all_reason = f"kill switch: {switch.reason}"
+            due = {
+                symbol: CloseDecision(symbol, True, close_all_reason)
+                for symbol, units in observed.items() if units != 0
+            }
+    results: list[dict[str, Any]] = []
+    if trading == "on":
+        for instrument, decision in sorted(due.items()):
+            current = {
+                p.instrument: _position_units(p)
+                for p in positions.list_positions().positions
+            }.get(instrument, Decimal(0))
+            if current == 0:
+                results.append(
+                    {
+                        "instrument": instrument,
+                        "closed": False,
+                        "detail": "position already closed",
+                    }
+                )
+                continue
+            if current != observed[instrument]:
+                raise ValueError("position_changed_before_exit")
+            mark = _position_mark(instrument)
+            if mark is None:
+                results.append(
+                    {
+                        "instrument": instrument,
+                        "closed": False,
+                        "outcome": "quote_unavailable",
+                    }
+                )
+                continue
+            results.append(
+                _close_through_the_cycle(
+                    instrument=instrument,
+                    position_units=current,
+                    reference_price=mark,
+                    reason=close_all_reason or decision.reason,
+                    trading=trading,
+                    close_key="holding_exit_"
+                    + sha256(
+                        json.dumps(
+                            [instrument, sorted(trade_ids[instrument]), str(current)],
+                        ).encode()
+                    ).hexdigest(),
+                )
+            )
+    return {
+        "due": [d.to_dict() for _, d in sorted(due.items())],
+        "closed": results,
+        "checked": len(trades),
+        "drawdown_error": drawdown_error,
+        "detail": "NO_TRADE_TRADING_OFF"
+        if trading == "off"
+        else "holding policy checked",
+    }
 
 
 def _open_positions() -> dict[str, tuple[Decimal, Decimal]]:
@@ -1104,15 +1226,14 @@ def _open_positions() -> dict[str, tuple[Decimal, Decimal]]:
     positions = PositionOpsClient(client).list_positions().positions
     open_units: dict[str, Decimal] = {}
     for position in positions:
-        units = position.long_units - position.short_units
+        units = _position_units(position)
         if units != 0:
             open_units[position.instrument] = units
     if not open_units:
         return {}
-    sources = _risk_sources(tuple(sorted(open_units)))
     priced: dict[str, tuple[Decimal, Decimal]] = {}
     for instrument, units in open_units.items():
-        mark = sources.mid_price(instrument)
+        mark = _position_mark(instrument)
         if mark is None:
             continue
         priced[instrument] = (units, mark)

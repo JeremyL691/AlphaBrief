@@ -1,8 +1,8 @@
 """Risk routes — config, dashboard, and news/macro context.
 
-The routes in this module are strictly **read-only**. They never
-modify the risk gate, never place orders, and never call
-ModelGateway. The news/macro context endpoint surfaces a
+Risk limits and external context are read-only. The confirmed emergency
+switch writes durable state and queues the resident exit worker; it never
+submits an order directly or calls ModelGateway. The context endpoint surfaces a
 :class:`alphabrief_news.context_summary.NewsMacroSummary` together with the
 corresponding :class:`alphabrief_risk.RiskContextDecision` so the user
 can see how external evidence would tighten (never relax) risk
@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 from alphabrief_core import OrderIntent, load_paper_execution_policy, load_settings
+from alphabrief_core import paths as _paths
 from alphabrief_news.context_summary import build_news_macro_summary
 from alphabrief_risk import (
     AccountExposureContext,
@@ -26,8 +27,9 @@ from alphabrief_risk import (
     RiskLimitConfig,
     evaluate_news_macro_risk,
 )
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from alphabrief_risk.kill_switch import KillSwitchStore, load_persisted_kill_switch
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from alphabrief_api.routes.macro import _get_store as _get_macro_store
 from alphabrief_api.routes.news import _get_store as _get_news_store
@@ -82,7 +84,17 @@ _default_risk_gate = RiskGate(limits=_default_limits, kill_switch=_default_kill_
 
 
 def _get_risk_gate() -> RiskGate:
+    if _default_risk_gate.kill_switch_provider is not None:
+        try:
+            _default_risk_gate.kill_switch = _default_risk_gate.kill_switch_provider()
+        except Exception as exc:  # noqa: BLE001 - unknown stop state is not inactive
+            raise HTTPException(503, "kill_switch_state_unavailable") from exc
     return _default_risk_gate
+
+
+def configure_runtime_risk() -> None:
+    """Bind the resident API gate to the same durable stop as execution."""
+    _default_risk_gate.kill_switch_provider = load_persisted_kill_switch
 
 
 def _reset_risk_gate(limits: RiskLimitConfig | None = None) -> None:
@@ -197,6 +209,65 @@ class RiskCheckResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 router = APIRouter(prefix="/api/v1/risk", tags=["risk"])
+
+
+class KillSwitchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    active: StrictBool
+    confirmed: StrictBool
+    reason: str = Field(min_length=1, max_length=500)
+
+
+def _switch_state() -> dict[str, Any]:
+    store = KillSwitchStore(db_path=_paths.db_path())
+    try:
+        return store.load() or {
+            "active": False, "automatic": False,
+            "reason": "kill switch inactive", "updated_at": None,
+        }
+    finally:
+        store.close()
+
+
+@router.get("/kill-switch")
+def get_kill_switch() -> dict[str, Any]:
+    try:
+        return _switch_state()
+    except Exception as exc:  # noqa: BLE001 - do not expose database paths or values
+        raise HTTPException(503, "kill_switch_state_unavailable") from exc
+
+
+@router.post("/kill-switch")
+def set_kill_switch(
+    payload: KillSwitchRequest, request: Request, background_tasks: BackgroundTasks
+) -> dict[str, Any]:
+    if not payload.confirmed or not payload.reason.strip():
+        raise HTTPException(400, "explicit_confirmation_and_reason_required")
+    exit_worker = getattr(request.app.state, "request_position_exit", None)
+    if not callable(exit_worker):
+        raise HTTPException(503, "resident_runtime_required")
+    store: KillSwitchStore | None = None
+    try:
+        store = KillSwitchStore(db_path=_paths.db_path())
+        state = (
+            store.activate(reason=payload.reason)
+            if payload.active else store.deactivate(reason=payload.reason)
+        )
+    except ValueError as exc:
+        if str(exc) == "automatic_kill_switch_cannot_be_released":
+            raise HTTPException(409, str(exc)) from exc
+        raise HTTPException(503, "kill_switch_state_unavailable") from exc
+    except Exception as exc:  # noqa: BLE001 - persist failure cannot schedule an exit
+        raise HTTPException(503, "kill_switch_state_unavailable") from exc
+    finally:
+        if store is not None:
+            store.close()
+    if payload.active:
+        # Persistence precedes dispatch. The periodic monitor recovers a lost
+        # dispatch, using the same close lock, gate and decision audit path.
+        background_tasks.add_task(exit_worker)
+    return {**state, "close_requested": payload.active}
 
 
 # ---------------------------------------------------------------------------
