@@ -147,13 +147,23 @@ def _assert_no_secrets(raw: dict[str, Any], *, source: Path) -> None:
 
 
 def read_oanda_credentials() -> tuple[str, str]:
-    """Return (token, account_id) from environment, or raise BrokerAuthError.
+    """Return (token, account_id) from environment or secrets, or raise BrokerAuthError.
 
     Never returns a placeholder or empty string — adapters must fail
     loudly when credentials are missing.
     """
     token = os.environ.get(ENV_TOKEN, "").strip()
     account_id = os.environ.get(ENV_ACCOUNT_ID, "").strip()
+    if not token or not account_id:
+        try:
+            from alphabrief_core.secrets import read_secret
+
+            sec = read_secret("oanda")
+            if sec and isinstance(sec, dict):
+                token = token or str(sec.get("token") or "").strip()
+                account_id = account_id or str(sec.get("account_id") or "").strip()
+        except Exception:
+            pass
     if not token or not account_id:
         raise BrokerAuthError(
             f"missing OANDA credentials: set {ENV_TOKEN} and {ENV_ACCOUNT_ID}"

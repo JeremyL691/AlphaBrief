@@ -984,43 +984,51 @@ def test_review_journal_weekly_invalid_date_returns_422() -> None:
 
 
 # ---------------------------------------------------------------------------
-# GET /dashboard
+# Static dashboard and dashboard redirect (PROJECT_GUIDE 4.7)
 # ---------------------------------------------------------------------------
 
 
-def test_dashboard_returns_200_and_html() -> None:
-    response = client.get("/dashboard")
-
+def test_static_dashboard_returns_200_and_html() -> None:
+    response = client.get("/")
     assert response.status_code == 200
     content = response.text
     assert "<!DOCTYPE html>" in content
-    assert "Main - AlphaBrief" in content
-    assert "Project Status" in content
-    assert "Data Symbols" in content
-    assert "Last Backtest" in content
-    assert "Last Brief" in content
-    assert "Paper Portfolio" in content
-    assert "Risk Status" in content
-    assert "API Docs" in content
-    assert "Positions" in content
-    assert "Equity Curve" in content
-    assert "Recent Fills" in content
+    assert "AlphaBrief" in content
+    assert "design-tokens.css" in content
+    assert "app.js" in content
 
 
-def test_dashboard_news_returns_200() -> None:
-    response = client.get("/dashboard/news")
+def test_dashboard_redirects_to_static() -> None:
+    response = client.get("/dashboard", follow_redirects=False)
+    assert response.status_code in (307, 302)
+    assert response.headers["location"] == "/"
+
+    response_news = client.get("/dashboard/news", follow_redirects=False)
+    assert response_news.status_code in (307, 302)
+    assert response_news.headers["location"] == "/#news"
+
+
+def test_evaluation_scoreboard_endpoint_returns_200() -> None:
+    response = client.get("/api/v1/evaluation/scoreboard")
     assert response.status_code == 200
-    content = response.text
-    assert "News" in content
-    assert "/api/v1/news/headlines" in content
+    assert "scoreboard" in response.json()
 
 
-def test_dashboard_macro_returns_200() -> None:
-    response = client.get("/dashboard/macro")
+def test_settings_overview_endpoint_returns_200() -> None:
+    response = client.get("/api/v1/settings/overview")
     assert response.status_code == 200
-    content = response.text
-    assert "Macro" in content
-    assert "/api/v1/macro/indicators" in content
+    body = response.json()
+    assert "credentials" in body
+    assert "service" in body
+    assert "paths" in body
+
+
+def test_doctor_run_endpoint_returns_200() -> None:
+    response = client.get("/api/v1/doctor/run?offline=true")
+    assert response.status_code == 200
+    body = response.json()
+    assert "ok" in body
+    assert "results" in body
 
 
 
