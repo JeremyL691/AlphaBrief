@@ -300,6 +300,7 @@ class DailyTradingCycle:
             is_ai_trading_enabled() if enabled is None else bool(enabled)
         )
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._custom_cycle_id_factory = cycle_id_factory
         self._cycle_id_factory = cycle_id_factory or self._default_cycle_id
 
     # ------------------------------------------------------------------
@@ -322,7 +323,12 @@ class DailyTradingCycle:
         the original frozen record is returned without another model call.
         """
         trading_day = self._trading_day()
-        cycle_id = self._cycle_id_factory()
+        if self._custom_cycle_id_factory is not None:
+            cycle_id = self._custom_cycle_id_factory()
+        elif cycle_key is not None:
+            cycle_id = f"cyc_{sha256(cycle_key.encode('utf-8')).hexdigest()[:16]}"
+        else:
+            cycle_id = self._default_cycle_id()
         now = self._clock()
         live_unlocked = is_live_trading_unlocked()
 
@@ -438,95 +444,105 @@ class DailyTradingCycle:
                 )
                 continue
 
-            pre_model_snapshot = snapshot
-            payload = CommitteeInput(
-                snapshot=pre_model_snapshot, time_horizon=time_horizon,
-                cycle_key=cycle_key or cycle_id,
-            )
-            result = self._committee.run(payload)
-            all_votes.extend(result.votes)
-            committee_role_errors.extend(result.role_errors)
-            if not result.ok or result.plan is None:
-                if any(": model_budget:" in error for error in result.role_errors):
-                    overall_outcome = "skipped_model_budget"
-                    committee_role_errors.append(NO_TRADE_MODEL_BUDGET)
-                elif any(
-                    ": provider_unavailable:" in error for error in result.role_errors
-                ):
-                    overall_outcome = "skipped_model_unavailable"
-                    committee_role_errors.append(NO_TRADE_MODEL_UNAVAILABLE)
+            final_id = final_decision_id(cycle_id, symbol)
+            existing_final = self._store.get_final_decision(final_id)
+            if existing_final is not None:
+                plan = existing_final.plan
+                all_votes.extend(existing_final.votes)
+                final = existing_final
+            else:
+                pre_model_snapshot = snapshot
+                payload = CommitteeInput(
+                    snapshot=pre_model_snapshot, time_horizon=time_horizon,
+                    cycle_key=cycle_key or cycle_id,
+                )
+                result = self._committee.run(payload)
+                all_votes.extend(result.votes)
+                committee_role_errors.extend(result.role_errors)
+                if not result.ok or result.plan is None:
+                    if any(": model_budget:" in error for error in result.role_errors):
+                        overall_outcome = "skipped_model_budget"
+                        committee_role_errors.append(NO_TRADE_MODEL_BUDGET)
+                    elif any(
+                        ": provider_unavailable:" in err
+                        for err in result.role_errors
+                    ):
+                        overall_outcome = "skipped_model_unavailable"
+                        committee_role_errors.append(NO_TRADE_MODEL_UNAVAILABLE)
+                    self._record_shadow(
+                        cycle_id=cycle_id,
+                        snapshot=pre_model_snapshot,
+                        now=now,
+                        plan=None,
+                        detail="committee produced no plan",
+                        single_call_input=payload,
+                        pending=pending_single_calls,
+                    )
+                    continue
+                plan = result.plan
+                if not plan.blocked_by_ethics and plan.action in {
+                    "open_long",
+                    "open_short",
+                    "close",
+                }:
+                    if self._snapshot_refresher is not None:
+                        snapshot = self._snapshot_refresher(snapshot)
+                    facts = snapshot.broker_evidence
+                    # A configured broker source cannot disappear after the model.
+                    # Minimal unit fixtures without a source retain their old scope.
+                    if facts is not None or self._snapshot_refresher is not None:
+                        units = None if facts is None else facts.position_units
+                        captured = (
+                            None if facts is None else facts.positions_captured_at
+                        )
+                        action = plan.action
+                        if (
+                            facts is None or facts.symbol != symbol
+                            or units is None
+                            or not units.is_finite()
+                            or captured is None
+                            or not 0 <= (self._clock() - captured).total_seconds() <= 60
+                        ):
+                            action = "no_trade"
+                        elif action == "close" and units == 0:
+                            action = "hold"
+                        elif action in {"open_long", "open_short"} and units != 0:
+                            same_direction = (units > 0) == (action == "open_long")
+                            action = "hold" if same_direction else "close"
+                        if action != plan.action:
+                            plan = plan.model_copy(
+                                update={
+                                    "action": action,
+                                    "target_position_pct": Decimal("0"),
+                                    "rationale": (
+                                        f"{plan.rationale}; position_action={action}"
+                                    ),
+                                }
+                            )
+                final = self._store.save_final_decision(FinalCommitteeDecision(
+                    decision_id=final_id,
+                    cycle_id=cycle_id, cycle_key=cycle_key, symbol=symbol,
+                    plan=plan, votes=result.votes, input_quality=input_quality[-1],
+                    broker_evidence=snapshot.broker_evidence,
+                    direction_override=cast(
+                        "Literal['long', 'short'] | None", self._direction_override,
+                    ),
+                    quantity_override=self._quantity_override,
+                    override_reason=self._override_reason, created_at=self._clock(),
+                ))
                 self._record_shadow(
                     cycle_id=cycle_id,
                     snapshot=pre_model_snapshot,
                     now=now,
-                    plan=None,
-                    detail="committee produced no plan",
+                    plan=plan,
+                    detail=(
+                        f"side={plan.side} target={plan.target_position_pct} "
+                        f"confidence={plan.confidence}"
+                    ),
                     single_call_input=payload,
                     pending=pending_single_calls,
                 )
-                continue
-            plan = result.plan
-            if not plan.blocked_by_ethics and plan.action in {
-                "open_long",
-                "open_short",
-                "close",
-            }:
-                if self._snapshot_refresher is not None:
-                    snapshot = self._snapshot_refresher(snapshot)
-                facts = snapshot.broker_evidence
-                # A configured broker source cannot disappear after the model.
-                # Minimal unit fixtures without a source retain their old scope.
-                if facts is not None or self._snapshot_refresher is not None:
-                    units = None if facts is None else facts.position_units
-                    captured = None if facts is None else facts.positions_captured_at
-                    action = plan.action
-                    if (
-                        facts is None or facts.symbol != symbol
-                        or units is None
-                        or not units.is_finite()
-                        or captured is None
-                        or not 0 <= (self._clock() - captured).total_seconds() <= 60
-                    ):
-                        action = "no_trade"
-                    elif action == "close" and units == 0:
-                        action = "hold"
-                    elif action in {"open_long", "open_short"} and units != 0:
-                        same_direction = (units > 0) == (action == "open_long")
-                        action = "hold" if same_direction else "close"
-                    if action != plan.action:
-                        plan = plan.model_copy(
-                            update={
-                                "action": action,
-                                "target_position_pct": Decimal("0"),
-                                "rationale": (
-                                    f"{plan.rationale}; position_action={action}"
-                                ),
-                            }
-                        )
-            final = self._store.save_final_decision(FinalCommitteeDecision(
-                decision_id=final_decision_id(cycle_id, symbol),
-                cycle_id=cycle_id, cycle_key=cycle_key, symbol=symbol,
-                plan=plan, votes=result.votes, input_quality=input_quality[-1],
-                broker_evidence=snapshot.broker_evidence,
-                direction_override=cast(
-                    "Literal['long', 'short'] | None", self._direction_override,
-                ),
-                quantity_override=self._quantity_override,
-                override_reason=self._override_reason, created_at=self._clock(),
-            ))
             all_plans.append(plan)
-            self._record_shadow(
-                cycle_id=cycle_id,
-                snapshot=pre_model_snapshot,
-                now=now,
-                plan=plan,
-                detail=(
-                    f"side={plan.side} target={plan.target_position_pct} "
-                    f"confidence={plan.confidence}"
-                ),
-                single_call_input=payload,
-                pending=pending_single_calls,
-            )
 
             if plan.blocked_by_ethics:
                 # Ethics veto is absolute: no override applies.
@@ -556,6 +572,7 @@ class DailyTradingCycle:
                     reason=plan.rationale,
                     committee_decision_id=final.decision_id,
                 )
+                self._store.save_attempt(attempt, cycle_id=cycle_id)
                 all_attempts.append(
                     attempt.model_copy(
                         update={
@@ -745,6 +762,10 @@ class DailyTradingCycle:
                 error_message="NO_TRADE_TRADING_OFF",
             )
 
+        existing_attempt = self._store.get_attempt(cycle_id, intent_id)
+        if existing_attempt is not None and existing_attempt.outcome == "executed":
+            return existing_attempt
+
         try:
             execution_result = self._execution_backend.submit(
                 intent,
@@ -754,7 +775,7 @@ class DailyTradingCycle:
                 estimated_quantity=estimated_quantity,
             )
         except ExecutionBackendError as exc:
-            return self._attempt_record(
+            error_att = self._attempt_record(
                 intent=intent,
                 decision=decision,
                 outcome="error",
@@ -762,14 +783,18 @@ class DailyTradingCycle:
                 now=now,
                 error_message=str(exc),
             )
+            self._store.save_attempt(error_att, cycle_id=cycle_id)
+            return error_att
 
-        return self._attempt_record(
+        attempt = self._attempt_record(
             intent=intent,
             decision=decision,
             outcome="executed",
             execution_result=execution_result,
             now=now,
         )
+        self._store.save_attempt(attempt, cycle_id=cycle_id)
+        return attempt
 
     def _record_shadow(
         self,

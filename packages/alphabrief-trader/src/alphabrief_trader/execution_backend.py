@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
@@ -373,6 +374,33 @@ class ExternalPaperExecutionBackend:
             quantity=request.quantity,
         )
         if not validation.valid:
+            if validation.kind in ("already_consumed", "consumed"):
+                resolver = self._unknown_outcome_resolver
+                if resolver is None:
+                    resolver = _resolver_for(self._adapter)
+                if resolver is not None:
+                    resolution = resolver.resolve(intent.intent_id)
+                    if resolution.resolution == "RESOLVED_ACCEPTED":
+                        return ExecutionBackendResult(
+                            execution_backend="external_paper",
+                            order_id=resolution.broker_order_id or intent.intent_id,
+                            client_order_id=intent.intent_id,
+                            broker_order_id=resolution.broker_order_id,
+                            broker_status=str(resolution.state or "UNKNOWN"),
+                            broker_result_json=resolution.model_dump(mode="json"),
+                            filled=True,
+                            fill_price=None,
+                            fill_quantity=quantity,
+                            fill_json=None,
+                            risk_context_version=context.context_version,
+                        )
+                    if resolution.resolution == "RESOLVED_NOT_SUBMITTED":
+                        raise ExecutionBackendError(
+                            f"SUBMIT_NOT_ACCEPTED: {resolution.detail}"
+                        )
+                    raise ExecutionBackendError(
+                        f"SUBMIT_UNKNOWN: {resolution.detail}"
+                    )
             raise ExecutionBackendError(
                 f"RiskDecision not executable: {validation.kind}: "
                 f"{validation.detail}"
@@ -400,6 +428,12 @@ class ExternalPaperExecutionBackend:
             )
         except (BrokerAdapterError, NotImplementedError) as exc:
             raise ExecutionBackendError(str(exc)) from exc
+
+        # S5 crash injection hook for restart recovery test (GUIDE S5 criteria)
+        if os.environ.get("ALPHABRIEF_TEST_CRASH_AT") == "after_submit":
+            import signal
+
+            os.kill(os.getpid(), signal.SIGKILL)
         filled = result.status == BrokerOrderStatus.FILLED
         return ExecutionBackendResult(
             execution_backend="external_paper",

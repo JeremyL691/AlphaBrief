@@ -32,6 +32,7 @@ from alphabrief_core.execution_policy import (
     PaperExecutionPolicy,
     load_paper_execution_policy,
 )
+from alphabrief_core.notifications import notify_macos
 from alphabrief_core.observability import (
     COMPONENTS,
     CORRELATION_KINDS,
@@ -208,6 +209,7 @@ __all__ = [
     "load_settings",
     "malformed_cursor_error",
     "normalize_read_payload",
+    "notify_macos",
     "redact_observable",
     "unavailable_source_error",
     "unknown_filter_error",
