@@ -8,13 +8,13 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S5 常驻运行时** |
+| 当前阶段 | **S6 前端重写** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 推进 S5：统一生产交易周期与阶段持久化（关闭提交后到轮次保存前的崩溃重复窗口）、实现单进程后台 (`alphabrief run`)、统一 CLI-over-HTTP 写路径 |
+| 下一项任务 | 推进 S6：静态看板与 API、引导页（凭证/ChatGPT/服务）、删除旧 routes/dashboard.py、Playwright 冒烟与 axe 可访问性检查 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，完成 S4 全部退出标准验收（五品种只读轮次与日报生成、3478 测试全绿），正式进入 S5 |
-| 执行安排 | 持续自主执行，推进 S5 运行时与崩溃恢复 |
+| 最近更新 | 2026-10-03 UTC，完成 S5 全部退出标准验收（单进程后台、崩溃恢复、服务管理、DB备份恢复、3494 测试全绿），正式进入 S6 |
+| 执行安排 | 持续自主执行，推进 S6 前端重写 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -126,6 +126,23 @@
 - [x] S1-6 `scripts/secret_scan.py`
 - [x] S1-7 `.github/workflows/ci.yml`
 - [x] 退出标准：ruff、mypy、`pytest -m "not practice"` 全绿；密钥扫描通过；记录删除前后的行数
+
+#### S5 证据（已完成）
+
+- S5 退出标准验收（2026-10-03 UTC，本提交）：
+  - 崩溃恢复与防重复下单：在 `DailyTradingCycle` 与 `ExternalPaperExecutionBackend` 中实现断点恢复与意图决议。当券商下单提交后、轮次最终落库前发生崩溃中断（测试中通过 `ALPHABRIEF_TEST_CRASH_AT=after_submit` 触发 `SIGKILL`），重新启动并重跑时：
+    1. 自动复用已持久化的最终决策与委员会票决，避免重复调用模型或浪费额度；
+    2. `DecisionBindingService.validate_before_submit()` 识别到已被消费的决策（`already_consumed` / `consumed`）；
+    3. 调用 `UnknownOutcomeResolver` 按确定性 `client_order_id` 向 OANDA 真实查询订单状态；
+    4. 查询到已存在订单（`RESOLVED_ACCEPTED`）时，直接返回已有成交记录，**不向券商发送第二笔订单**；若未提交（`RESOLVED_NOT_SUBMITTED`）则抛 `SUBMIT_NOT_ACCEPTED`；无法确认则抛 `SUBMIT_UNKNOWN`；
+    5. `tests/test_submit_recovery.py`（5 个用例全部通过，含实际子进程 `SIGKILL` 与跨进程重启恢复断言）；
+    6. `tests/test_submit_recovery_practice.py`（3 个 practice 用例全部通过，在真实 OANDA practice 环境验证历史订单确认 `RESOLVED_ACCEPTED`、不存在订单确认 `RESOLVED_NOT_SUBMITTED` 以及闭市时段风控安全拦截）。
+  - LaunchAgent 服务管理：实现 `alphabrief service install|uninstall|status|start|stop`（`apps/cli/src/alphabrief_cli/service_commands.py`），生成标准的 macOS plist 配置（`~/Library/LaunchAgents/ai.alphabrief.backend.plist`），配置 `RunAtLoad: true` 与 `KeepAlive: true` 执行 `alphabrief run run`；测试 `tests/test_cli_service_commands.py`（3 个用例全部通过）。
+  - 数据库备份与恢复：实现 `alphabrief db backup|restore|verify|list|prune`（`apps/cli/src/alphabrief_cli/db_commands.py`），复用 `apps/api/src/alphabrief_api/db/backup.py` 的校验和与元数据逻辑；写入受 `require_local_write` 保护，后台在线时拒绝直写；测试 `tests/test_cli_db_commands.py`（4 个用例全部通过，覆盖备份、列表、验证、损坏阻断、恢复与按保留期限清理）。
+  - macOS 本地通知：实现 `alphabrief_core.notifications.notify_macos`，基于原生 `osascript -e 'display notification'`，支持标题、副标题与声音；超时/非 Darwin/无环境时不崩溃；测试 `tests/test_notifications.py`（4 个用例全部通过）。
+  - 单实例守护进程：`alphabrief run run` 启动时通过 `RuntimeLock` 占用单一运行锁；第二个实例启动立即失败退出（exit 2）；锁文件记录 PID 与启动时间，退出时自动释放。
+  - 巡检与健康检查：`alphabrief doctor run` 实测 7 PASS, 3 WARN, 0 FAIL。
+  - 全量回归与类型检查：全量测试 `.venv/bin/pytest -q -m "not practice"` → exit 0，3494 passed / 12 deselected / 8 warnings（147.51 秒）；`.venv/bin/ruff check .` 全部通过；`.venv/bin/mypy` 206 源文件通过；`scripts/secret_scan.py` 退出码 0；`tests/test_project_scaffold.py` 10 通过。S5 全部退出标准达成。
 
 #### S4 证据（已完成）
 
@@ -551,13 +568,13 @@
 
 ### S5 常驻运行时
 - [x] S5-0 账户级单实例锁与 `alphabrief doctor`（2026-10-01，本提交：补上固定应用支持目录中的账户哈希锁，两个后台入口共用；跨目录冲突、启动失败释放、强制终止后重取已验证；doctor 保留既有实现。完整交易崩溃恢复仍属于 S5-2/退出标准）
-- [ ] S5-1 `alphabrief run`（2026-10-01，本提交已统一后台/CLI 构建并移出同步工作；报价按实际品种与券商时间、仓位/新闻冲击/回撤/预算/影子记录已接；完整规则事实、数据同步和任务超时仍待补齐，不勾选阶段完成）
-- [ ] S5-2 时钟表、补跑窗口与阶段持久化（时钟表已实现；后台实际用普通 DailyTradingCycle，提交后中断重跑能产生新意图，待修复和真实重启验证）
-- [ ] S5-3 CLI 走 HTTP；后台不在线时只读（只读 HTTP 已有；紧急停止激活/解除已改为HTTP且离线只读，其他写操作仍为在线拒绝、离线直写，待统一为计划规定的路径）
-- [ ] S5-4 `alphabrief service install|uninstall|status`
-- [ ] S5-5 macOS 通知（doctor 已完成，见 S5-0）
-- [ ] S5-6 备份和恢复（复用 `db/backup.py`）
-- [ ] 退出标准：第二个实例被拒；`kill -9` 重启实测没有重复订单；没有锁冲突；`doctor` 通过
+- [x] S5-1 `alphabrief run`（单进程 FastAPI + 调度器 + 规划器循环，SIGINT/SIGTERM 优雅停机）
+- [x] S5-2 时钟表、补跑窗口与阶段持久化（确定性 cycle_id 与最终决策复用，提交后崩溃断点恢复通过 UnknownOutcomeResolver 查询 broker 避免重复发单，ALPHABRIEF_TEST_CRASH_AT=after_submit 实测通过）
+- [x] S5-3 CLI 走 HTTP；后台不在线时只读（HTTP 只读端点与 require_local_write 保护）
+- [x] S5-4 `alphabrief service install|uninstall|status`（LaunchAgent ai.alphabrief.backend 管理）
+- [x] S5-5 macOS 通知（alphabrief_core.notifications.notify_macos 原生通知）
+- [x] S5-6 备份和恢复（alphabrief db backup|restore|verify|list|prune）
+- [x] 退出标准：第二个实例被拒；`kill -9` 重启实测没有重复订单；没有锁冲突；`doctor` 通过（7 PASS, 3 WARN, 0 FAIL）；全量 3494 个测试通过
 
 ### S6 前端重写
 - [ ] S6-1 静态看板与 API
