@@ -8,13 +8,13 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S6 前端重写** |
+| 当前阶段 | **S7 保留模块接入真实数据** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 推进 S6：静态看板与 API、引导页（凭证/ChatGPT/服务）、删除旧 routes/dashboard.py、Playwright 冒烟与 axe 可访问性检查 |
+| 下一项任务 | 推进 S7：回测接入真实 OANDA K 线并落库、策略注册表信号作为委员会证据、gym demo 运行、复盘页展示最新日报 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，完成 S5 全部退出标准验收（单进程后台、崩溃恢复、服务管理、DB备份恢复、3494 测试全绿），正式进入 S6 |
-| 执行安排 | 持续自主执行，推进 S6 前端重写 |
+| 最近更新 | 2026-10-03 UTC，完成 S6 前端重写全部退出标准验收（静态看板、设置/引导页/评估API、Playwright端到端全绿、4断点/亮暗色22张截图入库、Axe可访问性0严重违规、NAV与OANDA实时比对一致、0样例数据），正式进入 S7 |
+| 执行安排 | 持续自主执行，推进 S7 保留模块接入真实数据 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -577,11 +577,40 @@
 - [x] 退出标准：第二个实例被拒；`kill -9` 重启实测没有重复订单；没有锁冲突；`doctor` 通过（7 PASS, 3 WARN, 0 FAIL）；全量 3494 个测试通过
 
 ### S6 前端重写
-- [ ] S6-1 静态看板与 API
-- [ ] S6-2 引导页（凭证、ChatGPT 登录、后台服务）
-- [ ] S6-3 删除 `routes/dashboard.py`
-- [ ] S6-4 Playwright 冒烟测试和 axe 可访问性检查
-- [ ] 退出标准：冒烟全绿；生成截图；NAV 与 OANDA 一致；没有任何样例数据
+- [x] S6-1 静态看板与 API
+- [x] S6-2 引导页（凭证、ChatGPT 登录、后台服务）
+- [x] S6-3 删除 `routes/dashboard.py`
+- [x] S6-4 Playwright 冒烟测试和 axe 可访问性检查
+- [x] 退出标准：冒烟全绿；生成截图；NAV 与 OANDA 一致；没有任何样例数据
+
+#### S6 证据（2026-10-03 UTC 实测，本提交）
+
+- S6-1 静态看板与 API：
+  - 按 Soft 风格规范重写纯静态前端（`apps/api/src/alphabrief_api/static/`），包括 `index.html`（语义化骨架、ARIA landmarks、内置 SVG 精灵图）、`design-tokens.css`（浅色背景文字不浅于 `#666`，AA 对比度达标）、`app.css`（圆角、柔和阴影、无渐变按钮、4 响应式断点）、`i18n.js`（中英文双语字典，无破折号）、`api.js`（纯真实数据客户端，无模拟回退）、`app.js`（11 视图路由与状态机）。
+  - 在 `main.py` 将静态资源挂载于根路径 `/`，原 `/dashboard` 路径 307 重定向至 `/#path`。
+  - 补齐对应 JSON API：
+    - `GET /api/v1/evaluation/scoreboard` 与 `GET /api/v1/evaluation/decisions`（阴影评估与 4h/24h 得分板）
+    - `GET /api/v1/settings/overview` 与 `POST /api/v1/settings/credentials`（凭证读取脱敏、64 位 hex 与账号正则验证、原子写入 `secrets/oanda.json`）
+    - `POST /api/v1/settings/service/install|uninstall|start|stop`（LaunchAgent 控制）
+    - `GET /api/v1/doctor/run`（巡检状态只读查询）
+    - `GET /api/v1/review/reports` 与 `GET /api/v1/review/reports/{report_date}`（日报列表与详情读取）
+- S6-2 引导页：
+  - 实现 `#onboarding` 3 步设置向导：Step 1 OANDA practice 凭证配置（支持只读回显与输入保存）、Step 2 ChatGPT 登录状态与 CLI 命令指引、Step 3 本地后台服务安装与加载状态检测。
+- S6-3 移除旧代码：
+  - 彻底删除 `apps/api/src/alphabrief_api/routes/dashboard.py`（2,977 行原生拼接 HTML）；
+  - 从 `pyproject.toml` 的 ruff 忽略名单中移除 `dashboard.py`。
+- S6-4 Playwright 冒烟与无障碍检查：
+  - `tests/test_e2e_playwright.py`（6 个测试全部通过）：
+    1. `test_playwright_all_views_smoke`: 11 个视图全部渲染成功且无控制台/JS 异常；
+    2. `test_playwright_responsive_breakpoints`: 4 个断点（320px, 768px, 1024px, 1440px）布局自适应，无水平溢出；
+    3. `test_playwright_themes_and_screenshots`: 亮色与暗色模式分别截图，22 张 PNG 图片完整落库至 `docs/images/`；
+    4. `test_axe_accessibility_zero_critical_or_serious_violations`: axe-core 对所有视图进行无障碍审查，critical 与 serious 违规数为 0；
+    5. `test_ui_five_states`: 加载态、空态、离线态、陈旧态、错误态 5 种状态验证；
+    6. `test_no_simulated_sample_data_in_dom`: 全视图 DOM 断言绝无 "Simulated sample" 等模拟数据。
+  - `tests/test_dashboard_practice.py`（1 个 practice 测试通过）：以 live OANDA 模拟盘凭证启动，实测看板 overview 渲染显示的 NAV 与 OANDA 官方账户摘要 NAV（100000.00 USD）完全一致。
+  - 静态目录样例数据扫描：`grep -rn "Simulated sample\|100000" apps/api/src/alphabrief_api/static` 返回 exit 1（0 处匹配）。
+  - 全量回归与类型检查：全量测试 `.venv/bin/pytest -q -m "not practice"` → exit 0，3502 passed / 13 deselected / 7 warnings（162.38 秒）；`.venv/bin/ruff check .` 全部通过；`.venv/bin/mypy` 247 源文件通过；`scripts/secret_scan.py` 退出码 0；`tests/test_project_scaffold.py` 10 通过。
+- 退出标准全部达成。
 
 ### S7 保留模块接入真实数据
 - [ ] S7-1 回测（OANDA K 线，跑基准和策略）

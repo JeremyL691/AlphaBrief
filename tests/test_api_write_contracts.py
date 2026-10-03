@@ -123,6 +123,7 @@ class TestApprovedMutationSurface:
             "",
             "check",
             "compare",
+            "credentials",
             "debate",
             "evaluate",
             "fetch",
@@ -134,6 +135,7 @@ class TestApprovedMutationSurface:
             "releases",
             "route",
             "run",
+            "service",
             "signals",
             "specs",
         }

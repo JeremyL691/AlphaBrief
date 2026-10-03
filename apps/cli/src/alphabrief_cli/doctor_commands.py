@@ -111,6 +111,14 @@ class DoctorReport:
 # ---------------------------------------------------------------------------
 
 
+def _open_store(store_cls: Any, db_path: Any) -> Any:
+    """Open store read-only, falling back to read-write if process already connected."""
+    try:
+        return store_cls(db_path=db_path, read_only=True)
+    except Exception:
+        return store_cls(db_path=db_path, read_only=False)
+
+
 def check_data_dir() -> CheckResult:
     """The data directory exists and is writable."""
     target = _paths.data_dir()
@@ -198,7 +206,7 @@ def check_model_channel() -> CheckResult:
             "history and budget are not readable here (use `alphabrief "
             "scheduler status` for live state)",
         )
-    store = ModelCallStore(db_path=_paths.db_path(), read_only=True)
+    store = _open_store(ModelCallStore, _paths.db_path())
     try:
         since = datetime.now(UTC) - timedelta(days=1)
         usage = store.daily_usage(since)
@@ -335,7 +343,7 @@ def check_reconciliation() -> CheckResult:
         )
     from alphabrief_execution.broker.recon_store import BrokerReconStore
 
-    store = BrokerReconStore(db_path=_paths.db_path(), read_only=True)
+    store = _open_store(BrokerReconStore, _paths.db_path())
     try:
         snapshots = store.list_snapshots(limit=1)
         freeze = store.has_open_freeze()
@@ -430,13 +438,16 @@ def check_market_data(symbols: Sequence[str]) -> CheckResult:
         )
     from alphabrief_api.db.market_data import MarketDataStore
 
-    store = MarketDataStore(db_path=_paths.db_path(), read_only=True)
+    store = _open_store(MarketDataStore, _paths.db_path())
     try:
         missing: list[str] = []
         stale: list[str] = []
         newest: datetime | None = None
         for symbol in symbols:
-            bars = store.get_bar_models(symbol)
+            try:
+                bars = store.get_bar_models(symbol)
+            except Exception:
+                bars = []
             if not bars:
                 missing.append(symbol)
                 continue
@@ -481,7 +492,7 @@ def check_quote_samples(symbols: Sequence[str]) -> CheckResult:
         QuoteSampleStore,
     )
 
-    store = QuoteSampleStore(db_path=_paths.db_path(), read_only=True)
+    store = _open_store(QuoteSampleStore, _paths.db_path())
     try:
         counts = {
             symbol: len(
@@ -493,6 +504,8 @@ def check_quote_samples(symbols: Sequence[str]) -> CheckResult:
             )
             for symbol in symbols
         }
+    except Exception:
+        counts = {symbol: 0 for symbol in symbols}
     finally:
         store.close()
     thin = {symbol: count for symbol, count in counts.items() if count < 5}

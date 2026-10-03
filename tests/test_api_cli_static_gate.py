@@ -108,6 +108,7 @@ class TestNoUndocumentedMutation:
             "",
             "check",
             "compare",
+            "credentials",
             "debate",
             "evaluate",
             "fetch",
@@ -119,6 +120,7 @@ class TestNoUndocumentedMutation:
             "releases",
             "route",
             "run",
+            "service",
             "signals",
             "specs",
         }
