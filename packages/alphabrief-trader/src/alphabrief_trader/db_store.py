@@ -43,6 +43,7 @@ from alphabrief_trader.schemas import (
     DailyCycleSummary,
     DecisionCallReference,
     FinalCommitteeDecision,
+    OrderAttempt,
 )
 
 
@@ -216,7 +217,7 @@ class AiTradingStore:
         cycle_id = record.cycle_id
         self._conn.execute(
             """
-            INSERT INTO ai_daily_cycles (
+            INSERT OR REPLACE INTO ai_daily_cycles (
                 cycle_id, trading_day, symbols_json, outcome, enabled,
                 live_trading_enabled, summary, cycle_json, created_at
             ) VALUES (?, ?, ?::JSON, ?, ?, ?, ?, ?::JSON, ?)
@@ -237,7 +238,7 @@ class AiTradingStore:
         for vote_index, vote in enumerate(record.votes):
             self._conn.execute(
                 """
-                INSERT INTO ai_committee_votes (
+                INSERT OR REPLACE INTO ai_committee_votes (
                     cycle_id, vote_index, role, model_name, view, confidence,
                     suggested_action, target_position_pct, veto,
                     needs_human_review, vote_json, created_at
@@ -262,7 +263,7 @@ class AiTradingStore:
         for attempt in record.attempts:
             self._conn.execute(
                 """
-                INSERT INTO ai_order_attempts (
+                INSERT OR REPLACE INTO ai_order_attempts (
                     cycle_id, intent_id, outcome, approved,
                     requires_human_review, filled, order_id,
                     attempt_json, created_at
@@ -514,6 +515,41 @@ class AiTradingStore:
                 }
             )
         return out
+
+    def save_attempt(self, attempt: OrderAttempt, cycle_id: str) -> None:
+        """Persist or update an individual order attempt."""
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO ai_order_attempts (
+                cycle_id, intent_id, outcome, approved,
+                requires_human_review, filled, order_id,
+                attempt_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::JSON, ?)
+            """,
+            [
+                cycle_id,
+                attempt.intent_id,
+                attempt.outcome,
+                attempt.approved,
+                attempt.requires_human_review,
+                attempt.filled,
+                attempt.order_id,
+                _serialize(attempt.model_dump(mode="json")),
+                attempt.created_at,
+            ],
+        )
+
+    def get_attempt(self, cycle_id: str, intent_id: str) -> OrderAttempt | None:
+        """Retrieve an attempt by cycle_id and intent_id."""
+        row = self._conn.execute(
+            "SELECT attempt_json FROM ai_order_attempts "
+            "WHERE cycle_id = ? AND intent_id = ?",
+            [cycle_id, intent_id],
+        ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        return OrderAttempt.model_validate(payload)
 
     # ------------------------------------------------------------------
     # Discipline config snapshot (read-only advisory)
