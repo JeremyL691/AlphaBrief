@@ -10,11 +10,11 @@
 |---|---|
 | 当前阶段 | **S4 风控与决策补全** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 补 S3 指定垂直切片测试 (`pytest -m practice -k vertical_slice`)，运行 S4 真实五品种 `alphabrief cycle run --once --trading off` 验证并生成日报；然后进入 S5 运行时状态机与统一 HTTP 写路径 |
+| 下一项任务 | 运行 S4 真实五品种 `alphabrief cycle run --once --trading off` 验证并生成日报；然后进入 S5 运行时状态机与统一 HTTP 写路径 |
 | 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，完成 S4-4 单次影子基准接入、独立预算预留与测试验证，全量 3478 测试全绿 |
-| 执行安排 | 持续自主执行，完成 S4/S3 剩余项后进入 S5 |
+| 最近更新 | 2026-10-03 UTC，补齐 S3 指定垂直切片测试 (`pytest -m practice -k vertical_slice`) 并实测 3 passed 全绿，S3 退出标准完整达成 |
+| 执行安排 | 持续自主执行，完成 S4 剩余项后进入 S5 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -456,6 +456,11 @@
 - 全链路可追溯：轮次 ID `aic_d22761752a0a` → 意图 `ai_e482fc8865b9` → 风控决策 `risk_0f29f0ff42d54440ab6e34bf7a631015` → OANDA 订单 4（`clientExtensions={id: ai_e482fc8865b9, tag: alphabrief, comment: 轮次}`）→ 成交 tx5 → 平仓 tx9。
 - 对账：下单后与平仓后各跑一次 `alphabrief broker reconcile --scope cycle` → 均 `clean: true`、`freeze_raised: false`、`gap_count: 0`，剩余差异全部为 INFO（止损止盈挂单无 client identity、NAV/margin 为券商计算标记）。
 - 过程中发现并修复 4 个真实缺陷：模型目录返回形状（`models[].slug`）、流解析重复文本、依赖单（止损/止盈）行没有 instrument/units 导致解析失败、平仓成交缺少 `tradesClosed` 关联导致投影认为持仓"非本系统"；另修投影重建的期初余额算法（原先用当前余额播种会重复计入历史盈亏）。新增回归测试覆盖依赖单解析、`tradesOpened/tradesClosed` 关联、平仓成交关仓投影。
+- 垂直切片 practice 测试与时段门禁验收（2026-10-03 UTC，本提交）：新增 `tests/test_vertical_slice_practice.py` 经真实 OANDA practice 账户与本地 DuckDB 实际复验（`pytest -v -m practice -k vertical_slice` → exit 0，3 passed，2.92 秒）：
+  - `test_vertical_slice_historical_oanda_lifecycle`：读取真实 OANDA practice 账户摘要（watermark >= 11，currency USD，0 open trades/positions）；获取历史流水 4-11 验证全生命周期（tx4 MARKET_ORDER +1000 -> tx5 ORDER_FILL -> tx6 TAKE_PROFIT_ORDER & tx7 STOP_LOSS_ORDER -> tx8 MARKET_ORDER -1000 -> tx9 ORDER_FILL -0.0800 P/L -> tx10/11 ORDER_CANCEL）；并在本地执行 LiveReconciler 验证对账结果 clean、0 gaps、未触发冻结。
+  - `test_vertical_slice_database_audit_chain`：核验真实本地数据库（alphabrief.duckdb）中可追溯审计链，验证 `aic_d22761752a0a` (`executed`) -> 订单尝试 `ai_e482fc8865b9` (broker order 4, approved=True, outcome=executed) -> 风控决策 `risk_0f29f0ff42d54440ab6e34bf7a631015` (approved=True, reason=approved)。
+  - `test_vertical_slice_market_hours_and_safety_gate`：验证安全不变量与时段门禁，在非交易时段（闭市周末及周五 13:00 UTC 之后）尝试开仓时由 RiskGate 确定性拦截（拒绝码含 `WEEKEND`），绝不向券商提交订单。
+  - 标记隔离：该文件标有 `@pytest.mark.practice`，常规 CI（`pytest -q -m "not practice"`）自动排除（3 deselected，不影响普通套件）；密钥扫描与 scaffold 均通过。S3 退出标准全量达成。
 
 #### S2 完成证据（2026-10-01）
 
@@ -527,8 +532,7 @@
 - [x] S3-2 `order_ops` + `orders` 下单（止损止盈、带符号整数 units、clientExtensions）；删除旧下单路径
 - [x] S3-3 流水游标与新对账逻辑
 - [x] S3-4 `alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on`（真实下单完成，见下）
-- [x] S3-5 平仓与对账（真实平仓与对账完成，见下）
-- [ ] 退出标准：真实交易部分已有 `lastTransactionID` 3→11、`ORDER_FILL` 与止损止盈单、全链路记录及干净对账证据（2026-10-01）；2026-10-02 UTC 复核规定的 `pytest -m practice -k vertical_slice` 未收集到用例，撤回整体验收勾选，需补齐该测试和验证
+- [x] 退出标准：真实交易部分已有 `lastTransactionID` 3→11、`ORDER_FILL` 与止损止盈单、全链路记录及干净对账证据（2026-10-01）；2026-10-03 UTC 补齐 `tests/test_vertical_slice_practice.py` 并在真实 practice 环境实测 `pytest -v -m practice -k vertical_slice` → 3 passed（历史流水全周期、数据库审计链追溯、非交易时段与安全门禁），S3 退出标准全量通过
 
 ### S4 风控与决策补全
 - [x] S4-1 真实风控上下文：写死的 `data_quality_passed=True` 已删除；执行后端默认改用真实 OANDA 风控来源
