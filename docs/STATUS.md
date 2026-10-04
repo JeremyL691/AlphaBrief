@@ -8,13 +8,13 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S8 打包** |
+| 当前阶段 | **S9 试运行前门禁** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 推进 S8：PyInstaller 打包后端、electron-builder 产出 `AlphaBrief-1.0.0-rc.N-arm64.dmg`、`scripts/build_release.sh` 与临时目录冒烟测试 |
-| 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
+| 下一项任务 | 推进 S9：RC 后台（venv/打包）安装 LaunchAgent、`trading_mode=on`、固定 1000 units，连续运行 24 小时并逐项核对门禁清单 |
+| 下次巡检时间（UTC） | 不适用（尚未进入试运行；S9 24 小时运行结束后核对门禁） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，接任 Agent 完成 S7 全部退出标准验收（回测接 OANDA K 线并落库可见、启用策略信号进入委员会输入证据、gym demo 真实 K 线回合、复盘页展示真实日报；全量回归 3515 通过），进入 S8 |
-| 执行安排 | 持续自主执行，推进 S8 打包 |
+| 最近更新 | 2026-10-03 UTC，完成 S8 全部退出标准验收（`scripts/build_release.sh` 产出 `dist/AlphaBrief-1.0.0-rc.1-arm64.dmg` + SHA256SUMS；dmg 冒烟测试通过：临时数据目录、trading off、不装 LaunchAgent，`--version`/doctor/health/静态看板全部通过），进入 S9 |
+| 执行安排 | 持续自主执行，推进 S9 门禁 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -632,11 +632,19 @@
 - 质量门禁：`.venv/bin/pytest -q -m "not practice"` → exit 0，**3515 passed / 13 deselected**（196.46 秒）；`.venv/bin/ruff check .` 通过；`.venv/bin/mypy` 495 文件通过、CLI strict 24 文件通过；`scripts/secret_scan.py` 退出码 0。修复 3 处既有 mypy 错误（`test_submit_recovery.py` 改从 `alphabrief_risk.broker_context` 导入 datum 类型、axe_playwright_python 增加 mypy override、`review_commands.py` 可选路径类型）。
 
 ### S8 打包
-- [ ] S8-1 `scripts/build_release.sh`（PyInstaller + electron-builder + `SHA256SUMS`）
-- [ ] S8-2 改造 Electron（不依赖源码目录、托盘、服务管理、图标）
-- [ ] S8-3 冒烟测试（临时数据目录、`trading_mode=off`、不装 LaunchAgent）
-- [ ] S8-4 版本号 `1.0.0-rc.N`
-- [ ] 退出标准：dmg 和校验和生成；冒烟通过；`--version` 正确
+- [x] S8-1 `scripts/build_release.sh`（PyInstaller + electron-builder + `SHA256SUMS`）（2026-10-03，见 S8 证据）
+- [x] S8-2 改造 Electron（不依赖源码目录、托盘、服务管理、图标）（2026-10-03，见 S8 证据）
+- [x] S8-3 冒烟测试（临时数据目录、`trading_mode=off`、不装 LaunchAgent）（2026-10-03，见 S8 证据）
+- [x] S8-4 版本号 `1.0.0-rc.1`（pyproject + electron/package.json + core version.py 三方一致）（2026-10-03）
+- [x] 退出标准：dmg 和校验和生成；冒烟通过；`--version` 正确（2026-10-03）
+
+#### S8 证据（2026-10-03 UTC 实测，本提交）
+
+- S8-1 构建脚本：`scripts/build_release.sh` 一次运行完成：三方版本一致性校验（不一致即拒绝构建）→ PyInstaller onedir 打包 `alphabrief` CLI（含全部 13 个包源码路径、`--copy-metadata alphabrief`、静态看板 add-data；构建后立即验证 `--version`）→ electron-builder `--mac dmg --arm64` → `dist/AlphaBrief-1.0.0-rc.1-arm64.dmg`（138,158,045 字节）+ `dist/SHA256SUMS.txt`（sha256 e64a82e1…f166）。删除被取代的 `electron/scripts/package.js` 及其专属测试 `tests/test_electron_packaging.py`。
+- S8-2 Electron：`main.js` 优先使用捆绑后端 `Contents/Resources/backend/alphabrief/alphabrief`（打包态），仓库 venv 仅作开发回退；入口从 `/dashboard` 改为 `/`；托盘与 Dock 使用项目自有几何图形图标（`electron/build/make_icon.py` 纯 stdlib 绘制三根蜡烛图，`iconutil` 合成 `icon.icns`，无第三方资产）；`preload.js` 暴露根路径；服务管理仍由设置页调用 `alphabrief service`（S6 已接）。新增 `tests/test_release_version.py` 守护版本三方一致与 `--version` 输出（替代 package.js 的检查职责）。
+- S8-3 冒烟测试：`scripts/smoke_test_dmg.sh dist/AlphaBrief-1.0.0-rc.1-arm64.dmg` 实测通过——dmg 只读挂载到临时目录；打包后端 `--version` → `AlphaBrief 1.0.0-rc.1`；`doctor run`（临时数据目录、`ALPHABRIEF_TRADING_MODE=off`）→ `oanda_read_only: PASS`（practice 可达、68 个可交易品种；model_channel FAIL 为临时目录无 OAuth 凭证的预期结果）；`serve serve` 后 `/health` → `{"status":"healthy","version":"1.0.0-rc.1"}`；静态看板 `/` 返回 index；`/api/v1/review/reports` 响应正常。全程未安装 LaunchAgent、未触碰真实数据目录、未与真实后台抢交易权（off 不取账户锁）。
+- S8-4 版本：`pyproject.toml`、`electron/package.json`、`alphabrief_core/version.py` 统一 `1.0.0-rc.1`；CLI 新增 `--version`；`/health` 返回同一版本常量；`tests/test_release_version.py` 2 用例守护。
+- 质量门禁：`.venv/bin/pytest -q -m "not practice"` → exit 0，**3507 passed / 13 deselected**（204.63 秒；净变化 -9 = 删除 package.js 专属测试 9 个）；ruff 全部通过；mypy 496 文件 + CLI strict 25 文件通过；`scripts/secret_scan.py` 退出码 0。安装 dev 依赖 `pyinstaller`、`electron-builder`（GUIDE 授权范围）。
 
 ### S9 试运行前门禁
 - [ ] S9-1 RC 后台以固定 1000 units 连续运行 24 小时

@@ -1,16 +1,53 @@
 {
   "name": "alphabrief-desktop",
-  "version": "0.0.1",
+  "version": "1.0.0-rc.1",
   "private": true,
-  "description": "Native macOS wrapper for the AlphaBrief dashboard (spawns the FastAPI backend).",
+  "description": "Native macOS wrapper for the AlphaBrief dashboard (spawns the bundled FastAPI backend).",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "start:dev": "electron . --dev",
-    "package": "node scripts/package.js",
-    "test": "node scripts/package.js check"
+    "dist": "electron-builder --mac dmg --arm64"
   },
   "devDependencies": {
-    "electron": "^32.0.0"
+    "electron": "^32.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "ai.alphabrief.desktop",
+    "productName": "AlphaBrief",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "error-overlay.html",
+      "icon-tray.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-dist/alphabrief",
+        "to": "backend/alphabrief"
+      }
+    ],
+    "mac": {
+      "target": {
+        "target": "dmg",
+        "arch": [
+          "arm64"
+        ]
+      },
+      "identity": null,
+      "icon": "build/icon.icns",
+      "category": "public.app-category.finance",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "writeUpdateInfo": false
+    }
   }
 }
