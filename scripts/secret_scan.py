@@ -54,6 +54,10 @@ KNOWN_FIXTURES: frozenset[str] = frozenset(
         "adanos_test_key",
         "your_password",
         "dXNlcjpwYXNz",
+        "221-004-7654321-009",
+        "sk-abcdefghijklmnopqrstuvwxyz012345",
+        "sup3r-s3cret-value",
+        "hunter2hunter2",
     }
 )
 
