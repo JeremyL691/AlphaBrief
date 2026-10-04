@@ -89,6 +89,11 @@ class MarketDataStore:
         if not read_only:
             apply_schema(self._conn)
 
+    @property
+    def db_path(self) -> Path:
+        """Resolved DuckDB file path backing this store."""
+        return self._db_path
+
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------

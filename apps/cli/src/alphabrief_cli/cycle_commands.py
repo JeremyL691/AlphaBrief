@@ -17,6 +17,7 @@ stops before submitting, recording ``NO_TRADE_TRADING_OFF``.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
@@ -31,6 +32,7 @@ from alphabrief_api.db import AiTradingStore, NewsStore
 from alphabrief_api.db.market_data import MarketDataStore
 from alphabrief_api.db.model_call import ModelCallStore
 from alphabrief_core import (
+    Bar,
     RiskDecision,
     load_paper_execution_policy,
     load_settings,
@@ -62,6 +64,8 @@ from alphabrief_trader.schemas import NewsInputEvidence, SignalInputEvidence
 from alphabrief_trader.shadow_store import ShadowStore
 
 cycle_app = typer.Typer(help="Run one trading cycle or close a position.")
+
+_LOGGER = logging.getLogger(__name__)
 
 TradingMode = Literal["on", "off"]
 
@@ -133,11 +137,21 @@ def _snapshot_loader(
         snapshot = builder.build(symbol, reference_price_override=latest.close)
         if snapshot is None:
             return None
+        strategy_signals = _compute_enabled_strategy_signals(
+            db_path=market_store.db_path,
+            symbol=symbol,
+            # Signals are computed on the same single H1 series the
+            # snapshot builder consumes: a flattened multi-timeframe
+            # batch would fail the bars quality check and mixed
+            # granularities are never valid strategy input.
+            bars=h1,
+        )
         return snapshot.model_copy(
             update={
                 "atr": inputs.atr,
                 "momentum_20d_pct": inputs.return_20d_pct,
                 "volatility_20d_pct": inputs.volatility_20d_pct,
+                "strategy_signals": strategy_signals,
                 "market_evidence": inputs.evidence.model_copy(
                     update={
                         "refresh_errors": {
@@ -170,6 +184,80 @@ def _snapshot_loader(
         )
 
     return _loader
+
+
+def _compute_enabled_strategy_signals(
+    db_path: Path,
+    symbol: str,
+    bars: list[Bar],
+) -> dict[str, dict[str, Any]]:
+    """Compute latest signals for enabled strategies using stored OANDA bars.
+
+    Strategy signals are optional committee evidence (GUIDE 6.4): a
+    strategy that fails to compute is logged and skipped, never allowed to
+    break the round, and never synthesised from stale or fake data.
+    """
+    signals: dict[str, dict[str, Any]] = {}
+    if not bars:
+        return signals
+    from alphabrief_api.db import StrategySpecStore
+    from alphabrief_data import FeatureGenerationError, generate_basic_features
+    from alphabrief_strategy import (
+        StrategyExecutionError,
+        StrategySpec,
+        resolve_builtin_runner,
+        run_strategy,
+    )
+    from alphabrief_strategy.interface import StrategyInput
+    from pydantic import ValidationError
+
+    spec_store = StrategySpecStore(db_path=db_path)
+    try:
+        specs = spec_store.list_specs(enabled_only=True)
+        for spec_row in specs:
+            strat_id = spec_row["strategy_id"]
+            full = spec_store.get_spec(strat_id)
+            if not full or "spec" not in full:
+                continue
+            try:
+                spec_obj = StrategySpec.model_validate(full["spec"])
+                runner = resolve_builtin_runner(strat_id)
+                if runner is None:
+                    _LOGGER.warning(
+                        "strategy signal skipped: no builtin runner for %s",
+                        strat_id,
+                    )
+                    continue
+                features = generate_basic_features(bars)
+                out = run_strategy(
+                    runner,
+                    StrategyInput(spec=spec_obj, bars=bars, features=features),
+                )
+                if out.signals:
+                    last_sig = out.signals[-1]
+                    signals[strat_id] = {
+                        "signal_id": last_sig.signal_id,
+                        "direction": last_sig.direction,
+                        "confidence": last_sig.confidence,
+                        "horizon": last_sig.horizon,
+                        "rationale": last_sig.rationale,
+                        "timestamp": last_sig.timestamp.isoformat(),
+                    }
+            except (
+                StrategyExecutionError,
+                FeatureGenerationError,
+                ValidationError,
+            ) as exc:
+                _LOGGER.warning(
+                    "strategy signal for %s on %s failed: %s",
+                    strat_id,
+                    symbol,
+                    exc,
+                )
+                continue
+    finally:
+        spec_store.close()
+    return signals
 
 
 def _signal_observation(market: MarketDataStore) -> SignalCandleObservation:

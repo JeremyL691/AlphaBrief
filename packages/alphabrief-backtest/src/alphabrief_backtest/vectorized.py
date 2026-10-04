@@ -41,6 +41,8 @@ class BacktestTrade(BaseModel):
     slippage_cost: Decimal
     net_pnl: Decimal
     exit_reason: str = Field(min_length=1)
+    spread_cost: Decimal = Decimal("0")
+    financing_cost: Decimal = Decimal("0")
 
 
 class BacktestMetrics(BaseModel):
@@ -60,6 +62,9 @@ class BacktestMetrics(BaseModel):
     sortino: Decimal | None  # downside-deviation variant
     turnover: Decimal  # sum(|delta_qty| * price) / initial_cash
     exposure_pct: Decimal  # fraction of bars in-market (position > 0)
+    spread_cost_total: Decimal = Decimal("0")
+    financing_cost_total: Decimal = Decimal("0")
+    financing_cost_note: str = "estimated"
 
 
 class BacktestReport(BaseModel):
@@ -76,15 +81,31 @@ class BacktestReport(BaseModel):
     metrics: BacktestMetrics
     equity_curve: list[EquityPoint]
     trades: list[BacktestTrade]
+    spread_bps: Decimal = Decimal("0")
+    financing_rate_daily: Decimal = Decimal("0")
+    financing_estimated: bool = True
+    integer_units: bool = False
 
 
 class VectorizedBacktester:
     """Run a simple long/flat backtest from strategy signals."""
 
-    def __init__(self, *, initial_cash: Decimal = Decimal("10000")) -> None:
+    def __init__(
+        self,
+        *,
+        initial_cash: Decimal = Decimal("10000"),
+        spread_bps: Decimal = Decimal("0"),
+        financing_rate_daily: Decimal = Decimal("0"),
+        financing_estimated: bool = True,
+        integer_units: bool = False,
+    ) -> None:
         if initial_cash <= 0:
             raise ValueError("initial_cash must be positive")
         self.initial_cash = initial_cash
+        self.spread_bps = spread_bps
+        self.financing_rate_daily = financing_rate_daily
+        self.financing_estimated = financing_estimated
+        self.integer_units = integer_units
 
     def run(
         self,
@@ -92,8 +113,13 @@ class VectorizedBacktester:
         *,
         spec: StrategySpec,
         bars: list[Bar],
-        features: list[FeatureRow],
+        features: list[FeatureRow] | None = None,
     ) -> BacktestReport:
+        if features is None:
+            from alphabrief_data import generate_basic_features
+
+            features = generate_basic_features(bars)
+
         strategy_input = StrategyInput(spec=spec, bars=bars, features=features)
         strategy_output = run_strategy(strategy, strategy_input)
         signals_by_timestamp = {
@@ -106,11 +132,31 @@ class VectorizedBacktester:
         entry_price = Decimal("0")
         entry_fee = Decimal("0")
         entry_slippage = Decimal("0")
+        entry_spread = Decimal("0")
+        entry_financing = Decimal("0")
         trades: list[BacktestTrade] = []
         equity_curve: list[EquityPoint] = []
         pending_signal: Signal | None = None
+        prev_bar: Bar | None = None
 
         for bar in bars:
+            # Overnight financing when position is carried across calendar days
+            if (
+                position_quantity > 0
+                and prev_bar is not None
+                and self.financing_rate_daily > 0
+            ):
+                nights = (bar.timestamp.date() - prev_bar.timestamp.date()).days
+                if nights > 0:
+                    night_charge = (
+                        position_quantity
+                        * bar.close
+                        * self.financing_rate_daily
+                        * Decimal(nights)
+                    )
+                    cash -= night_charge
+                    entry_financing += night_charge
+
             if pending_signal is not None:
                 (
                     cash,
@@ -119,6 +165,8 @@ class VectorizedBacktester:
                     entry_price,
                     entry_fee,
                     entry_slippage,
+                    entry_spread,
+                    entry_financing,
                     maybe_trade,
                 ) = self._apply_signal(
                     pending_signal,
@@ -130,6 +178,8 @@ class VectorizedBacktester:
                     entry_price,
                     entry_fee,
                     entry_slippage,
+                    entry_spread,
+                    entry_financing,
                 )
                 if maybe_trade is not None:
                     trades.append(maybe_trade)
@@ -144,6 +194,7 @@ class VectorizedBacktester:
             )
 
             pending_signal = signals_by_timestamp.get(bar.timestamp)
+            prev_bar = bar
 
         if pending_signal is not None:
             (
@@ -153,6 +204,8 @@ class VectorizedBacktester:
                 entry_price,
                 entry_fee,
                 entry_slippage,
+                entry_spread,
+                entry_financing,
                 maybe_trade,
             ) = self._apply_signal(
                 pending_signal,
@@ -164,6 +217,8 @@ class VectorizedBacktester:
                 entry_price,
                 entry_fee,
                 entry_slippage,
+                entry_spread,
+                entry_financing,
             )
             if maybe_trade is not None:
                 trades.append(maybe_trade)
@@ -187,6 +242,8 @@ class VectorizedBacktester:
                 entry_price=entry_price,
                 entry_fee=entry_fee,
                 entry_slippage=entry_slippage,
+                entry_spread=entry_spread,
+                entry_financing=entry_financing,
                 exit_reason="end_of_backtest",
             )
             trades.append(close_trade)
@@ -206,6 +263,10 @@ class VectorizedBacktester:
             final_value=final_value,
             fee_bps=spec.costs.fee_bps,
             slippage_bps=spec.costs.slippage_bps,
+            spread_bps=self.spread_bps,
+            financing_rate_daily=self.financing_rate_daily,
+            financing_estimated=self.financing_estimated,
+            integer_units=self.integer_units,
             metrics=_metrics(
                 initial_cash=self.initial_cash,
                 equity_curve=equity_curve,
@@ -227,10 +288,14 @@ class VectorizedBacktester:
         entry_price: Decimal,
         entry_fee: Decimal,
         entry_slippage: Decimal,
+        entry_spread: Decimal = Decimal("0"),
+        entry_financing: Decimal = Decimal("0"),
     ) -> tuple[
         Decimal,
         Decimal,
         datetime | None,
+        Decimal,
+        Decimal,
         Decimal,
         Decimal,
         Decimal,
@@ -249,12 +314,16 @@ class VectorizedBacktester:
                 entry_price=entry_price,
                 entry_fee=entry_fee,
                 entry_slippage=entry_slippage,
+                entry_spread=entry_spread,
+                entry_financing=entry_financing,
                 exit_reason="signal_exit",
             )
             return (
                 new_cash,
                 new_position,
                 None,
+                Decimal("0"),
+                Decimal("0"),
                 Decimal("0"),
                 Decimal("0"),
                 Decimal("0"),
@@ -268,6 +337,8 @@ class VectorizedBacktester:
             entry_price,
             entry_fee,
             entry_slippage,
+            entry_spread,
+            entry_financing,
             None,
         )
 
@@ -276,15 +347,29 @@ class VectorizedBacktester:
         bar: Bar,
         spec: StrategySpec,
         cash: Decimal,
-    ) -> tuple[Decimal, Decimal, datetime, Decimal, Decimal, Decimal]:
+    ) -> tuple[Decimal, Decimal, datetime, Decimal, Decimal, Decimal, Decimal, Decimal]:
         fee_rate = spec.costs.fee_bps / BPS_DENOMINATOR
         slippage_rate = spec.costs.slippage_bps / BPS_DENOMINATOR
-        execution_price = bar.close * (Decimal("1") + slippage_rate)
+        spread_rate = (self.spread_bps / BPS_DENOMINATOR) / Decimal("2")
+        execution_price = bar.close * (Decimal("1") + slippage_rate + spread_rate)
         target_notional = cash * spec.risk.max_position_pct
-        quantity = target_notional / (execution_price * (Decimal("1") + fee_rate))
+        raw_quantity = target_notional / (execution_price * (Decimal("1") + fee_rate))
+        quantity = Decimal(int(raw_quantity)) if self.integer_units else raw_quantity
+        if quantity <= 0:
+            return (
+                cash,
+                Decimal("0"),
+                bar.timestamp,
+                execution_price,
+                Decimal("0"),
+                Decimal("0"),
+                Decimal("0"),
+                Decimal("0"),
+            )
         notional = quantity * execution_price
         fee = notional * fee_rate
-        slippage_cost = quantity * (execution_price - bar.close)
+        slippage_cost = quantity * bar.close * slippage_rate
+        spread_cost = quantity * bar.close * spread_rate
 
         return (
             cash - notional - fee,
@@ -293,6 +378,8 @@ class VectorizedBacktester:
             execution_price,
             fee,
             slippage_cost,
+            spread_cost,
+            Decimal("0"),
         )
 
     def _close_position(
@@ -306,6 +393,8 @@ class VectorizedBacktester:
         entry_price: Decimal,
         entry_fee: Decimal,
         entry_slippage: Decimal,
+        entry_spread: Decimal,
+        entry_financing: Decimal,
         exit_reason: str,
     ) -> tuple[Decimal, Decimal, BacktestTrade]:
         if entry_timestamp is None:
@@ -313,14 +402,17 @@ class VectorizedBacktester:
 
         fee_rate = spec.costs.fee_bps / BPS_DENOMINATOR
         slippage_rate = spec.costs.slippage_bps / BPS_DENOMINATOR
-        execution_price = bar.close * (Decimal("1") - slippage_rate)
+        spread_rate = (self.spread_bps / BPS_DENOMINATOR) / Decimal("2")
+        execution_price = bar.close * (Decimal("1") - slippage_rate - spread_rate)
         notional = position_quantity * execution_price
         exit_fee = notional * fee_rate
-        exit_slippage = position_quantity * (bar.close - execution_price)
+        exit_slippage = position_quantity * bar.close * slippage_rate
+        exit_spread = position_quantity * bar.close * spread_rate
         gross_pnl = (execution_price - entry_price) * position_quantity
         total_fees = entry_fee + exit_fee
         total_slippage = entry_slippage + exit_slippage
-        net_pnl = gross_pnl - total_fees
+        total_spread = entry_spread + exit_spread
+        net_pnl = gross_pnl - total_fees - entry_financing
 
         return (
             cash + notional - exit_fee,
@@ -335,6 +427,8 @@ class VectorizedBacktester:
                 gross_pnl=gross_pnl,
                 fees=total_fees,
                 slippage_cost=total_slippage,
+                spread_cost=total_spread,
+                financing_cost=entry_financing,
                 net_pnl=net_pnl,
                 exit_reason=exit_reason,
             ),
@@ -389,6 +483,8 @@ def _metrics(
     sortino = _sortino(equity_curve=equity_curve)
     turnover = _turnover(trades=trades, initial_cash=initial_cash)
     exposure_pct = _exposure_pct(equity_curve=equity_curve)
+    spread_cost_total = sum((t.spread_cost for t in trades), Decimal("0"))
+    financing_cost_total = sum((t.financing_cost for t in trades), Decimal("0"))
     return BacktestMetrics(
         total_return=total_return,
         max_drawdown=max_drawdown,
@@ -401,6 +497,9 @@ def _metrics(
         sortino=sortino,
         turnover=turnover,
         exposure_pct=exposure_pct,
+        spread_cost_total=spread_cost_total,
+        financing_cost_total=financing_cost_total,
+        financing_cost_note="estimated",
     )
 
 

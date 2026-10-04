@@ -6,9 +6,12 @@ together.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import typer
 from alphabrief_core import paths as _paths
 from alphabrief_core.paths import PathConfigError
+from alphabrief_core.version import __version__
 
 from alphabrief_cli.ai_commands import ai_app
 from alphabrief_cli.audit_commands import audit_app
@@ -18,6 +21,7 @@ from alphabrief_cli.cycle_commands import cycle_app
 from alphabrief_cli.data_commands import data_app
 from alphabrief_cli.db_commands import db_app
 from alphabrief_cli.doctor_commands import doctor_app
+from alphabrief_cli.gym_commands import gym_app
 from alphabrief_cli.macro_commands import macro_app
 from alphabrief_cli.model_commands import model_app
 from alphabrief_cli.news_commands import news_app
@@ -34,6 +38,7 @@ app = typer.Typer(
     name="alphabrief",
     help="AlphaBrief local-first AI forex paper-trading workbench.",
     no_args_is_help=True,
+    invoke_without_command=True,
     add_completion=False,
 )
 
@@ -46,6 +51,7 @@ app.add_typer(backtest_app, name="backtest")
 app.add_typer(risk_app, name="risk")
 app.add_typer(report_app, name="report")
 app.add_typer(doctor_app, name="doctor")
+app.add_typer(gym_app, name="gym")
 app.add_typer(run_app, name="run")
 app.add_typer(audit_app, name="audit")
 app.add_typer(review_app, name="review")
@@ -59,7 +65,12 @@ app.add_typer(service_app, name="service")
 
 
 @app.callback()
-def _validate_environment() -> None:
+def _validate_environment(
+    version: Annotated[
+        bool | None,
+        typer.Option("--version", help="Show the AlphaBrief version and exit."),
+    ] = None,
+) -> None:
     """Fail with an actionable message when the environment is unusable.
 
     The data directory must be an absolute path (PROJECT_GUIDE 4.3). A
@@ -68,6 +79,9 @@ def _validate_environment() -> None:
     """
     import sys
 
+    if version:
+        typer.echo(f"AlphaBrief {__version__}")
+        raise typer.Exit()
     if any(argument in {"--help", "-h"} for argument in sys.argv[1:]):
         return
     try:

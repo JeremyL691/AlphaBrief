@@ -106,6 +106,7 @@ from alphabrief_core.secrets import (
     redact,
     write_secret,
 )
+from alphabrief_core.version import __version__
 from alphabrief_core.write_contracts import (
     APPROVED_ENDPOINTS,
     APPROVED_PAYLOAD_KEYS,
@@ -213,4 +214,5 @@ __all__ = [
     "redact_observable",
     "unavailable_source_error",
     "unknown_filter_error",
+    "__version__",
 ]

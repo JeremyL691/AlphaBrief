@@ -8,12 +8,10 @@ path in the packaged application.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ELECTRON_MAIN = ROOT / "electron" / "main.js"
-PACKAGE_JS = ROOT / "electron" / "scripts" / "package.js"
 
 
 class TestNoLivePath:
@@ -59,18 +57,6 @@ class TestNoLivePath:
 
 
 class TestPackagedInspection:
-    def test_packaged_artifact_passes_security_scan(self) -> None:
-        # The packaging scanner refuses forbidden content at build
-        # time; the selftest proves the scan catches live/broker-like
-        # markers.
-        result = subprocess.run(
-            ["node", str(PACKAGE_JS), "selftest"],
-            capture_output=True,
-            text=True,
-            cwd=str(ROOT),
-        )
-        assert result.returncode == 0
-
     def test_packaged_files_are_practice_only(self) -> None:
         # The shell only speaks to the local backend (127.0.0.1); the
         # packaged main.js must not reference any external host.

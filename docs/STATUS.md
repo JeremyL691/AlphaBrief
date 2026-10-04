@@ -8,13 +8,13 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S7 保留模块接入真实数据** |
+| 当前阶段 | **S9 试运行前门禁** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 推进 S7：回测接入真实 OANDA K 线并落库、策略注册表信号作为委员会证据、gym demo 运行、复盘页展示最新日报 |
-| 下次巡检时间（UTC） | 不适用（尚未进入试运行） |
+| 下一项任务 | 推进 S9：RC 后台（venv/打包）安装 LaunchAgent、`trading_mode=on`、固定 1000 units，连续运行 24 小时并逐项核对门禁清单 |
+| 下次巡检时间（UTC） | 不适用（尚未进入试运行；S9 24 小时运行结束后核对门禁） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，完成 S6 前端重写全部退出标准验收（静态看板、设置/引导页/评估API、Playwright端到端全绿、4断点/亮暗色22张截图入库、Axe可访问性0严重违规、NAV与OANDA实时比对一致、0样例数据），正式进入 S7 |
-| 执行安排 | 持续自主执行，推进 S7 保留模块接入真实数据 |
+| 最近更新 | 2026-10-03 UTC，完成 S8 全部退出标准验收（`scripts/build_release.sh` 产出 `dist/AlphaBrief-1.0.0-rc.1-arm64.dmg` + SHA256SUMS；dmg 冒烟测试通过：临时数据目录、trading off、不装 LaunchAgent，`--version`/doctor/health/静态看板全部通过），进入 S9 |
+| 执行安排 | 持续自主执行，推进 S9 门禁 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -613,18 +613,38 @@
 - 退出标准全部达成。
 
 ### S7 保留模块接入真实数据
-- [ ] S7-1 回测（OANDA K 线，跑基准和策略）
-- [ ] S7-2 策略注册表（信号作为委员会证据）
-- [ ] S7-3 gym demo
-- [ ] S7-4 复盘页
-- [ ] 退出标准：见 GUIDE S7
+- [x] S7-1 回测（OANDA K 线，跑基准和策略）（2026-10-03，见 S7 证据）
+- [x] S7-2 策略注册表（信号作为委员会证据）（2026-10-03，见 S7 证据）
+- [x] S7-3 gym demo（2026-10-03，见 S7 证据）
+- [x] S7-4 复盘页（2026-10-03，见 S7 证据）
+- [x] 退出标准：见 GUIDE S7；全部在真实数据库/OANDA K 线上验收（2026-10-03）
+
+#### S7 证据（2026-10-03 UTC 实测，本提交）
+
+- S7-1 回测：
+  - 真实运行 `.venv/bin/alphabrief backtest run --strategy momentum --instrument EUR_USD --from 2026-07-05 --granularity D` → `report_id: backtest_d72222e5b4d6`，61 根真实 OANDA D 线（2026-07-09 至 2026-10-01），`integer_units: True`、点差成本 1.4983、隔夜利息 36.1623（标注 estimated）；结果经 `BacktestReportStore` 落库。
+  - 以真实数据目录、`trading_mode=off` 启动后台：`GET /api/v1/backtest/reports` 返回 4 条真实 EUR_USD momentum 报告（含本次 2 条）；回测页（static `app.js`）读取同一端点。修复：回测按 `--granularity` 后缀精确查询 K 线（原先跨周期时间戳去重会静默丢弃 11 根 D 线，61→50），新增回归测试 `test_cli_backtest_uses_requested_granularity_only`。
+- S7-2 策略信号进入委员会输入证据：
+  - `.venv/bin/alphabrief strategy save --from-json /tmp/momentum_spec.json --enable` 注册并启用 `momentum`；`.venv/bin/alphabrief cycle run --once --instrument EUR_USD --trading off` → 轮次 `aic_4a743c4c0629`，`outcome=skipped_data_stale`（周六闭市，确定性数据质量门禁生效），attempts=0、订单=0、模型调用=0。
+  - 持久化 InputQualityRecord 的 `evidence_catalog` 包含 `strategy:momentum`：`direction=long, confidence=1.0, signal_id=momentum:2026-10-02T20:00:00+00:00`（最后完成 H1 收盘，真实 K 线计算）。CLI 与常驻后台共用同一 `_snapshot_loader`，信号同样进入输入哈希。新增 `tests/test_strategy_committee_evidence.py` 3 用例（目录条目、loader 计算、多周期共存不崩溃）。
+- S7-3 gym：`.venv/bin/alphabrief gym demo --instrument EUR_USD --granularity H1` → 157 根真实 H1 线、156 步、total_return -0.0209、`live_trading: false`、零券商订单；`tests/test_gym_cli.py` 2 用例。
+- S7-4 复盘页：`GET /api/v1/review/reports` 返回真实日报 2026-10-03（md，2 cycles）与 2026-10-01；`GET /api/v1/review/reports/2026-10-03` 返回 markdown 正文；复盘页（static `api.js`）读取同一端点；`alphabrief review daily` 无 `--snapshot` 时直接读取最新日报；`tests/test_review_daily_cli.py` 3 用例。
+- 质量门禁：`.venv/bin/pytest -q -m "not practice"` → exit 0，**3515 passed / 13 deselected**（196.46 秒）；`.venv/bin/ruff check .` 通过；`.venv/bin/mypy` 495 文件通过、CLI strict 24 文件通过；`scripts/secret_scan.py` 退出码 0。修复 3 处既有 mypy 错误（`test_submit_recovery.py` 改从 `alphabrief_risk.broker_context` 导入 datum 类型、axe_playwright_python 增加 mypy override、`review_commands.py` 可选路径类型）。
 
 ### S8 打包
-- [ ] S8-1 `scripts/build_release.sh`（PyInstaller + electron-builder + `SHA256SUMS`）
-- [ ] S8-2 改造 Electron（不依赖源码目录、托盘、服务管理、图标）
-- [ ] S8-3 冒烟测试（临时数据目录、`trading_mode=off`、不装 LaunchAgent）
-- [ ] S8-4 版本号 `1.0.0-rc.N`
-- [ ] 退出标准：dmg 和校验和生成；冒烟通过；`--version` 正确
+- [x] S8-1 `scripts/build_release.sh`（PyInstaller + electron-builder + `SHA256SUMS`）（2026-10-03，见 S8 证据）
+- [x] S8-2 改造 Electron（不依赖源码目录、托盘、服务管理、图标）（2026-10-03，见 S8 证据）
+- [x] S8-3 冒烟测试（临时数据目录、`trading_mode=off`、不装 LaunchAgent）（2026-10-03，见 S8 证据）
+- [x] S8-4 版本号 `1.0.0-rc.1`（pyproject + electron/package.json + core version.py 三方一致）（2026-10-03）
+- [x] 退出标准：dmg 和校验和生成；冒烟通过；`--version` 正确（2026-10-03）
+
+#### S8 证据（2026-10-03 UTC 实测，本提交）
+
+- S8-1 构建脚本：`scripts/build_release.sh` 一次运行完成：三方版本一致性校验（不一致即拒绝构建）→ PyInstaller onedir 打包 `alphabrief` CLI（含全部 13 个包源码路径、`--copy-metadata alphabrief`、静态看板 add-data；构建后立即验证 `--version`）→ electron-builder `--mac dmg --arm64` → `dist/AlphaBrief-1.0.0-rc.1-arm64.dmg`（138,158,045 字节）+ `dist/SHA256SUMS.txt`（sha256 e64a82e1…f166）。删除被取代的 `electron/scripts/package.js` 及其专属测试 `tests/test_electron_packaging.py`。
+- S8-2 Electron：`main.js` 优先使用捆绑后端 `Contents/Resources/backend/alphabrief/alphabrief`（打包态），仓库 venv 仅作开发回退；入口从 `/dashboard` 改为 `/`；托盘与 Dock 使用项目自有几何图形图标（`electron/build/make_icon.py` 纯 stdlib 绘制三根蜡烛图，`iconutil` 合成 `icon.icns`，无第三方资产）；`preload.js` 暴露根路径；服务管理仍由设置页调用 `alphabrief service`（S6 已接）。新增 `tests/test_release_version.py` 守护版本三方一致与 `--version` 输出（替代 package.js 的检查职责）。
+- S8-3 冒烟测试：`scripts/smoke_test_dmg.sh dist/AlphaBrief-1.0.0-rc.1-arm64.dmg` 实测通过——dmg 只读挂载到临时目录；打包后端 `--version` → `AlphaBrief 1.0.0-rc.1`；`doctor run`（临时数据目录、`ALPHABRIEF_TRADING_MODE=off`）→ `oanda_read_only: PASS`（practice 可达、68 个可交易品种；model_channel FAIL 为临时目录无 OAuth 凭证的预期结果）；`serve serve` 后 `/health` → `{"status":"healthy","version":"1.0.0-rc.1"}`；静态看板 `/` 返回 index；`/api/v1/review/reports` 响应正常。全程未安装 LaunchAgent、未触碰真实数据目录、未与真实后台抢交易权（off 不取账户锁）。
+- S8-4 版本：`pyproject.toml`、`electron/package.json`、`alphabrief_core/version.py` 统一 `1.0.0-rc.1`；CLI 新增 `--version`；`/health` 返回同一版本常量；`tests/test_release_version.py` 2 用例守护。
+- 质量门禁：`.venv/bin/pytest -q -m "not practice"` → exit 0，**3507 passed / 13 deselected**（204.63 秒；净变化 -9 = 删除 package.js 专属测试 9 个）；ruff 全部通过；mypy 496 文件 + CLI strict 25 文件通过；`scripts/secret_scan.py` 退出码 0。安装 dev 依赖 `pyinstaller`、`electron-builder`（GUIDE 授权范围）。
 
 ### S9 试运行前门禁
 - [ ] S9-1 RC 后台以固定 1000 units 连续运行 24 小时
@@ -693,6 +713,9 @@
 | 2026-10-02 UTC | 必需开场意见缺失与可选讨论失败 | 必需角色任一开场失败或引用失效且修复失败时不生成计划；可选讨论失败不替代有效开场决策，但保留错误 | GUIDE5.4要求经理读完四份分析；缺失风险意见不能移除veto，保留有效意见和错误比静默降级更安全 |
 
 | 2026-10-02 UTC | 经理倍数缺省与减仓执行语义 | 依GUIDE5.6省略倍数用1.5/2.0，显式值必须有限JSON数值并在保护单计算截断；减仓使用OANDA REDUCE_ONLY | 5.6明确允许未给建议，不能把缺省当非法响应；反向普通单在持仓变化后可能反手，reduce-only必须贯穿实际券商请求而非仅保留意图字段 |
+| 2026-10-03 UTC | 注册策略如何映射到信号 runner | 唯一 `resolve_builtin_runner`：id 含 momentum→MomentumStrategy，含 random→RandomStrategy，其余（含 ma_trend 与自定义注册）→MovingAverageTrendStrategy，空 id 拒绝；回测与委员会证据共用 | v1 只有三个内置 runner，DSL 不做任意条件解释；注册 spec 以自身 strategy_id 产出确定性信号；两处独立映射违反"每个关注点一份实现"，已合并 |
+| 2026-10-03 UTC | 可选策略证据失败时是否阻断决策轮 | per-strategy 失败（坏 spec/特征生成/执行错误）记警告并跳过该策略，不阻断轮次；信号只在 H1 单周期序列上计算 | GUIDE 6.4 定位策略信号为可选证据；真实验收发现混合周期输入触发 FeatureGenerationError 崩溃整轮，可选证据不得破坏决策轮；H1 与委员会主窗口一致且新鲜度同 K 线 |
+| 2026-10-03 UTC | 回测 K 线的查询口径 | 按 `--granularity` 后缀精确查询（`get_bar_models(instrument, data_version_suffix=":M:<tf>")`），不回退混合周期 | 无后缀查询按 (symbol, timestamp) 跨周期去重，D 线与 H4/H1 时间戳冲突时被静默丢弃（真实库 61→50），混合周期序列对回测无意义 |
 
 ## 阻塞
 

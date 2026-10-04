@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from alphabrief_core.version import __version__
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
@@ -22,7 +23,7 @@ router = APIRouter(tags=["health"])
 def get_health() -> HealthStatus:
     """Return the AlphaBrief API health status."""
 
-    return HealthStatus(status="healthy", version="0.0.0")
+    return HealthStatus(status="healthy", version=__version__)
 
 
 __all__ = ["HealthStatus", "router"]

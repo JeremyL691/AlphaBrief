@@ -6,7 +6,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const port = Number(process.env.ALPHABRIEF_ELECTRON_PORT || 8765);
 
 contextBridge.exposeInMainWorld('alphabrief', {
-  dashboardUrl: `http://127.0.0.1:${port}/dashboard`,
+  dashboardUrl: `http://127.0.0.1:${port}/`,
   backendPort: port,
   onBackendError: (handler) => {
     const listener = (_event, payload) => handler(payload);

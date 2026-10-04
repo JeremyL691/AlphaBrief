@@ -49,3 +49,11 @@ _reference_sources/
 
 # omp (oh-my-pi) runtime state - not source
 .omo/
+# S8 packaging artifacts (built by scripts/build_release.sh)
+electron/backend-dist/
+electron/dist/
+!electron/build/
+node_modules/
+# PyInstaller auto-generated spec files and regenerable iconset
+/*.spec
+electron/build/alphabrief.iconset/
