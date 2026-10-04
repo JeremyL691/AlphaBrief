@@ -21,8 +21,9 @@ from alphabrief_execution.broker.runtime import NullBrokerAdapter
 
 
 @pytest.fixture(autouse=True)
-def _reset_adapter() -> Iterator[None]:
+def _reset_adapter(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """Ensure each test starts with a fresh (uncached) adapter singleton."""
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     broker_adapter._reset_broker_adapter()
     yield
     broker_adapter._reset_broker_adapter()
