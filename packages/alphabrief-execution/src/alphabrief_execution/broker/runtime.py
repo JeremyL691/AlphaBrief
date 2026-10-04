@@ -106,12 +106,31 @@ class NullBrokerAdapter(BrokerAdapter):
 
 
 def oanda_is_configured(environ: dict[str, str] | None = None) -> bool:
-    """Return True when both OANDA credentials are present."""
+    """Return True when both OANDA credentials are present.
+
+    Credentials come from the environment (``ALPHABRIEF_OANDA_TOKEN`` /
+    ``ALPHABRIEF_OANDA_ACCOUNT_ID``) or, when no explicit environment is
+    given, from the data directory's ``secrets/oanda.json`` — the same
+    resolution order :func:`read_oanda_credentials` applies.
+    """
     source = os.environ if environ is None else environ
-    return bool(
-        source.get(ENV_TOKEN, "").strip()
-        and source.get(ENV_ACCOUNT_ID, "").strip()
-    )
+    if source.get(ENV_TOKEN, "").strip() and source.get(
+        ENV_ACCOUNT_ID, ""
+    ).strip():
+        return True
+    if environ is not None:
+        return False
+    try:
+        from alphabrief_core.secrets import read_secret
+
+        sec = read_secret("oanda")
+        return bool(
+            sec
+            and str(sec.get("token") or "").strip()
+            and str(sec.get("account_id") or "").strip()
+        )
+    except Exception:
+        return False
 
 
 def resolve_data_dir(environ: dict[str, str] | None = None) -> Path:

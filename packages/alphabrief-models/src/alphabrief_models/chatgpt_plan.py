@@ -36,6 +36,7 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 from alphabrief_core import paths
+from alphabrief_core.http import secure_urlopen
 from alphabrief_core.secrets import (
     SecretStoreError,
     delete_secret,
@@ -300,7 +301,7 @@ def default_http_send(
 
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with secure_urlopen(request, timeout=timeout) as response:
             return HttpResponse(
                 status=int(response.status),
                 body=response.read(),

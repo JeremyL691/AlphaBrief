@@ -651,6 +651,15 @@
 - [ ] S9-2 门禁清单全部勾选（见 GUIDE S9）
 - [ ] 退出标准：打 tag `v1.0.0-rc.N` 并推送；写入 Day 0
 
+#### S9 进展（进行中）
+
+- S9 运行时与服务支持接入（2026-10-03 UTC，本提交）：
+  - TLS 证书捆绑安全传输：创建 `alphabrief_core.http.secure_urlopen` 与 `ca_bundle_context`，依赖 `certifi>=2024.0`，为 LaunchAgent 与打包二进制提供受信任的根证书环境，解决 macOS Python 无 `SSL_CERT_FILE` 时的 TLS 报错；OANDA client、模型网关 adapters（OpenAI、ChatGPT plan）及 RSS 新闻提供者均接入 `secure_urlopen`。
+  - OANDA 凭证自动加载：`oanda_is_configured` 在缺少环境变量时无缝降级读取 `secrets/oanda.json`，确保无环境变量的常驻 LaunchAgent 正常运行。
+  - S9 固定 1000 units 与交易开关支持：`alphabrief run run` 接入 `--units` 与 `--trading-mode`；`alphabrief service install` 接入 `--units`、`--trading-mode` 与 `--executable`，生成正确的 plist ProgramArguments；`_ai_cycle_factory` 接入 `quantity_override` 确保常驻后台在 S9 门禁预跑时固定 1000 units 下单。
+  - 数据库迁移 5：新增 `soak_runs` 与 `scheduler_task_runs` 表。
+  - 验证：全量测试 `.venv/bin/pytest -q -m "not practice"` → exit 0，3513 passed / 13 deselected / 7 warnings（209.87 秒）；`.venv/bin/ruff check .` 全部通过；`.venv/bin/mypy` 498 源文件通过；`scripts/secret_scan.py` 退出码 0；`tests/test_project_scaffold.py` 10 通过。
+
 ### S10 14 天试运行
 - [ ] 合格日 14 / 14（由 `alphabrief soak status` 计算）
 - [ ] 没有未解决的冻结或阻塞
@@ -716,6 +725,7 @@
 | 2026-10-03 UTC | 注册策略如何映射到信号 runner | 唯一 `resolve_builtin_runner`：id 含 momentum→MomentumStrategy，含 random→RandomStrategy，其余（含 ma_trend 与自定义注册）→MovingAverageTrendStrategy，空 id 拒绝；回测与委员会证据共用 | v1 只有三个内置 runner，DSL 不做任意条件解释；注册 spec 以自身 strategy_id 产出确定性信号；两处独立映射违反"每个关注点一份实现"，已合并 |
 | 2026-10-03 UTC | 可选策略证据失败时是否阻断决策轮 | per-strategy 失败（坏 spec/特征生成/执行错误）记警告并跳过该策略，不阻断轮次；信号只在 H1 单周期序列上计算 | GUIDE 6.4 定位策略信号为可选证据；真实验收发现混合周期输入触发 FeatureGenerationError 崩溃整轮，可选证据不得破坏决策轮；H1 与委员会主窗口一致且新鲜度同 K 线 |
 | 2026-10-03 UTC | 回测 K 线的查询口径 | 按 `--granularity` 后缀精确查询（`get_bar_models(instrument, data_version_suffix=":M:<tf>")`），不回退混合周期 | 无后缀查询按 (symbol, timestamp) 跨周期去重，D 线与 H4/H1 时间戳冲突时被静默丢弃（真实库 61→50），混合周期序列对回测无意义 |
+| 2026-10-03 UTC | S9 后台与 LaunchAgent 运行环境安全 | 引入 certifi 统一安全 HTTPS 传输，service install/run run 接入 --units 与 --trading-mode | 打包/LaunchAgent 环境无全局 SSL 证书配置，需随包携带根证书；S9 需固定 1000 units 预跑 |
 
 ## 阻塞
 

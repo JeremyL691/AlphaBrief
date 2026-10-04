@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from alphabrief_execution.broker.errors import (
     BrokerAuthError,
@@ -283,9 +283,27 @@ class _NoRedirect(HTTPRedirectHandler):
 
 def _default_http_send(request: Request, timeout_seconds: float) -> bytes:
     validate_practice_url(request.full_url)
-    opener = build_opener(_NoRedirect())
+    opener = build_opener(_NoRedirect(), _ca_bundle_handler())
     with opener.open(request, timeout=timeout_seconds) as response:
         return bytes(response.read())
+
+
+def _ca_bundle_handler() -> Any:
+    """HTTPS handler pinned to the certifi CA bundle when available.
+
+    macOS Python builds ship an OpenSSL that does not trust the system
+    keychain, so a bare ``urlopen`` fails with
+    ``CERTIFICATE_VERIFY_FAILED`` outside a repository checkout (the
+    LaunchAgent and the packaged app have no ``SSL_CERT_FILE`` set).
+    certifi is part of the runtime dependency closure and its bundle
+    travels with the frozen backend.
+    """
+    try:
+        from certifi import where as certifi_where
+    except ImportError:  # pragma: no cover - certifi ships with the deps
+        return HTTPSHandler()
+    context = ssl.create_default_context(cafile=certifi_where())
+    return HTTPSHandler(context=context)
 
 
 def _encode(value: str) -> str:

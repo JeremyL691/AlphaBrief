@@ -9,6 +9,7 @@ description = "Local-first AI quant research and paper-trading workbench."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "certifi>=2024.0",
     "duckdb>=1.0,<2",
     "fastapi>=0.100,<1",
     "numpy>=2.0",

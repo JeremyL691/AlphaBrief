@@ -6,7 +6,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from alphabrief_core.http import secure_urlopen
 
 from alphabrief_models.adapters import _maybe_structured_output
 from alphabrief_models.gateway import (
@@ -23,7 +25,7 @@ _DEFAULT_OPENAI_CAPABILITIES: frozenset[ModelCapability] = frozenset(
 
 
 def _default_http_post(request: Request, timeout_seconds: float) -> bytes:
-    with urlopen(request, timeout=timeout_seconds) as response:
+    with secure_urlopen(request, timeout=timeout_seconds) as response:
         return cast(bytes, response.read())
 
 
