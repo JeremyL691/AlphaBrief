@@ -10,11 +10,11 @@
 |---|---|
 | 当前阶段 | **S9 试运行前门禁** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 推进 S9：RC 后台（venv/打包）安装 LaunchAgent、`trading_mode=on`、固定 1000 units，连续运行 24 小时并逐项核对门禁清单 |
-| 下次巡检时间（UTC） | 不适用（尚未进入试运行；S9 24 小时运行结束后核对门禁） |
+| 下一项任务 | 持续维持 S9 LaunchAgent 后台运行 24 小时（pid 91978，trading_mode=on，固定 1000 units），并逐项核对门禁清单 |
+| 下次巡检时间（UTC） | 2026-10-05 04:00 UTC（S9 24 小时预跑结束后核对门禁） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，完成 S8 全部退出标准验收（`scripts/build_release.sh` 产出 `dist/AlphaBrief-1.0.0-rc.1-arm64.dmg` + SHA256SUMS；dmg 冒烟测试通过：临时数据目录、trading off、不装 LaunchAgent，`--version`/doctor/health/静态看板全部通过），进入 S9 |
-| 执行安排 | 持续自主执行，推进 S9 门禁 |
+| 最近更新 | 2026-10-04 UTC，完成 S9 运行时与 LaunchAgent 服务部署；安装打包版后台（/Applications/AlphaBrief.app）为 LaunchAgent 服务（pid 91978，端口 8000，trading_mode=on，固定 1000 units）；全历史密钥扫描通过；主分支推送到 origin/main；后台平稳运行并持续进行对账与报价采样 |
+| 执行安排 | 持续维持 S9 后台运行，按计划巡检核对门禁 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -654,11 +654,18 @@
 #### S9 进展（进行中）
 
 - S9 运行时与服务支持接入（2026-10-03 UTC，本提交）：
-  - TLS 证书捆绑安全传输：创建 `alphabrief_core.http.secure_urlopen` 与 `ca_bundle_context`，依赖 `certifi>=2024.0`，为 LaunchAgent 与打包二进制提供受信任的根证书环境，解决 macOS Python 无 `SSL_CERT_FILE` 时的 TLS 报错；OANDA client、模型网关 adapters（OpenAI、ChatGPT plan）及 RSS 新闻提供者均接入 `secure_urlopen`。
+  - TLS 证书捆绑安全传输：创建 `alphabrief_core.http.secure_urlopen` 与 `ca_bundle_context`，依赖 `certifi>=2024.0`，为 LaunchAgent 与打包二进制提供受信任的根证书环境，解决 macOS Python 无 `SSL_CERT_FILE`时的 TLS 报错；OANDA client、模型网关 adapters（OpenAI、ChatGPT plan）及 RSS 新闻提供者均接入 `secure_urlopen`。
   - OANDA 凭证自动加载：`oanda_is_configured` 在缺少环境变量时无缝降级读取 `secrets/oanda.json`，确保无环境变量的常驻 LaunchAgent 正常运行。
   - S9 固定 1000 units 与交易开关支持：`alphabrief run run` 接入 `--units` 与 `--trading-mode`；`alphabrief service install` 接入 `--units`、`--trading-mode` 与 `--executable`，生成正确的 plist ProgramArguments；`_ai_cycle_factory` 接入 `quantity_override` 确保常驻后台在 S9 门禁预跑时固定 1000 units 下单。
   - 数据库迁移 5：新增 `soak_runs` 与 `scheduler_task_runs` 表。
   - 验证：全量测试 `.venv/bin/pytest -q -m "not practice"` → exit 0，3513 passed / 13 deselected / 7 warnings（209.87 秒）；`.venv/bin/ruff check .` 全部通过；`.venv/bin/mypy` 498 源文件通过；`scripts/secret_scan.py` 退出码 0；`tests/test_project_scaffold.py` 10 通过。
+
+- S9 LaunchAgent 服务部署与平稳运行（2026-10-04 UTC，本提交）：
+  - 打包与安装：构建正式 DMG 并同步到 `/Applications/AlphaBrief.app`；通过 `alphabrief service install --trading-mode on --units 1000 --executable /Applications/AlphaBrief.app/Contents/Resources/backend/alphabrief/alphabrief` 成功安装并加载 LaunchAgent（`ai.alphabrief.backend`）。
+  - 后台运行状态：进程 pid 91978 启动成功，持有运行锁 `runtime.lock`，成功绑定 `127.0.0.1:8000` 并通过 `/health` 探针检查（`{"status":"healthy","version":"1.0.0-rc.1"}`）。
+  - 自动心跳与任务：`alphabrief scheduler heartbeats` 显示 `reconcile`（对账）、`position_monitor`（持仓监控）、`quote_poll`（点差采样）、`market_sync`、`shadow_score` 全部正常循环运行（`last_status: ok, last_error: null`）；`alphabrief broker status` 显示对账无差异（`all_match: true`，`open_freezes: []`）。
+  - 巡检：`alphabrief doctor run` 在服务运行时保持 0 FAIL（4 PASS, 6 WARN, 0 FAIL）。
+  - 代码与推送：增强 `project_root` 支持从 PyInstaller 冻结包加载 `config/`；`scripts/secret_scan.py --history` 全 Git 历史扫描 0 泄露通过；本地 `main` 分支已全部推送至 `origin/main`。
 
 ### S10 14 天试运行
 - [ ] 合格日 14 / 14（由 `alphabrief soak status` 计算）
