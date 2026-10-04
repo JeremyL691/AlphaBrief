@@ -18,6 +18,7 @@ from alphabrief_api.routes.macro import _clear_store as _clear_macro_store
 from alphabrief_api.routes.news import _clear_store as _clear_news_store
 from alphabrief_api.routes.review import _clear_review_store
 from alphabrief_api.routes.risk import _reset_risk_gate
+from alphabrief_core.version import __version__
 from alphabrief_data import ParquetBarLoader
 from alphabrief_news import MacroIndicator, NewsHeadline
 from alphabrief_risk import RiskLimitConfig
@@ -91,7 +92,7 @@ def test_health_check_returns_200() -> None:
 def test_health_check_body() -> None:
     response = client.get("/health")
 
-    assert response.json() == {"status": "healthy", "version": "0.0.0"}
+    assert response.json() == {"status": "healthy", "version": __version__}
 
 
 def test_api_status_returns_200(monkeypatch: pytest.MonkeyPatch) -> None:

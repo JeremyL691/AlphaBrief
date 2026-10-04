@@ -1,14 +1,16 @@
 // Electron main process for AlphaBrief.
 //
-// Spawns the project's FastAPI backend (`alphabrief serve serve`) as a child
-// process using the project's .venv, waits for /health to return 200, then
-// opens a BrowserWindow pointed at /dashboard. Streams child stderr to
-// electron/backend.log. On quit the child is killed.
+// Production (packaged app): spawns the PyInstaller-built backend bundled
+// at Contents/Resources/backend/alphabrief/alphabrief. Development
+// (`--dev` or unpackaged): falls back to the repo's .venv console script.
+// Waits for /health to return 200, then opens a BrowserWindow pointed at
+// the static dashboard. Streams child stderr to backend.log. On quit the
+// child is killed.
 //
-// One Python entry point is intentionally not modified — the `alphabrief`
-// CLI already does everything the desktop app needs.
+// The backend binary is the single source of truth — the desktop shell
+// never implements trading, risk, or storage logic.
 
-const { app, BrowserWindow, Tray, Menu, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, nativeImage } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -20,13 +22,21 @@ const HOST = '127.0.0.1';
 // ALPHABRIEF_ELECTRON_PORT env var.
 const PORT = Number(process.env.ALPHABRIEF_ELECTRON_PORT || 8765);
 const HEALTH_URL = `http://${HOST}:${PORT}/health`;
-const DASHBOARD_URL = `http://${HOST}:${PORT}/dashboard`;
+const DASHBOARD_URL = `http://${HOST}:${PORT}/`;
 
-// Repo root is the parent of the electron/ directory.
+// Repo root is the parent of the electron/ directory (dev runs only).
 const REPO_ROOT = path.resolve(__dirname, '..');
 const VENV_BIN = path.join(REPO_ROOT, '.venv', 'bin');
 const VENTRY_ALPHABRIEF = path.join(VENV_BIN, 'alphabrief');
 const LOG_FILE = path.join(__dirname, 'backend.log');
+// Bundled backend, laid down by electron-builder extraResources.
+const PACKAGED_BACKEND = path.join(
+  process.resourcesPath || '',
+  'backend',
+  'alphabrief',
+  'alphabrief'
+);
+const TRAY_ICON = path.join(__dirname, 'icon-tray.png');
 
 // Backend log rotation: cap the file at 1 MiB. When the file is
 // approaching the cap (>= 768 KiB written this session), rotate to a
@@ -53,9 +63,16 @@ let isQuitting = false;
 let lastBackendStartFailedReason = null;
 
 function resolveBackendCommand() {
-  // Prefer the venv's installed `alphabrief` console script — it's the
-  // same one `alphabrief serve serve` invokes. Falls back to `uv run` if
-  // the venv is missing (CI / cold clone).
+  // Packaged app: use the bundled PyInstaller backend — the app must not
+  // depend on a repository checkout or venv at runtime.
+  if (fs.existsSync(PACKAGED_BACKEND)) {
+    return {
+      command: PACKAGED_BACKEND,
+      args: ['serve', 'serve', '--host', HOST, '--port', String(PORT)],
+      label: 'bundled backend',
+    };
+  }
+  // Dev fallback: the venv's installed `alphabrief` console script.
   if (fs.existsSync(VENTRY_ALPHABRIEF)) {
     return {
       command: VENTRY_ALPHABRIEF,
@@ -247,14 +264,12 @@ function restartBackend() {
 }
 
 function createTray() {
-  // Use a built-in template image — no bundled asset needed.
-  const iconPath = process.platform === 'darwin'
-    ? path.join(__dirname, 'icon.png')
-    : undefined;
-  // On macOS, a missing icon is fine; the tray still works with a fallback.
-  tray = iconPath && fs.existsSync(iconPath)
-    ? new Tray(iconPath)
-    : new Tray(require('electron').nativeImage.createEmpty());
+  // Project-generated candlestick glyph (electron/build/icon-tray.png).
+  // An empty fallback keeps the tray working if the asset is missing.
+  const icon = fs.existsSync(TRAY_ICON)
+    ? nativeImage.createFromPath(TRAY_ICON)
+    : nativeImage.createEmpty();
+  tray = new Tray(icon);
 
   const menu = Menu.buildFromTemplate([
     { label: 'Open Dashboard', click: () => {
