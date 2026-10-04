@@ -7,11 +7,16 @@ and daily reports). Never hardcodes or simulates day counts.
 
 from __future__ import annotations
 
+import shutil
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import duckdb
 from alphabrief_api.db.ai_trading import AiTradingStore
 from alphabrief_api.db.paper import PaperStore
 from alphabrief_core import paths as _paths
@@ -22,6 +27,29 @@ from alphabrief_trader.soak_store import SoakStore
 
 TARGET_QUALIFIED_DAYS = 14
 MAX_ALLOWED_EXTENSIONS = 3
+
+
+@contextmanager
+def snapshot_db_if_locked(db_path: Path | str | None) -> Iterator[Path]:
+    """Provide a readable database path, snapshotting if DuckDB is locked."""
+    target = Path(db_path) if db_path else _paths.db_path()
+    if not target.exists():
+        yield target
+        return
+    try:
+        conn = duckdb.connect(str(target), read_only=True)
+        conn.close()
+        yield target
+        return
+    except duckdb.IOException:
+        # Lock held by running backend daemon; create temporary snapshot copy
+        with tempfile.TemporaryDirectory(prefix="alphabrief_soak_snap_") as td:
+            snap_db = Path(td) / target.name
+            shutil.copy2(target, snap_db)
+            wal = target.with_name(target.name + ".wal")
+            if wal.exists():
+                shutil.copy2(wal, Path(td) / (snap_db.name + ".wal"))
+            yield snap_db
 
 
 @dataclass(frozen=True)
@@ -149,7 +177,6 @@ def _calculate_day_downtime_hours(
         if gap > 21600.0:
             total_gap_seconds += gap
 
-
     last_gap = (day_end - sorted_times[-1]).total_seconds()
     if last_gap > 21600.0:
         total_gap_seconds += last_gap
@@ -163,6 +190,16 @@ def evaluate_soak_status(
     as_of: datetime | None = None,
 ) -> SoakStatus:
     """Evaluate soak qualification facts from the database."""
+    with snapshot_db_if_locked(db_path) as effective_db:
+        return _evaluate_soak_status_impl(db_path=effective_db, as_of=as_of)
+
+
+def _evaluate_soak_status_impl(
+    *,
+    db_path: Path | str | None = None,
+    as_of: datetime | None = None,
+) -> SoakStatus:
+    """Evaluate soak qualification facts from the database implementation."""
     now = _parse_ts(as_of) or datetime.now(UTC)
     soak_store = SoakStore(db_path=db_path)
     try:
@@ -258,7 +295,6 @@ def evaluate_soak_status(
             if order_ts and order_ts.date().isoformat() == day_str:
                 day_orders.append(details)
                 timestamps.append(order_ts)
-
 
         d_start = datetime(
             current_day.year, current_day.month, current_day.day, 0, 0, tzinfo=UTC
@@ -378,7 +414,6 @@ def evaluate_soak_status(
                 "triggered_at": now.isoformat(),
             }
         )
-
 
     has_active_freezes = any(f.is_open for f in freezes)
     is_complete = (

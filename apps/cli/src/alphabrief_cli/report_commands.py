@@ -285,10 +285,6 @@ def soak_cmd(
         write_soak_report,
     )
 
-    from alphabrief_cli.api_client import require_local_write
-
-    require_local_write("report soak")
-
     data = generate_soak_report_data()
     md_path, json_path = write_soak_report(data, out_file=out_file, final=final)
 
