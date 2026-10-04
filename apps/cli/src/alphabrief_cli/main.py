@@ -18,6 +18,7 @@ from alphabrief_cli.cycle_commands import cycle_app
 from alphabrief_cli.data_commands import data_app
 from alphabrief_cli.db_commands import db_app
 from alphabrief_cli.doctor_commands import doctor_app
+from alphabrief_cli.gym_commands import gym_app
 from alphabrief_cli.macro_commands import macro_app
 from alphabrief_cli.model_commands import model_app
 from alphabrief_cli.news_commands import news_app
@@ -46,6 +47,7 @@ app.add_typer(backtest_app, name="backtest")
 app.add_typer(risk_app, name="risk")
 app.add_typer(report_app, name="report")
 app.add_typer(doctor_app, name="doctor")
+app.add_typer(gym_app, name="gym")
 app.add_typer(run_app, name="run")
 app.add_typer(audit_app, name="audit")
 app.add_typer(review_app, name="review")

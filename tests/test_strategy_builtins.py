@@ -373,3 +373,26 @@ class TestFamilyContract:
         assert "orders" not in StrategyOutput.model_fields
         for strategy in _FAMILIES:
             assert "submit" not in dir(strategy)
+
+
+def test_resolve_builtin_runner_maps_registered_ids() -> None:
+    from alphabrief_strategy import (
+        MomentumStrategy,
+        MovingAverageTrendStrategy,
+        RandomStrategy,
+        resolve_builtin_runner,
+    )
+
+    assert isinstance(resolve_builtin_runner("momentum"), MomentumStrategy)
+    assert isinstance(
+        resolve_builtin_runner("eur_momentum_v2"), MomentumStrategy
+    )
+    assert isinstance(resolve_builtin_runner("random"), RandomStrategy)
+    assert isinstance(
+        resolve_builtin_runner("ma_trend"), MovingAverageTrendStrategy
+    )
+    assert isinstance(
+        resolve_builtin_runner("custom_registered"), MovingAverageTrendStrategy
+    )
+    assert resolve_builtin_runner("") is None
+    assert resolve_builtin_runner("   ") is None

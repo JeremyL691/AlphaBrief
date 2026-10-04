@@ -226,6 +226,7 @@ class MarketSnapshot(_CommitteeSchema):
     news_items: list[NewsHeadline] = Field(default_factory=list, max_length=20)
     excluded_news_hashes: list[str] = Field(default_factory=list)
     macro_context: str | None = None
+    strategy_signals: dict[str, dict[str, Any]] = Field(default_factory=dict)
     data_version: str = Field(default="ai-trader-v1", min_length=1)
     captured_at: datetime
 

@@ -123,3 +123,9 @@ files = [
     "packages/alphabrief-trader/src",
     "tests",
 ]
+
+[[tool.mypy.overrides]]
+# axe_playwright_python ships no py.typed marker or stubs; the import is
+# exercised by the S6 accessibility tests at runtime.
+module = "axe_playwright_python.*"
+ignore_missing_imports = true
