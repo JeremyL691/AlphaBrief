@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -56,11 +57,14 @@ def list_cmd() -> None:
 
 @review_app.command("daily")
 def daily_cmd(
-    snapshot: Path = typer.Option(  # noqa: B008  (typer.Option is the documented pattern)
-        ...,
+    snapshot: Path | None = typer.Option(  # noqa: B008
+        None,
         "--snapshot",
         "-s",
-        help="Path to a ReviewCenterSnapshot JSON file.",
+        help=(
+            "Path to a ReviewCenterSnapshot JSON file "
+            "(optional if daily reports exist)."
+        ),
         exists=False,
         readable=True,
     ),
@@ -68,10 +72,13 @@ def daily_cmd(
         None,
         "--trading-day",
         "-d",
-        help="ISO trading day (YYYY-MM-DD). Defaults to most recent brief or today.",
+        help=(
+            "ISO trading day (YYYY-MM-DD). Defaults to most recent "
+            "brief, report, or today."
+        ),
     ),
 ) -> None:
-    """Generate a daily review journal from a ReviewCenterSnapshot JSON file."""
+    """Display the daily review or report from a snapshot or persistent report store."""
     resolved_day: date | None = None
     if trading_day is not None:
         try:
@@ -83,49 +90,114 @@ def daily_cmd(
             )
             print(f"detail: {exc}", file=sys.stderr)
             sys.exit(1)
-    try:
-        text = snapshot.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        print(f"error: snapshot file not found: {snapshot}", file=sys.stderr)
-        print(f"detail: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except OSError as exc:
-        print(f"error: failed to read snapshot file: {snapshot}", file=sys.stderr)
-        print(f"detail: {exc}", file=sys.stderr)
-        sys.exit(1)
 
-    try:
-        loaded = ReviewCenterSnapshot.model_validate_json(text)
-    except (ValidationError, ValueError):
+    if snapshot is not None:
         try:
-            loaded = load_review_snapshot(snapshot)
-        except (FileNotFoundError, ReviewSnapshotLoadError, OSError) as exc:
-            print(f"error: invalid review snapshot: {snapshot}", file=sys.stderr)
+            text = snapshot.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            print(f"error: snapshot file not found: {snapshot}", file=sys.stderr)
+            print(f"detail: {exc}", file=sys.stderr)
+            sys.exit(1)
+        except OSError as exc:
+            print(f"error: failed to read snapshot file: {snapshot}", file=sys.stderr)
             print(f"detail: {exc}", file=sys.stderr)
             sys.exit(1)
 
-    if resolved_day is None:
-        if loaded.daily_briefs:
-            resolved_day = max(brief.trading_day for brief in loaded.daily_briefs)
+        try:
+            loaded = ReviewCenterSnapshot.model_validate_json(text)
+        except (ValidationError, ValueError):
+            try:
+                loaded = load_review_snapshot(snapshot)
+            except (FileNotFoundError, ReviewSnapshotLoadError, OSError) as exc:
+                print(f"error: invalid review snapshot: {snapshot}", file=sys.stderr)
+                print(f"detail: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+        if resolved_day is None:
+            if loaded.daily_briefs:
+                resolved_day = max(brief.trading_day for brief in loaded.daily_briefs)
+            else:
+                resolved_day = date.today()
+
+        try:
+            entry = generate_daily_review(loaded, trading_day=resolved_day)
+        except (ValidationError, ValueError) as exc:
+            print(f"error: failed to generate daily review: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"=== {entry.title} ===")
+        print(entry.summary)
+        print()
+        print("Highlights:")
+        for highlight in entry.highlights:
+            print(f"  - {highlight}")
+        print()
+        print("Action items:")
+        for item in entry.action_items:
+            print(f"  - {item}")
+        return
+
+    # If --snapshot is omitted, look in _paths.daily_reports_dir() first
+    daily_dir = _paths.daily_reports_dir()
+    if daily_dir.is_dir():
+        target_md: Path | None
+        target_json: Path | None
+        if resolved_day is not None:
+            day_str = resolved_day.isoformat()
+            target_md = daily_dir / f"{day_str}.md"
+            target_json = daily_dir / f"{day_str}.json"
         else:
-            resolved_day = date.today()
+            md_files = sorted(daily_dir.glob("*.md"), reverse=True)
+            json_files = sorted(daily_dir.glob("*.json"), reverse=True)
+            target_md = md_files[0] if md_files else None
+            target_json = json_files[0] if json_files else None
 
+        if target_md and target_md.exists():
+            print(target_md.read_text(encoding="utf-8"))
+            return
+        if target_json and target_json.exists():
+            data = json.loads(target_json.read_text(encoding="utf-8"))
+            print(f"=== Daily Report: {target_json.stem} ===")
+            print(data.get("summary", "No summary provided."))
+            if "cycles" in data:
+                print(f"Executed cycles: {len(data['cycles'])}")
+            if "nav" in data:
+                print(f"Account NAV: {data['nav']}")
+            return
+
+    # Fallback to latest snapshot in ReviewStore
+    store = _open_review_store()
     try:
-        entry = generate_daily_review(loaded, trading_day=resolved_day)
-    except (ValidationError, ValueError) as exc:
-        print(f"error: failed to generate daily review: {exc}", file=sys.stderr)
-        sys.exit(1)
+        latest = store.get_latest_snapshot()
+    finally:
+        store.close()
 
-    print(f"=== {entry.title} ===")
-    print(entry.summary)
-    print()
-    print("Highlights:")
-    for highlight in entry.highlights:
-        print(f"  - {highlight}")
-    print()
-    print("Action items:")
-    for item in entry.action_items:
-        print(f"  - {item}")
+    if latest is not None and "snapshot" in latest:
+        try:
+            loaded = ReviewCenterSnapshot.model_validate(latest["snapshot"])
+            if resolved_day is None:
+                if loaded.daily_briefs:
+                    resolved_day = max(
+                        brief.trading_day for brief in loaded.daily_briefs
+                    )
+                else:
+                    resolved_day = date.today()
+            entry = generate_daily_review(loaded, trading_day=resolved_day)
+            print(f"=== {entry.title} ===")
+            print(entry.summary)
+            print()
+            print("Highlights:")
+            for highlight in entry.highlights:
+                print(f"  - {highlight}")
+            print()
+            print("Action items:")
+            for item in entry.action_items:
+                print(f"  - {item}")
+            return
+        except Exception:
+            pass
+
+    print("No daily reports or review snapshots found in storage.")
 
 
 __all__ = ["review_app"]

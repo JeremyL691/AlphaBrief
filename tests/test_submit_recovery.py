@@ -35,6 +35,9 @@ from alphabrief_execution.broker.port import (
 from alphabrief_execution.broker.risk_context import (
     AccountSourceDatum,
     BrokerRiskContextBuilder,
+)
+from alphabrief_risk import RiskGate, RiskLimitConfig
+from alphabrief_risk.broker_context import (
     ConversionDatum,
     HealthState,
     PendingOrderDatum,
@@ -43,7 +46,6 @@ from alphabrief_execution.broker.risk_context import (
     ReconciliationState,
     TradeDatum,
 )
-from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_risk.decision_binding import (
     DecisionBindingService,
 )

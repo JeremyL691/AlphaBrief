@@ -99,4 +99,15 @@ def build_evidence_catalog(snapshot: MarketSnapshot) -> dict[str, str]:
         macro = sanitize_external_text(snapshot.macro_context, source="committee-macro")
         if not macro.neutralized_instructions:
             add("macro", {"context": macro.sanitized_text})
+    strategy_signals = getattr(snapshot, "strategy_signals", None) or {}
+    for strat_id, sig in sorted(strategy_signals.items()):
+        body = scrub_secrets(
+            json.dumps(
+                {"symbol": snapshot.symbol, "strategy_id": strat_id, **sig},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        catalog[f"strategy:{strat_id}"] = body
     return dict(sorted(catalog.items()))

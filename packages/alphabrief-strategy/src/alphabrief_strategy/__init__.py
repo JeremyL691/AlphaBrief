@@ -6,7 +6,12 @@ from alphabrief_strategy.admission import (
     AdmissionResult,
     evaluate_strategy_admission,
 )
-from alphabrief_strategy.builtins import MovingAverageTrendStrategy
+from alphabrief_strategy.builtins import (
+    MomentumStrategy,
+    MovingAverageTrendStrategy,
+    RandomStrategy,
+    resolve_builtin_runner,
+)
 from alphabrief_strategy.dsl import (
     DATA_ALLOWLIST,
     INDICATOR_ALLOWLIST,
@@ -70,9 +75,11 @@ __all__ = [
     "LiteralNode",
     "LogicNode",
     "MeanReversionFamily",
+    "MomentumStrategy",
     "MovingAverageTrendStrategy",
     "NoTradeFamily",
     "NotNode",
+    "RandomStrategy",
     "StrategyCondition",
     "StrategyExecutionError",
     "StrategyFamily",
@@ -91,5 +98,6 @@ __all__ = [
     "compile_condition",
     "evaluate_condition",
     "evaluate_strategy_admission",
+    "resolve_builtin_runner",
     "run_strategy",
 ]
