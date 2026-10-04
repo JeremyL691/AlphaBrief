@@ -32,6 +32,7 @@ from alphabrief_cli.run_commands import run_app
 from alphabrief_cli.scheduler_commands import scheduler_app
 from alphabrief_cli.serve_commands import serve_app
 from alphabrief_cli.service_commands import service_app
+from alphabrief_cli.soak_commands import soak_app
 from alphabrief_cli.strategy_commands import strategy_app
 
 app = typer.Typer(
@@ -62,6 +63,8 @@ app.add_typer(serve_app, name="serve")
 app.add_typer(ai_app, name="ai")
 app.add_typer(db_app, name="db")
 app.add_typer(service_app, name="service")
+app.add_typer(soak_app, name="soak")
+
 
 
 @app.callback()
