@@ -619,6 +619,36 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=5,
+        name="soak-run-identity-and-task-history",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS soak_runs (
+                run_index        INTEGER NOT NULL,
+                started_at       TIMESTAMPTZ NOT NULL,
+                state            TEXT NOT NULL,
+                reason           TEXT,
+                superseded_by    INTEGER,
+                created_at       TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (run_index)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS scheduler_task_runs (
+                task_name        TEXT NOT NULL,
+                started_at       TIMESTAMPTZ NOT NULL,
+                finished_at      TIMESTAMPTZ,
+                status           TEXT NOT NULL,
+                error            TEXT
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_scheduler_task_runs_time
+                ON scheduler_task_runs (started_at)
+            """,
+        ),
+    ),
 )
 
 _LATEST_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)

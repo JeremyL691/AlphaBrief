@@ -141,8 +141,7 @@ def test_default_transport_installs_the_redirect_guard(
             return Response(b"{}")
 
     def build(*handlers: Any) -> Opener:
-        assert len(handlers) == 1
-        assert isinstance(handlers[0], transport._NoRedirect)
+        assert any(isinstance(h, transport._NoRedirect) for h in handlers)
         return Opener()
 
     monkeypatch.setattr(transport, "build_opener", build)

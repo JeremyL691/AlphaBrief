@@ -1067,6 +1067,84 @@ class TestSchedulerRunsAiTask:
         finally:
             store.close()
 
+    def test_ai_cycle_factory_quantity_override_pins_units(
+        self,
+        isolated_data_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """S9 fixed-units pre-run: the resident factory pins order size.
+
+        ``quantity_override`` must replace the risk-based sizing formula
+        (GUIDE 5.6: fixed 1000 units) while keeping the RiskGate in the
+        path, so the submitted order is exactly the pinned size.
+        """
+        monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_TRADING_MODE", "on")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
+        monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
+        adapter = _SubmittingAdapter()
+        monkeypatch.setattr(scheduler_commands, "_build_adapter", lambda: adapter)
+        provider = GroundedProvider(
+            provider_name="fake",
+            model_name="fake-1",
+            capabilities=["structured_output"],
+            structured_output={
+                "analysis": "Bullish continuation.",
+                "view": "bullish",
+                "confidence": 0.8,
+                "evidence_ids": ["input-evidence"],
+                "risks": [],
+                "suggested_action": "buy",
+                "target_position_pct": "0.10",
+                "veto": False,
+                "needs_human_review": False,
+            },
+        )
+        monkeypatch.setattr(
+            cycle_commands,
+            "build_ai_trading_committee",
+            lambda record_sink=None, daily_budget=None, validation_sink=None: (
+                TradingCommittee(
+                    gateway=ModelGateway(
+                        providers=[provider],
+                        record_sink=record_sink,
+                        daily_budget=daily_budget,
+                        validation_sink=validation_sink,
+                    ),
+                    discipline=DisciplineConfig(),
+                    max_turns=5,
+                    challenge_rounds=0,
+                )
+            ),
+        )
+        _seed_risk_sized_inputs(isolated_data_dir)
+
+        handler = _ai_cycle_factory(
+            db_path=isolated_data_dir, quantity_override=Decimal(1000)
+        )
+
+        async def _run_handler() -> None:
+            await handler()
+
+        asyncio.run(_run_handler())
+
+        assert len(adapter.requests) == 1
+        assert adapter.requests[0].symbol == "EUR_USD"
+        # The pinned size replaces the 83-unit risk-based calculation.
+        assert adapter.requests[0].quantity == Decimal("1000")
+
+        store = AiTradingStore(db_path=isolated_data_dir / _paths.DATABASE_NAME)
+        try:
+            latest = store.get_latest_cycle()
+            assert latest is not None
+            attempt = latest["attempts"][0]
+            assert Decimal(attempt["order_intent_json"]["quantity"]) == Decimal(
+                "1000"
+            )
+            assert attempt["outcome"] == "executed"
+        finally:
+            store.close()
+
     @pytest.mark.parametrize(
         "timeframe,count",
         [
