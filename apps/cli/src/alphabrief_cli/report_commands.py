@@ -265,4 +265,48 @@ def daily_cmd(
     )
 
 
-__all__ = ["daily_cmd", "report_app"]
+@report_app.command("soak")
+def soak_cmd(
+    final: bool = typer.Option(  # noqa: B008
+        False,
+        "--final",
+        help="Generate final release soak report (writes to reports/).",
+    ),
+    out_file: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--out-file",
+        help="Custom output file path for markdown report.",
+    ),
+    pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
+) -> None:
+    """Write the comprehensive 14-day soak test report."""
+    from alphabrief_trader.soak_report import (
+        generate_soak_report_data,
+        write_soak_report,
+    )
+
+    from alphabrief_cli.api_client import require_local_write
+
+    require_local_write("report soak")
+
+    data = generate_soak_report_data()
+    md_path, json_path = write_soak_report(data, out_file=out_file, final=final)
+
+    _dump(
+        {
+            "final": final,
+            "markdown": str(md_path),
+            "json": str(json_path),
+            "qualified_days": data.status.qualified_days,
+            "target_days": data.status.target_days,
+            "extensions": data.status.extension_days,
+            "resets": len(data.status.resets),
+            "is_complete": data.status.is_complete,
+            "state": data.status.state,
+        },
+        pretty=pretty,
+    )
+
+
+__all__ = ["daily_cmd", "report_app", "soak_cmd"]
+

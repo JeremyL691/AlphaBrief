@@ -667,6 +667,13 @@
   - 巡检：`alphabrief doctor run` 在服务运行时保持 0 FAIL（4 PASS, 6 WARN, 0 FAIL）。
   - 代码与推送：增强 `project_root` 支持从 PyInstaller 冻结包加载 `config/`；`scripts/secret_scan.py --history` 全 Git 历史扫描 0 泄露通过；本地 `main` 分支已全部推送至 `origin/main`。
 
+- S9 试运行评估与报告引擎及发布物料准备（2026-10-04 UTC，本提交）：
+  - 试运行生命周期与状态评估器：在 `packages/alphabrief-trader/src/alphabrief_trader/` 实现 `soak_store.py`（基于 DuckDB `soak_runs` 表的 `start_soak` / `record_reset` / `complete_soak` / `halt_soak` 生命周期管理）与 `soak_evaluator.py`（严格按 PROJECT_GUIDE 5.7 / 7.3 S10 规则评估 14 天合格日、6–12h 停机顺延、>12h 停机或未授权敞口/重复订单重置）。
+  - 试运行报告生成器：在 `packages/alphabrief-trader/src/alphabrief_trader/` 实现 `soak_report.py`，根据 PROJECT_GUIDE 附录 D 规范生成完整 Markdown 报告（含执行摘要、14 天日志、安全与不变量审计、交易与持仓分析、模型委员会与影子基准对比、系统性能与对账完整性）及配套 JSON 数据。
+  - CLI 工具接入：在 `alphabrief_cli` 接入 `alphabrief soak status`、`alphabrief soak start` 与 `alphabrief report soak [--final] [--out-file]`；在 `alphabrief_api.db` 导出 `SoakStore` 与 `SoakRun`。
+  - 发布物料准备：创建符合 Keep a Changelog 规范的 `CHANGELOG.md`；更新 `README.md`（双语架构图解、CLI 常用指令、安全不变量及 macOS 首次打开说明）。
+  - 验证：18 个新增测试全部通过（`test_soak_store.py` 4 个、`test_soak_evaluator.py` 7 个、`test_report_soak.py` 3 个、`test_soak_cli.py` 4 个）；Ruff lint/format 0 警告；Mypy 106 个源文件通过；`tests/test_project_scaffold.py` 10 通过；`scripts/secret_scan.py` 退出码 0。
+
 ### S10 14 天试运行
 - [ ] 合格日 14 / 14（由 `alphabrief soak status` 计算）
 - [ ] 没有未解决的冻结或阻塞
