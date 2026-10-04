@@ -13,7 +13,7 @@
 | 下一项任务 | 持续维持 S9 LaunchAgent 后台运行 24 小时（pid 91978，trading_mode=on，固定 1000 units），并逐项核对门禁清单 |
 | 下次巡检时间（UTC） | 2026-10-05 04:00 UTC（S9 24 小时预跑结束后核对门禁） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-04 UTC，完成 S9 运行时与 LaunchAgent 服务部署；安装打包版后台（/Applications/AlphaBrief.app）为 LaunchAgent 服务（pid 91978，端口 8000，trading_mode=on，固定 1000 units）；全历史密钥扫描通过；主分支推送到 origin/main；后台平稳运行并持续进行对账与报价采样 |
+| 最近更新 | 2026-10-04 UTC，完成 S9 试运行评估引擎（soak status/report）、发布物料（CHANGELOG/README）及后台独占锁快照只读优化（提交 debaeb2, 55485c2 已推送到 origin/main）；打包版独立 LaunchAgent 服务（pid 91978，端口 8000，trading_mode=on，固定 1000 units）平稳运行中，5 项调度任务及券商双向对账持续正常。 |
 | 执行安排 | 持续维持 S9 后台运行，按计划巡检核对门禁 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
