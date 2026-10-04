@@ -48,6 +48,7 @@ done
     --copy-metadata alphabrief \
     $PKG_PATHS \
     --add-data "apps/api/src/alphabrief_api/static:alphabrief_api/static" \
+    --add-data "config:config" \
     --hidden-import uvicorn.logging \
     --hidden-import uvicorn.loops.auto \
     --hidden-import uvicorn.protocols.http.auto \
