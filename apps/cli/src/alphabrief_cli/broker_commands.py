@@ -313,6 +313,27 @@ def freeze_cmd(
     ),
 ) -> None:
     """Raise a manual freeze. Auto-ordering will block until unfreeze."""
+    if is_api_running():
+        import urllib.request
+
+        url = f"{os.environ.get('ALPHABRIEF_API_URL', 'http://127.0.0.1:8000')}/api/v1/broker/freeze"
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"reason": reason}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            print(f"error: failed to raise freeze: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"event_id: {payload['event_id']}")
+        print(f"reason: {payload['reason']}")
+        print(f"raised_at: {payload['raised_at']}")
+        return
+
     from alphabrief_cli.api_client import require_local_write
 
     require_local_write("broker freeze")
@@ -340,6 +361,28 @@ def unfreeze_cmd(
     ),
 ) -> None:
     """Clear an open freeze by id."""
+    if is_api_running():
+        import urllib.request
+
+        url = f"{os.environ.get('ALPHABRIEF_API_URL', 'http://127.0.0.1:8000')}/api/v1/broker/unfreeze"
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps({"event_id": event_id, "reason": reason}).encode(
+                    "utf-8"
+                ),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            print(f"error: failed to clear freeze: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"event_id: {payload['event_id']}")
+        print(f"cleared_at: {payload['cleared_at']}")
+        return
+
     from alphabrief_cli.api_client import require_local_write
 
     require_local_write("broker unfreeze")
