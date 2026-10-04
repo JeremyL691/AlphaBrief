@@ -25,7 +25,13 @@ def mock_launch_agents_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
 
 
 def test_service_status_uninstalled(mock_launch_agents_dir: Path) -> None:
-    with patch("platform.system", return_value="Darwin"):
+    with (
+        patch("platform.system", return_value="Darwin"),
+        patch(
+            "alphabrief_cli.service_commands._service_loaded",
+            return_value=(False, None),
+        ),
+    ):
         res = runner.invoke(app, ["service", "status", "--compact"])
         assert res.exit_code == 0
         data = json.loads(res.output)

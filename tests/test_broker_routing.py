@@ -162,10 +162,12 @@ def test_production_safety_gate_flags_forbidden_config_selection(
 
 def test_unconfigured_scheduler_runtime_reports_not_ready_and_cannot_submit(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """AC-M01-W03-02: unconfigured broker runtime is not ready, cannot submit."""
     from alphabrief_cli.scheduler_commands import _build_adapter
 
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("ALPHABRIEF_OANDA_TOKEN", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("ALPHABRIEF_OANDA_BASE_URL", raising=False)

@@ -23,6 +23,7 @@ from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_trader.daily_report import DailyReportData, write_daily_report
 from alphabrief_trader.shadow_store import ShadowStore
+from alphabrief_trader.soak_evaluator import snapshot_db_if_locked
 
 report_app = typer.Typer(help="Generate operator reports from the database.")
 
@@ -88,7 +89,7 @@ def _model_calls_for_day(store: ModelCallStore, day: str) -> list[dict[str, Any]
     return [call for call in calls if str(call.get("created_at", ""))[:10] == day]
 
 
-def _equity_snapshot(day: str) -> dict[str, Any]:
+def _equity_snapshot(day: str, db_path: Path | str | None = None) -> dict[str, Any]:
     """NAV, day-start equity and drawdown, when an account id is configured."""
     from alphabrief_execution.broker.oanda.config import read_oanda_credentials
     from alphabrief_execution.broker.runtime import oanda_is_configured
@@ -98,7 +99,7 @@ def _equity_snapshot(day: str) -> dict[str, Any]:
     # The account id is only used to read the local equity snapshots; it is
     # never printed (reports carry the metrics, not the identifier).
     _, account_id = read_oanda_credentials()
-    store = PaperStore(db_path=_paths.db_path())
+    store = PaperStore(db_path=db_path or _paths.db_path())
     try:
         day_start = store.get_day_start_equity(account_id, date.fromisoformat(day))
         latest = store.get_latest_equity(account_id)
@@ -125,8 +126,10 @@ def _equity_snapshot(day: str) -> dict[str, Any]:
     return equity
 
 
-def _reconciliation(day: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    store = BrokerReconStore(db_path=_paths.db_path())
+def _reconciliation(
+    day: str, db_path: Path | str | None = None
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    store = BrokerReconStore(db_path=db_path or _paths.db_path())
     try:
         snapshots = store.list_snapshots(limit=200)
         freezes = store.list_freezes(only_open=False)
@@ -156,8 +159,10 @@ def _reconciliation(day: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return state, freeze_rows
 
 
-def _market_freshness(symbols: tuple[str, ...]) -> list[dict[str, Any]]:
-    store = MarketDataStore(db_path=_paths.db_path())
+def _market_freshness(
+    symbols: tuple[str, ...], db_path: Path | str | None = None
+) -> list[dict[str, Any]]:
+    store = MarketDataStore(db_path=db_path or _paths.db_path())
     rows: list[dict[str, Any]] = []
     try:
         for symbol in symbols:
@@ -218,37 +223,36 @@ def daily_cmd(
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Write the daily report for one UTC day."""
-    from alphabrief_cli.api_client import require_local_write
-
-    require_local_write("report daily")
-
     from alphabrief_cli.cycle_commands import DEFAULT_UNIVERSE
 
-    day = _day(report_date)
-    doctor_summary = _doctor_summary()
-    store = AiTradingStore(db_path=_paths.db_path())
-    model_calls = ModelCallStore(db_path=_paths.db_path())
-    shadow = ShadowStore(db_path=_paths.db_path())
-    try:
-        data = DailyReportData(
-            trading_day=day,
-            generated_at=datetime.now(UTC),
-            cycles=_cycles_for_day(store, day),
-            attempts=_attempts_for_day(store, day),
-            model_calls=_model_calls_for_day(model_calls, day),
-            shadow_decisions=shadow.list_decisions(limit=10000),
-            shadow_stats=shadow.scoreboard(),
-            reconciliation=_reconciliation(day)[0],
-            freezes=_reconciliation(day)[1],
-            equity=_equity_snapshot(day),
-            market_freshness=_market_freshness(DEFAULT_UNIVERSE),
-            doctor_summary=doctor_summary,
-        )
-        markdown_path, json_path = write_daily_report(data, directory=out_dir)
-    finally:
-        shadow.close()
-        model_calls.close()
-        store.close()
+    with snapshot_db_if_locked(_paths.db_path()) as effective_db:
+        day = _day(report_date)
+        doctor_summary = _doctor_summary()
+        store = AiTradingStore(db_path=effective_db)
+        model_calls = ModelCallStore(db_path=effective_db)
+        shadow = ShadowStore(db_path=effective_db)
+        try:
+            data = DailyReportData(
+                trading_day=day,
+                generated_at=datetime.now(UTC),
+                cycles=_cycles_for_day(store, day),
+                attempts=_attempts_for_day(store, day),
+                model_calls=_model_calls_for_day(model_calls, day),
+                shadow_decisions=shadow.list_decisions(limit=10000),
+                shadow_stats=shadow.scoreboard(),
+                reconciliation=_reconciliation(day, db_path=effective_db)[0],
+                freezes=_reconciliation(day, db_path=effective_db)[1],
+                equity=_equity_snapshot(day, db_path=effective_db),
+                market_freshness=_market_freshness(
+                    DEFAULT_UNIVERSE, db_path=effective_db
+                ),
+                doctor_summary=doctor_summary,
+            )
+            markdown_path, json_path = write_daily_report(data, directory=out_dir)
+        finally:
+            shadow.close()
+            model_calls.close()
+            store.close()
 
     _dump(
         {
@@ -305,4 +309,3 @@ def soak_cmd(
 
 
 __all__ = ["daily_cmd", "report_app", "soak_cmd"]
-

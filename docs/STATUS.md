@@ -13,7 +13,7 @@
 | 下一项任务 | 持续维持 S9 LaunchAgent 后台运行 24 小时（pid 91978，trading_mode=on，固定 1000 units），并逐项核对门禁清单 |
 | 下次巡检时间（UTC） | 2026-10-05 04:00 UTC（S9 24 小时预跑结束后核对门禁） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-04 UTC，完成 S9 试运行评估引擎（soak status/report）、发布物料（CHANGELOG/README）及后台独占锁快照只读优化（提交 debaeb2, 55485c2 已推送到 origin/main）；打包版独立 LaunchAgent 服务（pid 91978，端口 8000，trading_mode=on，固定 1000 units）平稳运行中，5 项调度任务及券商双向对账持续正常。 |
+| 最近更新 | 2026-10-04 21:25 UTC，LaunchAgent 后台服务（pid 91978）已连续无人值守平稳运行 17 小时 35 分钟（距离 24 小时门禁仅剩约 6.5 小时）；核验短暂网络 DNS 抖动触发的安全冻结并完成调查解冻（200 次对账全绿，all_match=True）；优化 report daily 快照只读与 broker unfreeze 运行态代理；全量 189 个相关测试全绿，doctor 0 FAIL。 |
 | 执行安排 | 持续维持 S9 后台运行，按计划巡检核对门禁 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
@@ -673,6 +673,12 @@
   - CLI 工具接入：在 `alphabrief_cli` 接入 `alphabrief soak status`、`alphabrief soak start` 与 `alphabrief report soak [--final] [--out-file]`；在 `alphabrief_api.db` 导出 `SoakStore` 与 `SoakRun`。
   - 发布物料准备：创建符合 Keep a Changelog 规范的 `CHANGELOG.md`；更新 `README.md`（双语架构图解、CLI 常用指令、安全不变量及 macOS 首次打开说明）。
   - 验证：18 个新增测试全部通过（`test_soak_store.py` 4 个、`test_soak_evaluator.py` 7 个、`test_report_soak.py` 3 个、`test_soak_cli.py` 4 个）；Ruff lint/format 0 警告；Mypy 106 个源文件通过；`tests/test_project_scaffold.py` 10 通过；`scripts/secret_scan.py` 退出码 0。
+
+- S9 门禁巡检与运行态 CLI 增强（2026-10-04 21:25 UTC，本提交）：
+  - 连续平稳运行 17.5 小时：LaunchAgent 后台守护进程（pid 91978，trading_mode=on，固定 1000 units）自 03:50 UTC 启动至今已连续平稳运行 17 小时 35 分钟，零崩溃、零重启，持有单一运行锁。
+  - 短暂网络故障处置与解冻：13:30–13:35 UTC 期间本机出现网络 DNS 临时解析异常（Errno 8），对账与持仓监控连续失败触发安全冻结；网络自动恢复后连续 40+ 次对账全绿（200 次快照 100% clean，all_match=True）；根据 PROJECT_GUIDE 5.9 调查核验后通过 API 解冻，当前 open_freezes 恢复为 0。
+  - 日报生成与运行态代理：为 `alphabrief report daily` 接入快照只读降级，使其在后台独占写锁时仍可安全直接输出当日报告；为 `alphabrief broker freeze/unfreeze` 接入运行态 API 代理；修复 3 处运行态单测隔离。
+  - 验证：成功生成 `reports/daily/2026-10-04.md`（包含 200 次干净对账、零异常订单）；全量 189 个 CLI/Report/Broker 测试全部通过；Ruff 与 Mypy 全绿；`alphabrief doctor run` 保持 0 FAIL。
 
 ### S10 14 天试运行
 - [ ] 合格日 14 / 14（由 `alphabrief soak status` 计算）
