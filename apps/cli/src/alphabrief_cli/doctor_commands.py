@@ -229,16 +229,17 @@ def check_news_sources(*, timeout_seconds: float = 15.0) -> CheckResult:
     """Each configured news feed answers with a parseable document."""
     import urllib.request
 
+    from alphabrief_core.http import secure_urlopen
     from alphabrief_news.providers.rss import _FEED_SOURCES
 
     reachable: list[str] = []
     failed: list[str] = []
     for key, source in _FEED_SOURCES.items():
         request = urllib.request.Request(
-            source.url, headers={"User-Agent": "AlphaBrief/0.0"}
+            source.url, headers={"User-Agent": "AlphaBrief/1.0"}
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with secure_urlopen(request, timeout=timeout_seconds) as response:
                 body = response.read(4096)
         except Exception:  # noqa: BLE001 - reported per feed
             failed.append(key)

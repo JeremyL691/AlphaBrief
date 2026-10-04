@@ -15,7 +15,6 @@ tagged with every traded symbol.
 from __future__ import annotations
 
 import json
-import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +22,7 @@ from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
+from alphabrief_core.http import secure_urlopen
 from alphabrief_data.providers import (
     RetryPolicy,
     call_with_retry,
@@ -125,7 +125,7 @@ _DEFAULT_TIMEOUT = 30.0
 
 def _default_http_get(request: Request, timeout_seconds: float) -> bytes:
     """Perform a blocking GET and return the response body."""
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+    with secure_urlopen(request, timeout=timeout_seconds) as response:
         return cast(bytes, response.read())
 
 

@@ -10,11 +10,11 @@
 |---|---|
 | 当前阶段 | **S9 试运行前门禁** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 推进 S9：RC 后台（venv/打包）安装 LaunchAgent、`trading_mode=on`、固定 1000 units，连续运行 24 小时并逐项核对门禁清单 |
-| 下次巡检时间（UTC） | 不适用（尚未进入试运行；S9 24 小时运行结束后核对门禁） |
+| 下一项任务 | 持续维持 S9 LaunchAgent 后台运行 24 小时（pid 91978，trading_mode=on，固定 1000 units），并逐项核对门禁清单 |
+| 下次巡检时间（UTC） | 2026-10-05 04:00 UTC（S9 24 小时预跑结束后核对门禁） |
 | 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-03 UTC，完成 S8 全部退出标准验收（`scripts/build_release.sh` 产出 `dist/AlphaBrief-1.0.0-rc.1-arm64.dmg` + SHA256SUMS；dmg 冒烟测试通过：临时数据目录、trading off、不装 LaunchAgent，`--version`/doctor/health/静态看板全部通过），进入 S9 |
-| 执行安排 | 持续自主执行，推进 S9 门禁 |
+| 最近更新 | 2026-10-04 UTC，完成 S9 试运行评估引擎（soak status/report）、发布物料（CHANGELOG/README）及后台独占锁快照只读优化（提交 debaeb2, 55485c2 已推送到 origin/main）；打包版独立 LaunchAgent 服务（pid 91978，端口 8000，trading_mode=on，固定 1000 units）平稳运行中，5 项调度任务及券商双向对账持续正常。 |
+| 执行安排 | 持续维持 S9 后台运行，按计划巡检核对门禁 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -651,6 +651,29 @@
 - [ ] S9-2 门禁清单全部勾选（见 GUIDE S9）
 - [ ] 退出标准：打 tag `v1.0.0-rc.N` 并推送；写入 Day 0
 
+#### S9 进展（进行中）
+
+- S9 运行时与服务支持接入（2026-10-03 UTC，本提交）：
+  - TLS 证书捆绑安全传输：创建 `alphabrief_core.http.secure_urlopen` 与 `ca_bundle_context`，依赖 `certifi>=2024.0`，为 LaunchAgent 与打包二进制提供受信任的根证书环境，解决 macOS Python 无 `SSL_CERT_FILE`时的 TLS 报错；OANDA client、模型网关 adapters（OpenAI、ChatGPT plan）及 RSS 新闻提供者均接入 `secure_urlopen`。
+  - OANDA 凭证自动加载：`oanda_is_configured` 在缺少环境变量时无缝降级读取 `secrets/oanda.json`，确保无环境变量的常驻 LaunchAgent 正常运行。
+  - S9 固定 1000 units 与交易开关支持：`alphabrief run run` 接入 `--units` 与 `--trading-mode`；`alphabrief service install` 接入 `--units`、`--trading-mode` 与 `--executable`，生成正确的 plist ProgramArguments；`_ai_cycle_factory` 接入 `quantity_override` 确保常驻后台在 S9 门禁预跑时固定 1000 units 下单。
+  - 数据库迁移 5：新增 `soak_runs` 与 `scheduler_task_runs` 表。
+  - 验证：全量测试 `.venv/bin/pytest -q -m "not practice"` → exit 0，3513 passed / 13 deselected / 7 warnings（209.87 秒）；`.venv/bin/ruff check .` 全部通过；`.venv/bin/mypy` 498 源文件通过；`scripts/secret_scan.py` 退出码 0；`tests/test_project_scaffold.py` 10 通过。
+
+- S9 LaunchAgent 服务部署与平稳运行（2026-10-04 UTC，本提交）：
+  - 打包与安装：构建正式 DMG 并同步到 `/Applications/AlphaBrief.app`；通过 `alphabrief service install --trading-mode on --units 1000 --executable /Applications/AlphaBrief.app/Contents/Resources/backend/alphabrief/alphabrief` 成功安装并加载 LaunchAgent（`ai.alphabrief.backend`）。
+  - 后台运行状态：进程 pid 91978 启动成功，持有运行锁 `runtime.lock`，成功绑定 `127.0.0.1:8000` 并通过 `/health` 探针检查（`{"status":"healthy","version":"1.0.0-rc.1"}`）。
+  - 自动心跳与任务：`alphabrief scheduler heartbeats` 显示 `reconcile`（对账）、`position_monitor`（持仓监控）、`quote_poll`（点差采样）、`market_sync`、`shadow_score` 全部正常循环运行（`last_status: ok, last_error: null`）；`alphabrief broker status` 显示对账无差异（`all_match: true`，`open_freezes: []`）。
+  - 巡检：`alphabrief doctor run` 在服务运行时保持 0 FAIL（4 PASS, 6 WARN, 0 FAIL）。
+  - 代码与推送：增强 `project_root` 支持从 PyInstaller 冻结包加载 `config/`；`scripts/secret_scan.py --history` 全 Git 历史扫描 0 泄露通过；本地 `main` 分支已全部推送至 `origin/main`。
+
+- S9 试运行评估与报告引擎及发布物料准备（2026-10-04 UTC，本提交）：
+  - 试运行生命周期与状态评估器：在 `packages/alphabrief-trader/src/alphabrief_trader/` 实现 `soak_store.py`（基于 DuckDB `soak_runs` 表的 `start_soak` / `record_reset` / `complete_soak` / `halt_soak` 生命周期管理）与 `soak_evaluator.py`（严格按 PROJECT_GUIDE 5.7 / 7.3 S10 规则评估 14 天合格日、6–12h 停机顺延、>12h 停机或未授权敞口/重复订单重置）。
+  - 试运行报告生成器：在 `packages/alphabrief-trader/src/alphabrief_trader/` 实现 `soak_report.py`，根据 PROJECT_GUIDE 附录 D 规范生成完整 Markdown 报告（含执行摘要、14 天日志、安全与不变量审计、交易与持仓分析、模型委员会与影子基准对比、系统性能与对账完整性）及配套 JSON 数据。
+  - CLI 工具接入：在 `alphabrief_cli` 接入 `alphabrief soak status`、`alphabrief soak start` 与 `alphabrief report soak [--final] [--out-file]`；在 `alphabrief_api.db` 导出 `SoakStore` 与 `SoakRun`。
+  - 发布物料准备：创建符合 Keep a Changelog 规范的 `CHANGELOG.md`；更新 `README.md`（双语架构图解、CLI 常用指令、安全不变量及 macOS 首次打开说明）。
+  - 验证：18 个新增测试全部通过（`test_soak_store.py` 4 个、`test_soak_evaluator.py` 7 个、`test_report_soak.py` 3 个、`test_soak_cli.py` 4 个）；Ruff lint/format 0 警告；Mypy 106 个源文件通过；`tests/test_project_scaffold.py` 10 通过；`scripts/secret_scan.py` 退出码 0。
+
 ### S10 14 天试运行
 - [ ] 合格日 14 / 14（由 `alphabrief soak status` 计算）
 - [ ] 没有未解决的冻结或阻塞
@@ -716,6 +739,7 @@
 | 2026-10-03 UTC | 注册策略如何映射到信号 runner | 唯一 `resolve_builtin_runner`：id 含 momentum→MomentumStrategy，含 random→RandomStrategy，其余（含 ma_trend 与自定义注册）→MovingAverageTrendStrategy，空 id 拒绝；回测与委员会证据共用 | v1 只有三个内置 runner，DSL 不做任意条件解释；注册 spec 以自身 strategy_id 产出确定性信号；两处独立映射违反"每个关注点一份实现"，已合并 |
 | 2026-10-03 UTC | 可选策略证据失败时是否阻断决策轮 | per-strategy 失败（坏 spec/特征生成/执行错误）记警告并跳过该策略，不阻断轮次；信号只在 H1 单周期序列上计算 | GUIDE 6.4 定位策略信号为可选证据；真实验收发现混合周期输入触发 FeatureGenerationError 崩溃整轮，可选证据不得破坏决策轮；H1 与委员会主窗口一致且新鲜度同 K 线 |
 | 2026-10-03 UTC | 回测 K 线的查询口径 | 按 `--granularity` 后缀精确查询（`get_bar_models(instrument, data_version_suffix=":M:<tf>")`），不回退混合周期 | 无后缀查询按 (symbol, timestamp) 跨周期去重，D 线与 H4/H1 时间戳冲突时被静默丢弃（真实库 61→50），混合周期序列对回测无意义 |
+| 2026-10-03 UTC | S9 后台与 LaunchAgent 运行环境安全 | 引入 certifi 统一安全 HTTPS 传输，service install/run run 接入 --units 与 --trading-mode | 打包/LaunchAgent 环境无全局 SSL 证书配置，需随包携带根证书；S9 需固定 1000 units 预跑 |
 
 ## 阻塞
 

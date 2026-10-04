@@ -19,6 +19,7 @@ from alphabrief_api.db.model_eval import ModelEvalStore
 from alphabrief_api.db.news import NewsStore
 from alphabrief_api.db.paper import PaperStore
 from alphabrief_api.db.review import ReviewStore
+from alphabrief_api.db.soak import SoakStore
 from alphabrief_api.db.strategies import StrategySpecStore
 from alphabrief_api.db.strategy_signals import StrategySignalStore
 
@@ -33,6 +34,8 @@ __all__ = [
     "NewsStore",
     "PaperStore",
     "ReviewStore",
+    "SoakStore",
     "StrategySignalStore",
     "StrategySpecStore",
 ]
+

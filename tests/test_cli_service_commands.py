@@ -114,3 +114,68 @@ def test_service_start_and_stop(mock_launch_agents_dir: Path) -> None:
         res_stop = runner.invoke(app, ["service", "stop", "--compact"])
         assert res_stop.exit_code == 0
         assert json.loads(res_stop.output)["stopped"] is True
+
+
+def test_service_install_units_and_executable_plist_args(
+    mock_launch_agents_dir: Path,
+) -> None:
+    """The S9 plist must pass options that `alphabrief run run` accepts.
+
+    `--trading-mode on --units 1000` pins the fixed-units pre-run; the
+    generated ProgramArguments are verified against the Typer command so
+    the service can never be installed with an unparseable command line.
+    """
+    import plistlib
+
+    from alphabrief_cli.run_commands import run_cmd as _run_cmd  # noqa: F401
+    from typer.testing import CliRunner as _CliRunner
+
+    mock_launchctl = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            args=["launchctl"], returncode=0, stdout="", stderr=""
+        )
+    )
+    packaged = mock_launch_agents_dir.parent / "packaged-backend"
+    packaged.write_bytes(b"stub")
+
+    with (
+        patch("platform.system", return_value="Darwin"),
+        patch("alphabrief_cli.service_commands._launchctl", mock_launchctl),
+        patch(
+            "alphabrief_cli.service_commands._service_loaded",
+            return_value=(False, None),
+        ),
+    ):
+        res = runner.invoke(
+            app,
+            [
+                "service",
+                "install",
+                "--trading-mode",
+                "on",
+                "--units",
+                "1000",
+                "--executable",
+                str(packaged),
+                "--compact",
+            ],
+        )
+        assert res.exit_code == 0, res.output
+
+        plist_file = mock_launch_agents_dir / "ai.alphabrief.backend.plist"
+        plist = plistlib.loads(plist_file.read_bytes())
+        args = plist["ProgramArguments"]
+        assert args[-2:] == ["--units", "1000"]
+        assert "--trading-mode" in args and "on" in args
+        assert str(packaged) in args
+        assert args.index("on") == args.index("--trading-mode") + 1
+        assert args.index("1000") == args.index("--units") + 1
+
+        # Every option and value pair in the plist must be accepted by
+        # `alphabrief run run --help`.
+        helptext = _CliRunner().invoke(app, ["run", "run", "--help"]).output
+        iterator = iter(range(len(args)))
+        for i in iterator:
+            token = args[i]
+            if token.startswith("--"):
+                assert f"{token}" in helptext, f"{token} not accepted by run run"

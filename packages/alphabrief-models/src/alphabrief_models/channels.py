@@ -82,6 +82,15 @@ def load_model_settings(path: Path | None = None) -> ModelSettings:
     """
     config_path = path or CONFIG_PATH
     if not config_path.is_file():
+        try:
+            from alphabrief_core.policy_version import project_root
+
+            candidate = project_root() / CONFIG_PATH
+            if candidate.is_file():
+                config_path = candidate
+        except Exception:
+            pass
+    if not config_path.is_file():
         return ModelSettings()
     document = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if document is None:

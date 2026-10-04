@@ -30,6 +30,7 @@ from collections.abc import Callable, Coroutine
 from contextlib import ExitStack
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -731,7 +732,7 @@ def _reconcile_runner(recon_store: BrokerReconStore) -> Callable[[str], None]:
     return _reconcile_once
 
 def _ai_cycle_factory(
-    *, db_path: Path
+    *, db_path: Path, quantity_override: Decimal | None = None
 ) -> Callable[..., Coroutine[Any, Any, None]]:
     """Build an ``on_ai_cycle`` coroutine bound to ``db_path``.
 
@@ -739,6 +740,10 @@ def _ai_cycle_factory(
     paper universe. The handler is registered but disabled by default;
     ``scheduler run`` enables the task only when
     ``ALPHABRIEF_AI_TRADING_ENABLED`` is truthy.
+
+    ``quantity_override`` pins the order size for the S9 fixed-units
+    pre-run (GUIDE 5.6): when set, position sizing uses exactly these
+    units instead of the risk-based formula.
     """
     from alphabrief_api.db import NewsStore
 
@@ -757,6 +762,7 @@ def _ai_cycle_factory(
                 symbols=universe, database=database,
                 trading=cast("TradingMode", trading_mode()),
                 enabled=is_ai_trading_enabled(),
+                quantity_override=quantity_override,
             ) as cycle:
                 cycle.run(list(universe), cycle_key=cycle_key)
 

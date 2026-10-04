@@ -48,11 +48,13 @@ done
     --copy-metadata alphabrief \
     $PKG_PATHS \
     --add-data "apps/api/src/alphabrief_api/static:alphabrief_api/static" \
+    --add-data "config:config" \
     --hidden-import uvicorn.logging \
     --hidden-import uvicorn.loops.auto \
     --hidden-import uvicorn.protocols.http.auto \
     --hidden-import uvicorn.protocols.websockets.auto \
     --hidden-import uvicorn.lifespan.on \
+    --hidden-import pytz \
     apps/cli/src/alphabrief_cli/__main__.py \
     --distpath "$ELECTRON_DIR/backend-dist" \
     --workpath /tmp/alphabrief-pyinstaller-work \

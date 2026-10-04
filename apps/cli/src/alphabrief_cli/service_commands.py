@@ -84,12 +84,36 @@ def install_cmd(
     catch_up_minutes: int = typer.Option(
         90, "--catch-up-minutes", help="Clock schedule catch-up window."
     ),
+    units: str = typer.Option(
+        "",
+        "--units",
+        help=(
+            "Fixed order size in units for every intent (GUIDE 5.6 S9 "
+            "pre-run); empty means risk-based sizing."
+        ),
+    ),
+    executable: Path | None = typer.Option(
+        None,
+        "--executable",
+        help=(
+            "Backend command override (e.g. the packaged onedir binary); "
+            "defaults to the venv's alphabrief console script."
+        ),
+    ),
     pretty: bool = typer.Option(True, "--pretty/--compact"),
 ) -> None:
     """Generate and load ~/Library/LaunchAgents/ai.alphabrief.backend.plist."""
     if platform.system() != "Darwin":
         typer.secho(
             "error: LaunchAgent service is only supported on macOS",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if trading_mode not in {"on", "off"}:
+        typer.secho(
+            f"error: --trading-mode must be 'on' or 'off', got {trading_mode!r}",
             fg=typer.colors.RED,
             err=True,
         )
@@ -103,7 +127,17 @@ def install_cmd(
     stdout_path = str(logs_directory / "backend.out.log")
     stderr_path = str(logs_directory / "backend.err.log")
 
-    exec_cmd = _find_alphabrief_executable()
+    if executable is not None:
+        if not executable.is_file():
+            typer.secho(
+                f"error: --executable {executable} is not a file",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        exec_cmd = [str(executable)]
+    else:
+        exec_cmd = _find_alphabrief_executable()
     program_args = [
         *exec_cmd,
         "run",
@@ -117,6 +151,8 @@ def install_cmd(
         "--catch-up-minutes",
         str(catch_up_minutes),
     ]
+    if units.strip():
+        program_args += ["--units", units.strip()]
 
     env_vars = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"),

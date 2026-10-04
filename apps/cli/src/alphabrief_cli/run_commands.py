@@ -28,7 +28,7 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -378,6 +378,7 @@ class Runtime:
         shadow_scorer: Callable[[], Any] | None = None,
         market_refresher: Callable[[], Any] | None = None,
         position_monitor: Callable[[], Any] | None = None,
+        quantity_override: Decimal | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -398,6 +399,7 @@ class Runtime:
         self._position_monitor = position_monitor or (
             lambda: position_monitor_once(now=self._clock())
         )
+        self._quantity_override = quantity_override
         self._close_lock = asyncio.Lock()
         self._market_sync_lock = asyncio.Lock()
         self._stop = asyncio.Event()
@@ -410,7 +412,10 @@ class Runtime:
     def _default_decision_round(self, cycle_key: str) -> Any:
         from alphabrief_cli.scheduler_commands import _ai_cycle_factory
 
-        handler = _ai_cycle_factory(db_path=_paths.data_dir())
+        handler = _ai_cycle_factory(
+            db_path=_paths.data_dir(),
+            quantity_override=self._quantity_override,
+        )
         return handler(cycle_key=cycle_key)
 
     async def _run_decision_round(self, event: PlannedEvent) -> None:
@@ -640,6 +645,22 @@ def run_cmd(
         "--catch-up-minutes",
         help="How late a missed round may still run (PROJECT_GUIDE 5.1).",
     ),
+    trading_mode: str | None = typer.Option(  # noqa: B008
+        None,
+        "--trading-mode",
+        help=(
+            "Trading switch for this process: 'off' or 'on' "
+            "(defaults to environment or 'off')."
+        ),
+    ),
+    units: str = typer.Option(  # noqa: B008
+        "",
+        "--units",
+        help=(
+            "Fixed order size in units for every intent (GUIDE 5.6 S9 "
+            "pre-run); empty means risk-based sizing."
+        ),
+    ),
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
 ) -> None:
     """Start the API and the scheduler in one locked process."""
@@ -648,8 +669,42 @@ def run_cmd(
         _ai_scheduler_universe,
         _configure_logging,
         _refuse_if_live_trading_unlocked,
-        trading_mode,
     )
+    from alphabrief_cli.scheduler_commands import (
+        trading_mode as _trading_mode_getter,
+    )
+
+    if trading_mode is not None:
+        normalized_mode = trading_mode.strip().lower()
+        if normalized_mode not in {"on", "off"}:
+            typer.secho(
+                f"error: --trading-mode must be 'on' or 'off', got {trading_mode!r}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        os.environ["ALPHABRIEF_TRADING_MODE"] = normalized_mode
+    else:
+        normalized_mode = _trading_mode_getter()
+
+    quantity_override: Decimal | None = None
+    if units.strip():
+        try:
+            quantity_override = Decimal(units.strip())
+        except InvalidOperation as exc:
+            typer.secho(
+                f"error: --units must be a decimal number, got {units!r}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1) from exc
+        if quantity_override <= 0:
+            typer.secho(
+                "error: --units must be positive",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
 
     _refuse_if_live_trading_unlocked()
     _configure_logging()
@@ -661,6 +716,7 @@ def run_cmd(
             port=port,
             universe=universe,
             catch_up_minutes=catch_up_minutes,
+            quantity_override=quantity_override,
         )
         loop = asyncio.new_event_loop()
         try:
@@ -678,7 +734,7 @@ def run_cmd(
                     "status": "running",
                     "api": f"http://{host}:{port}",
                     "lock": str(lock.path),
-                    "trading_mode": trading_mode(),
+                    "trading_mode": normalized_mode,
                     "universe": list(universe),
                     "catch_up_minutes": catch_up_minutes,
                     "pid": os.getpid(),
