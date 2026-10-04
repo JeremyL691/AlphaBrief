@@ -34,7 +34,11 @@ from alphabrief_execution.broker.oanda.telemetry import redact_account_id
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 
 from alphabrief_trader.shadow_store import ShadowStore
-from alphabrief_trader.soak_evaluator import SoakStatus, evaluate_soak_status
+from alphabrief_trader.soak_evaluator import (
+    SoakStatus,
+    evaluate_soak_status,
+    snapshot_db_if_locked,
+)
 
 
 @dataclass(frozen=True)
@@ -354,6 +358,16 @@ def generate_soak_report_data(
     as_of: datetime | None = None,
 ) -> SoakReportData:
     """Gather all soak facts and build SoakReportData."""
+    with snapshot_db_if_locked(db_path) as effective_db:
+        return _generate_soak_report_data_impl(db_path=effective_db, as_of=as_of)
+
+
+def _generate_soak_report_data_impl(
+    *,
+    db_path: Path | str | None = None,
+    as_of: datetime | None = None,
+) -> SoakReportData:
+    """Gather all soak facts and build SoakReportData implementation."""
     now = as_of or datetime.now(UTC)
     status = evaluate_soak_status(db_path=db_path, as_of=now)
 
