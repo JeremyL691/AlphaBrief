@@ -117,6 +117,14 @@ def _resolve_policy_path(path: Path) -> Path:
 
     if path.is_absolute():
         return path
+    try:
+        from alphabrief_core.policy_version import project_root
+
+        candidate = project_root() / path
+        if candidate.is_file():
+            return candidate
+    except Exception:
+        pass
     parents = (*Path.cwd().parents, *Path(__file__).resolve().parents)
     for directory in (Path.cwd(), *parents):
         if (directory / "pyproject.toml").is_file():

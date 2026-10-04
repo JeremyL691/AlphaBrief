@@ -36,11 +36,21 @@ class PolicyVersionError(RuntimeError):
 
 
 def project_root(start: Path | None = None) -> Path:
-    """The first ancestor of ``start`` (or cwd) holding ``pyproject.toml``."""
+    """The first ancestor holding pyproject.toml, or the bundle directory."""
+    import sys
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass and (Path(meipass) / "config/paper_execution_policy.yaml").is_file():
+        return Path(meipass)
+    exe_dir = Path(sys.executable).parent
+    if (exe_dir / "config/paper_execution_policy.yaml").is_file():
+        return exe_dir
     base = (start or Path.cwd()).resolve()
     for directory in (base, *base.parents):
         if (directory / "pyproject.toml").is_file():
             return directory
+    if (base / "config/paper_execution_policy.yaml").is_file():
+        return base
     raise PolicyVersionError(
         f"no pyproject.toml found at or above {base}: cannot locate the "
         "reviewed configuration files"
