@@ -686,6 +686,7 @@ def run_cmd(
         os.environ["ALPHABRIEF_TRADING_MODE"] = normalized_mode
     else:
         normalized_mode = _trading_mode_getter()
+    os.environ.setdefault("ALPHABRIEF_AI_TRADING_ENABLED", "true")
 
     quantity_override: Decimal | None = None
     if units.strip():
