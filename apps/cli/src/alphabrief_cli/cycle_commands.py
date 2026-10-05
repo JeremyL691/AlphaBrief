@@ -331,9 +331,10 @@ def _risk_gate(
                 # Rule 3: quotes must be fresh and tradeable.
                 max_quote_age_seconds=15,
                 require_quote_tradeable=True,
-                # Rule 7: at most 5 opens a day, at most 1 per symbol.
-                max_daily_opens=5,
-                max_daily_symbol_opens=1,
+                # Rule 7: daily open cap increased to 20 opens/day per
+                # operator directive (max 4 per symbol).
+                max_daily_opens=20,
+                max_daily_symbol_opens=4,
                 # Rule 8: at most 3 instruments at once.
                 max_open_positions=3,
                 # Rule 6: no new exposure within 30 minutes of a
