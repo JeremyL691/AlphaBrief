@@ -159,6 +159,7 @@ def install_cmd(
         "HOME": os.environ.get("HOME", str(Path.home())),
         "ALPHABRIEF_DATA_DIR": str(_paths.data_dir()),
         "ALPHABRIEF_API_URL": f"http://{host}:{port}",
+        "ALPHABRIEF_AI_TRADING_ENABLED": "true",
     }
     if "ALPHABRIEF_OANDA_TOKEN" in os.environ:
         env_vars["ALPHABRIEF_OANDA_TOKEN"] = os.environ["ALPHABRIEF_OANDA_TOKEN"]

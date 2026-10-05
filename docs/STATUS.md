@@ -10,10 +10,10 @@
 |---|---|
 | 当前阶段 | **S10 14 天试运行** |
 | 状态 | `SOAKING` |
-| 下一项任务 | 维持 S10 LaunchAgent 后台守护进程（pid 2961，trading_mode=on，已配置 max_daily_opens=20 并自动在前 3 天减半）持续运行，每日约 UTC 22:30 执行常规巡检与日报核对 |
+| 下一项任务 | 维持 S10 LaunchAgent 后台守护进程（pid 21144，trading_mode=on，已配置 max_daily_opens=20 并注入 ALPHABRIEF_AI_TRADING_ENABLED=true）持续运行，每日约 UTC 22:30 执行常规巡检与日报核对 |
 | 下次巡检时间（UTC） | 2026-10-05 22:30 UTC（Day 0/1 日报生成后巡检） |
 | 试运行 | 进行中；合格日 0 / 14；顺延 0；重置 1；当前 Day 0 启动于 2026-10-05 07:34:53 UTC（run_index 1） |
-| 最近更新 | 2026-10-05 07:36 UTC，响应用户明确指令将日内开仓上限从 5 笔调高至 20 笔/天（单品种上限 4 笔）；根据 GUIDE 7.3 S10 规则在 soak_runs 记录重置（run_index 1，从新 Day 0 启动）；重构 DMG 并安装 LaunchAgent 后台（pid 2961），doctor 0 FAIL，/health 正常。 |
+| 最近更新 | 2026-10-05 20:01 UTC，修复 LaunchAgent 环境遗漏 ALPHABRIEF_AI_TRADING_ENABLED 导致定时轮次报 blocked_disabled 的缺陷；重新构建并加载后台（pid 21144），doctor 0 FAIL，/health 正常。 |
 | 执行安排 | 持续维持 S10 后台运行，每日约 UTC 22:30 自动巡检核对 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
@@ -731,6 +731,7 @@
 
 | 日期 | 问题 | 选择 | 理由 |
 |---|---|---|---|
+| 2026-10-05 UTC | LaunchAgent 注入 ALPHABRIEF_AI_TRADING_ENABLED | run_commands setdefault 与 service install env_vars 注入 ALPHABRIEF_AI_TRADING_ENABLED=true | 遗留标志位未在服务中声明导致调度器决策轮误判 blocked_disabled；修复后确保调度器平稳触发委员会 |
 | 2026-10-05 UTC | 日内开仓频次上限放宽至 20 笔/天 | cycle_commands 的 EntryRulePolicy 设置 max_daily_opens=20, max_daily_symbol_opens=4，soak_runs 记录重置 (run_index 1) | 用户明确指令在测试阶段提升交易频次以观察成效；依 GUIDE 7.3 S10 规则执行试运行重置，重新从 Day 0 起算 |
 | 2026-10-05 UTC | 模型全局锁定为 GPT 6 Luna | config/alphabrief.yaml 与持久凭证 default_model 显式锁定为 gpt-6-luna，禁用 gpt-6-astra | 用户明确指令；当前阶段唯一允许使用的模型为 GPT 6 Luna |
 | 2026-10-02 UTC | 信号涨跌与20日相关性的口径 | H1/D用相邻完成收盘收益；相关性用最近20个同起止日线收益的Decimal Pearson，零方差或不足20对拒绝，不填零 | GUIDE5.3要求由真实K线派生；价格水平相关或错位区间不能代表日收益关系；三个只读信号真实GET均可读，交易目录不包含它们不是排除理由 |
@@ -778,4 +779,4 @@
 
 | 日期（UTC） | 合格 | 订单 / 成交 | 当日盈亏 | NAV | 异常与处理 | 版本 |
 |---|---|---|---|---|---|---|
-| 2026-10-05 | 重置/进行中 (Day 0) | 0 / 0 | 0.00 | 99999.92 | 响应用户指令调高日内开仓上限至 20 笔/天（max_daily_symbol_opens=4）；依规触发重置（run_index 1 从 Day 0 重启），后台 pid 2961 运行正常 | 1.0.0-rc.1 |
+| 2026-10-05 | 重置/进行中 (Day 0) | 0 / 0 | 0.00 | 99999.92 | 调高开仓上限至 20 笔/天；修复 LaunchAgent 环境变量 ALPHABRIEF_AI_TRADING_ENABLED 遗漏问题，后台 pid 21144 运行正常 | 1.0.0-rc.1 |
