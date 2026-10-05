@@ -9,8 +9,8 @@ model:
   # fallback channel is used only when this is explicitly true, so a
   # billing channel can never switch silently.
   fallback_enabled: false
-  # Leave empty to use the default model discovered from the account.
-  primary_model: ""
+  # Globally locked to GPT 6 Luna per operator directive.
+  primary_model: "gpt-6-luna"
   # Daily budget (PROJECT_GUIDE 5.13). The subscription channel is capped
   # by call count, the optional paid fallback by estimated USD cost.
   daily_call_limit: 150
