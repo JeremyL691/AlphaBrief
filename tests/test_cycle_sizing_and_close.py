@@ -400,3 +400,21 @@ class TestClosePath:
         assert attempt.reason == "NO_TRADE_TRADING_OFF"
         assert attempt.risk_decision_id is not None
         assert backend.submission_count == 0
+
+    def test_current_soak_day_reflects_active_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from alphabrief_cli.cycle_commands import _current_soak_day
+        from alphabrief_trader.soak_store import SoakStore
+
+        db = tmp_path / "test_soak.duckdb"
+        monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr("alphabrief_core.paths.db_path", lambda: db)
+
+        assert _current_soak_day() is None
+
+        store = SoakStore(db_path=db)
+        store.start_soak(started_at=datetime.now(UTC) - timedelta(days=2))
+        store.close()
+
+        assert _current_soak_day() == 3
