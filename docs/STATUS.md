@@ -8,13 +8,13 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S9 试运行前门禁** |
-| 状态 | `IN_PROGRESS` |
-| 下一项任务 | 持续维持 S9 LaunchAgent 后台运行 24 小时（pid 91978，trading_mode=on，固定 1000 units），并逐项核对门禁清单 |
-| 下次巡检时间（UTC） | 2026-10-05 04:00 UTC（S9 24 小时预跑结束后核对门禁） |
-| 试运行 | 未开始；合格日 0 / 14；顺延 0；重置 0 |
-| 最近更新 | 2026-10-05 01:30 UTC，LaunchAgent 后台服务（pid 91978）已连续无人值守平稳运行 21 小时 39 分钟（距离 24 小时门禁仅剩约 2 小时 20 分钟）；5 项调度任务全部正常（对账 1278 次、持仓监控 1283 次、报价采样 1252 次），经纪商双向对账全部吻合，0 open freezes，doctor 0 FAIL。 |
-| 执行安排 | 持续维持 S9 后台运行，按计划巡检核对门禁 |
+| 当前阶段 | **S10 14 天试运行** |
+| 状态 | `SOAKING` |
+| 下一项任务 | 维持 S10 LaunchAgent 后台守护进程（pid 61031，trading_mode=on，按风险计算仓位并自动在前 3 天减半）持续运行，每日约 UTC 22:30 执行常规巡检与日报核对 |
+| 下次巡检时间（UTC） | 2026-10-05 22:30 UTC（Day 0/1 日报生成后巡检） |
+| 试运行 | 进行中；合格日 0 / 14；顺延 0；重置 0；Day 0 启用于 2026-10-05 05:16:17 UTC（run_index 0） |
+| 最近更新 | 2026-10-05 05:20 UTC，S9 24 小时预跑门禁以连续无人值守运行 25 小时 20 分钟（0 崩溃、0 重启、对账 100% 吻合、0 freeze、0 FAIL）圆满通过，Tag `v1.0.0-rc.1` 已创建并推送；S10 14 天试运行（run_index 0）正式启动，LaunchAgent（pid 61031，移除 `--units 1000`，接通前 3 天风险减半）平稳运行。 |
+| 执行安排 | 持续维持 S10 后台运行，每日约 UTC 22:30 自动巡检核对 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -647,11 +647,32 @@
 - 质量门禁：`.venv/bin/pytest -q -m "not practice"` → exit 0，**3507 passed / 13 deselected**（204.63 秒；净变化 -9 = 删除 package.js 专属测试 9 个）；ruff 全部通过；mypy 496 文件 + CLI strict 25 文件通过；`scripts/secret_scan.py` 退出码 0。安装 dev 依赖 `pyinstaller`、`electron-builder`（GUIDE 授权范围）。
 
 ### S9 试运行前门禁
-- [ ] S9-1 RC 后台以固定 1000 units 连续运行 24 小时
-- [ ] S9-2 门禁清单全部勾选（见 GUIDE S9）
-- [ ] 退出标准：打 tag `v1.0.0-rc.N` 并推送；写入 Day 0
+- [x] S9-1 RC 后台以固定 1000 units 连续运行 24 小时（2026-10-05 实测 25 小时 20 分钟连续无故障运行，见 S9 证据）
+- [x] S9-2 门禁清单全部勾选（见 GUIDE S9）（2026-10-05 实测逐项满足，见 S9 证据）
+- [x] 退出标准：打 tag `v1.0.0-rc.1` 并推送；写入 Day 0（2026-10-05 已打 tag 并推送，soak_runs 写入 Day 0）
 
-#### S9 进展（进行中）
+#### S9 进展与完成证据
+
+- S9 24 小时预跑门禁达成与 S10 正式启动（2026-10-05 05:20 UTC，本提交）：
+  - 连续平稳运行 25 小时 20 分钟：LaunchAgent 后台守护进程（pid 91978，trading_mode=on，固定 1000 units）自 2026-10-04 03:50 UTC 至 2026-10-05 05:11 UTC 连续平稳运行 25 小时 20 分钟（`ps -p 91978 -o etime` 达 `01-01:20:38`），零崩溃、零重启（LaunchAgent 重启计数为 0）。
+  - 门禁清单逐项核验全部通过：
+    1. 24 小时内后台进程没有意外退出（通过，持续运行 >25h）；
+    2. 每个计划轮次都有记录（通过，休市期间记录 `skipped_data_stale`，调度任务全部正常）；
+    3. 对账全部干净（通过，1494 次对账，`all_match=true`，`open_freezes: []`）；
+    4. 没有重复订单（通过，`clientExtensions.id` 唯一且 0 重复）；
+    5. 每笔订单都能追到持久化的 RiskDecision（通过）；
+    6. 出站请求只访问安全白名单主机（通过，只访问 OANDA practice 与配置新闻源）；
+    7. 日报生成成功，`doctor` 全部 PASS（通过，`reports/daily/2026-10-04.md` 已生成，`doctor` 0 FAIL）；
+    8. 模型调用在预算内（通过）；
+    9. CI 全绿（通过，代码与测试全绿）。
+  - 退出标准执行：
+    - 打 tag `v1.0.0-rc.1` 并推送至 GitHub（`git tag v1.0.0-rc.1 && git push origin v1.0.0-rc.1`）；
+    - 卸载 S9 固定 1000 units 预跑后台；
+    - 执行 `alphabrief soak start`，在数据库 `soak_runs` 表成功创建并写入 Day 0 起始时间（`2026-10-05T05:16:17 UTC`，`run_index: 0`）；
+    - 切换为按风险计算的仓位，并在 `alphabrief_cli.cycle_commands` 接入 `_current_soak_day` 动态获取当前试运行天数，实现前 3 天风险按规范自动减半；
+    - 重新编译 DMG/后端二进制并安装 LaunchAgent（pid 61031，`trading_mode=on`，无 `--units` 限制）；
+    - 验证：`/health` 返回 healthy，`alphabrief soak status` 返回 `soak_started=true, state=active, qualified_days=0/14`，`doctor run` 0 FAIL。
+
 
 - S9 运行时与服务支持接入（2026-10-03 UTC，本提交）：
   - TLS 证书捆绑安全传输：创建 `alphabrief_core.http.secure_urlopen` 与 `ca_bundle_context`，依赖 `certifi>=2024.0`，为 LaunchAgent 与打包二进制提供受信任的根证书环境，解决 macOS Python 无 `SSL_CERT_FILE`时的 TLS 报错；OANDA client、模型网关 adapters（OpenAI、ChatGPT plan）及 RSS 新闻提供者均接入 `secure_urlopen`。
@@ -755,3 +776,4 @@
 
 | 日期（UTC） | 合格 | 订单 / 成交 | 当日盈亏 | NAV | 异常与处理 | 版本 |
 |---|---|---|---|---|---|---|
+| 2026-10-05 | 进行中 (Day 0) | 0 / 0 | 0.00 | 99999.92 | S9 24h 门禁达成（25.3h 连续运行，0 崩溃/重启）；Tag v1.0.0-rc.1 已推送；S10 于 05:16 UTC 正式启动 (run_index 0)，后台 pid 61031 (trading_mode=on) 正常运行 | 1.0.0-rc.1 |

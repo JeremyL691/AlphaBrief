@@ -681,6 +681,25 @@ def _snapshot_refresher(
     return refresh
 
 
+def _current_soak_day() -> int | None:
+    """Return the 1-based day index of the active soak run, or None."""
+    try:
+        from alphabrief_trader.soak_store import SoakStore
+
+        store = SoakStore()
+        try:
+            active = store.get_active_run()
+            if active is not None:
+                start_date = active.started_at.date()
+                day = (datetime.now(UTC).date() - start_date).days + 1
+                return max(1, day)
+        finally:
+            store.close()
+    except Exception:
+        pass
+    return None
+
+
 def _sizing_provider(sources: Any) -> Any:
     """Build the 5.6 sizing inputs (NAV, factor, precision) per symbol.
 
@@ -716,9 +735,7 @@ def _sizing_provider(sources: Any) -> Any:
             trade_units_precision=int(metadata.trade_units_precision),
             minimum_trade_size=metadata.minimum_trade_size,
             risk_multiplier=multiplier,
-            # The soak-day risk halving is wired when the 14-day run starts
-            # (S10); until then the full 0.25% risk applies.
-            soak_day=None,
+            soak_day=_current_soak_day(),
         )
 
     return _build
