@@ -11,9 +11,9 @@
 | 当前阶段 | **S10 14 天试运行** |
 | 状态 | `SOAKING` |
 | 下一项任务 | 维持 S10 LaunchAgent 后台守护进程（pid 21144，trading_mode=on，已配置 max_daily_opens=20 并注入 ALPHABRIEF_AI_TRADING_ENABLED=true）持续运行，每日约 UTC 22:30 执行常规巡检与日报核对 |
-| 下次巡检时间（UTC） | 2026-10-05 22:30 UTC（Day 0/1 日报生成后巡检） |
-| 试运行 | 进行中；合格日 0 / 14；顺延 0；重置 1；当前 Day 0 启动于 2026-10-05 07:34:53 UTC（run_index 1） |
-| 最近更新 | 2026-10-05 20:01 UTC，修复 LaunchAgent 环境遗漏 ALPHABRIEF_AI_TRADING_ENABLED 导致定时轮次报 blocked_disabled 的缺陷；重新构建并加载后台（pid 21144），doctor 0 FAIL，/health 正常。 |
+| 下次巡检时间（UTC） | 2026-10-07 22:30 UTC（Day 2/3 日报生成后巡检） |
+| 试运行 | 进行中；合格日 1 / 14；顺延 0；重置 1；当前 Day 0 启动于 2026-10-05 07:34:53 UTC（run_index 1） |
+| 最近更新 | 2026-10-06 21:38 UTC，核验 2026-10-05 为合格日 1（3 轮次、200 次 clean 对账、0 冻结、日报已就绪）；2026-10-06 正常进行（GPT-6 Luna 完成 54 次真实调用，经理与风控决策 no_trade，0 订单，200 次 clean 对账，0 冻结，日报已生成）。 |
 | 执行安排 | 持续维持 S10 后台运行，每日约 UTC 22:30 自动巡检核对 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
@@ -779,4 +779,5 @@
 
 | 日期（UTC） | 合格 | 订单 / 成交 | 当日盈亏 | NAV | 异常与处理 | 版本 |
 |---|---|---|---|---|---|---|
-| 2026-10-05 | 重置/进行中 (Day 0) | 0 / 0 | 0.00 | 99999.92 | 调高开仓上限至 20 笔/天；修复 LaunchAgent 环境变量 ALPHABRIEF_AI_TRADING_ENABLED 遗漏问题，后台 pid 21144 运行正常 | 1.0.0-rc.1 |
+| 2026-10-05 | 合格 (Day 1) | 0 / 0 | 0.00 | 99999.92 | 调高开仓上限至 20 笔/天；修复 LaunchAgent 环境变量遗漏问题，后台 pid 21144 运行正常，200 次对账 clean，0 冻结，日报已生成，判定为合格日 1 | 1.0.0-rc.1 |
+| 2026-10-06 | 进行中 (Day 2) | 0 / 0 | 0.00 | 99999.92 | GPT-6 Luna 委员会正常运行（54 次成功出站），对各品种决策评估为 no_trade（含 risk veto）；3 轮次完成，200 次对账 clean，0 冻结，日报已生成 | 1.0.0-rc.1 |
