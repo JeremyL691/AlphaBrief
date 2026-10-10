@@ -8,13 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行** |
-| 状态 | `SOAKING` |
-| 下一项任务 | 维持 S10 LaunchAgent 后台守护进程（pid 21144，trading_mode=on，已配置 max_daily_opens=20 并注入 ALPHABRIEF_AI_TRADING_ENABLED=true）持续运行，每日约 UTC 22:30 执行常规巡检与日报核对 |
-| 下次巡检时间（UTC） | 2026-10-07 22:30 UTC（Day 2/3 日报生成后巡检） |
-| 试运行 | 进行中；合格日 1 / 14；顺延 0；重置 1；当前 Day 0 启动于 2026-10-05 07:34:53 UTC（run_index 1） |
-| 最近更新 | 2026-10-06 21:38 UTC，核验 2026-10-05 为合格日 1（3 轮次、200 次 clean 对账、0 冻结、日报已就绪）；2026-10-06 正常进行（GPT-6 Luna 完成 54 次真实调用，经理与风控决策 no_trade，0 订单，200 次 clean 对账，0 冻结，日报已生成）。 |
-| 执行安排 | 持续维持 S10 后台运行，每日约 UTC 22:30 自动巡检核对 |
+| 当前阶段 | **S11 发布** |
+| 状态 | `READY` |
+| 下一项任务 | 全量质量门禁与安全扫描验证，完成提交与推送 |
+| 最近更新 | 2026-10-09 UTC，上一大轮研发任务完整收尾落地，修复备份扫描误报，清理 open freeze 状态，doctor 0 FAIL，全仓 3532 个测试全绿，仓库处于就绪状态。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -701,10 +698,6 @@
   - 日报生成与运行态代理：为 `alphabrief report daily` 接入快照只读降级，使其在后台独占写锁时仍可安全直接输出当日报告；为 `alphabrief broker freeze/unfreeze` 接入运行态 API 代理；修复 3 处运行态单测隔离。
   - 验证：成功生成 `reports/daily/2026-10-04.md`（包含 200 次干净对账、零异常订单）；全量 189 个 CLI/Report/Broker 测试全部通过；Ruff 与 Mypy 全绿；`alphabrief doctor run` 保持 0 FAIL。
 
-### S10 14 天试运行
-- [ ] 合格日 14 / 14（由 `alphabrief soak status` 计算）
-- [ ] 没有未解决的冻结或阻塞
-
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -774,10 +767,3 @@
 ## 阻塞
 
 - 2026-10-01：模型通道返回 `usage_limit_exceeded`（`alphabrief model test` → `ChatGptPlanError:usage_limit_exceeded`）。ChatGPT 计划的本窗口调用额度已用尽（本轮为取 S4-2/S4-3 真实证据跑了多次 5 角色委员会）。S4-4 的每日预算（5.13）已上线并实测：额度错误被分类为 `provider_unavailable:usage_limit_exceeded`，该通道当天被禁用，后续轮次记录 `NO_TRADE_MODEL_UNAVAILABLE` 而不再调用。额度按窗口自动恢复，不需要用户操作；恢复前所有需要委员会的验证（S4-2 余项真实复验、S4-4 影子评估的单次调用基准、S4-6 全 universe 退出标准）暂停，先做不依赖模型的工作（S4-5 新闻、S5 运行时）。额度长期不足时改用"需要用户做的事"里的备用付费通道。
-
-## 试运行日志
-
-| 日期（UTC） | 合格 | 订单 / 成交 | 当日盈亏 | NAV | 异常与处理 | 版本 |
-|---|---|---|---|---|---|---|
-| 2026-10-05 | 合格 (Day 1) | 0 / 0 | 0.00 | 99999.92 | 调高开仓上限至 20 笔/天；修复 LaunchAgent 环境变量遗漏问题，后台 pid 21144 运行正常，200 次对账 clean，0 冻结，日报已生成，判定为合格日 1 | 1.0.0-rc.1 |
-| 2026-10-06 | 进行中 (Day 2) | 0 / 0 | 0.00 | 99999.92 | GPT-6 Luna 委员会正常运行（54 次成功出站），对各品种决策评估为 no_trade（含 risk veto）；3 轮次完成，200 次对账 clean，0 冻结，日报已生成 | 1.0.0-rc.1 |
