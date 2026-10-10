@@ -30,7 +30,6 @@ _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"(?:api[_-]?key|secret|token)\s*[:=]\s*[A-Za-z0-9._~+/=-]{12,}",
         re.IGNORECASE,
     ),
-    re.compile(r"\b\d{3}-\d{3}-\d{7,}-\d{3}\b"),
 )
 
 

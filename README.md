@@ -119,12 +119,11 @@ AlphaBrief provides a unified command-line tool `alphabrief`:
 .venv/bin/alphabrief scheduler heartbeats
 .venv/bin/alphabrief broker status
 
-# Inspect soak testing qualification status
+# Inspect runtime qualification status
 .venv/bin/alphabrief soak status
 
 # Generate operator reports
 .venv/bin/alphabrief report daily
-.venv/bin/alphabrief report soak
 ```
 
 ---
