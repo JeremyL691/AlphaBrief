@@ -10,7 +10,7 @@
 |---|---|
 | 当前阶段 | **S10 收尾前提复验（S11 发布未就绪）** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 修复 scheduler 冻结自动解除与重复冻结缺口，解冻后跑通一次完整真实 practice 交易验收（免费主通道已实现、实测并过本地门禁，等待独立审查） |
+| 下一项任务 | 部署新代码到运行中后台，确认 25 个旧冻结按 5.9 自动解除，然后跑通一次完整真实 practice 交易验收（下单→风控→对账→清仓） |
 | 最近更新 | 2026-10-13 UTC：免费主通道迁移完成实现与真实隔离实测（固定模型改用 `nvidia/nemotron-3-super-120b-a12b:free`），本地质量门禁 `ruff`/`mypy`/非 practice 全量测试已通过；独立审查通道因订阅额度用尽未启动，真实交易仍未验证。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
@@ -709,6 +709,15 @@
 - 凭证现状：只读 `GET /api/v1/key` 返回 HTTP 200，`is_free_tier=false`，月度限额 USD 0.01（非用户所述严格零）；`free_model_daily_requests` 上限 1000。软件侧仍独立强制零价与 45/天上限，不依赖 key 限额。
 - 质量门禁：`.venv/bin/python -m ruff check .` All checks passed；`.venv/bin/python -m mypy` 507 files 无问题；`.venv/bin/python -m pytest tests/ -q -m "not practice"` 3576 passed / 1 failed（唯一失败为既有用户改动，见阻塞）。
 
+#### S10 冻结自动解除与重复冻结修复（2026-10-13 UTC 实测，本提交）
+
+- 根因确认：实时只读查询 `/api/v1/broker/status` 返回 25 个 `source=scheduler` 冻结，而原因只有两类（`task reconcile failed`、`task position_monitor failed`）且按失败次数逐次递增 —— 一次故障被记成多个事件，不是 25 次独立故障。
+- 修复 1（去重）：`_run_task` 只在同一失败周期尚无对应开放冻结时新建事件（按 `task <name> failed ` 前缀匹配，兼容历史文案）；人工清除后仍持续失败会重新冻结。
+- 修复 2（自动解冻）：`_maybe_auto_unfreeze` 在每次对账任务成功后评估；最近 3 个对账快照全部 `all_match` 且失败任务计已归零时，按 GUIDE 5.9 自动清除。只处理 `source=scheduler` 的任务失败冻结；`source=reconciler` 的差异/非本系统订单类冻结永不自动清除。
+- 修复 3（冻结期继续取证）：`quote_poll`、`shadow_score`、`ai_daily_cycle` 改为 `run_when_frozen=True`。GUIDE 5.9 要求冻结期间照常同步、对账、跑委员会；新开仓仍由 RiskGate 的 `FROZEN` 规则拦住。此前 `quote_poll` 在冻结中被跳过且永不重试，导致报价采样停在 10-10 的旧错误。
+- 审计完整性：`BrokerReconStore.clear_freeze` 新增 `source` 参数（默认 `manual`），自动解冻写入 `auto_unfreeze`，不再把自动动作记成人工。
+- 验证：新增 5 个 scheduler 测试（单周期单冻结、三次干净自动解冻、未达三次不清、reconciler 冻结不清、任务仍失败不清）+ 1 个运行时常驻任务冻结期继续取证的测试；`.venv/bin/python -m pytest tests/ -q -m "not practice"` 3582 passed / 1 failed（同上既有用户改动），`ruff`/`mypy` 均干净。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -783,6 +792,8 @@
 | 2026-10-03 UTC | S9 后台与 LaunchAgent 运行环境安全 | 引入 certifi 统一安全 HTTPS 传输，service install/run run 接入 --units 与 --trading-mode | 打包/LaunchAgent 环境无全局 SSL 证书配置，需随包携带根证书；S9 需固定 1000 units 预跑 |
 
 ## 阻塞
+
+- 2026-10-13 UTC 上一轮记录的调度恢复缺口已修复但尚未部署验证：重复冻结与自动解除已在代码中实现并过本地测试（见 S10 证据），但运行中后台仍为旧代码、25 个冻结仍开放。在 `alphabrief service install` 重新部署并看到冻结实际解除前，不得声称恢复已完成。
 
 - 2026-10-13 UTC 免费主通道迁移的独立审查未执行：原计划由子代理先实现再独立只读审查，负责实现的子代理因 ChatGPT 订阅共享额度用尽失败（`Run fan-out: 1/2 used`），审查通道从未启动（preflight 报告 `declared lane 'openrouter-review' was not launched`）。本次迁移目前只有主控自审与本地门禁证据，缺独立复核；在补齐独立审查前不得记为已完成验收。
 - 2026-10-13 UTC 迁移后真实交易仍未验证：免费主通道的隔离真实调用已通过，但尚未部署到运行中后台，也未经完整后台链路产生真实 practice 订单；25 个 scheduler 冻结仍未解除，quote_poll 仍停在旧错误。下一项任务为修复调度器自动解除与重复冻结缺口，再做一次完整真实 practice 交易验收。

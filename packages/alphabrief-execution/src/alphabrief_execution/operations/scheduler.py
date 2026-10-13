@@ -478,6 +478,7 @@ class OperationsScheduler:
                 self._failure_counters[task.name] = 0
                 if is_broker_task:
                     self._broker_tracker.record_success()
+                    self._maybe_auto_unfreeze()
             except Exception as exc:  # noqa: BLE001 — record, alert, decide
                 self._failure_counters[task.name] += 1
                 self._heartbeats.record_run(
@@ -489,30 +490,86 @@ class OperationsScheduler:
                     self._failure_counters[task.name]
                     >= self._config.max_consecutive_failures
                 ):
-                    self._recon_store.raise_freeze(
-                        reason=(
-                            f"task {task.name} failed "
-                            f"{self._failure_counters[task.name]} consecutive times"
-                        ),
-                        source=self._config.on_failure_freeze_source,
-                    )
-                    await self._alert_sink.emit(
-                        severity="critical",
-                        source="scheduler",
-                        message=(
-                            f"task {task.name} exceeded "
-                            f"{self._config.max_consecutive_failures} failures; "
-                            "auto-freeze raised"
-                        ),
-                        task_name=task.name,
-                        payload={"error": str(exc)},
-                    )
-                    # Wait for the operator to clear the freeze; stop the loop on
-                    # request. While a freeze is open, the top of the loop will
-                    # skip task execution and only emit warnings.
+                    # One durable freeze per failure episode: repeated
+                    # failures while the episode's freeze is still open
+                    # must not append indistinguishable events. A manual
+                    # clear during continued failure still re-freezes,
+                    # because no open event matches then.
+                    if not self._task_freeze_open(task.name):
+                        self._recon_store.raise_freeze(
+                            reason=(
+                                f"task {task.name} failed "
+                                f"{self._failure_counters[task.name]} "
+                                "consecutive times"
+                            ),
+                            source=self._config.on_failure_freeze_source,
+                        )
+                        await self._alert_sink.emit(
+                            severity="critical",
+                            source="scheduler",
+                            message=(
+                                f"task {task.name} exceeded "
+                                f"{self._config.max_consecutive_failures} "
+                                "failures; auto-freeze raised"
+                            ),
+                            task_name=task.name,
+                            payload={"error": str(exc)},
+                        )
+                    # Wait for the freeze to clear; stop the loop on
+                    # request. While a freeze is open, the top of the loop
+                    # will skip task execution and only emit warnings.
                     await self._sleep(task.interval_seconds)
                     continue
             await self._sleep(task.interval_seconds)
+
+    def _task_freeze_open(self, task_name: str) -> bool:
+        """True when an open freeze already covers this task's failures.
+
+        The prefix match covers both the current wording and historical
+        events, so one outage is never recorded as many freezes.
+        """
+        prefix = f"task {task_name} failed "
+        return any(
+            freeze.reason.startswith(prefix)
+            for freeze in self._recon_store.list_freezes(only_open=True)
+        )
+
+    def _maybe_auto_unfreeze(self) -> None:
+        """Lift scheduler failure freezes once their cause is gone.
+
+        PROJECT_GUIDE 5.9: a freeze clears automatically when the cause has
+        disappeared and three consecutive reconciliations are clean. Only
+        scheduler task-failure freezes qualify here; reconciliation
+        differences and foreign-order freezes stay manual forever.
+        """
+        if not self._three_consecutive_clean_reconciliations():
+            return
+        for freeze in self._recon_store.list_freezes(only_open=True):
+            if freeze.source != self._config.on_failure_freeze_source:
+                continue
+            if not freeze.reason.startswith("task "):
+                continue
+            failing_task = freeze.reason.split(" ", 2)[1]
+            if self._failure_counters.get(failing_task, 0) != 0:
+                continue
+            self._recon_store.clear_freeze(
+                event_id=freeze.event_id,
+                reason=(
+                    "auto-unfreeze 5.9: cause cleared and three consecutive "
+                    f"clean reconciliations (task {failing_task})"
+                ),
+                source="auto_unfreeze",
+            )
+
+    def _three_consecutive_clean_reconciliations(self) -> bool:
+        """True when the three most recent reconciliations all matched."""
+        try:
+            snapshots = self._recon_store.list_snapshots(limit=3)
+        except Exception:  # noqa: BLE001 - a store failure must clear nothing
+            return False
+        if len(snapshots) < 3:
+            return False
+        return all(snapshot.all_match for snapshot in snapshots)
 
     async def _sleep(self, seconds: float) -> None:
         try:
@@ -583,6 +640,11 @@ def build_default_tasks(
                 # auto-freeze (3 consecutive timeouts).
                 timeout_seconds=900.0,
                 max_retries=1,
+                # GUIDE 5.9: the committee keeps running while frozen and
+                # the RiskGate turns any entry into a FROZEN no-trade. The
+                # daily interval also means a freeze that happens to be open
+                # at cycle time must not silently lose the day's run.
+                run_when_frozen=True,
                 enabled=False,  # gated by ALPHABRIEF_AI_TRADING_ENABLED
             )
         )

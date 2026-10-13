@@ -175,3 +175,40 @@ def test_read_only_tasks_run_immediately_even_with_an_open_freeze(
     finally:
         heartbeat.close()
         recon.close()
+
+
+def test_frozen_runtime_keeps_collecting_data_and_running_the_committee(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GUIDE 5.9: a freeze stops new exposure, not data or analysis.
+
+    A frozen quote task could never retry its own transient error, so the
+    freeze outlived its cause and quote sampling stayed on a stale failure
+    while reconciliation had already recovered.
+    """
+    from alphabrief_execution.broker.recon_store import BrokerReconStore
+    from alphabrief_execution.operations.scheduler import HeartbeatStore
+
+    heartbeat = HeartbeatStore(tmp_path / "runtime.db")
+    recon = BrokerReconStore(tmp_path / "runtime.db")
+    recon.raise_freeze(reason="test", source="test")
+    monkeypatch.setattr(scheduler_commands, "_open_heartbeat_store", lambda: heartbeat)
+    monkeypatch.setattr(scheduler_commands, "_open_recon_store", lambda: recon)
+
+    async def check() -> None:
+        runtime = _runtime(lambda: None)
+        scheduler: OperationsScheduler = await runtime._build_scheduler()
+        try:
+            by_name = {task.name: task for task in scheduler._tasks}
+            for name in ("quote_poll", "shadow_score", "market_sync",
+                         "position_monitor", "reconcile"):
+                assert by_name[name].run_when_frozen is True, name
+            assert recon.has_open_freeze()
+        finally:
+            scheduler.request_stop()
+
+    try:
+        asyncio.run(check())
+    finally:
+        heartbeat.close()
+        recon.close()
