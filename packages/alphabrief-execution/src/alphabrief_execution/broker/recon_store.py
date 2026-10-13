@@ -368,10 +368,16 @@ class BrokerReconStore:
             related_snapshot_id=related_snapshot_id,
         )
 
-    def clear_freeze(self, *, event_id: str, reason: str | None = None) -> FreezeEvent:
-        # Log the reason in a fresh freeze record? No — design:
-        # clearing is a separate action. We update cleared_at and the
-        # reason is recorded in a separate companion row.
+    def clear_freeze(
+        self,
+        *,
+        event_id: str,
+        reason: str | None = None,
+        source: str = "manual",
+    ) -> FreezeEvent:
+        # Clearing is a separate, immutable audit event: the reason and
+        # the actor are recorded in a companion row rather than rewriting
+        # the original freeze.
         self._conn.execute(
             (
                 "UPDATE broker_freeze_events SET cleared_at = ? "
@@ -394,7 +400,7 @@ class BrokerReconStore:
                     _now_iso(),
                     "unfreeze",
                     reason,
-                    "manual",
+                    source,
                     event_id,
                 ],
             )

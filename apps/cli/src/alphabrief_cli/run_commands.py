@@ -583,6 +583,11 @@ class Runtime:
                     handler=self._run_quote_poll,
                     timeout_seconds=QUOTE_POLL_TIMEOUT,
                     max_retries=0,
+                    # GUIDE 5.9: a freeze stops new exposure, not data
+                    # collection. A frozen quote task also could never
+                    # recover from a transient outage, so the freeze would
+                    # outlive its cause.
+                    run_when_frozen=True,
                 ),
                 ScheduledTask(
                     name="shadow_score",
@@ -590,6 +595,9 @@ class Runtime:
                     handler=self._run_shadow_score,
                     timeout_seconds=SHADOW_SCORE_TIMEOUT,
                     max_retries=0,
+                    # Read-only analysis: it produces no order and must
+                    # keep running so its own failure episode can clear.
+                    run_when_frozen=True,
                 ),
             ]
         )

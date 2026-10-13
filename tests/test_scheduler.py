@@ -445,6 +445,169 @@ def test_build_default_tasks_ai_cycle_timeout_covers_committee_runtime() -> None
     # per symbol (4 role calls, up to 30s model timeout each); a too-short
     # timeout would auto-freeze the scheduler on a slow provider.
     assert ai.timeout_seconds >= 600.0
+    # GUIDE 5.9: the committee runs while frozen; the RiskGate turns an
+    # entry into a FROZEN no-trade instead of the scheduler skipping it.
+    assert ai.run_when_frozen is True
+
+
+def test_failing_task_creates_one_freeze_per_failure_episode(
+    tmp_path: Path,
+) -> None:
+    """An outage must not append one freeze event per failed attempt.
+
+    The scheduler used to raise a new freeze on every failure at or
+    above the threshold, producing 4 events for 6 failures.
+    """
+    task = _failing_task(failures=10)
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[task],
+        config=SchedulerConfig(max_consecutive_failures=2),
+    )
+
+    async def drive() -> None:
+        await asyncio.sleep(0.3)
+        scheduler.request_stop()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_drive_and_run(scheduler, drive))
+    finally:
+        loop.close()
+    try:
+        open_freezes = recon_store.list_freezes(only_open=True)
+        assert len(open_freezes) == 1, [f.reason for f in open_freezes]
+        assert open_freezes[0].reason.startswith("task flaky failed ")
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
+def test_auto_unfreeze_after_three_clean_reconciliations(
+    tmp_path: Path,
+) -> None:
+    """GUIDE 5.9: cause cleared plus three clean reconciliations lifts it."""
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
+    freeze = recon_store.raise_freeze(
+        reason="task reconcile failed 3 consecutive times",
+        source="scheduler",
+    )
+    for _ in range(3):
+        recon_store.record_snapshot(
+            scope="cycle",
+            orders_match=True,
+            fills_match=True,
+            cash_match=True,
+            positions_match=True,
+            diff={},
+        )
+    recon_store.close()
+
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[_ok_task()],
+    )
+    try:
+        scheduler._maybe_auto_unfreeze()  # noqa: SLF001 - policy unit under test
+        assert recon_store.has_open_freeze() is False
+        history = recon_store.list_freezes(only_open=False)
+        clears = [f for f in history if f.related_snapshot_id == freeze.event_id]
+        assert len(clears) == 1
+        assert clears[0].source == "auto_unfreeze"
+        assert "three consecutive" in clears[0].reason
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
+def test_auto_unfreeze_requires_clean_reconciliations(tmp_path: Path) -> None:
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
+    recon_store.raise_freeze(
+        reason="task reconcile failed 3 consecutive times",
+        source="scheduler",
+    )
+    for clean in (True, True, False):
+        recon_store.record_snapshot(
+            scope="cycle",
+            orders_match=clean,
+            fills_match=clean,
+            cash_match=clean,
+            positions_match=clean,
+            diff={} if clean else {"kind": "order_diff"},
+        )
+    recon_store.close()
+
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[_ok_task()],
+    )
+    try:
+        scheduler._maybe_auto_unfreeze()  # noqa: SLF001 - policy unit under test
+        assert recon_store.has_open_freeze() is True
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
+def test_auto_unfreeze_never_clears_reconciler_freezes(tmp_path: Path) -> None:
+    """Reconciliation-difference and foreign-order freezes stay manual."""
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
+    recon_store.raise_freeze(
+        reason="foreign_order:order not created by this system",
+        source="reconciler",
+    )
+    for _ in range(3):
+        recon_store.record_snapshot(
+            scope="cycle",
+            orders_match=True,
+            fills_match=True,
+            cash_match=True,
+            positions_match=True,
+            diff={},
+        )
+    recon_store.close()
+
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[_ok_task()],
+    )
+    try:
+        scheduler._maybe_auto_unfreeze()  # noqa: SLF001 - policy unit under test
+        assert recon_store.has_open_freeze() is True
+    finally:
+        heartbeats.close()
+        recon_store.close()
+
+
+def test_auto_unfreeze_waits_while_the_task_still_fails(tmp_path: Path) -> None:
+    """A still-failing task keeps its freeze open."""
+    recon_store = BrokerReconStore(db_path=tmp_path / "recon.db")
+    recon_store.raise_freeze(
+        reason="task flaky failed 3 consecutive times",
+        source="scheduler",
+    )
+    for _ in range(3):
+        recon_store.record_snapshot(
+            scope="cycle",
+            orders_match=True,
+            fills_match=True,
+            cash_match=True,
+            positions_match=True,
+            diff={},
+        )
+    recon_store.close()
+
+    scheduler, heartbeats, recon_store, _ = _build_scheduler(
+        tmp_path,
+        tasks=[_failing_task(failures=10)],
+    )
+    try:
+        scheduler._failure_counters["flaky"] = 4  # noqa: SLF001 - simulate outage
+        scheduler._maybe_auto_unfreeze()  # noqa: SLF001 - policy unit under test
+        assert recon_store.has_open_freeze() is True
+    finally:
+        heartbeats.close()
+        recon_store.close()
 
 
 def test_freeze_warning_alert_emitted_once_per_freeze_event(
