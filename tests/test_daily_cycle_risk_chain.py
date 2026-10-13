@@ -1,6 +1,6 @@
-"""M11-W06: the full proposal → risk → execution → reconciliation chain.
+"""The full proposal → risk → execution → reconciliation chain.
 
-Covers AC-M11-W06-01/03: submit occurs only when the proposal,
+Covers: submit occurs only when the proposal,
 OrderIntent, broker-fresh inputs, immutable RiskDecision, execution
 enablement, and idempotency mapping share one correlation chain; every
 broker outcome triggers immediate reconciliation and persists linked

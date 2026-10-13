@@ -1,6 +1,6 @@
-"""OANDA account reconciliation without false mismatches (M07-W04).
+"""OANDA account reconciliation without false mismatches.
 
-Compares the local durable projection (M07-W03) with a remote OANDA
+Compares the local durable projection with a remote OANDA
 view across orders, trades, positions, balance, NAV, margin, financing,
 fills, and the transaction cursor. Legitimate broker-originated remote
 state (orders, trades, positions without our client identity) and

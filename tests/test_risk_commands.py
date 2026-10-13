@@ -78,7 +78,7 @@ def test_risk_status_prints_current_state(
 
 
 # ---------------------------------------------------------------------------
-# Phase 21 R21.x — risk check CLI flags for the new account-context fields
+# Risk check CLI flags for the new account-context fields
 # ---------------------------------------------------------------------------
 
 
@@ -102,8 +102,8 @@ def _intent_payload(tmp_path: Path) -> Path:
     return intent_path
 
 
-def test_risk_check_help_lists_phase21_flags() -> None:
-    """The Phase 21 R21.x flags must be present on ``risk check --help``
+def test_risk_check_help_lists_account_rule_flags() -> None:
+    """The flags must be present on ``risk check --help``
     so operators discover them."""
     result = runner.invoke(risk_app, ["check", "--help"])
     assert result.exit_code == 0

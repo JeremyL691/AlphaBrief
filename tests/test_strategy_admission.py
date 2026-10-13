@@ -1,6 +1,6 @@
-"""M12-W02: machine-enforced strategy-family admission.
+"""Machine-enforced strategy-family admission.
 
-Covers AC-M12-W02-02/03: applicability is enforced by OANDA instrument
+Covers: applicability is enforced by OANDA instrument
 category and unsupported combinations fail admission with explicit
 reasons; no-trade is first-class and admissible everywhere; predictive
 or learned outputs (Kronos/Gym) are rejected as advisory-only and can

@@ -1,15 +1,15 @@
-"""M04-W03: versioned instrument catalog snapshots and diffs.
+"""Versioned instrument catalog snapshots and diffs.
 
 Covers:
 - a catalog snapshot, its instrument rows, content hash, account
   correlation, fetched_at UTC timestamp, and diff publish atomically or
-  not at all under failure injection (AC-M04-W03-01);
+  not at all under failure injection;
 - replaying identical content is idempotent while additions, removals,
   and metadata changes create queryable history without overwriting
-  prior versions (AC-M04-W03-02);
+  prior versions;
 - the current projection rebuilds from immutable catalog facts and
   exactly matches the latest complete snapshot count and hashes
-  (AC-M04-W03-03).
+.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _snapshot(
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W03-01: atomic publication
+# Atomic publication
 # ---------------------------------------------------------------------------
 
 
@@ -109,7 +109,7 @@ def test_failed_publish_rolls_back_atomically(
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W03-02: idempotent replay and queryable history
+# Idempotent replay and queryable history
 # ---------------------------------------------------------------------------
 
 
@@ -158,7 +158,7 @@ def test_metadata_changes_are_recorded_not_overwritten(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W03-03: projection rebuild matches the latest snapshot
+# Projection rebuild matches the latest snapshot
 # ---------------------------------------------------------------------------
 
 

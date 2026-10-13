@@ -1,6 +1,6 @@
-"""M12-W06: parameter stability and overfitting audits.
+"""Parameter stability and overfitting audits.
 
-Covers AC-M12-W06-02: parameter perturbation, subperiod, walk-forward,
+Covers: parameter perturbation, subperiod, walk-forward,
 and multiple-testing fixtures emit stability metrics and explicit
 overfitting warnings.
 """

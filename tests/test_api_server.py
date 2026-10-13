@@ -648,7 +648,7 @@ def test_backtest_get_report_not_found_returns_404() -> None:
 def _load_spy_bars(tmp_path: Path, close: str = "90.0") -> None:
     """Load a minimal SPY bar set so the paper route can resolve a mark price.
 
-    R21.1: the paper order route fails closed with ``missing_mark_price``
+    The paper order route fails closed with ``missing_mark_price``
     when no bars are stored for the symbol, so any test that submits a SPY
     order must first seed stored bars. The OHLC values scale from the
     chosen close so the ``Bar`` validator (low <= open/high/close) holds.
@@ -723,10 +723,10 @@ def test_risk_config_returns_200() -> None:
     ])
     # Caps are USD notional; auto-execution is enabled.
     assert body["max_order_value"] == "2000"
-    # Phase 19: the runtime account-exposure cap from PaperExecutionPolicy.
+    # The runtime account-exposure cap from PaperExecutionPolicy.
     assert body["max_total_exposure"] == "20000"
     assert body["require_human_review"] is False
-    # Phase 21 R21.2/R21.3 fields are surfaced with paper defaults.
+    # /fields are surfaced with paper defaults.
     assert body["max_symbol_exposure"] == "20000"
     assert body["max_concentration_pct"] == "1.0"
     assert body["max_leverage"] == "1.0"
@@ -1078,7 +1078,7 @@ def test_redoc_accessible() -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/data/fetch — Phase 9 real market data providers
+# POST /api/v1/data/fetch — real market data providers
 # ---------------------------------------------------------------------------
 
 
@@ -1218,7 +1218,7 @@ def test_macro_get_indicator_not_found() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 19 — account-level total-exposure enforcement (API path)
+# Account-level total-exposure enforcement (API path)
 # ---------------------------------------------------------------------------
 
 
@@ -1319,7 +1319,7 @@ def test_risk_check_fail_closed_when_account_context_omitted() -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/risk/check — Phase 21 R21.x account_context fields
+# POST /api/v1/risk/check — account_context fields
 # ---------------------------------------------------------------------------
 
 

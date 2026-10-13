@@ -1,12 +1,12 @@
-"""M03-W01: versioned, transactional, idempotent database migrations.
+"""Versioned, transactional, idempotent database migrations.
 
 Covers:
 - empty, current-baseline, and fixture schemas migrate to the same
-  latest version (AC-M03-W01-01);
+  latest version;
 - re-running migrations changes no data and an interrupted migration
-  rolls back atomically (AC-M03-W01-02);
+  rolls back atomically;
 - a newer or corrupt schema fails startup without partial writes
-  (AC-M03-W01-03).
+.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def connection() -> Generator[duckdb.DuckDBPyConnection, None, None]:
 
 
 # ---------------------------------------------------------------------------
-# AC-M03-W01-01: same latest version from every starting point
+# Same latest version from every starting point
 # ---------------------------------------------------------------------------
 
 
@@ -112,7 +112,7 @@ def test_custom_migrations_apply_in_version_order(
 
 
 # ---------------------------------------------------------------------------
-# AC-M03-W01-02: idempotent re-runs and atomic rollback
+# Idempotent re-runs and atomic rollback
 # ---------------------------------------------------------------------------
 
 
@@ -167,7 +167,7 @@ def test_interrupted_migration_rolls_back_atomically(
 
 
 # ---------------------------------------------------------------------------
-# AC-M03-W01-03: newer or corrupt schema fails startup
+# Newer or corrupt schema fails startup
 # ---------------------------------------------------------------------------
 
 

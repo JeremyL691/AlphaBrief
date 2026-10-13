@@ -1,9 +1,9 @@
-"""Operational health blocks for new exposure (M08-W06).
+"""Operational health blocks for new exposure.
 
 Kill switch, open freeze, stale broker, unresolved reconciliation diff,
 transaction gap, failed required backup, lost writer lease, and
 unhealthy scheduler each block new exposure with a distinct persisted
-rule result (REQ-RISK-007, AC-M08-W06-01). Missing health evidence for a
+rule result. Missing health evidence for a
 configured condition fails closed — an unverifiable system state never
 silently unblocks execution.
 """

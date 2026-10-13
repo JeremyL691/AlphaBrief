@@ -1,4 +1,4 @@
-"""M06-W01: OANDA order model property tests (AC-M06-W01-01).
+"""OANDA order model property tests.
 
 Positive units encode buy, negative units encode sell, zero is rejected,
 and quantities, prices, and distances normalize exactly from instrument

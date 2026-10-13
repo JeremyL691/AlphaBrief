@@ -1,4 +1,4 @@
-"""Tests for the strategy CLI subcommands (Phase 15 R15.3)."""
+"""Tests for the strategy CLI subcommands."""
 
 from __future__ import annotations
 

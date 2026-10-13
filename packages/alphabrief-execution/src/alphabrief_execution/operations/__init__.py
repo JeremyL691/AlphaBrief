@@ -1,7 +1,7 @@
 """Operations control plane for paper trading.
 
 Holds the long-running scheduler plus the broker reconciliation runner
-and the heartbeat / alert stores. Phase 18 adds this layer; Phase 17
+and the heartbeat / alert stores. adds this layer;
 defined the broker adapter, store, and reconciliation runner that
 this package composes.
 """

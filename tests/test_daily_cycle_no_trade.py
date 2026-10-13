@@ -1,6 +1,6 @@
-"""M11-W05: durable successful terminal no-trade outcomes.
+"""Durable successful terminal no-trade outcomes.
 
-Covers AC-M11-W05-01/03: repeating the same trading date and snapshot
+Covers: repeating the same trading date and snapshot
 key returns the existing cycle; no-trade, risk rejection, market closed,
 stale data, insufficient evidence, and budget exhaustion are durable
 successful terminal outcomes with evidence IDs and reasons.

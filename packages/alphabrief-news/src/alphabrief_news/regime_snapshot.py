@@ -1,15 +1,15 @@
-"""Immutable daily regime and sentiment snapshots (M09-W06).
+"""Immutable daily regime and sentiment snapshots.
 
 Combines news, macro, sentiment, entity-link, quality, freshness, and
 source-version IDs into one immutable daily evidence snapshot shared by
-research and deterministic risk (REQ-PLAT-009, REQ-NEWS-005,
-REQ-NEWS-007, REQ-NEWS-009, REQ-RISK-005). A snapshot records every
-input ID under one immutable version ID and hash (AC-M09-W06-01).
+research and deterministic risk.
+ A snapshot records every
+input ID under one immutable version ID and hash.
 Partial-source failure and stale critical coverage produce
 deterministic degraded or blocked verdicts with missing-source reasons —
-never synthesized replacement facts (AC-M09-W06-02). Research context
+never synthesized replacement facts. Research context
 and news-risk context loaded by the same snapshot ID resolve identical
-evidence and quality verdicts (AC-M09-W06-03).
+evidence and quality verdicts.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ def build_regime_snapshot(
 ) -> RegimeSnapshot:
     """Build one immutable snapshot deterministically.
 
-    Degradation (AC-M09-W06-02):
+    Degradation:
 
     - ``blocked`` when any critical source failed or is missing;
     - ``degraded`` when any non-critical source failed or is missing;
@@ -216,7 +216,7 @@ class RegimeSnapshotStore:
 
     def get(self, snapshot_id: str) -> RegimeSnapshot | None:
         """The shared authority: the same ID resolves the same snapshot
-        for research and risk consumers (AC-M09-W06-03)."""
+        for research and risk consumers."""
         row = self._conn.execute(
             "SELECT snapshot_json FROM regime_snapshots WHERE snapshot_id = ?",
             [snapshot_id],

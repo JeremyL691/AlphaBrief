@@ -1,4 +1,4 @@
-"""M08-W06: reduce-only and close validation (AC-M08-W06-02/03).
+"""Reduce-only and close validation.
 
 Reduce-only and close operations are permitted only when they provably
 reduce the relevant position and gross risk and still satisfy
@@ -71,7 +71,7 @@ def _order(**overrides: object) -> ReduceOnlyOrder:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W06-02: permitted only when it provably reduces risk
+# Permitted only when it provably reduces risk
 # ---------------------------------------------------------------------------
 
 
@@ -114,7 +114,7 @@ def test_full_close_is_permitted() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W06-03: every bypass attempt fails closed
+# Every bypass attempt fails closed
 # ---------------------------------------------------------------------------
 
 

@@ -518,7 +518,7 @@ def test_risk_gate_context_multiplier_below_one_only_reduces_not_relaxes() -> No
 
 
 # ---------------------------------------------------------------------------
-# Phase 19 R19.1 — account-level total-exposure enforcement
+# Account-level total-exposure enforcement
 # ---------------------------------------------------------------------------
 
 

@@ -49,7 +49,7 @@ _RETRIABLE_METHODS: frozenset[str] = frozenset({"GET"})
 
 
 # Phrases that identify a TLS handshake failure so the operator can
-# distinguish them from a generic connection refused — Phase 30 task #4.
+# Distinguish them from a generic connection refused — task #4.
 _SSL_ERROR_MARKERS: tuple[str, ...] = (
     "ssl handshake",
     "ssl: certificate",
@@ -131,7 +131,7 @@ class OandaHttpClient:
                     # Surface the final attempt as a clear transient error
                     # so callers can render a "broker temporarily
                     # unavailable" message instead of treating it as a
-                    # hard failure. Phase 30 task #4: log clearly rather
+                    # Hard failure. task #4: log clearly rather
                     # than crash silently.
                     _LOGGER.warning(
                         "oanda transient error on %s %s attempt=%d/%d "
@@ -144,7 +144,7 @@ class OandaHttpClient:
                     )
                     raise
                 backoff = self._config.retry_backoff_seconds * (2**attempt)
-                # Phase 30: tag SSL handshake failures distinctly so the
+                # Tag SSL handshake failures distinctly so the
                 # operator can correlate them with their local Python /
                 # certifi version instead of treating them as a generic
                 # transport blip.
@@ -233,7 +233,7 @@ class OandaHttpClient:
         except HTTPError as exc:
             raise _http_error_to_broker_error(exc, request) from exc
         except ssl.SSLError as exc:
-            # Phase 30 task #4: surface SSL handshake failures as
+            # Task #4: surface SSL handshake failures as
             # BrokerTransientError so the retry path covers them and the
             # final-attempt log line tells the operator to inspect their
             # local Python / certifi bundle.

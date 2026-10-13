@@ -1,4 +1,4 @@
-"""OANDA failure classification and bounded retry rules (M06-W06).
+"""OANDA failure classification and bounded retry rules.
 
 Auth, validation, broker reject, rate limit, transient server, transport
 timeout, disconnect, parse, and unknown-outcome failures map to stable

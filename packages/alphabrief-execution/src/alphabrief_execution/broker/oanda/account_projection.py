@@ -1,4 +1,4 @@
-"""Durable remote account projections (M07-W03).
+"""Durable remote account projections.
 
 Derives account, balance, NAV, margin, order, fill, trade, position,
 realized/unrealized PnL, and financing projections from immutable OANDA
@@ -473,7 +473,7 @@ class AccountProjectionStore:
         """Apply incremental facts on top of the persisted snapshot.
 
         The resulting projection must equal a clean replay of the full
-        fact history (AC-M07-W03-02).
+        fact history.
         """
         current = self.snapshot(account_id)
         state = _ProjectionState(account_id)

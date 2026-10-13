@@ -1,17 +1,17 @@
-"""M08-W05: spread, liquidity, news, and macro tightening.
+"""Spread, liquidity, news, and macro tightening.
 
 Covers:
 - boundary tests for spread absolute and relative limits, quoted
   liquidity, projected slippage, high-impact event windows, affected
   currencies and categories, sentiment severity, coverage, disagreement,
-  freshness, and uncertainty (AC-M08-W05-01);
+  freshness, and uncertainty;
 - the context policy is deterministic and tighten-only — no model score,
   narrative, committee confidence, or external text can increase size,
-  relax a rule, or modify its thresholds (AC-M08-W05-02);
+  relax a rule, or modify its thresholds;
 - missing or stale critical market or content context yields the
   configured reject or conservative clamp and never a fabricated
   neutral score, disabled rule, fallback content, or user question
-  (AC-M08-W05-03).
+.
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ def _rule(
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W05-01: boundary tests for every rule
+# Boundary tests for every rule
 # ---------------------------------------------------------------------------
 
 
@@ -308,7 +308,7 @@ def test_sentiment_severity_rejects_below_floor() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W05-02: deterministic, tighten-only, no external text influence
+# Deterministic, tighten-only, no external text influence
 # ---------------------------------------------------------------------------
 
 
@@ -372,7 +372,7 @@ def test_no_free_text_inputs_exist() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W05-03: missing/stale evidence fails closed
+# Missing/stale evidence fails closed
 # ---------------------------------------------------------------------------
 
 

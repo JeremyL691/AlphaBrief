@@ -1,10 +1,10 @@
-"""M06-W06: scrubbed OANDA request telemetry.
+"""Scrubbed OANDA request telemetry.
 
 Covers:
 - telemetry records method family, endpoint template, status, broker
   request ID, latency, attempts, error class, and scrubbed correlation
   while excluding the token, the full account ID, and sensitive payload
-  values (AC-M06-W06-03).
+  values.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def _row_values(row: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W06-03: scrubbed telemetry fields
+# Scrubbed telemetry fields
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""M04-W02: instrument metadata strictness (AC-M04-W02-01/03).
+"""Instrument metadata strictness.
 
 The metadata model is frozen and rejects unknown top-level fields, every
 numeric field is Decimal, and no field is derived from the symbol name.

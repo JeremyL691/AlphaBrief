@@ -1,6 +1,6 @@
-"""M11-W03: research scheduling runs independently of execution enablement.
+"""Research scheduling runs independently of execution enablement.
 
-Covers AC-M11-W03-01/03: a frozen, disabled, or broker-unready execution
+Covers: a frozen, disabled, or broker-unready execution
 path still completes eligible ingest, snapshot, committee, and report
 phases; research-only, execution-disabled, blocked, and executable modes
 are persisted as distinct machine-readable states with reasons.

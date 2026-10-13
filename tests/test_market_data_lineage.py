@@ -1,4 +1,4 @@
-"""M05-W05: market snapshot lineage (AC-M05-W05-03).
+"""Market snapshot lineage.
 
 Later ingestion or correction creates new facts and a new lineage-linked
 snapshot without changing any snapshot already referenced by a decision.

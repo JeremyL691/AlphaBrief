@@ -1,4 +1,4 @@
-"""Bounded structured-output repair for ModelGateway calls (M10-W05).
+"""Bounded structured-output repair for ModelGateway calls.
 
 When a model returns invalid JSON, a schema violation, or a grounding
 violation (e.g. a nonexistent citation), the caller may re-ask the model

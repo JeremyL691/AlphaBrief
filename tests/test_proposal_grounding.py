@@ -1,6 +1,6 @@
-"""M10-W04: evidence-grounded proposal and no-trade schema enforcement.
+"""Evidence-grounded proposal and no-trade schema enforcement.
 
-Covers AC-M10-W04-01/02/03: proposals carry thesis, anti-thesis,
+Covers: proposals carry thesis, anti-thesis,
 confidence, horizon, entry rationale, invalidation, suggested exposure,
 evidence, dissent, freshness, uncertainty, and no-trade; every citation
 resolves to an evidence ID in the exact committee snapshot; unsupported

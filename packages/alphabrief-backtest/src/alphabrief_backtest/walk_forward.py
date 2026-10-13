@@ -1,4 +1,4 @@
-"""R21.5 — walk-forward validation and overfitting audit.
+"""Walk-forward validation and overfitting audit.
 
 Reuses :class:`VectorizedBacktester` to run the strategy on rolling
 in-sample (IS) / out-of-sample (OOS) windows, then reports the

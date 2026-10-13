@@ -1,15 +1,15 @@
-"""M05-W01: OANDA candles contract fixtures.
+"""OANDA candles contract fixtures.
 
 Covers:
 - fixtures cover every supported granularity, M/B/A component
   combinations, count and time ranges, daily and weekly alignment,
-  pagination boundaries, and UTC timestamps (AC-M05-W01-01);
+  pagination boundaries, and UTC timestamps;
 - bid/ask/mid OHLC plus volume and complete flags are Decimal-safe and
   retained without collapsing components or overwriting another source
-  version (AC-M05-W01-02);
+  version;
 - pagination is bounded and duplicate-free and incomplete candles
   remain queryable raw facts but are excluded from completed decision
-  inputs (AC-M05-W01-03).
+  inputs.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def _client(
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W01-01: fixture coverage
+# Fixture coverage
 # ---------------------------------------------------------------------------
 
 
@@ -167,7 +167,7 @@ def test_utc_timestamps_are_normalized() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W01-02: Decimal-safe, no collapsing, no overwrite
+# Decimal-safe, no collapsing, no overwrite
 # ---------------------------------------------------------------------------
 
 
@@ -257,7 +257,7 @@ def test_source_versions_coexist_in_store_without_overwrite(
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W01-03: bounded, duplicate-free pagination; complete semantics
+# Bounded, duplicate-free pagination; complete semantics
 # ---------------------------------------------------------------------------
 
 

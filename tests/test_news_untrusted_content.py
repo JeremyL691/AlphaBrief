@@ -1,11 +1,11 @@
-"""M09-W05: untrusted external content sanitization.
+"""Untrusted external content sanitization.
 
 - every external text fragment carries an untrusted-evidence marker,
   source identity, content hash, and bounded sanitized representation
-  before model use (AC-M09-W05-01);
+  before model use;
 - sanitization logs contain no token, authorization header, complete
   account ID, prohibited full article, or executable external
-  instruction (AC-M09-W05-03).
+  instruction.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from alphabrief_news.untrusted import (
 )
 
 # ---------------------------------------------------------------------------
-# AC-M09-W05-01: marked, sourced, hashed, bounded sanitized evidence
+# Marked, sourced, hashed, bounded sanitized evidence
 # ---------------------------------------------------------------------------
 
 
@@ -78,7 +78,7 @@ def test_sanitization_is_deterministic() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M09-W05-03: scrubbed logs, no secrets or executable instructions
+# Scrubbed logs, no secrets or executable instructions
 # ---------------------------------------------------------------------------
 
 

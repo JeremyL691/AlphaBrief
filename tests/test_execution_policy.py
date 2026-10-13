@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 POLICY_NOW = datetime(2026, 6, 22, 14, 0, tzinfo=UTC)
 # A Monday 10:00 America/New_York moment — inside the policy trading
-# session, so the R21.2 ``require_market_open`` check does not reject.
+# Session, so the ``require_market_open`` check does not reject.
 # Kept in sync with ``POLICY_NOW`` so signal-staleness also passes.
 
 
@@ -22,9 +22,9 @@ def _empty_account_context(
 ) -> "AccountExposureContext":
     """An AccountExposureContext with zero exposure.
 
-    The Phase 19 default gate enforces the $300 total-exposure cap at
+    The default gate enforces the $300 total-exposure cap at
     runtime, so a buy without an account_context fails closed
-    (``account_context_required``). R21.2 adds leverage (needs ``equity``)
+    (``account_context_required``). adds leverage (needs ``equity``)
     and price-deviation (needs ``reference_mark_prices``) checks, both
     fail-closed. Rule 10 adds daily-loss (needs broker P&L and the durable latch) and
     drawdown (needs ``equity_high_water_mark``), also fail-closed. These
@@ -96,7 +96,7 @@ def test_execution_policy_rejects_invalid_operating_boundaries(
     replacement: str,
     error: str,
 ) -> None:
-    """Round 0063: baseline-aware boundary tests.
+    """: baseline-aware boundary tests.
 
     Replacements target fields by key prefix on the actual baseline so the
     tests stay stable when default values (provider, market, symbols,
@@ -160,7 +160,7 @@ def test_execution_policy_accepts_reviewed_oanda_paper_boundary(
     text = baseline
     # Force the OANDA + fx + EUR-only shape regardless of what the baseline
     # currently says — this test documents that the reviewed boundary can be
-    # expressed from any starting policy. Round 0063 changed the default to
+    # Expressed from any starting policy. changed the default to
     # multi_asset, so we explicitly collapse to fx here.
     text = re.sub(
         r"^provider:.*$", "provider: oanda_paper", text, count=1, flags=re.MULTILINE
@@ -201,7 +201,7 @@ def test_default_api_risk_gate_enforces_policy_subset() -> None:
     _reset_risk_gate()
     gate = _get_risk_gate()
     gate.clock = lambda: POLICY_NOW  # session-in, fresh signal
-    # M01-W01: default universe is the OANDA-practice multi-asset boundary
+    # Default universe is the OANDA-practice multi-asset boundary
     # (FX + metals + index CFDs + transitional names). Use a representative
     # instrument from each class; order value stays well under
     # max_order_notional=2000 USD.
@@ -342,7 +342,7 @@ def test_relative_policy_path_resolves_against_project_root(
 
 
 # ---------------------------------------------------------------------------
-# M01-W01: OANDA-only policy boundary and negative gates
+# OANDA-only policy boundary and negative gates
 # ---------------------------------------------------------------------------
 
 
@@ -350,7 +350,7 @@ def test_relative_policy_path_resolves_against_project_root(
 def test_execution_policy_rejects_non_oanda_providers(
     tmp_path: Path, provider: str
 ) -> None:
-    """AC-M01-W01-01: provider accepts only ``oanda_paper``."""
+    """Provider accepts only ``oanda_paper``."""
     policy_path = tmp_path / "policy.yaml"
     text = _replace_line(
         _configured_policy_text(), "provider:", f"provider: {provider}"
@@ -362,7 +362,7 @@ def test_execution_policy_rejects_non_oanda_providers(
 
 
 def test_execution_policy_rejects_non_oanda_market(tmp_path: Path) -> None:
-    """AC-M01-W01-01: market must be an OANDA-account market boundary."""
+    """Market must be an OANDA-account market boundary."""
     policy_path = tmp_path / "policy.yaml"
     text = _replace_line(
         _configured_policy_text(), "market:", "market: us_equity"
@@ -374,7 +374,7 @@ def test_execution_policy_rejects_non_oanda_market(tmp_path: Path) -> None:
 
 
 def test_production_boundary_gate_accepts_checked_in_configuration() -> None:
-    """AC-M01-W01-02: the checked-in production configuration passes."""
+    """The checked-in production configuration passes."""
     from alphabrief_execution.broker.safety import production_boundary_violations
 
     root = Path(__file__).resolve().parents[1]
@@ -419,7 +419,7 @@ def test_production_boundary_gate_rejects_forbidden_selections(
     replacement: str,
     fragment: str,
 ) -> None:
-    """AC-M01-W01-02: no live host, other broker, routing, or fallback."""
+    """No live host, other broker, routing, or fallback."""
     from alphabrief_execution.broker.safety import production_boundary_violations
 
     config_dir = tmp_path / "config"
@@ -444,7 +444,7 @@ def test_production_boundary_gate_rejects_forbidden_selections(
 def test_missing_oanda_credentials_fail_closed_without_order_or_fill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-M01-W01-03: missing credentials fail closed with no order or fill."""
+    """Missing credentials fail closed with no order or fill."""
     from alphabrief_execution.broker.errors import BrokerAuthError
     from alphabrief_execution.broker.oanda.client import OandaHttpClient
     from alphabrief_execution.broker.oanda.config import OandaPaperConfig

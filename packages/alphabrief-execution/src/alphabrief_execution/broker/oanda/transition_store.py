@@ -1,4 +1,4 @@
-"""Append-only order transition store (M06-W03).
+"""Append-only order transition store.
 
 Persists immutable broker transition facts and derives current
 projections deterministically. Duplicate transition IDs are ignored

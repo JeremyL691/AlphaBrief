@@ -1,12 +1,12 @@
-"""M08-W04: consecutive-loss streak rules.
+"""Consecutive-loss streak rules.
 
 Covers:
 - boundary tests for the consecutive-loss streak and its evidence-backed
-  reset (AC-M08-W04-01);
+  reset;
 - missing loss-streak state rejects new exposure and never silently
-  disables the configured rule (AC-M08-W04-03);
+  disables the configured rule;
 - the durable streak derives from recorded day results and only resets
-  on an evidence-backed profitable day (AC-M08-W04-02).
+  on an evidence-backed profitable day.
 """
 
 from __future__ import annotations

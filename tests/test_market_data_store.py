@@ -1,12 +1,12 @@
-"""M03-W02: immutable versioned market-data facts.
+"""Immutable versioned market-data facts.
 
 Covers:
 - same symbol+timestamp from different source versions coexist and
-  retain lineage (AC-M03-W02-01);
+  retain lineage;
 - bar facts are append-only with content-addressed identities
-  (AC-M03-W02-02);
+
 - historical snapshots reconstruct identical fact IDs and hashes after
-  later ingestion (AC-M03-W02-03).
+  later ingestion.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _bar(symbol: str = "EUR_USD", close: str = "1.10", high: str = "1.11") -> Ba
 
 
 def test_versions_coexist_with_lineage(tmp_path: Path) -> None:
-    """AC-M03-W02-01: different source versions of one bar coexist."""
+    """Different source versions of one bar coexist."""
     store = MarketDataStore(db_path=tmp_path / "market.db")
     try:
         bar = _bar()
@@ -59,7 +59,7 @@ def test_versions_coexist_with_lineage(tmp_path: Path) -> None:
 
 
 def test_reingesting_identical_facts_is_a_noop(tmp_path: Path) -> None:
-    """AC-M03-W02-02: identical facts append once; no overwrite."""
+    """Identical facts append once; no overwrite."""
     store = MarketDataStore(db_path=tmp_path / "market.db")
     try:
         bar = _bar()
@@ -75,7 +75,7 @@ def test_reingesting_identical_facts_is_a_noop(tmp_path: Path) -> None:
 
 
 def test_fact_id_is_deterministic_content_address(tmp_path: Path) -> None:
-    """AC-M03-W02-03: identical content produces the identical fact ID."""
+    """Identical content produces the identical fact ID."""
     store = MarketDataStore(db_path=tmp_path / "market.db")
     try:
         bar = _bar()
@@ -107,7 +107,7 @@ def test_fact_id_is_deterministic_content_address(tmp_path: Path) -> None:
 
 
 def test_bar_facts_are_utc_stamped(tmp_path: Path) -> None:
-    """AC-M03-W02-02: every fact carries a UTC ingestion timestamp."""
+    """Every fact carries a UTC ingestion timestamp."""
     store = MarketDataStore(db_path=tmp_path / "market.db")
     try:
         bar = _bar()

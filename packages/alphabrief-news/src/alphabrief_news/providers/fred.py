@@ -1,4 +1,4 @@
-"""FRED macro-economic data provider (Phase 11 real implementation).
+"""FRED macro-economic data provider (real implementation).
 
 FRED is the Federal Reserve Economic Data service from the Federal
 Reserve Bank of St. Louis. A free API key is required and can be

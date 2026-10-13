@@ -1,6 +1,6 @@
-"""Live-path tests for /api/v1/broker/positions and /account (Phase 20 R20.2).
+"""Live-path tests for /api/v1/broker/positions and /account.
 
-M01-W02: exercises the API-side ``BrokerAdapter`` singleton against a mock
+Exercises the API-side ``BrokerAdapter`` singleton against a mock
 OANDA practice server (``tests._helpers.MockOandaServer``):
 
 - credentials set + mock seeded -> live ``/positions`` and ``/account``
@@ -210,7 +210,7 @@ def test_broker_reconcile_runs_real_pass_with_live_adapter(
 ) -> None:
     """POST /reconcile with a live adapter performs real broker reads and
     records a genuine verdict — never an unconditional all-match
-    placeholder (AC-M07-W06-03)."""
+    placeholder."""
     server = MockOandaServer()
     server.start()
     try:

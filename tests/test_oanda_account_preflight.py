@@ -1,15 +1,15 @@
-"""M04-W01: fail-closed OANDA practice account preflight.
+"""Fail-closed OANDA practice account preflight.
 
 Covers:
 - a valid practice response produces one typed account profile with
   margin fields, capability flags, a scrubbed account correlation hash,
-  and a UTC retrieval timestamp (AC-M04-W01-01);
+  and a UTC retrieval timestamp;
 - missing credentials, invalid credentials, live hosts, account
   mismatch, non-tradeable accounts, and malformed responses fail closed
   before any catalog sync or execution with no fallback
-  (AC-M04-W01-02);
+
 - CLI/API/logs/exceptions/evidence contain neither the token nor the
-  complete account ID (AC-M04-W01-03).
+  complete account ID.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def _ok_send(body: dict[str, Any]) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W01-01: valid response -> typed profile
+# Valid response -> typed profile
 # ---------------------------------------------------------------------------
 
 
@@ -118,7 +118,7 @@ def test_profile_contains_scrubbed_account_hash_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W01-02: fail-closed classifications
+# Fail-closed classifications
 # ---------------------------------------------------------------------------
 
 
@@ -218,7 +218,7 @@ def test_malformed_response_fails_closed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W01-03: no token or complete account ID in any surface
+# No token or complete account ID in any surface
 # ---------------------------------------------------------------------------
 
 

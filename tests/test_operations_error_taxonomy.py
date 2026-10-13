@@ -1,6 +1,6 @@
-"""M15-W02: deterministic error taxonomy.
+"""Deterministic error taxonomy.
 
-Covers AC-M15-W02-01: auth, validation, broker reject, rate-limit,
+Covers: auth, validation, broker reject, rate-limit,
 transient, protocol, data-quality, and safety failures map
 deterministically to retryability, severity, execution freeze,
 no-trade, and escalation behavior.

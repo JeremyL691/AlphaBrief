@@ -1,4 +1,4 @@
-"""Multi-asset continuous-action trading environment (Phase 11)."""
+"""Multi-asset continuous-action trading environment."""
 
 from __future__ import annotations
 

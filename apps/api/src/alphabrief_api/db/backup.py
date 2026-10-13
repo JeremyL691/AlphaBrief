@@ -1,13 +1,13 @@
-"""Atomic database backups, isolated restore, and retention (M03-W05).
+"""Atomic database backups, isolated restore, and retention.
 
 - ``create_backup`` snapshots the DuckDB file atomically (temp file +
   rename) with a manifest carrying file hashes, the schema version, the
   blueprint version, and the retention policy; artifacts are scanned for
-  configured secret patterns before publication (REQ-PLAT-007,
-  REQ-OPS-002).
+  configured secret patterns before publication.
+
 - ``restore_backup`` restores into an isolated target, migrates it to
   the latest schema version, rebuilds cycle projections, and runs
-  integrity queries (REQ-OPS-006).
+  integrity queries.
 - ``apply_retention`` removes only expired explicit targets and always
   preserves the newest verified restore point.
 """

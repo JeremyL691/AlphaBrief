@@ -1,4 +1,4 @@
-"""DuckDB-backed durable model-call record store (M10-W02).
+"""DuckDB-backed durable model-call record store.
 
 ``ModelCallStore`` persists every terminal ``ModelCallRecord`` produced
 by ``ModelGateway``: request and response hashes, template version,

@@ -1,4 +1,4 @@
-"""Deterministic daily cycle keys and catch-up policy (M11-W05).
+"""Deterministic daily cycle keys and catch-up policy.
 
 Repeating the same trading date and snapshot key returns the existing
 terminal cycle; a missed cycle runs only inside its configured catch-up

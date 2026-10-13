@@ -1,4 +1,4 @@
-"""M03-W05: backup retention policy (AC-M03-W05-03).
+"""Backup retention policy.
 
 Retention removes only expired explicit backup targets and always
 preserves the newest verified restore point.

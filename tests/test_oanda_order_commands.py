@@ -1,4 +1,4 @@
-"""M06-W06 integration: order commands under transport faults.
+"""Integration: order commands under transport faults.
 
 Exercises the full command path — submit, unknown-outcome resolution by
 persisted client identity, fail-closed gating, and scrubbed telemetry —

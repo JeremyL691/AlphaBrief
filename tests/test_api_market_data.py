@@ -1,4 +1,4 @@
-"""API market-data route integration tests (M03-W02).
+"""API market-data route integration tests.
 
 The bars endpoint serves the deduplicated latest version per timestamp
 while the versioned facts remain queryable through the store.
@@ -32,7 +32,7 @@ def _isolated_store(tmp_path: Path) -> Generator[None, None, None]:
 
 
 def test_bars_endpoint_serves_latest_version(tmp_path: Path) -> None:
-    """AC-M03-W02-01: the API serves the latest version per timestamp."""
+    """The API serves the latest version per timestamp."""
     from alphabrief_api.db.market_data import MarketDataStore
 
     # The route store resolves its path from ALPHABRIEF_DATA_DIR, which

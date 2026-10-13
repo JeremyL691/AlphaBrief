@@ -1,9 +1,9 @@
-"""M09-W05: prompt-injection fixtures cannot alter system or risk policy.
+"""Prompt-injection fixtures cannot alter system or risk policy.
 
 Instruction-like external content is neutralized deterministically and
 never retained as an executable directive — system instructions, risk
 limits, execution settings, evidence boundaries, and tool permissions
-are unaffected (AC-M09-W05-02, REQ-NEWS-006, REQ-AI-008).
+are unaffected.
 """
 
 from __future__ import annotations

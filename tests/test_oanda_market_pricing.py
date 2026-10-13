@@ -1,15 +1,15 @@
-"""M05-W02: batch pricing and home-currency conversion evidence.
+"""Batch pricing and home-currency conversion evidence.
 
 Covers:
 - requests are deterministically chunked within configured limits and
   responses preserve bid/ask ladders, spread, liquidity, tradeable,
   closeout prices, conversion factors, broker timestamp, and request
-  correlation (AC-M05-W02-01);
+  correlation;
 - missing sides, crossed prices, nonpositive conversion factors,
   duplicate instruments, and malformed timestamps fail quality
-  validation instead of being silently repaired (AC-M05-W02-02);
+  validation instead of being silently repaired;
 - partial broker responses publish explicit per-instrument coverage and
-  are never represented as a complete pricing snapshot (AC-M05-W02-03).
+  are never represented as a complete pricing snapshot.
 """
 
 from __future__ import annotations
@@ -138,7 +138,7 @@ def _client(
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W02-01: chunking and field preservation
+# Chunking and field preservation
 # ---------------------------------------------------------------------------
 
 
@@ -229,7 +229,7 @@ def test_chunk_correlation_ids_are_distinct() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W02-02: quality validation fails closed
+# Quality validation fails closed
 # ---------------------------------------------------------------------------
 
 
@@ -290,7 +290,7 @@ def test_float_values_are_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W02-03: explicit per-instrument coverage
+# Explicit per-instrument coverage
 # ---------------------------------------------------------------------------
 
 

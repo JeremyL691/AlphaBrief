@@ -1,11 +1,11 @@
-"""M08-W07: decision-binding service and executable contract.
+"""Decision-binding service and executable contract.
 
 Missing, rejected, expired, already consumed, account-mismatched,
 policy-mismatched, intent-mismatched, snapshot-mismatched, or
 quantity-exceeding decisions are rejected by the backend before network
-submit (AC-M08-W07-02); AI and manual paper paths invoke the same
+submit; AI and manual paper paths invoke the same
 binding service and no caller can construct an executable approval
-boolean or mutate inputs after approval (AC-M08-W07-03).
+boolean or mutate inputs after approval.
 """
 
 from __future__ import annotations

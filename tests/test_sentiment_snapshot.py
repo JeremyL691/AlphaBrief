@@ -1,13 +1,13 @@
-"""M09-W04: explainable multi-scope sentiment aggregation.
+"""Explainable multi-scope sentiment aggregation.
 
 - every sentiment aggregate exposes direction, intensity, disagreement,
   sample count, source coverage, freshness, uncertainty, evidence IDs,
-  and algorithm version (AC-M09-W04-01);
+  and algorithm version;
 - reordering identical input evidence produces byte-equivalent
-  normalized output and the same snapshot hash (AC-M09-W04-02);
+  normalized output and the same snapshot hash;
 - sparse, contradictory, stale, and single-source fixtures produce
   explicit uncertainty or insufficient-coverage verdicts instead of
-  confident defaults (AC-M09-W04-03).
+  confident defaults.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _fixture() -> list[SentimentSample]:
 
 
 # ---------------------------------------------------------------------------
-# AC-M09-W04-01: every aggregate exposes the full evidence surface
+# Every aggregate exposes the full evidence surface
 # ---------------------------------------------------------------------------
 
 
@@ -121,7 +121,7 @@ def test_multi_scope_aggregates() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M09-W04-02: reordering identical evidence is byte-equivalent
+# Reordering identical evidence is byte-equivalent
 # ---------------------------------------------------------------------------
 
 
@@ -148,7 +148,7 @@ def test_snapshot_hash_changes_when_evidence_changes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M09-W04-03: sparse/contradictory/stale/single-source -> explicit verdicts
+# Sparse/contradictory/stale/single-source -> explicit verdicts
 # ---------------------------------------------------------------------------
 
 

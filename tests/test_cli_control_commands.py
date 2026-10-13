@@ -1,6 +1,6 @@
-"""M13-W02: safe and idempotent operator write contracts (CLI side).
+"""Safe and idempotent operator write contracts (CLI side).
 
-Covers AC-M13-W02-02/03 from the CLI angle: API JSON and CLI JSON for
+Covers from the CLI angle: API JSON and CLI JSON for
 accepted and rejected mutations are identical, replay semantics hold on
 both surfaces, and the CLI introduces no operator mutation outside the
 approved set.

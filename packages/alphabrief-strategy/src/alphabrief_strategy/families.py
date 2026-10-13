@@ -1,4 +1,4 @@
-"""Category-aware deterministic strategy families (M12-W02).
+"""Category-aware deterministic strategy families.
 
 Each family is a frozen, pure function of its declared inputs: it reads
 only bar fields and the feature keys it declares, and identical inputs
@@ -7,7 +7,7 @@ an explicit ``insufficient data`` flat outcome instead of a guess.
 
 Families emit :class:`Signal` evidence only — never orders. Predictive
 or learned outputs (Kronos/Gym) are handled by :mod:`admission` and are
-never executable strategies (REQ-STRAT-007).
+never executable strategies.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from alphabrief_core import Bar, Signal, SignalDirection
 
 from alphabrief_strategy.interface import StrategyInput, StrategyOutput
 
-#: OANDA instrument categories (M04-W04 taxonomy). Mirrored here so the
+#: OANDA instrument categories (taxonomy). Mirrored here so the
 #: strategy runtime never imports broker code; parity with
 #: ``alphabrief_execution.broker.oanda.taxonomy.InstrumentCategory`` is
 #: enforced by tests/test_strategy_builtins.py.

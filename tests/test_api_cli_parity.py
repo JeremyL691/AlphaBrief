@@ -1,6 +1,6 @@
-"""M13-W05: API-CLI parity against the OpenAPI contract.
+"""API-CLI parity against the OpenAPI contract.
 
-Covers AC-M13-W05-03: every documented CLI JSON command maps to an
+Covers: every documented CLI JSON command maps to an
 OpenAPI resource or an explicitly local read-only contract, with
 automated schema parity over the same fixture.
 """

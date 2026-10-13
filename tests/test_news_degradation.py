@@ -1,5 +1,5 @@
-"""M09-W06: deterministic degradation for partial-source failure and
-stale critical coverage (AC-M09-W06-02).
+"""Deterministic degradation for partial-source failure and
+stale critical coverage.
 
 Partial-source failure and stale critical coverage produce deterministic
 degraded or blocked verdicts with missing-source reasons — never

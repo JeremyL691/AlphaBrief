@@ -46,7 +46,7 @@ def test_broker_reconcile_fails_closed_without_credentials(
 ) -> None:
     # With no OANDA practice credentials the shared durable service
     # records an explicitly non-matching snapshot — never a vacuous
-    # all-match placeholder (AC-M07-W06-03).
+    # All-match placeholder.
     response = client.post("/api/v1/broker/reconcile?scope=eod")
     assert response.status_code == 200
     body = response.json()
@@ -111,7 +111,7 @@ def test_broker_positions_returns_empty_without_credentials(
 def test_broker_account_returns_zero_snapshot_without_credentials(
     client: TestClient,
 ) -> None:
-    # Null adapter -> a real zero AccountSnapshot, not the pre-Phase-20
+    # Null adapter -> a real zero AccountSnapshot, not the pre-
     # {"account": None} stub.
     response = client.get("/api/v1/broker/account")
     assert response.status_code == 200

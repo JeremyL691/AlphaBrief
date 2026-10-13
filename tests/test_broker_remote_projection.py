@@ -1,9 +1,9 @@
-"""M07-W03: durable remote account projections — golden history.
+"""Durable remote account projections — golden history.
 
 Covers:
 - golden transaction histories rebuild exact account, order, fill,
   trade, position, balance, NAV, margin, PnL, and financing projections
-  with broker IDs and UTC timestamps (AC-M07-W03-01).
+  with broker IDs and UTC timestamps.
 """
 
 from __future__ import annotations

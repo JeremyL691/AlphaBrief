@@ -1,4 +1,4 @@
-"""API persistent-store integration tests (M03-W01).
+"""API persistent-store integration tests.
 
 Exercises the DuckDB-backed API stores through their public surface:
 schema application via the versioned migration framework, insert/query

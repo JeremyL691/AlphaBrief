@@ -1,4 +1,4 @@
-"""Complete OANDA v20 instruments contract (M04-W02).
+"""Complete OANDA v20 instruments contract.
 
 ``fetch_instruments`` retrieves every instrument returned for the
 configured account; ``parse_instruments_response`` converts each row
@@ -31,7 +31,7 @@ class InstrumentParseError(ValueError):
 
 
 class InstrumentMetadata(BaseModel):
-    """One strict instrument metadata object (M04-W02).
+    """One strict instrument metadata object.
 
     Every numeric trading field is a ``Decimal``; the raw broker type and
     any unknown response fields are preserved verbatim in

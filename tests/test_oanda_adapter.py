@@ -254,7 +254,7 @@ def test_resting_limit_order_requires_an_explicit_time_in_force() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 30 task #4: SSL handshake errors must surface as
+# Task #4: SSL handshake errors must surface as
 # BrokerTransientError so the retry path covers them and the final
 # log line tells the operator to inspect their certifi bundle.
 # ---------------------------------------------------------------------------

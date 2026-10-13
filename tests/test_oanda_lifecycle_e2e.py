@@ -1,4 +1,4 @@
-"""M06-W07 runtime E2E: controlled practice scenarios.
+"""Runtime E2E: controlled practice scenarios.
 
 Proves the formal product path end to end — OrderIntent, RiskGate,
 persisted RiskDecision, idempotent submit, automatic cleanup, and final

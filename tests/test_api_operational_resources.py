@@ -1,6 +1,6 @@
-"""M13-W03: operational API resources from runtime stores.
+"""Operational API resources from runtime stores.
 
-Covers AC-M13-W03-01: API resources expose account, NAV, margin, PnL,
+Covers: API resources expose account, NAV, margin, PnL,
 exposures, positions, pending orders, fills, financing, category
 attribution, and their observation timestamps from runtime stores —
 with explicit nulls (never fabricated values) for fields the stores

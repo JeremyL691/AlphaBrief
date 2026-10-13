@@ -369,7 +369,7 @@ class BrokerReconStore:
         )
 
     def clear_freeze(self, *, event_id: str, reason: str | None = None) -> FreezeEvent:
-        # Log the reason in a fresh freeze record? No — Phase 17 design:
+        # Log the reason in a fresh freeze record? No — design:
         # clearing is a separate action. We update cleared_at and the
         # reason is recorded in a separate companion row.
         self._conn.execute(

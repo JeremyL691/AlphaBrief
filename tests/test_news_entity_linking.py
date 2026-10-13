@@ -1,8 +1,8 @@
-"""M09-W02: deterministic news entity linking.
+"""Deterministic news entity linking.
 
 - every entity link records entity type, normalized identifier,
   matching rule version, confidence, and originating evidence ID
-  (AC-M09-W02-03);
+
 - symbols link to instruments exactly; dictionary aliases link
   currencies, countries, companies, asset classes, and markets.
 """

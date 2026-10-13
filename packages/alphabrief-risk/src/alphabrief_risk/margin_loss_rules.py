@@ -1,15 +1,15 @@
-"""Margin, leverage, loss, drawdown, and loss-streak rules (M08-W04).
+"""Margin, leverage, loss, drawdown, and loss-streak rules.
 
 Binds new exposure to broker-fresh margin evidence and durable realized
 and unrealized daily loss, rolling drawdown, high-water mark, day-start
-equity, and consecutive-loss state (REQ-RISK-003, REQ-RISK-004,
-REQ-PLAT-005). Every rule is deterministic, Decimal-safe, and
+equity, and consecutive-loss state.
+ Every rule is deterministic, Decimal-safe, and
 fail-closed: missing or stale margin, PnL, high-water, day-start,
 loss-streak, or equity state rejects new exposure and never silently
-disables a configured rule (AC-M08-W04-03).
+disables a configured rule.
 
 Durable day and high-water values live in :class:`LossStateStore`
-(AC-M08-W04-02): they survive restart and can never reset, move
+they survive restart and can never reset, move
 backward, or be replaced with current equity to widen an allowable
 limit.
 """

@@ -1,4 +1,4 @@
-"""R21.3 — account equity snapshot store (DuckDB-backed).
+"""Account equity snapshot store (DuckDB-backed).
 
 The store is the only persistence boundary for daily-loss + drawdown
 state. Two invariants are exercised here:

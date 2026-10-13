@@ -1,8 +1,8 @@
 """DuckDB-backed review store for AlphaBrief.
 
 ``ReviewStore`` provides persistent storage for review snapshots,
-replacing the in-memory default snapshot that was used before Phase 7
-Round 4.
+replacing the in-memory default snapshot that was used before
+.
 """
 
 from __future__ import annotations

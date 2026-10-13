@@ -1,4 +1,4 @@
-"""M09-W07: news CLI fixture queries (deterministic, no network)."""
+"""News CLI fixture queries (deterministic, no network)."""
 
 from __future__ import annotations
 

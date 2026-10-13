@@ -1,4 +1,4 @@
-"""Versioned deterministic OANDA instrument taxonomy (M04-W04).
+"""Versioned deterministic OANDA instrument taxonomy.
 
 Classifies every instrument into Currency, Metal, or an OANDA CFD
 subclass while preserving the raw broker type and an explicit unknown
@@ -22,7 +22,7 @@ from alphabrief_execution.broker.oanda.instruments import (
     InstrumentMetadata,
 )
 
-#: Bump when any classification rule changes (AC-M04-W04-03).
+#: Bump when any classification rule changes.
 TAXONOMY_VERSION = "oanda-taxonomy-1"
 
 InstrumentCategory = Literal[

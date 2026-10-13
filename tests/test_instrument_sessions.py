@@ -1,4 +1,4 @@
-"""M05-W04: instrument-level session integration with catalog state.
+"""Instrument-level session integration with catalog state.
 
 Session verdicts combine with persisted catalog state (active/inactive
 and taxonomy category) so new-exposure readiness derives from account

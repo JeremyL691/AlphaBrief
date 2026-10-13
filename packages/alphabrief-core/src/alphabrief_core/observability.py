@@ -1,4 +1,4 @@
-"""Structured observability and runtime readiness truth (M15-W01).
+"""Structured observability and runtime readiness truth.
 
 Every critical subsystem — ingestion, news, models, scheduler, cycle,
 risk, OANDA, reconciliation, backup, API, and Electron — publishes
@@ -8,7 +8,7 @@ intent, risk, order, transaction, reconciliation, alert, and backup
 records across logs and metrics. All observable output is scrubbed of
 tokens, authorization headers, full account IDs, model-sensitive
 content, unlicensed news text, and configured secret patterns
-(REQ-OPS-001, REQ-OPS-002).
+.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ COMPONENTS: tuple[str, ...] = (
     "electron",
 )
 
-#: The documented correlation record kinds (REQ-OPS-002).
+#: The documented correlation record kinds.
 CORRELATION_KINDS: tuple[str, ...] = (
     "cycle",
     "evidence",

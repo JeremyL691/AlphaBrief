@@ -1,4 +1,4 @@
-"""Scrubbed OANDA request telemetry (M06-W06).
+"""Scrubbed OANDA request telemetry.
 
 Records method family, endpoint template, status, broker request ID,
 latency, attempts, error class, and a scrubbed correlation while

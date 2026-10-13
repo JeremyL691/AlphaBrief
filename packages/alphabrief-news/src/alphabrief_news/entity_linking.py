@@ -1,10 +1,10 @@
-"""Deterministic news entity linking (M09-W02).
+"""Deterministic news entity linking.
 
 Associates content with markets, asset classes, currencies, countries,
 companies, and OANDA instruments through deterministic dictionary rules
-(REQ-NEWS-003). Every entity link records entity type, normalized
+. Every entity link records entity type, normalized
 identifier, matching rule version, confidence, and the originating
-evidence ID (AC-M09-W02-03).
+evidence ID.
 """
 
 from __future__ import annotations

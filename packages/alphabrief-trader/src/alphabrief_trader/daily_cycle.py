@@ -1205,7 +1205,7 @@ __all__ = [
 
 
 class DurableDailyCycle:
-    """Persisted compare-and-set daily cycle (M11-W01).
+    """Persisted compare-and-set daily cycle.
 
     Runs the daily cycle as a durable state machine: preflight, ingest,
     snapshot, discuss, propose, risk, execute (or no-trade), reconcile,

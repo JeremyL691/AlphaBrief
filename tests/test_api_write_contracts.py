@@ -1,6 +1,6 @@
-"""M13-W02: safe and idempotent operator write contracts (API side).
+"""Safe and idempotent operator write contracts (API side).
 
-Covers AC-M13-W02-01/02/03: only the approved operator mutations are
+Covers: only the approved operator mutations are
 exposed; every accepted mutation validates current state, requires an
 idempotency key, persists actor and correlation metadata, and returns
 the same result on replay; live host, arbitrary endpoint, arbitrary

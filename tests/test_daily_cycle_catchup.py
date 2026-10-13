@@ -1,6 +1,6 @@
-"""M11-W05: catch-up windows and expiry for missed cycles.
+"""Catch-up windows and expiry for missed cycles.
 
-Covers AC-M11-W05-02: a missed cycle runs only inside its configured
+Covers: a missed cycle runs only inside its configured
 catch-up window and records expired-without-chase after the window
 closes, without chasing obsolete trades.
 """

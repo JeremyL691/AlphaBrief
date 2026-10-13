@@ -1,4 +1,4 @@
-"""Tests for the DuckDB-backed ModelEvalStore (Phase 14 Round 1)."""
+"""Tests for the DuckDB-backed ModelEvalStore."""
 
 from __future__ import annotations
 

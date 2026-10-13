@@ -1,6 +1,6 @@
-"""M12-W03: backtest metadata parity with the OANDA practice runtime.
+"""Backtest metadata parity with the OANDA practice runtime.
 
-Covers AC-M12-W03-03: backtest metadata and execution semantics resolve
+Covers: backtest metadata and execution semantics resolve
 the same instrument version and normalization rules used by the OANDA
 practice runtime, or record an explicit versioned difference.
 """

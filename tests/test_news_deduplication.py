@@ -1,10 +1,10 @@
-"""M09-W02: deterministic news deduplication.
+"""Deterministic news deduplication.
 
 - tracking parameters, URL aliases, identical content hashes, and
   bounded title similarity collapse deterministic duplicates into one
-  canonical cluster (AC-M09-W02-01);
+  canonical cluster;
 - reports with materially different claims or viewpoints remain separate
-  even when their titles and entities overlap (AC-M09-W02-02).
+  even when their titles and entities overlap.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _item(**overrides: object) -> DedupEvidence:
 
 
 # ---------------------------------------------------------------------------
-# AC-M09-W02-01: deterministic duplicates collapse
+# Deterministic duplicates collapse
 # ---------------------------------------------------------------------------
 
 
@@ -142,7 +142,7 @@ def test_cluster_news_builds_canonical_clusters() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M09-W02-02: different claims/viewpoints stay separate
+# Different claims/viewpoints stay separate
 # ---------------------------------------------------------------------------
 
 

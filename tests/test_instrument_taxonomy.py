@@ -1,14 +1,14 @@
-"""M04-W04: deterministic instrument taxonomy.
+"""Deterministic instrument taxonomy.
 
 Covers:
 - fixtures cover Currency, Metal, index/commodity/bond/equity CFDs when
   returned, and unknown values with deterministic category and
-  taxonomy-version output (AC-M04-W04-01);
+  taxonomy-version output;
 - unrecognized broker types or display patterns remain visible as
   unknown with their raw value and never disappear from catalog counts
-  or search (AC-M04-W04-02);
+  or search;
 - taxonomy changes create a new derived version and cannot mutate the
-  raw instrument snapshot (AC-M04-W04-03).
+  raw instrument snapshot.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _snapshot(*instruments: InstrumentMetadata) -> InstrumentCatalogSnapshot:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W04-01: deterministic category fixtures
+# Deterministic category fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -103,7 +103,7 @@ def test_snapshot_classification_covers_all_rows() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W04-02: unknown instruments stay visible with raw values
+# Unknown instruments stay visible with raw values
 # ---------------------------------------------------------------------------
 
 
@@ -172,7 +172,7 @@ def test_unknown_instruments_remain_in_catalog_counts(
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W04-03: taxonomy is derived and versioned, never mutating raw data
+# Taxonomy is derived and versioned, never mutating raw data
 # ---------------------------------------------------------------------------
 
 

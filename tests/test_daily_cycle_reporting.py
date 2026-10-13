@@ -1,6 +1,6 @@
-"""M11-W07: reproducible daily cycle reports from immutable IDs.
+"""Reproducible daily cycle reports from immutable IDs.
 
-Covers AC-M11-W07-01/02: each completed cycle references a daily brief,
+Covers: each completed cycle references a daily brief,
 transcript or legal skip, proposal or no-trade, risk result, broker
 outcome, reconciliation, portfolio snapshot, alerts, and data-quality
 summary; rebuilding a report from immutable IDs produces byte-equivalent

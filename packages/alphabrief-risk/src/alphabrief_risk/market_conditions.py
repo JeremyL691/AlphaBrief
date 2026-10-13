@@ -1,18 +1,18 @@
-"""Deterministic spread, liquidity, news, and macro tightening (M08-W05).
+"""Deterministic spread, liquidity, news, and macro tightening.
 
 Applies versioned spread, liquidity, slippage, news-event, macro-window,
 sentiment-coverage, and stale-content rules that can only reduce size or
-reject (REQ-RISK-004, REQ-RISK-005). The policy is deterministic and
+reject. The policy is deterministic and
 tighten-only: the verdict's ``size_multiplier`` is always in ``(0, 1]``
 and a rejected rule forces ``0``. No model score, narrative, committee
 confidence, or external text is accepted anywhere — evidence is strictly
 typed structured facts, so no external input can increase size, relax a
-rule, or modify its thresholds (AC-M08-W05-02).
+rule, or modify its thresholds.
 
 Missing or stale critical market or content context yields the
 configured reject or a conservative clamp — never a fabricated neutral
 score, a disabled rule, fallback content, or a user question
-(AC-M08-W05-03).
+.
 """
 
 from __future__ import annotations

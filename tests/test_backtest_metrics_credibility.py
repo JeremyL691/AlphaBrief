@@ -1,4 +1,4 @@
-"""R21.4 — backtest credibility metrics.
+"""Backtest credibility metrics.
 
 Adds benchmark, CAGR, Sharpe, Sortino, turnover, and exposure to the
 vectorized backtester. Each metric is exercised through its success

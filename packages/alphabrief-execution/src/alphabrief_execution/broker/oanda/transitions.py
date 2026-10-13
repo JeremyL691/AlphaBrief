@@ -1,4 +1,4 @@
-"""Order and dependent-order transition facts (M06-W03).
+"""Order and dependent-order transition facts.
 
 Interprets immediate fill, pending, partial fill, cancel, reject, expire,
 reissue, trade reduction, trade close, and dependent-order transitions

@@ -1,4 +1,4 @@
-"""Local append-only order ledger with idempotency identities (M07-W01).
+"""Local append-only order ledger with idempotency identities.
 
 Atomically maps cycle, intent, risk decision, client request, client
 extension, broker order, trade, and transaction identities into one
@@ -368,7 +368,7 @@ class OrderLedger:
 
         Startup recovery resolves every one of these by querying the
         broker for the persisted client identity — never by re-submit
-        (REQ-EXEC-011).
+.
         """
         rows = self._conn.execute(
             """SELECT submit_id, cycle_id, intent_id, decision_id,
@@ -392,7 +392,7 @@ class OrderLedger:
         """The durable submit_id -> broker_order_id mapping.
 
         Restored into the process adapter at startup so a replay of any
-        completed cycle can never double-submit (REQ-EXEC-011).
+        completed cycle can never double-submit.
         """
         rows = self._conn.execute(
             """SELECT submit_id, broker_order_id FROM order_ledger_reservations

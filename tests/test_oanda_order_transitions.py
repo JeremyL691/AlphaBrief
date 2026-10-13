@@ -1,16 +1,16 @@
-"""M06-W03: order and dependent-order transition facts.
+"""Order and dependent-order transition facts.
 
 Covers:
 - every documented transition fixture produces immutable ordered facts
   with broker transaction IDs, related IDs, UTC times, quantities,
-  prices, reasons, financing, and correlation IDs (AC-M06-W03-01);
+  prices, reasons, financing, and correlation IDs;
 - immediate fill, pending, partial fill, cancel, reject, expire,
   reissue, reduce, close, and dependent-order transitions update
   projections deterministically without impossible state jumps
-  (AC-M06-W03-02);
+
 - duplicate, out-of-order, malformed, or conflicting facts are
   idempotently ignored or quarantined and never mutate a terminal fact
-  or fabricate a fill (AC-M06-W03-03).
+  or fabricate a fill.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def _transition(
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W03-01: immutable typed facts
+# Immutable typed facts
 # ---------------------------------------------------------------------------
 
 
@@ -106,7 +106,7 @@ def test_store_persists_transitions_immutably(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W03-02: deterministic projections without impossible jumps
+# Deterministic projections without impossible jumps
 # ---------------------------------------------------------------------------
 
 
@@ -215,7 +215,7 @@ def test_reduce_without_prior_order_is_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W03-03: duplicates, out-of-order, malformed, conflicting
+# Duplicates, out-of-order, malformed, conflicting
 # ---------------------------------------------------------------------------
 
 

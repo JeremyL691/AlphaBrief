@@ -1,6 +1,6 @@
-"""Tests for the API-side broker adapter singleton (Phase 20 R20.1).
+"""Tests for the API-side broker adapter singleton.
 
-M01-W02: OANDA practice is the only execution venue. Covers:
+OANDA practice is the only execution venue. Covers:
 - no credentials -> null adapter; ``has_live_broker`` False.
 - OANDA credentials set -> live OandaPaperAdapter; ``has_live_broker`` True.
 - ``_reset_broker_adapter`` clears the cache (creds then unset -> null).
@@ -82,7 +82,7 @@ def test_null_adapter_read_probes_return_zero_shape() -> None:
     assert account.equity == Decimal("0")
     assert account.buying_power == Decimal("0")
     assert account.currency == "USD"
-    # M01-W03: an unconfigured broker runtime reports not ready.
+    # An unconfigured broker runtime reports not ready.
     health = asyncio.run(adapter.health())
     assert health.healthy is False
     assert "not configured" in health.detail

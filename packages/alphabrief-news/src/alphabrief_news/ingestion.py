@@ -1,16 +1,16 @@
-"""Production news ingestion and provenance contracts (M09-W01).
+"""Production news ingestion and provenance contracts.
 
 Fetches configured financial-news sources and persists successful,
 partial, empty, and failed fetches with immutable provenance and
-copyright-safe content retention (REQ-NEWS-001, REQ-NEWS-008,
-REQ-PLAT-008, REQ-PLAT-009). Every attempted item persists source,
+copyright-safe content retention.
+ Every attempted item persists source,
 canonical URL, published and fetched UTC times, language, content hash,
-bounded summary, fetch outcome, and correlation ID (AC-M09-W01-01).
+bounded summary, fetch outcome, and correlation ID.
 Success, empty, timeout, rate-limit, malformed, and source-failure
 produce distinct durable outcomes — headlines are never fabricated
-(AC-M09-W01-02). Sources marked metadata-only never persist licensed
+. Sources marked metadata-only never persist licensed
 full text; they retain only permitted metadata and bounded summaries
-(AC-M09-W01-03).
+.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ NewsFetchOutcome = Literal[
     "source_failure",
 ]
 
-#: Default summary bound for metadata-only sources (REQ-NEWS-008).
+#: Default summary bound for metadata-only sources.
 DEFAULT_METADATA_ONLY_SUMMARY_CHARS = 200
 
 

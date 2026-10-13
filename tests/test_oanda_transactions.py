@@ -1,15 +1,15 @@
-"""M06-W05: transaction details, ranges, and cursor primitives.
+"""Transaction details, ranges, and cursor primitives.
 
 Covers:
 - detail, ID-range, paginated-range, and since-ID requests preserve
   OANDA transaction IDs as the cursor authority and never substitute
-  local timestamps (AC-M06-W05-01);
+  local timestamps;
 - empty pages, overlapping pages, duplicate IDs, out-of-order IDs,
   declared page ranges, and missing ranges produce deterministic
-  normalized output and explicit gap signals (AC-M06-W05-02);
+  normalized output and explicit gap signals;
 - cursor candidates are returned separately from durable advancement so
   a failed consumer cannot acknowledge unseen transactions
-  (AC-M06-W05-03).
+.
 """
 
 from __future__ import annotations
@@ -171,7 +171,7 @@ def _seed(broker: _FakeTransactionBroker, ids: list[int]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W05-01: broker IDs are the cursor authority
+# Broker IDs are the cursor authority
 # ---------------------------------------------------------------------------
 
 
@@ -239,7 +239,7 @@ def test_unknown_transaction_fails_closed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W05-02: deterministic normalized output and explicit gap signals
+# Deterministic normalized output and explicit gap signals
 # ---------------------------------------------------------------------------
 
 
@@ -347,7 +347,7 @@ def test_pagination_limit_fails_closed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W05-03: cursor candidates are separate from durable advancement
+# Cursor candidates are separate from durable advancement
 # ---------------------------------------------------------------------------
 
 

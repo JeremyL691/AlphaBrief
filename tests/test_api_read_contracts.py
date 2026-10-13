@@ -1,6 +1,6 @@
-"""M13-W01: unified versioned API read contracts.
+"""Unified versioned API read contracts.
 
-Covers AC-M13-W01-01/03: every required read surface has one versioned
+Covers: every required read surface has one versioned
 response schema with UTC timestamps, stable IDs, provenance, freshness,
 pagination, and explicit empty or partial state; unknown filters,
 malformed cursors, invalid identifiers, and unavailable sources return

@@ -1,9 +1,9 @@
-"""Deterministic instrument constraint rules (M08-W02).
+"""Deterministic instrument constraint rules.
 
 Evaluates catalog allowability, active and tradeable state, units and
 price precision, minimum and maximum size, position cap, session state,
 and every execution-relevant freshness signal as stable typed rule
-results (REQ-RISK-002, REQ-OANDA-003, REQ-OANDA-009, REQ-OANDA-010).
+results.
 The layer is pure and deterministic: identical evidence produces
 identical rule results, a failing rule can never be silenced, and any
 fail-closed input (unknown instrument, inactive catalog state, broker
@@ -17,7 +17,7 @@ to ``trade_units_precision`` (fractional units beyond the precision are
 rejected, never silently rounded into a different order). Executable
 inputs are bound to the approved decision through a deterministic hash,
 so any post-decision change of symbol, units, price, instrument version,
-or snapshot hash invalidates execution (REQ-RISK-010, AC-M08-W02-03).
+or snapshot hash invalidates execution.
 """
 
 from __future__ import annotations
@@ -410,7 +410,7 @@ def bind_execution_inputs(
 
     Any post-decision change of symbol, units, price, instrument
     version, or snapshot hash produces a different hash and invalidates
-    execution (AC-M08-W02-03, REQ-RISK-010).
+    execution.
     """
     payload = "|".join(
         [

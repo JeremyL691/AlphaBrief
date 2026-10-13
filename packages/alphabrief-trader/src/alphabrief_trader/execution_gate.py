@@ -1,4 +1,4 @@
-"""Deterministic execution-readiness gate (M11-W03).
+"""Deterministic execution-readiness gate.
 
 Research scheduling (data, news, snapshots, committee, reporting) runs
 independently of the deterministic gate that permits OANDA practice
@@ -16,7 +16,7 @@ from enum import StrEnum
 
 
 class ExecutionMode(StrEnum):
-    """Distinct persisted execution states (AC-M11-W03-03)."""
+    """Distinct persisted execution states."""
 
     EXECUTABLE = "executable"
     EXECUTION_DISABLED = "execution_disabled"

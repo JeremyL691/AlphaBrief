@@ -1,6 +1,6 @@
 """Review Center routes — snapshot and journal generation.
 
-Phase 7 Round 4: Review snapshots are now persisted in DuckDB via
+Review snapshots are now persisted in DuckDB via
 ``ReviewStore``, replacing the module-level default snapshot that
 contained hardcoded sample data.
 """

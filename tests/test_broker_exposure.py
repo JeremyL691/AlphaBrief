@@ -1,4 +1,4 @@
-"""Tests for the execution-side account-exposure projection (Phase 19 R19.2).
+"""Tests for the execution-side account-exposure projection.
 
 Drives the adapter variant with a tiny in-memory fake adapter. Verifies
 the projection sums gross notional (``abs(qty) * mark``), honors explicit

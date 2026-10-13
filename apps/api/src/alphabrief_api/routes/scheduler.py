@@ -169,7 +169,7 @@ def scheduler_status() -> dict[str, Any]:
     separate CLI process, not an API worker. The field is reserved
     for a future round that probes a PID file. The leader, running
     phase, heartbeat, last outcome, and next due time come from the
-    persisted scheduler runtime truth (M11-W02), so the API reports the
+    persisted scheduler runtime truth, so the API reports the
     same executing runtime the scheduler itself sees.
     """
     heartbeats = _heartbeat_store()

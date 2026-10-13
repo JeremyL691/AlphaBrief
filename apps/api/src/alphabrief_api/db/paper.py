@@ -2,7 +2,7 @@
 
 ``PaperStore`` provides persistent storage for audit events, portfolio
 snapshots, and broker orders, replacing the in-memory broker state that
-was used before Phase 7 Round 4.
+was used before.
 """
 
 from __future__ import annotations
@@ -217,7 +217,7 @@ class PaperStore:
         return self.get_audit_events(event_type="order_created")
 
     # ------------------------------------------------------------------
-    # R21.3 account equity snapshots (daily-loss + drawdown)
+    # Account equity snapshots (daily-loss + drawdown)
     # ------------------------------------------------------------------
     #
     # Append-only equity snapshots the paper route writes after each

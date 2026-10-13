@@ -15,11 +15,11 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PaperOrderType = Literal["market", "limit"]
-# M01-W01: OANDA practice is the only production provider. The literal is
+# OANDA practice is the only production provider. The literal is
 # the deterministic gate itself — any other provider value fails schema
-# validation (REQ-PLAT-002).
+# Validation.
 PaperProvider = Literal["oanda_paper"]
-# M01-W01: accepted markets are OANDA-account markets only. ``us_equity``
+# Accepted markets are OANDA-account markets only. ``us_equity``
 # was removed because it describes a venue boundary no OANDA account serves.
 PaperMarket = Literal["fx", "multi_asset", "crypto"]
 TradingDay = Literal["mon", "tue", "wed", "thu", "fri"]

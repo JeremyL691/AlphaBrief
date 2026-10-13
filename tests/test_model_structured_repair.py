@@ -1,6 +1,6 @@
-"""M10-W05: bounded structured-output repair.
+"""Bounded structured-output repair.
 
-Covers AC-M10-W05-01/02 at the repair layer: invalid JSON, schema
+Covers at the repair layer: invalid JSON, schema
 violations, and nonexistent citations trigger no more than the
 configured repair attempts; every attempt records a typed verdict with
 its model-call ID; exhausted repair is a terminal failure that must

@@ -1,7 +1,7 @@
-"""Tests for the Phase 21 R21.x extensions to ``AccountExposureContext``.
+"""Tests for the extensions to ``AccountExposureContext``.
 
-R21.1 (Phase 19) introduced the value object with the original five
-fields. R21.2 / R21.3 extended it with the inputs that the new risk
+Introduced the value object with the original five
+fields. / extended it with the inputs that the new risk
 checks need:
 
 - ``equity``                 (max_leverage / drawdown / daily_loss)
@@ -169,7 +169,7 @@ def test_day_realized_pnl_rejects_float() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_account_exposure_round_trip_preserves_phase21_fields() -> None:
+def test_account_exposure_round_trip_preserves_risk_fields() -> None:
     ctx = _ctx(
         equity=Decimal("1000"),
         reference_mark_prices={"SPY": Decimal("500")},

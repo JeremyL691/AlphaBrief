@@ -1,12 +1,12 @@
-"""M07-W03: account projection store — convergence and authority.
+"""Account projection store — convergence and authority.
 
 Covers:
 - full snapshot plus incremental changes converges to the same
   normalized projection as a clean replay of all facts
-  (AC-M07-W02-02);
+
 - API, CLI, and scheduler readers resolve the same persisted account
   authority and cannot expose conflicting process-local portfolio state
-  (AC-M07-W03-03).
+.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ def _full_history() -> list[ProjectionFact]:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W03-02: full snapshot + incremental changes converge
+# Full snapshot + incremental changes converge
 # ---------------------------------------------------------------------------
 
 
@@ -181,7 +181,7 @@ def test_replay_and_incremental_balance_nav_identical(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W03-03: one persisted account authority for every reader
+# One persisted account authority for every reader
 # ---------------------------------------------------------------------------
 
 

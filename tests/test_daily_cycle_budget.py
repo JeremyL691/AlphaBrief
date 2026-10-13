@@ -1,6 +1,6 @@
-"""M11-W04: candidate selection budget accounting.
+"""Candidate selection budget accounting.
 
-Covers AC-M11-W04-01 in detail: cumulative budget usage is tracked and
+Covers in detail: cumulative budget usage is tracked and
 never exceeds the configured limits, and every budget exhaustion is
 recorded as an explicit skipped verdict.
 """

@@ -1,7 +1,7 @@
 """DuckDB-backed brief store for AlphaBrief.
 
 ``BriefStore`` provides persistent storage for DailyAlphaBriefs,
-replacing the in-memory dictionary that was used before Phase 7 Round 3.
+replacing the in-memory dictionary that was used before.
 """
 
 from __future__ import annotations

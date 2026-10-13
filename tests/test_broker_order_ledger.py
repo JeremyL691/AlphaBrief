@@ -1,9 +1,9 @@
-"""M07-W01: broker order ledger integration.
+"""Broker order ledger integration.
 
 Covers:
 - reservation, approved-decision binding, submit attempt, broker result,
   and related IDs commit atomically with compare-and-set transitions and
-  immutable history (AC-M07-W01-02);
+  immutable history;
 - the ledger composes with the unknown-outcome resolver so a timeout
   after submit never duplicates the order.
 """
@@ -116,7 +116,7 @@ def _submit_payload() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W01-02: atomic compare-and-set transitions with immutable history
+# Atomic compare-and-set transitions with immutable history
 # ---------------------------------------------------------------------------
 
 

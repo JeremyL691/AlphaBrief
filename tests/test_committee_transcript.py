@@ -1,6 +1,6 @@
-"""M10-W03: evidence-grounded multi-turn committee transcript.
+"""Evidence-grounded multi-turn committee transcript.
 
-Covers AC-M10-W03-01/02/03: every completed run contains the four
+Covers: every completed run contains the four
 analyst roles plus a moderator with bounded turn order, role identity,
 timestamps, and model-call IDs; challenge turns preserve stance and
 cited evidence IDs instead of flattening dissent; committee context
@@ -292,7 +292,7 @@ class TestChallengeAndDissent:
         # A nonexistent citation (ev- prefix not in the available evidence
         # IDs) is a grounding violation: without repair configured the
         # role's vote is rejected and never enters the transcript or the
-        # vote list (M10-W05 enforcement).
+        # Vote list (enforcement).
         provider = _PhasedProvider(
             opening={
                 **_OPENING_PAYLOAD,

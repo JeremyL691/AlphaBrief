@@ -1,12 +1,12 @@
-"""Error taxonomy and durable alert lifecycle (M15-W02).
+"""Error taxonomy and durable alert lifecycle.
 
 Operational failures are classified deterministically into retry,
-freeze, no-trade, or stop behavior (REQ-OPS-003). Alerts persist
+freeze, no-trade, or stop behavior. Alerts persist
 severity, dedupe key, first and last occurrence, count,
 acknowledgement, escalation, resolution, incident link, and scrubbed
 evidence across restart; external sink failure never deletes or
 resolves the local alert and repeated equivalent events do not create
-an unbounded alert storm (REQ-OPS-004).
+an unbounded alert storm.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ class ErrorClassification(BaseModel):
     escalate: bool
 
 
-#: REQ-OPS-003 mapping: error class -> deterministic behavior.
+#: Mapping: error class -> deterministic behavior.
 _ERROR_CLASSIFICATION: dict[str, ErrorClassification] = {
     "auth": ErrorClassification(
         error_class="auth",

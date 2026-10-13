@@ -1,13 +1,13 @@
-"""M08-W01: broker-fresh risk context value object and builder.
+"""Broker-fresh risk context value object and builder.
 
 - the context carries source IDs, capture times, freshness verdicts,
   account state, balance, NAV, margin, positions, pending orders,
   trades, bid/ask prices, conversions, catalog version, reconciliation
-  state, and health state (AC-M08-W01-01);
+  state, and health state;
 - missing, stale, account-mismatched, partially covered, frozen, or
   internally inconsistent contexts reject with classified errors — no
   synthesized defaults, no fallback account, no user question
-  (AC-M08-W01-03).
+.
 """
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ def _build(
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W01-01: the context carries every required fact
+# The context carries every required fact
 # ---------------------------------------------------------------------------
 
 
@@ -169,7 +169,7 @@ def test_full_context_carries_every_required_field() -> None:
     context = _build(sources)
     assert context.context_version == DEFAULT_CONTEXT_VERSION
     assert context.policy_version == DEFAULT_POLICY_VERSION
-    # Source IDs and capture time (REQ-PLAT-009 traceability).
+    # Source IDs and capture time (traceability).
     assert context.source_ids[0] == f"account:{ACCOUNT}"
     assert context.captured_at == NOW
     # Account state and money fields.
@@ -241,7 +241,7 @@ def test_positions_pending_orders_prices_round_trip() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W01-03: fail closed before submit — never synthesized
+# Fail closed before submit — never synthesized
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""OANDA order operations port (M06-W02).
+"""OANDA order operations port.
 
 Create, get, list (paginated), cancel, and replace orders with exact
 typed responses, request correlation on every result, and fail-closed

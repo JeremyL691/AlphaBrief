@@ -1,9 +1,9 @@
-"""Research-grade reproducible portfolio reports (M12-W05).
+"""Research-grade reproducible portfolio reports.
 
 ``build_portfolio_report`` is a pure function of declared inputs —
 snapshots, fills, trades, financing events, rejections, and a benchmark
-— so identical inputs always produce an identical report. Every report
-carries the full REQ-STRAT-005 metric set plus instrument and category
+so identical inputs always produce an identical report. Every report
+carries the full metric set plus instrument and category
 attribution, cost attribution (spread, slippage, financing, fees),
 rejection attribution, benchmark delta, and an explicit IS/OOS label.
 Degenerate inputs serialize as ``None`` (or ``0`` where a zero is the
@@ -33,7 +33,7 @@ _ANNUALIZATION = Decimal("252") ** Decimal("0.5")
 
 
 class ReportMetrics(BaseModel):
-    """The full REQ-STRAT-005 metric set.
+    """The full metric set.
 
     Statistical metrics are ``None`` for degenerate inputs (zero
     variance, no trades, too few periods); ``total_return``,

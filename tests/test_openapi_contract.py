@@ -1,6 +1,6 @@
-"""M13-W05: locked deterministic OpenAPI contract.
+"""Locked deterministic OpenAPI contract.
 
-Covers AC-M13-W05-01/02: the generated OpenAPI is deterministic and
+Covers: the generated OpenAPI is deterministic and
 declares every read and approved mutation schema, error model, cursor,
 freshness field, idempotency header, and correlation identifier;
 contract tests prove cursor stability, bounded page sizes, UTC

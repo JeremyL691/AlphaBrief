@@ -1,6 +1,6 @@
-"""M12-W01: safe compiled strategy condition DSL.
+"""Safe compiled strategy condition DSL.
 
-Covers AC-M12-W01-01/02/03: valid fixtures compile into a typed
+Covers: valid fixtures compile into a typed
 normalized AST with deterministic serialization and explicit indicator,
 operator, parameter, and data requirements; imports, calls outside the
 allowlist, attribute traversal, comprehensions, mutation, file access,

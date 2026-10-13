@@ -1,14 +1,14 @@
-"""M04-W02: OANDA instruments client and strict parsing.
+"""OANDA instruments client and strict parsing.
 
 Covers:
 - every response row becomes exactly one strict metadata object
   preserving name, displayName, raw type, precisions, sizes, margin,
-  pipLocation, and stop-distance fields (AC-M04-W02-01);
+  pipLocation, and stop-distance fields;
 - unknown fields are retained in a versioned raw payload while missing
   or invalid required trading fields reject the whole candidate snapshot
-  without partial publication (AC-M04-W02-02);
+  without partial publication;
 - parsing uses Decimal-safe values and never infers precision or size
-  from symbol naming (AC-M04-W02-03).
+  from symbol naming.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def _http_send(body: dict[str, Any]) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W02-01: strict per-row metadata
+# Strict per-row metadata
 # ---------------------------------------------------------------------------
 
 
@@ -115,7 +115,7 @@ def test_fetch_instruments_uses_account_scoped_endpoint() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W02-02: raw payload retention and whole-snapshot rejection
+# Raw payload retention and whole-snapshot rejection
 # ---------------------------------------------------------------------------
 
 
@@ -154,7 +154,7 @@ def test_malformed_response_rejects() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W02-03: Decimal-safe, never inferred from symbol naming
+# Decimal-safe, never inferred from symbol naming
 # ---------------------------------------------------------------------------
 
 

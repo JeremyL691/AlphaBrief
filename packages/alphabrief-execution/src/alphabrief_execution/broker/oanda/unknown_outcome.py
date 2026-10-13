@@ -1,4 +1,4 @@
-"""Unknown submit-outcome resolution and fail-closed gating (M06-W06).
+"""Unknown submit-outcome resolution and fail-closed gating.
 
 After a timeout or disconnect on a submit, the broker may or may not
 have accepted the order. This module resolves the outcome by querying

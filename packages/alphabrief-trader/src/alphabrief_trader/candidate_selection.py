@@ -1,4 +1,4 @@
-"""Bounded, explainable daily candidate selection (M11-W04).
+"""Bounded, explainable daily candidate selection.
 
 Selects a category-aware daily analysis set from the complete OANDA
 catalogue using deterministic rules over catalogue status, category,

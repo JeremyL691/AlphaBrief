@@ -1,6 +1,6 @@
-"""M17-W03: packaged application smoke contract.
+"""Packaged application smoke contract.
 
-Covers AC-M17-W03-02: the packaged application passes backend
+Covers: the packaged application passes backend
 readiness, port conflict, duplicate ownership, startup failure,
 navigation, freeze, graceful shutdown, restart, and error-propagation
 smoke checks. The smoke contract inspects the packaged main.js source

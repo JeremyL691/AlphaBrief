@@ -1,6 +1,6 @@
-"""M10-W02: deterministic per-call, per-cycle, and daily model budgets.
+"""Deterministic per-call, per-cycle, and daily model budgets.
 
-Covers AC-M10-W02-03: budget-exhausted calls are rejected
+Covers: budget-exhausted calls are rejected
 deterministically, every rejection persists one terminal record, and
 already committed evidence is never altered.
 """

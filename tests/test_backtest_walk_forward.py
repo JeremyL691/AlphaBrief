@@ -1,6 +1,6 @@
-"""M12-W04: reproducible IS/OOS walk-forward evaluation.
+"""Reproducible IS/OOS walk-forward evaluation.
 
-Covers AC-M12-W04-01/02: rolling and anchored fixtures create
+Covers: rolling and anchored fixtures create
 non-overlapping decision boundaries with parameters fitted only on
 declared in-sample observations; out-of-sample execution uses frozen
 parameters and cannot access later observations, later revisions, or

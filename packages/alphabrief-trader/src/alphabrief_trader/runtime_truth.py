@@ -1,4 +1,4 @@
-"""Persisted scheduler runtime truth (M11-W02).
+"""Persisted scheduler runtime truth.
 
 The API and CLI task-status surfaces derive active configuration, the
 leader ID, the running phase, heartbeat, last outcome, and next due

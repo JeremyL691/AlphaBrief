@@ -1,6 +1,6 @@
-"""M13-W06: static operator-contract gate.
+"""Static operator-contract gate.
 
-Covers AC-M13-W06-02: static scans find no arbitrary broker proxy,
+Covers: static scans find no arbitrary broker proxy,
 route-local production state, offline-success placeholder, live
 control, undocumented mutation, or sensitive OpenAPI example across
 the API and CLI surfaces.

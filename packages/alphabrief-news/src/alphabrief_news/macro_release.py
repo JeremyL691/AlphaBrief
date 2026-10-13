@@ -1,13 +1,13 @@
-"""Macro calendar and revision-aware observation ingestion (M09-W03).
+"""Macro calendar and revision-aware observation ingestion.
 
 Persists scheduled macro releases and revision-aware observations with
 deterministic currency, market, and instrument impact mappings
-(REQ-NEWS-004, REQ-NEWS-003). Every release persists release time,
+. Every release persists release time,
 actual, forecast, previous, revision flag, importance, unit, source,
-and affected currencies/markets in UTC (AC-M09-W03-01). A revised
+and affected currencies/markets in UTC. A revised
 observation appends a new version with lineage while the prior value
-remains reconstructable (AC-M09-W03-02). States — missing, stale,
-partial, and revised — are explicit (AC-M09-W03-03).
+remains reconstructable. States — missing, stale,
+partial, and revised — are explicit.
 """
 
 from __future__ import annotations

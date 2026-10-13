@@ -1,4 +1,4 @@
-"""M09-W03: macro release CLI (AC-M09-W03-03).
+"""Macro release CLI.
 
 CLI fixture queries return the same ordered macro events with explicit
 states as the API store.

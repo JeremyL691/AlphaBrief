@@ -113,14 +113,14 @@ class ExecutionBackend(Protocol):
 class ExternalPaperExecutionBackend:
     """Execution backend that submits to a configured external paper adapter.
 
-    M08-W01: every external submit first builds a broker-fresh risk
+    Every external submit first builds a broker-fresh risk
     context through the shared context service. For the OANDA practice
     adapter the default composition uses the live broker sources
     (account money, positions, pending orders, trades, bid/ask and
     home-currency conversions), so the gate sees the real account. A
     missing, stale, account-mismatched, partially covered, frozen, or
     internally inconsistent context rejects the order before any submit
-    — no synthesized defaults, no fallback account, no review bypass.
+no synthesized defaults, no fallback account, no review bypass.
     """
 
     def __init__(
@@ -160,7 +160,7 @@ class ExternalPaperExecutionBackend:
         )
         # The persisted decision is the only executable contract: by
         # default the backend validates against the durable store in the
-        # runtime data directory authority (M01-W04).
+        # Runtime data directory authority.
         self._decision_binding: DecisionBindingService = (
             decision_binding
             or DecisionBindingService(
@@ -268,10 +268,10 @@ class ExternalPaperExecutionBackend:
         now: datetime,
         estimated_quantity: Decimal | None,
     ) -> ExecutionBackendResult:
-        # M08-W01: a broker-fresh risk context is required before any
+        # A broker-fresh risk context is required before any
         # external submit. A missing, stale, account-mismatched, partial,
         # frozen, or inconsistent context rejects the order here — the
-        # backend never submits without it (REQ-RISK-010).
+        # Backend never submits without it.
         try:
             context = self._risk_context_builder.build()
         except RiskContextError as exc:
@@ -308,9 +308,9 @@ class ExternalPaperExecutionBackend:
             reduce_only=intent.reduce_only,
         )
 
-        # M08-W07: the approved decision is bound to the immutable
+        # The approved decision is bound to the immutable
         # decision ledger BEFORE any network submit. When the decision
-        # carries an approval-time inputs hash (M08-W02), the executable
+        # Carries an approval-time inputs hash, the executable
         # request must still match it — a post-approval change of symbol,
         # units, or price rejects before persistence. The decision is
         # then persisted through the shared decision-binding service and
@@ -318,8 +318,8 @@ class ExternalPaperExecutionBackend:
         # expired, consumed, account-mismatched, policy-mismatched,
         # intent-mismatched, inputs-mismatched, snapshot-mismatched, or
         # quantity-exceeding decisions reject before the network call
-        # (AC-M08-W07-02). The backend never trusts a caller-supplied
-        # approval flag (AC-M08-W07-03).
+        #. The backend never trusts a caller-supplied
+        # Approval flag.
         request_inputs_hash = hash_inputs(
             symbol=request.symbol,
             units=request.quantity,

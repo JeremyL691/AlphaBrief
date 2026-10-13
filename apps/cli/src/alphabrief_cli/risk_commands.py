@@ -218,8 +218,8 @@ def check_cmd(
         "--risk-context-file",
         help="Optional path to a JSON file with a RiskContextDecision.",
     ),
-    # Phase 21 R21.x account-context overrides. The CLI builds an
-    # AccountExposureContext from these so the new R21.x checks
+    # Account-context overrides. The CLI builds an
+    # AccountExposureContext from these so the new checks
     # (symbol exposure, concentration, leverage, price deviation, daily
     # loss, drawdown) can be exercised end-to-end through the CLI. The
     # existing ``--total-exposure`` / ``--symbol-exposure`` /
@@ -309,7 +309,7 @@ def check_cmd(
         )
 
     # Build a permissive zero-exposure AccountExposureContext from the
-    # R21.x CLI overrides. Only the fields the caller passed are set;
+    # CLI overrides. Only the fields the caller passed are set;
     # the rest stay None so the gate's fail-closed paths can be
     # exercised explicitly.
     account_ctx_overrides: dict[str, Any] = {

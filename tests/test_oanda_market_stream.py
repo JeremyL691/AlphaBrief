@@ -1,15 +1,15 @@
-"""M05-W03: bounded, stale-aware OANDA pricing stream.
+"""Bounded, stale-aware OANDA pricing stream.
 
 Covers:
 - one runtime owner maintains at most the configured stream connection
   and reconciles subscriptions without opening a connection per
-  instrument or consumer (AC-M05-W03-01);
+  instrument or consumer;
 - disconnects, heartbeat loss, malformed frames, rate limits, and server
   errors follow bounded classified backoff and mark the stream stale
-  before any consumer can treat cached prices as fresh (AC-M05-W03-02);
+  before any consumer can treat cached prices as fresh;
 - shutdown cancels reads and reconnect timers, closes the connection,
   persists the final cursor state, and cannot busy-loop or ask for
-  intervention (AC-M05-W03-03).
+  intervention.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def _frame(
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W03-01: single connection + in-place subscription reconciliation
+# Single connection + in-place subscription reconciliation
 # ---------------------------------------------------------------------------
 
 
@@ -108,7 +108,7 @@ def test_connection_ceiling_is_enforced() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W03-02: classified bounded backoff and stale marking
+# Classified bounded backoff and stale marking
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +209,7 @@ def test_rate_limit_and_server_error_classifications() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W03-03: shutdown cancels, closes, persists cursor, no busy-loop
+# Shutdown cancels, closes, persists cursor, no busy-loop
 # ---------------------------------------------------------------------------
 
 

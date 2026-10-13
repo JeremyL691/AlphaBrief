@@ -1,4 +1,4 @@
-"""Proposal → risk → execution → reconciliation correlation chain (M11-W06).
+"""Proposal → risk → execution → reconciliation correlation chain.
 
 Submit occurs only when the proposal, OrderIntent, broker-fresh inputs,
 immutable RiskDecision, execution enablement, and idempotency mapping

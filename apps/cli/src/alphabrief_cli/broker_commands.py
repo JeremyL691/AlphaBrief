@@ -144,7 +144,7 @@ def reconcile_cmd(
     """Run one reconciliation pass through the shared durable service.
 
     Uses the same :class:`LiveReconciler` as the API and the
-    scheduler (AC-M07-W06-03): with the API running the pass is proxied
+    scheduler: with the API running the pass is proxied
     to it; otherwise the local process runs the identical durable
     service against the OANDA practice runtime. Missing OANDA practice
     credentials record a fail-closed non-matching snapshot — never a

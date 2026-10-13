@@ -1,17 +1,17 @@
-"""M07-W06: restart recovery across every submit and reconciliation transition.
+"""Restart recovery across every submit and reconciliation transition.
 
 Covers:
 - crash injection before reserve, after reserve, before send, after send,
   after response, during fact commit, during cursor advance, and during
   reconciliation recovers deterministically without a second external
-  order (AC-M07-W06-01);
+  order;
 - 100 same-cycle replays across fresh processes produce at most one
   external submit identity and one explainable terminal ledger chain
-  (AC-M07-W06-02);
+
 - startup sync resolves in-flight submits by query, restores the durable
-  submit mapping, and freezes unresolved outcomes (REQ-EXEC-011);
+  submit mapping, and freezes unresolved outcomes;
 - send failures and unresolved queries freeze instead of re-submitting
-  (REQ-EXEC-005), and blocking reconciliation differences freeze new
+and blocking reconciliation differences freeze new
   exposure while the immutable submit stays complete.
 """
 
@@ -320,7 +320,7 @@ def _close(handles: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W06-01: crash injection at every external submission transition
+# Crash injection at every external submission transition
 # ---------------------------------------------------------------------------
 
 
@@ -529,7 +529,7 @@ def test_workflow_rejects_identity_collision(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W06-02: 100 same-cycle replays across fresh processes
+# 100 same-cycle replays across fresh processes
 # ---------------------------------------------------------------------------
 
 
@@ -568,7 +568,7 @@ def test_100_same_cycle_replays_across_fresh_processes(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Startup sync (REQ-EXEC-011, REQ-OPS-006)
+# Startup sync
 # ---------------------------------------------------------------------------
 
 

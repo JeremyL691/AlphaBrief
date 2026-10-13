@@ -1,10 +1,10 @@
-"""Machine-enforced strategy-family admission (M12-W02).
+"""Machine-enforced strategy-family admission.
 
 Admission is a deterministic pure function of ``(family_id,
 instrument_category)``: unsupported combinations are rejected with an
 explicit reason before any signal is generated. Predictive or learned
 outputs (Kronos/Gym) can never be admitted as executable strategies;
-they remain advisory evidence only (REQ-STRAT-007).
+they remain advisory evidence only.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ AdmissionDecision = Literal["approved", "rejected"]
 
 #: Family ids that produce predictive or learned outputs. These are
 #: advisory evidence only and are never admissible as executable
-#: strategies (REQ-STRAT-007).
+#: Strategies.
 PREDICTIVE_FAMILY_IDS: frozenset[str] = frozenset(
     {"kronos_forecast", "gym_policy"}
 )

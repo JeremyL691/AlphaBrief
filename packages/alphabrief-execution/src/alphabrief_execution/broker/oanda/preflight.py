@@ -1,4 +1,4 @@
-"""Fail-closed OANDA practice account preflight (M04-W01).
+"""Fail-closed OANDA practice account preflight.
 
 ``run_account_preflight`` validates the configured practice account
 before any catalog sync or execution: credentials must be present, the

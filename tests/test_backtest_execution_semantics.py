@@ -1,6 +1,6 @@
-"""M12-W03: OANDA-semantic order execution and explicit rejection.
+"""OANDA-semantic order execution and explicit rejection.
 
-Covers AC-M12-W03-02: spread, slippage, financing, market closure,
+Covers: spread, slippage, financing, market closure,
 stale price, minimum units, precision, maximum units, and insufficient
 margin each change fills or produce an explicit rejection.
 """

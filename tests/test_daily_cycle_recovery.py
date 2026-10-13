@@ -1,6 +1,6 @@
-"""M11-W08: restart-safe autonomous daily operation.
+"""Restart-safe autonomous daily operation.
 
-Covers AC-M11-W08-01/02: failure injection before and after every
+Covers: failure injection before and after every
 durable phase and broker boundary resumes to one terminal cycle with no
 duplicate intent or submit; concurrent leaders, stale leases, timeout,
 provider failure, broker uncertainty, and reconciliation mismatch produce

@@ -1,4 +1,4 @@
-"""Complete OANDA v20 candles contract (M05-W01).
+"""Complete OANDA v20 candles contract.
 
 Supports the official candle granularities, bid/ask/mid components,
 alignment parameters, bounded duplicate-free pagination, complete-candle

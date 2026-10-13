@@ -1,17 +1,17 @@
-"""M08-W02: instrument, precision, size, session, and freshness rules.
+"""Instrument, precision, size, session, and freshness rules.
 
 Covers:
 - boundary and property tests for allowed and unknown instruments,
   active and inactive catalog state, tradeable false, units and price
   precision, minimum size, maximum order units, maximum position size,
-  and normalized-zero quantity (AC-M08-W02-01);
+  and normalized-zero quantity;
 - closed session, holiday, stale quote, stale catalog, incomplete
   candle, excessive gap, missing conversion, and partial pricing
   coverage reject new exposure with stable rule results
-  (AC-M08-W02-02);
+
 - instrument normalization occurs before final risk evaluation and any
   post-decision change of units, price, instrument version, or snapshot
-  hash invalidates the decision (AC-M08-W02-03, REQ-RISK-010).
+  hash invalidates the decision.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def _isolated_data_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Point the runtime data directory at tmp so the decision-binding
-    store (M08-W07) never touches the developer's real data directory."""
+    store never touches the developer's real data directory."""
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
 
 ACCOUNT = "101-004-1234567-001"
@@ -130,7 +130,7 @@ def _assert_rejects(rules: dict[str, bool], *names: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W02-01: catalog allowability and instrument state boundaries
+# Catalog allowability and instrument state boundaries
 # ---------------------------------------------------------------------------
 
 
@@ -284,7 +284,7 @@ def test_rule_results_are_stable_for_identical_evidence() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W02-02: market evidence failures reject with stable results
+# Market evidence failures reject with stable results
 # ---------------------------------------------------------------------------
 
 
@@ -330,7 +330,7 @@ def test_stale_catalog_evidence_rejects() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W02-03: normalization before evaluation; post-decision changes
+# Normalization before evaluation; post-decision changes
 # invalidate execution
 # ---------------------------------------------------------------------------
 
@@ -515,12 +515,12 @@ def _adapter_with_submit(requests: list[SubmitRequest]) -> BrokerAdapter:
 
 def test_backend_refuses_post_decision_input_change() -> None:
     """A bound decision whose executable inputs changed after approval is
-    refused before any submit (AC-M08-W02-03, REQ-RISK-010)."""
+    refused before any submit."""
     requests: list[SubmitRequest] = []
     adapter = _adapter_with_submit(requests)
     builder = BrokerRiskContextBuilder(_FakeSources(), clock=lambda: NOW)
     # The executable-inputs hash bound at approval uses the same
-    # components the backend validates (M08-W07).
+    # Components the backend validates.
     bound_hash = hash_inputs(
         symbol="EUR_USD",
         units=Decimal("1"),

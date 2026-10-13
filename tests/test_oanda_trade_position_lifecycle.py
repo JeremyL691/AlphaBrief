@@ -1,15 +1,15 @@
-"""M06-W04: trade and position lifecycle operations.
+"""Trade and position lifecycle operations.
 
 Covers:
 - trade/position get, list, partial close, full close, side-specific
   close, and protective dependent orders match exact request and response
-  fixtures (AC-M06-W04-01);
+  fixtures;
 - partial-close units, ALL semantics, long/short side handling, realized
   PnL, financing, and related transaction IDs stay distinct and
-  Decimal-safe (AC-M06-W04-02);
+  Decimal-safe;
 - missing, stale, already closed, account-mismatched, over-close, and
   unsupported requests fail closed without a local synthetic position
-  mutation (AC-M06-W04-03).
+  mutation.
 """
 
 from __future__ import annotations
@@ -399,7 +399,7 @@ def _clients(
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W04-01: get, list, partial/full close, side-specific close,
+# Get, list, partial/full close, side-specific close,
 # protective dependents, summary, and changes match exact fixtures
 # ---------------------------------------------------------------------------
 
@@ -578,7 +578,7 @@ def test_account_changes_matches_fixture() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W04-03: fail-closed without local synthetic mutation
+# Fail-closed without local synthetic mutation
 # ---------------------------------------------------------------------------
 
 

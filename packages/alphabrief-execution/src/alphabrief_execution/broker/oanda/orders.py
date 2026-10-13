@@ -1,4 +1,4 @@
-"""Strict OANDA order and dependent-order contracts (M06-W01).
+"""Strict OANDA order and dependent-order contracts.
 
 Models the supported order types, time-in-force values, trigger
 conditions, signed units, precision-normalized prices and distances,

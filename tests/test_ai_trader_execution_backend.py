@@ -117,7 +117,7 @@ def _decision(*, max_quantity: Decimal | None = None) -> RiskDecision:
 @pytest.fixture(autouse=True)
 def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the runtime data directory at tmp so the decision-binding
-    store (M08-W07) never touches the developer's real data directory."""
+    store never touches the developer's real data directory."""
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
 
 

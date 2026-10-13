@@ -157,7 +157,7 @@ def test_model_call_record_keeps_output_audit_without_raw_prompt_or_api_key() ->
 
 
 # ---------------------------------------------------------------------------
-# M10-W02: terminal classification and durable record sink
+# Terminal classification and durable record sink
 # ---------------------------------------------------------------------------
 
 

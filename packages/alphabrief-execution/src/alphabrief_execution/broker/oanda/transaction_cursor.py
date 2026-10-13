@@ -1,4 +1,4 @@
-"""Atomic OANDA transaction cursor advancement (M07-W02).
+"""Atomic OANDA transaction cursor advancement.
 
 Persists account-scoped OANDA transaction cursors only with consumed
 facts and projections in one transaction: an injected crash leaves

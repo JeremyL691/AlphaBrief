@@ -1,9 +1,9 @@
-"""M03-W02: model-call facts are append-only and UTC stamped.
+"""Model-call facts are append-only and UTC stamped.
 
 Model evaluations are immutable facts: every evaluation keeps its own
 ID and UTC timestamp, and later evaluations never mutate earlier rows.
 
-M10-W02 extends this file with the durable ``ModelCallStore`` that
+Extends this file with the durable ``ModelCallStore`` that
 persists every terminal ``ModelGateway`` call record.
 """
 
@@ -74,7 +74,7 @@ def test_evaluation_rows_keep_utc_timestamps(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# M10-W02: durable ModelGateway call records
+# Durable ModelGateway call records
 # ---------------------------------------------------------------------------
 
 

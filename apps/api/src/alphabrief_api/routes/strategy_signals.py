@@ -1,7 +1,7 @@
 """Strategy signal history routes — read-write access to recorded signals.
 
 This module exposes the :class:`StrategySignalStore` to the HTTP API
-as the **advisory signal history** surface for Phase 15 R15.5.
+as the **advisory signal history** surface for.
 
 Endpoints:
 
@@ -10,7 +10,7 @@ Endpoints:
 - ``GET    /api/v1/strategies/signals/{signal_id}`` — full record
 - ``DELETE /api/v1/strategies/signals/{signal_id}`` — remove a signal
 - ``GET    /api/v1/strategies/{strategy_id}/signals/count``
-                                                      — signal count
+signal count
 
 The router is **strictly advisory**. It never modifies RiskGate
 semantics, never affects execution, and never enables live trading.

@@ -1,6 +1,6 @@
-"""M15-W01: correlated heartbeats across records.
+"""Correlated heartbeats across records.
 
-Covers AC-M15-W01-02: correlation IDs connect cycle, evidence, model,
+Covers: correlation IDs connect cycle, evidence, model,
 intent, risk, order, transaction, reconciliation, alert, and backup
 records across logs and metrics.
 """

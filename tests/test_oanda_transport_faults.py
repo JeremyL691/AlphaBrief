@@ -1,12 +1,12 @@
-"""M06-W06: OANDA failure classification and bounded retry rules.
+"""OANDA failure classification and bounded retry rules.
 
 Covers:
 - auth, validation, broker reject, rate limit, transient server,
   transport timeout, disconnect, parse, and unknown-outcome failures map
-  to stable typed classes with bounded retry eligibility (AC-M06-W06-01);
+  to stable typed classes with bounded retry eligibility;
 - a timeout or disconnect after submit raises ``UnknownOutcomeFailure``
   instead of an auto-retry; unresolved state freezes further submission
-  instead of guessing (AC-M06-W06-02, transport half).
+  instead of guessing (transport half).
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ def _executor(
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W06-01: stable typed classes with bounded retry eligibility
+# Stable typed classes with bounded retry eligibility
 # ---------------------------------------------------------------------------
 
 
@@ -186,7 +186,7 @@ def test_executor_auth_never_retries() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W06-02: never auto-retry an ambiguous submit
+# Never auto-retry an ambiguous submit
 # ---------------------------------------------------------------------------
 
 

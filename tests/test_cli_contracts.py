@@ -1,6 +1,6 @@
-"""M13-W04: machine-readable CLI contracts.
+"""Machine-readable CLI contracts.
 
-Covers AC-M13-W04-01/02/03: read and control commands emit stable
+Covers: read and control commands emit stable
 compact JSON without prompts; success, empty, partial, validation,
 conflict, unavailable, frozen, and internal error states map to
 documented deterministic exit codes with structured stderr; API-backed

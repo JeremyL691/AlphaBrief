@@ -1,8 +1,8 @@
-"""M09-W07: news-risk context shared with the deterministic risk layer.
+"""News-risk context shared with the deterministic risk layer.
 
 A NewsMacroSummary carries the news and macro evidence that the
 risk layer consumes as tighten-only metadata — untrusted, deterministic,
-and never able to relax a limit (REQ-RISK-005, REQ-NEWS-006).
+and never able to relax a limit.
 """
 
 from __future__ import annotations

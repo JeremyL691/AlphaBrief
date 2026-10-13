@@ -1,4 +1,4 @@
-"""M09-W03: macro release store persistence and restart (AC-M09-W03-02).
+"""Macro release store persistence and restart.
 
 A revised observation appends a new version with lineage while the prior
 value remains reconstructable; records survive restart.
