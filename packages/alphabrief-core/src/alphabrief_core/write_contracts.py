@@ -1,6 +1,6 @@
-"""Safe and idempotent operator write contracts (M13-W02).
+"""Safe and idempotent operator write contracts.
 
-Operator mutations are limited to the REQ-UI-010 set — pause/resume
+Operator mutations are limited to the set — pause/resume
 research, freeze/unfreeze paper execution, cancel practice order, and
 reduce/close practice exposure. Every accepted mutation validates
 current state, requires an idempotency key, persists actor and
@@ -8,8 +8,8 @@ correlation metadata, and returns the same result on replay. Live
 hosts, arbitrary endpoints, arbitrary broker payloads, unsupported
 mutations, stale versions, and cross-account requests fail *before*
 any provider invocation and leave an audit rejection. There is no
-generic broker or arbitrary runtime request surface (REQ-UI-002,
-REQ-UI-010, REQ-PLAT-009).
+generic broker or arbitrary runtime request surface.
+
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ OperatorMutation = Literal[
     "close_practice_exposure",
 ]
 
-#: The complete, closed set of operator mutations (REQ-UI-010).
+#: The complete, closed set of operator mutations.
 OPERATOR_MUTATIONS: frozenset[str] = frozenset(
     {
         "pause_research",

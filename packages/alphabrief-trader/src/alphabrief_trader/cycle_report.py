@@ -1,4 +1,4 @@
-"""Reproducible daily cycle report (M11-W07).
+"""Reproducible daily cycle report.
 
 Every completed cycle references a daily brief, committee transcript (or
 a legal skip), proposal or no-trade, risk result, broker outcome,

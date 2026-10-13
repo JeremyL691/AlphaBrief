@@ -199,7 +199,7 @@ def test_scheduler_status_aggregates_counts_from_multiple_stores(
 # ---------------------------------------------------------------------------
 # Graceful degradation: writer-lock collisions must return 503 with a
 # structured "scheduler_writer_locked" payload, not a 500 that breaks
-# the dashboard. Phase 30 task #2.
+# The dashboard. task #2.
 # ---------------------------------------------------------------------------
 
 

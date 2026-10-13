@@ -1,14 +1,14 @@
-"""M04-W06: account catalog completeness and controlled practice gate.
+"""Account catalog completeness and controlled practice gate.
 
 Local deterministic gates:
 
 - fixture completeness: the response count equals the immutable store,
   API, and CLI counts with no hard-coded allowlist loss and complete
-  required metadata for every row (AC-M04-W06-01);
+  required metadata for every row;
 - missing credentials fail closed with ENVIRONMENT_BLOCKED semantics and
-  no mock substitution, waiver, fallback, or false DONE (AC-M04-W06-03).
+  no mock substitution, waiver, fallback, or false DONE.
 
-Controlled practice run (AC-M04-W06-02, T7): with
+Controlled practice run (T7): with
 ``ALPHABRIEF_OANDA_TOKEN`` and ``ALPHABRIEF_OANDA_ACCOUNT_ID`` set, the
 test performs the real practice account catalog run (preflight -> fetch
 -> persist -> API/CLI counts agree) and prints a scrubbed E5 evidence
@@ -110,7 +110,7 @@ def _required_fields(instrument: InstrumentMetadata) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W06-01: fixture completeness — response == store == API == CLI
+# Fixture completeness — response == store == API == CLI
 # ---------------------------------------------------------------------------
 
 
@@ -172,7 +172,7 @@ def test_fixture_completeness_response_store_api_cli_agree(
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W06-03: missing credentials fail closed (no substitution)
+# Missing credentials fail closed (no substitution)
 # ---------------------------------------------------------------------------
 
 
@@ -204,7 +204,7 @@ def test_missing_credentials_fail_closed_no_fallback() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W06-02: controlled OANDA practice run (T7; runs only with creds)
+# Controlled OANDA practice run (T7; runs only with creds)
 # ---------------------------------------------------------------------------
 
 

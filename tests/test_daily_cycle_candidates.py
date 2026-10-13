@@ -1,6 +1,6 @@
-"""M11-W04: bounded, explainable daily candidate selection.
+"""Bounded, explainable daily candidate selection.
 
-Covers AC-M11-W04-01/02/03: selection never exceeds configured
+Covers: selection never exceeds configured
 instrument, per-category, model-call, token, cost, or concurrency
 budgets; every selected and skipped instrument records deterministic
 rule results; equivalent inputs produce the same ordered candidate set

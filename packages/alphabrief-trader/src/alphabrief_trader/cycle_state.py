@@ -1,4 +1,4 @@
-"""Durable daily-cycle state machine (M11-W01).
+"""Durable daily-cycle state machine.
 
 Replaces one-shot orchestration with a persisted compare-and-set state
 machine covering every required daily-cycle phase: preflight, ingest,

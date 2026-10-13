@@ -1,4 +1,4 @@
-"""M09-W07: news API fixture queries (deterministic, no network).
+"""News API fixture queries (deterministic, no network).
 
 The news API surfaces stored headlines from the fixture store; the
 fetch endpoint uses the deterministic mock provider.

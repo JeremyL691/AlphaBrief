@@ -1,17 +1,17 @@
-"""One broker-fresh risk context service for every execution path (M08-W01).
+"""One broker-fresh risk context service for every execution path.
 
 Every execution path — AI external paper (trader backend) and manual
 paper API (routes/paper.py) — builds its pre-risk :class:`BrokerRiskContext`
 through this single service instead of caller-selected partial
-dictionaries (AC-M08-W01-02). The builder fetches account, positions,
+dictionaries. The builder fetches account, positions,
 pending orders, trades, bid/ask prices, conversions, catalog version,
 reconciliation state, and health facts through an injected
 :class:`RiskContextSources` port, stamps the shared context and policy
 versions, records per-source freshness verdicts, and **fails closed**
 before submit when any source is missing, stale, account-mismatched,
-partially covered, frozen, or internally inconsistent (AC-M08-W01-03):
+partially covered, frozen, or internally inconsistent:
 no synthesized defaults, no fallback account, no user question, no
-review bypass (REQ-RISK-001, REQ-RISK-010). The dependency arrow stays
+review bypass. The dependency arrow stays
 one-way: execution -> risk; the value object is owned by the risk layer.
 """
 

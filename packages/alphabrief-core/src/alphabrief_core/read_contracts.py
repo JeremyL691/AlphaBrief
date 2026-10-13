@@ -1,4 +1,4 @@
-"""Shared versioned read contracts for API and CLI surfaces (M13-W01).
+"""Shared versioned read contracts for API and CLI surfaces.
 
 Every read surface — instruments, prices, candles, news, sentiment,
 committee, risk, orders, trades, positions, cycles, scheduler, alerts,
@@ -7,8 +7,8 @@ stable IDs, provenance, freshness, pagination, and an explicit
 complete/empty/partial state. API JSON and CLI JSON normalize to the
 same domain payload and ordering. Unknown filters, malformed cursors,
 invalid identifiers, and unavailable sources produce typed errors that
-never carry fake or silently truncated data (REQ-UI-001, REQ-PLAT-008,
-REQ-PLAT-009).
+never carry fake or silently truncated data.
+
 """
 
 from __future__ import annotations

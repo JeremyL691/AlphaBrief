@@ -1,4 +1,4 @@
-"""M03-W02: OrderIntent and RiskDecision facts are append-only and UTC.
+"""OrderIntent and RiskDecision facts are append-only and UTC.
 
 AI trading cycles persist every OrderIntent / RiskDecision attempt as an
 immutable, UTC-stamped fact: cycles, votes, and attempts are appended by

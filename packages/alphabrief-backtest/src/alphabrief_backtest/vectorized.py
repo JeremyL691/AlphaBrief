@@ -1,4 +1,4 @@
-"""Vectorized-style long/flat backtester for AlphaBrief Phase 1."""
+"""Vectorized-style long/flat backtester for AlphaBrief ."""
 
 from datetime import datetime
 from decimal import Decimal
@@ -52,7 +52,7 @@ class BacktestMetrics(BaseModel):
     max_drawdown: Decimal
     trade_count: int = Field(ge=0)
     win_rate: Decimal | None
-    # R21.4 backtest credibility metrics. Each ``Optional`` is None for
+    # Backtest credibility metrics. Each ``Optional`` is None for
     # degenerate cases (zero trades / single bar / zero variance) so a
     # missing metric is a real signal, not a divide-by-zero artifact.
     benchmark_total_return: Decimal | None  # buy-and-hold on the same bars
@@ -468,7 +468,7 @@ def _metrics(
     win_rate = (
         None if not trades else Decimal(len(winning_trades)) / Decimal(len(trades))
     )
-    # R21.4 credibility metrics. See ``_buy_and_hold_benchmark`` and the
+    # Credibility metrics. See ``_buy_and_hold_benchmark`` and the
     # per-field ``ponytail:annualization`` note on the gating rules.
     benchmark_total_return = _buy_and_hold_benchmark(
         initial_cash=initial_cash, bars=bars

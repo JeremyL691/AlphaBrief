@@ -1,9 +1,9 @@
-"""M14-W07: controlled Electron lifecycle.
+"""Controlled Electron lifecycle.
 
-Covers AC-M14-W07-03: Electron detects backend readiness and port
+Covers: Electron detects backend readiness and port
 conflicts, surfaces startup errors, prevents duplicate backend
 ownership, and performs graceful freeze, reconcile, persist, and
-shutdown without swallowing failure (REQ-UI-009).
+shutdown without swallowing failure.
 """
 
 from __future__ import annotations

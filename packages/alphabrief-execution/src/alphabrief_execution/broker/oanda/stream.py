@@ -1,4 +1,4 @@
-"""Bounded, stale-aware OANDA pricing stream (M05-W03).
+"""Bounded, stale-aware OANDA pricing stream.
 
 One runtime owner maintains at most the configured stream connection
 and reconciles subscriptions in place — never one connection per

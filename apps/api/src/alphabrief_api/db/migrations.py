@@ -1,4 +1,4 @@
-"""Versioned, transactional, idempotent DuckDB migrations (M03-W01).
+"""Versioned, transactional, idempotent DuckDB migrations.
 
 Replaces the implicit ``CREATE TABLE IF NOT EXISTS`` startup with an
 explicit ordered migration ledger:
@@ -9,7 +9,7 @@ explicit ordered migration ledger:
 - re-running migrations is idempotent (applied versions are skipped and
   data is never touched);
 - a newer or corrupt schema fails the startup compatibility check
-  instead of being silently accepted (REQ-PLAT-004).
+  instead of being silently accepted.
 """
 
 from __future__ import annotations

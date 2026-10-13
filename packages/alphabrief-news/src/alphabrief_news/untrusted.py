@@ -1,14 +1,14 @@
-"""Untrusted external content sanitization (M09-W05).
+"""Untrusted external content sanitization.
 
 Every external text fragment is marked as untrusted evidence with its
 source identity, content hash, and a bounded sanitized representation
-before any model use (REQ-NEWS-006, AC-M09-W05-01). Prompt-injection
+before any model use. Prompt-injection
 style instructions are neutralized deterministically — they can never
 change system instructions, risk limits, execution settings, evidence
-boundaries, or tool permissions (AC-M09-W05-02). Sanitization logs
+boundaries, or tool permissions. Sanitization logs
 contain no token, authorization header, complete account ID, prohibited
-full article, or executable external instruction (AC-M09-W05-03,
-REQ-AI-008, REQ-OPS-002).
+full article, or executable external instruction.
+
 """
 
 from __future__ import annotations

@@ -1,16 +1,16 @@
-"""M07-W04: reconciliation diff matrix and tolerance safety.
+"""Reconciliation diff matrix and tolerance safety.
 
 Covers:
 - matching fixtures and legitimate pre-existing remote orders, trades,
   positions, financing, and broker-originated state reconcile without
-  false missing-local alarms (AC-M07-W04-01);
+  false missing-local alarms;
 - unknown, missing, conflicting, money, quantity, state, cursor,
   account, order, fill, trade, position, and financing differences
   produce stable typed diffs with source IDs and severity
-  (AC-M07-W04-02);
+
 - Decimal and timestamp tolerances are explicit, versioned,
   directionally safe, and cannot hide a material exposure, cash, margin,
-  or position difference (AC-M07-W04-03).
+  or position difference.
 """
 
 from __future__ import annotations
@@ -164,7 +164,7 @@ def _reconcile(
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W04-01: no false missing-local alarms
+# No false missing-local alarms
 # ---------------------------------------------------------------------------
 
 
@@ -258,7 +258,7 @@ def test_ledger_matched_client_identity_is_not_unknown(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W04-02: stable typed diffs with source IDs and severity
+# Stable typed diffs with source IDs and severity
 # ---------------------------------------------------------------------------
 
 
@@ -385,7 +385,7 @@ def test_money_financing_and_fill_diffs_are_typed(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W04-03: explicit, versioned, directionally safe tolerances
+# Explicit, versioned, directionally safe tolerances
 # ---------------------------------------------------------------------------
 
 

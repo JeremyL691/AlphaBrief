@@ -4,7 +4,7 @@
 evidence chain through stable IDs — cycle record, evidence, committee
 transcript, proposal or no-trade, intents, each risk rule, OANDA
 transactions, and reconciliation — read-only from the shared runtime
-stores (REQ-EXEC-010, REQ-UI-006). Missing links resolve to explicit
+stores. Missing links resolve to explicit
 ``not_found`` entries, never fabricated values.
 """
 

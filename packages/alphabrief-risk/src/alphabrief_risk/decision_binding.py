@@ -1,14 +1,14 @@
-"""Cryptographic RiskDecision binding service (M08-W07).
+"""Cryptographic RiskDecision binding service.
 
 The one service that persists an approved decision and validates it as
 the only executable backend contract. A missing, rejected, expired,
 already-consumed, account-mismatched, policy-mismatched,
 intent-mismatched, snapshot-mismatched, or quantity-exceeding decision
-is rejected by the backend before any network submit (REQ-RISK-010,
-AC-M08-W07-02). Neither the AI path nor the manual paper path can
+is rejected by the backend before any network submit.
+ Neither the AI path nor the manual paper path can
 construct an executable approval boolean: the backend validates against
 the persisted record, never against a caller-supplied flag
-(AC-M08-W07-03).
+.
 """
 
 from __future__ import annotations

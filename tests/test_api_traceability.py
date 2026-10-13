@@ -1,6 +1,6 @@
-"""M13-W03: end-to-end cycle traceability.
+"""End-to-end cycle traceability.
 
-Covers AC-M13-W03-02: a cycle trace endpoint resolves evidence,
+Covers: a cycle trace endpoint resolves evidence,
 committee transcript, proposal or no-trade, intent, each risk rule,
 OANDA transaction, and reconciliation through stable IDs.
 """

@@ -1,4 +1,4 @@
-"""Reproducible IS/OOS and walk-forward evaluation (M12-W04).
+"""Reproducible IS/OOS and walk-forward evaluation.
 
 True in-sample / out-of-sample evaluation with rolling and anchored
 walk-forward windows. Parameters are fitted only on declared in-sample
@@ -6,8 +6,8 @@ observations and frozen for the out-of-sample run; the out-of-sample
 slice is structurally isolated (later observations, later revisions,
 and undisclosed data versions are unreachable). Repeating a run with
 the same strategy, data version, costs, seed, and window specification
-yields the same run ID and the same normalized result (REQ-STRAT-003,
-REQ-PLAT-009).
+yields the same run ID and the same normalized result.
+
 """
 
 from __future__ import annotations

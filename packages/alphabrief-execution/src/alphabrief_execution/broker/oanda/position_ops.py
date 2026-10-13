@@ -1,4 +1,4 @@
-"""OANDA position operations port (M06-W04).
+"""OANDA position operations port.
 
 Get, list, and close positions with exact OANDA semantics: side-specific
 long/short units with explicit ``ALL``/``NONE``/partial unit handling,

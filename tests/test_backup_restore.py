@@ -1,12 +1,12 @@
-"""M03-W05: atomic backups, verified restore, and retention (AC-01..03).
+"""Atomic backups, verified restore, and retention.
 
 Covers:
 - backup is atomic, has schema/build/file hashes, and never contains
-  configured secret patterns (AC-M03-W05-01);
+  configured secret patterns;
 - an isolated restore migrates, rebuilds projections, and passes
-  integrity queries (AC-M03-W05-02);
+  integrity queries;
 - retention removes only expired explicit backup targets and preserves
-  the newest verified restore point (AC-M03-W05-03).
+  the newest verified restore point.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def seeded_db(
 
 
 # ---------------------------------------------------------------------------
-# AC-M03-W05-01: atomic backup with hashes and scrubbing
+# Atomic backup with hashes and scrubbing
 # ---------------------------------------------------------------------------
 
 
@@ -132,7 +132,7 @@ def test_backup_aborts_on_secret_pattern(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M03-W05-02: isolated restore migrates, rebuilds, and passes integrity
+# Isolated restore migrates, rebuilds, and passes integrity
 # ---------------------------------------------------------------------------
 
 
@@ -183,7 +183,7 @@ def test_restore_verifies_backup_hash_before_copy(
 
 
 # ---------------------------------------------------------------------------
-# AC-M03-W05-03: retention preserves the newest verified restore point
+# Retention preserves the newest verified restore point
 # ---------------------------------------------------------------------------
 
 

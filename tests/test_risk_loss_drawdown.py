@@ -1,4 +1,4 @@
-"""R21.3 — daily-loss + drawdown risk rules.
+"""Daily-loss + drawdown risk rules.
 
 Each rule is exercised through pass / reject / boundary / fail-closed
 (failure to provide required context) / audit cases. Both rules are

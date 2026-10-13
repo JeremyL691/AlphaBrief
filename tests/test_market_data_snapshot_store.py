@@ -1,16 +1,16 @@
-"""M05-W05: immutable market snapshots and quality verdicts.
+"""Immutable market snapshots and quality verdicts.
 
 Covers:
 - identical immutable inputs and quality-policy version produce the
   same snapshot ID, manifest hash, source IDs, quality results, and
-  normalized serialization (AC-M05-W05-01);
+  normalized serialization;
 - incomplete candles, stale quotes, missing conversion, catalog
   mismatch, unacceptable gaps, abnormal spread, and partial coverage
   produce explicit rule results and a non-executable verdict
-  (AC-M05-W05-02);
+
 - later ingestion creates new facts and a new lineage-linked snapshot
   without changing any snapshot already referenced by a decision
-  (AC-M05-W05-03).
+.
 """
 
 from __future__ import annotations
@@ -154,7 +154,7 @@ def _snapshot_inputs(
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W05-01: deterministic reproducibility
+# Deterministic reproducibility
 # ---------------------------------------------------------------------------
 
 
@@ -195,7 +195,7 @@ def test_publish_is_idempotent(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W05-02: quality rules fail closed
+# Quality rules fail closed
 # ---------------------------------------------------------------------------
 
 
@@ -285,7 +285,7 @@ def test_non_ready_readiness_makes_snapshot_non_executable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W05-03: lineage and immutability
+# Lineage and immutability
 # ---------------------------------------------------------------------------
 
 

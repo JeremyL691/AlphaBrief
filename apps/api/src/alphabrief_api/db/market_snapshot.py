@@ -1,4 +1,4 @@
-"""Immutable cycle market snapshots and quality verdicts (M05-W05).
+"""Immutable cycle market snapshots and quality verdicts.
 
 ``build_market_snapshot`` deterministically binds catalog, completed
 candles, current pricing, conversions, session evidence, freshness,

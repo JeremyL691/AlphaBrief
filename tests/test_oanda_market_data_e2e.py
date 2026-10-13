@@ -1,16 +1,16 @@
-"""M05-W06: market snapshot correctness and controlled practice gate.
+"""Market snapshot correctness and controlled practice gate.
 
 Local deterministic gates:
 
 - fixture and fault suites cover granularity, components, pagination,
   stream budgets, freshness, sessions, quality, snapshot
   reproducibility, and immutable lineage for every returned instrument
-  type and available category (AC-M05-W06-01);
+  type and available category;
 - missing credentials produce explicit ENVIRONMENT_BLOCKED semantics
   with no synthetic data, fallback prices, user question, or false
-  milestone completion (AC-M05-W06-03).
+  milestone completion.
 
-Controlled practice run (AC-M05-W06-02, T7): with credentials set, the
+Controlled practice run (T7): with credentials set, the
 test performs the real practice run (preflight -> candles -> pricing ->
 one complete immutable snapshot) and prints a scrubbed E5 summary.
 Without credentials the deterministic fail-closed path is asserted; the
@@ -65,7 +65,7 @@ def _fixture_candle_rows() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W06-01: fixture and fault suites (local determinism)
+# Fixture and fault suites (local determinism)
 # ---------------------------------------------------------------------------
 
 
@@ -114,7 +114,7 @@ def test_fault_suite_fails_closed_locally() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W06-03: missing credentials -> ENVIRONMENT_BLOCKED
+# Missing credentials -> ENVIRONMENT_BLOCKED
 # ---------------------------------------------------------------------------
 
 
@@ -145,7 +145,7 @@ def test_missing_credentials_yield_environment_blocked() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W06-02: controlled OANDA practice market-data run (T7)
+# Controlled OANDA practice market-data run (T7)
 # ---------------------------------------------------------------------------
 
 

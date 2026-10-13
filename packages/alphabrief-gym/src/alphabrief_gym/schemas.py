@@ -1,4 +1,4 @@
-"""Common schemas for the AlphaBrief trading environment (Phase 11+).
+"""Common schemas for the AlphaBrief trading environment (+).
 
 These Pydantic models describe the public observation / action / step
 result / metrics / configuration surface used by the gymnasium-style
@@ -180,7 +180,7 @@ class EnvV2AssetMetrics(AlphaBriefEnvModel):
 
 
 class EnvV2Report(AlphaBriefEnvModel):
-    """Phase 12.6 episode report for the multi-asset environment."""
+    """.6 episode report for the multi-asset environment."""
 
     report_id: str = Field(min_length=1)
     environment: str = Field(default="alphabrief_gym_v2", min_length=1)

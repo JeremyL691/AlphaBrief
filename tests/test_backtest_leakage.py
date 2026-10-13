@@ -1,6 +1,6 @@
-"""M12-W06: automated data-leakage and lookahead gates.
+"""Automated data-leakage and lookahead gates.
 
-Covers AC-M12-W06-01: seeded lookahead, revised-future-data, target
+Covers: seeded lookahead, revised-future-data, target
 leakage, train-test overlap, and timestamp-boundary violations each
 fail the automated leakage gates with explicit reasons.
 """

@@ -1,6 +1,6 @@
-"""M15-W01: component health and readiness.
+"""Component health and readiness.
 
-Covers AC-M15-W01-01 health/readiness semantics: every critical
+Covers health/readiness semantics: every critical
 subsystem reports a typed status and readiness; missing truth is
 unknown and not ready, never assumed healthy.
 """

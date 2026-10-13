@@ -1,4 +1,4 @@
-"""Category-aware instrument sessions, holidays, and tradeability (M05-W04).
+"""Category-aware instrument sessions, holidays, and tradeability.
 
 Replaces the universal weekday window with per-category session
 evidence combined with account catalog state and current OANDA

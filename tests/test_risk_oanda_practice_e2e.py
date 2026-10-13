@@ -1,16 +1,16 @@
-"""M08-W08: prove the complete deterministic risk chain and close M08.
+"""Prove the complete deterministic risk chain and close M08.
 
 Local deterministic gates (always run):
 
-- SAFE-005: every external order has a persisted approved RiskDecision —
+-: every external order has a persisted approved RiskDecision —
   the backend persists the decision before the adapter sees the order;
-- SAFE-006: rejected, stale, missing, and mismatched decisions have no
+-: rejected, stale, missing, and mismatched decisions have no
   submit path — the adapter receives zero orders;
 - missing credentials fail closed with ENVIRONMENT_BLOCKED and no mock
   pass, waiver, fallback, human question, or false DONE
-  (AC-M08-W08-03).
+.
 
-Controlled practice risk-chain scenario (AC-M08-W08-02, T7): with
+Controlled practice risk-chain scenario (T7): with
 ``ALPHABRIEF_OANDA_TOKEN`` and ``ALPHABRIEF_OANDA_ACCOUNT_ID`` set, one
 approved decision-to-order chain executes, rejected and stale decisions
 produce zero unauthorized submits, exposure is cleaned up, and scrubbed
@@ -149,7 +149,7 @@ def _backend(
 
 
 # ---------------------------------------------------------------------------
-# SAFE-005: every external order has a persisted approved RiskDecision
+# Every external order has a persisted approved RiskDecision
 # ---------------------------------------------------------------------------
 
 
@@ -178,7 +178,7 @@ def test_safe_005_order_has_persisted_consumed_decision(
 
 
 # ---------------------------------------------------------------------------
-# SAFE-006: rejected/stale/missing/mismatched decisions have no submit path
+# Rejected/stale/missing/mismatched decisions have no submit path
 # ---------------------------------------------------------------------------
 
 
@@ -306,7 +306,7 @@ def test_safe_006_mismatched_inputs_never_submit(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W08-03: missing credentials fail closed, no mock pass
+# Missing credentials fail closed, no mock pass
 # ---------------------------------------------------------------------------
 
 
@@ -328,7 +328,7 @@ def test_missing_credentials_fail_closed(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W08-02: controlled practice risk chain (T7, creds-gated)
+# Controlled practice risk chain (T7, creds-gated)
 # ---------------------------------------------------------------------------
 
 

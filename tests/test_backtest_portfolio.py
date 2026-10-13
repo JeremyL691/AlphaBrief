@@ -1,6 +1,6 @@
-"""M12-W03: multi-instrument portfolio accounting in home currency.
+"""Multi-instrument portfolio accounting in home currency.
 
-Covers AC-M12-W03-01: multi-instrument fixtures update cash, NAV, gross
+Covers: multi-instrument fixtures update cash, NAV, gross
 and net exposure, margin, positions, realized and unrealized PnL, and
 category attribution in account home currency.
 """

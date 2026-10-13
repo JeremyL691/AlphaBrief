@@ -1,4 +1,4 @@
-"""OANDA account operations port (M06-W04).
+"""OANDA account operations port.
 
 Account summary and account changes with exact OANDA semantics: balance,
 NAV, unrealized PnL, margins, open counts, and the durable

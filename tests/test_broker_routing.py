@@ -1,11 +1,11 @@
-"""M01-W03 negative gates: routing and simulated composition are gone.
+"""Negative gates: routing and simulated composition are gone.
 
 The routed broker adapter and the in-memory simulated fallback were
-removed from production (AC-M01-W03-01). Every production entry point
+removed from production. Every production entry point
 resolves either a real OANDA practice adapter or a fail-closed not-ready
-null adapter (AC-M01-W03-02). Test fakes live behind an explicit test
+null adapter. Test fakes live behind an explicit test
 composition root — ``tests/_helpers`` and in-test classes — that
-production settings can never reach (AC-M01-W03-03).
+production settings can never reach.
 """
 
 from __future__ import annotations
@@ -61,12 +61,12 @@ def _imported_modules(tree: ast.AST) -> list[str]:
 
 
 def test_routing_module_is_absent() -> None:
-    """AC-M01-W03-01: the routed adapter module no longer exists."""
+    """The routed adapter module no longer exists."""
     assert not (PROJECT_ROOT / _ROUTING_MODULE).is_file()
 
 
 def test_production_sources_do_not_import_routing() -> None:
-    """AC-M01-W03-01: no production source can reach the routing module."""
+    """No production source can reach the routing module."""
     offenders: list[str] = []
     for path in _production_source_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -77,7 +77,7 @@ def test_production_sources_do_not_import_routing() -> None:
 
 
 def test_production_settings_cannot_reach_test_fakes() -> None:
-    """AC-M01-W03-03: test fakes are unreachable from production settings."""
+    """Test fakes are unreachable from production settings."""
     offenders: list[str] = []
     for path in _production_source_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -88,12 +88,12 @@ def test_production_settings_cannot_reach_test_fakes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# M01-W05: milestone-wide safety scan (SAFE-001..004)
+# Milestone-wide safety scan
 # ---------------------------------------------------------------------------
 
 
 def test_production_safety_gate_passes_on_checked_in_repository() -> None:
-    """SAFE-001..003: the checked-in repository passes the milestone scan."""
+    """The checked-in repository passes the milestone scan."""
     from alphabrief_execution.broker.safety import production_safety_violations
 
     assert production_safety_violations(PROJECT_ROOT) == []
@@ -102,7 +102,7 @@ def test_production_safety_gate_passes_on_checked_in_repository() -> None:
 def test_production_safety_gate_flags_forbidden_imports(
     tmp_path: Path,
 ) -> None:
-    """SAFE-001: other-broker / routing / simulated imports are flagged."""
+    """Other-broker / routing / simulated imports are flagged."""
     from alphabrief_execution.broker.safety import production_safety_violations
 
     source = tmp_path / "apps" / "demo"
@@ -120,7 +120,7 @@ def test_production_safety_gate_flags_forbidden_imports(
 def test_production_safety_gate_flags_non_practice_execution_host(
     tmp_path: Path,
 ) -> None:
-    """SAFE-002: execution code must only reference the practice host."""
+    """Execution code must only reference the practice host."""
     from alphabrief_execution.broker.safety import production_safety_violations
 
     source = tmp_path / "packages" / "alphabrief-execution" / "src"
@@ -138,7 +138,7 @@ def test_production_safety_gate_flags_non_practice_execution_host(
 def test_production_safety_gate_flags_forbidden_config_selection(
     tmp_path: Path,
 ) -> None:
-    """SAFE-003: configuration cannot select routing or another venue."""
+    """Configuration cannot select routing or another venue."""
     from alphabrief_execution.broker.safety import production_safety_violations
 
     config_dir = tmp_path / "config"
@@ -164,7 +164,7 @@ def test_unconfigured_scheduler_runtime_reports_not_ready_and_cannot_submit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """AC-M01-W03-02: unconfigured broker runtime is not ready, cannot submit."""
+    """Unconfigured broker runtime is not ready, cannot submit."""
     from alphabrief_cli.scheduler_commands import _build_adapter
 
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
@@ -193,7 +193,7 @@ def test_unconfigured_scheduler_runtime_reports_not_ready_and_cannot_submit(
 def test_configured_scheduler_runtime_is_oanda_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-M01-W03-02: with credentials the runtime is the OANDA adapter."""
+    """With credentials the runtime is the OANDA adapter."""
     from alphabrief_cli.scheduler_commands import _build_adapter
     from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
 

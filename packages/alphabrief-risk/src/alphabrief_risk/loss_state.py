@@ -1,8 +1,8 @@
-"""Durable day, high-water, and loss-streak state (M08-W04).
+"""Durable day, high-water, and loss-streak state.
 
 DuckDB-backed state that survives restart and can never reset, move
 backward, or be replaced with current equity to widen an allowable
-limit (AC-M08-W04-02):
+limit:
 
 - the high-water mark only ever moves up (compare-and-set);
 - the day-start equity for a date is first-write-wins — a later same-day
@@ -11,7 +11,7 @@ limit (AC-M08-W04-02):
   resets to zero on an evidence-backed profitable day;
 - before the first recorded day every read returns ``None`` so the
   configured rules fail closed instead of silently disabling themselves
-  (AC-M08-W04-03).
+.
 """
 
 from __future__ import annotations

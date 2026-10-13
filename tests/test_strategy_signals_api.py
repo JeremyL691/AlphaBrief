@@ -1,4 +1,4 @@
-"""API tests for the strategy signal history routes (Phase 15 R15.5)."""
+"""API tests for the strategy signal history routes."""
 
 from __future__ import annotations
 

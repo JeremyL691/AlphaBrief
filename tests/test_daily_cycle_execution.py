@@ -1,6 +1,6 @@
-"""M11-W06: proposal → risk → execution with at-most-once submission.
+"""Proposal → risk → execution with at-most-once submission.
 
-Covers AC-M11-W06-01/02: submit occurs only when the proposal,
+Covers: submit occurs only when the proposal,
 OrderIntent, broker-fresh inputs, immutable RiskDecision, execution
 enablement, and idempotency mapping share one correlation chain;
 approved, rejected, no-trade, and broker-rejected fixtures produce the

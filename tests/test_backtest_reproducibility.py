@@ -1,9 +1,9 @@
-"""M12-W04: run ID and normalized-result reproducibility.
+"""Run ID and normalized-result reproducibility.
 
-Covers AC-M12-W04-03: repeating a run with the same strategy, data
+Covers: repeating a run with the same strategy, data
 version, costs, seed, and window specification yields the same run ID
 and normalized result; every result-relevant input is bound into the
-run ID (REQ-PLAT-009).
+run ID.
 """
 
 from __future__ import annotations

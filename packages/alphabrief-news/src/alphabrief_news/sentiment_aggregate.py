@@ -1,15 +1,15 @@
-"""Explainable multi-scope sentiment aggregation (M09-W04).
+"""Explainable multi-scope sentiment aggregation.
 
 Replaces single-score sentiment with deterministic evidence-backed
 aggregates for the whole market, asset classes, currencies, countries,
-companies, and instruments (REQ-NEWS-003, REQ-NEWS-005). Every
+companies, and instruments. Every
 aggregate exposes direction, intensity, disagreement, sample count,
 source coverage, freshness, uncertainty, evidence IDs, and algorithm
-version (AC-M09-W04-01). Reordering identical input evidence produces
+version. Reordering identical input evidence produces
 byte-equivalent normalized output and the same snapshot hash
-(AC-M09-W04-02). Sparse, contradictory, stale, and single-source
+. Sparse, contradictory, stale, and single-source
 fixtures produce explicit uncertainty or insufficient-coverage verdicts
-instead of confident defaults (AC-M09-W04-03).
+instead of confident defaults.
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ def aggregate_sentiment(
     Input order never matters: samples are sorted by scope and evidence
     ID before any computation, so reordering identical input produces
     byte-equivalent normalized output and the same snapshot hash
-    (AC-M09-W04-02).
+.
     """
     observed_at = now or datetime.now(UTC)
     ordered = sorted(samples, key=lambda s: (s.scope, s.scope_value, s.evidence_id))

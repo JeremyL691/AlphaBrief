@@ -1,4 +1,4 @@
-"""OANDA transaction details, ranges, and cursor primitives (M06-W05).
+"""OANDA transaction details, ranges, and cursor primitives.
 
 Transaction get, ID-range, paginated-range, and since-ID primitives for
 durable reconciliation. OANDA transaction IDs are the only cursor

@@ -247,7 +247,7 @@ def get_indicator(indicator_id: str) -> MacroIndicatorResponse:
 
 
 # ---------------------------------------------------------------------------
-# Macro release calendar (M09-W03)
+# Macro release calendar
 # ---------------------------------------------------------------------------
 
 

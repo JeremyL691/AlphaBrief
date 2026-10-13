@@ -1,4 +1,4 @@
-"""Committee security and stability evaluation (M10-W06).
+"""Committee security and stability evaluation.
 
 Runs the committee pipeline (committee + grounded proposal) against
 versioned adversarial fixtures: prompt injection, fabricated citations,

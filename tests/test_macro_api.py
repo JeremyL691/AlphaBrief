@@ -1,4 +1,4 @@
-"""M09-W03: macro release API (AC-M09-W03-03).
+"""Macro release API.
 
 API fixture queries return ordered macro events and expose missing,
 stale, partial, and revised states explicitly.

@@ -1,14 +1,14 @@
-"""Broker-fresh risk context value object (M08-W01).
+"""Broker-fresh risk context value object.
 
 One versioned, frozen, Decimal-safe input contract that every execution
 path builds through the same context service before risk evaluation and
 submit, carrying account state, positions, pending orders, trades,
 bid/ask prices, conversions, catalog version, reconciliation state,
 health state, source IDs, capture times, and freshness verdicts
-(REQ-RISK-001, REQ-PLAT-009). A plain data carrier owned by the risk
+. A plain data carrier owned by the risk
 layer: construction is strict (``float`` rejected, unknown fields
 forbidden, immutable), so a partial or inconsistent context cannot
-exist silently (AC-M08-W01-03).
+exist silently.
 """
 
 from __future__ import annotations

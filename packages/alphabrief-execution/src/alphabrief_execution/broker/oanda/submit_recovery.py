@@ -1,23 +1,23 @@
-"""Durable submit workflow and restart recovery (M07-W06).
+"""Durable submit workflow and restart recovery.
 
 Orchestrates every external submission transition through one durable
 path — reserve -> bind approved decision -> submit attempt -> send ->
 broker result -> fact commit -> cursor advance -> reconciliation — where
 each transition is a compare-and-set over the append-only order ledger
-(M07-W01). A crash at any named fault point leaves a deterministic
+. A crash at any named fault point leaves a deterministic
 boundary; re-running the same ``(cycle_id, intent_id)`` from a fresh
 process resumes from that boundary and never creates a second external
 order.
 
 An in-flight (``SUBMITTED``) outcome is always resolved by querying the
-broker for the persisted client identity (REQ-EXEC-005) — never by
+broker for the persisted client identity — never by
 re-submitting and never by guessing. An unresolved or never-received
 submit freezes both the ledger reservation and new exposure; blocking
 reconciliation differences after a completed submit freeze new exposure
 only, because the external order itself is an immutable terminal fact.
 
-:class:`StartupSyncService` is the restart entry point (REQ-EXEC-011,
-REQ-OPS-006): it resolves every in-flight reservation by query, restores
+:class:`StartupSyncService` is the restart entry point:
+ it resolves every in-flight reservation by query, restores
 the durable ``submit_id -> broker_order_id`` mapping into the process
 adapter, and reports the persisted transaction cursor so no restart ever
 re-submits or re-consumes facts.
@@ -57,7 +57,7 @@ FaultPoint = Literal[
     "during_reconciliation",
 ]
 
-#: The eight crash-injection points named by AC-M07-W06-01 across every
+#: The eight crash-injection points named across every
 #: external submission transition.
 FAULT_POINTS: tuple[FaultPoint, ...] = (
     "before_reserve",

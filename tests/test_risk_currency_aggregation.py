@@ -1,11 +1,11 @@
-"""M08-W03: exposure limits and fail-closed evidence (AC-M08-W03-02/03).
+"""Exposure limits and fail-closed evidence.
 
 - single-order, symbol, category, direction, gross, net, leverage, and
   concentration limits clamp or reject against the projected post-trade
-  exposure with Decimal-safe evidence (AC-M08-W03-02);
+  exposure with Decimal-safe evidence;
 - missing, stale, zero, inconsistent, or unsupported conversion and
   correlation evidence fails closed and can never fall back to nominal
-  units or cost basis (AC-M08-W03-03).
+  units or cost basis.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def _limits(**overrides: object) -> ExposureLimits:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W03-02: limits evaluate against projected post-trade exposure
+# Limits evaluate against projected post-trade exposure
 # ---------------------------------------------------------------------------
 
 
@@ -194,7 +194,7 @@ def test_unconfigured_limits_emit_no_results() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W03-03: evidence fails closed, never nominal/cost-basis fallback
+# Evidence fails closed, never nominal/cost-basis fallback
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""Deterministic OANDA-semantic order execution simulation (M12-W03).
+"""Deterministic OANDA-semantic order execution simulation.
 
 Orders are validated against versioned instrument metadata before any
 fill: market closure, stale prices, below-minimum / above-maximum
@@ -6,7 +6,7 @@ units, non-representable precision, and insufficient margin each
 produce an explicit rejection with a stable reason. Accepted fills
 apply spread (mid-based bid/ask), adverse slippage, and fees
 deterministically; financing is charged separately per holding night
-(REQ-STRAT-004).
+.
 """
 
 from __future__ import annotations

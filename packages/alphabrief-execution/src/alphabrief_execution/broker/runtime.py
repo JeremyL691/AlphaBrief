@@ -1,4 +1,4 @@
-"""Process-scoped OANDA practice broker runtime (M01-W04).
+"""Process-scoped OANDA practice broker runtime.
 
 The API lifespan, CLI broker commands, and the scheduler resolve the
 same runtime factory and persistent data directory authority, so

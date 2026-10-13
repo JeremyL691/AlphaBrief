@@ -1,4 +1,4 @@
-"""OANDA batch pricing and home-currency conversion evidence (M05-W02).
+"""OANDA batch pricing and home-currency conversion evidence.
 
 Fetches current prices in deterministic bounded chunks and retains bid
 and ask ladders, spread, liquidity, tradeable state, closeout prices,

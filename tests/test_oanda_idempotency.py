@@ -1,12 +1,12 @@
-"""M07-W01: idempotency identities in the local order ledger.
+"""Idempotency identities in the local order ledger.
 
 Covers:
 - one deterministic cycle+intent identity reserves at most one submit
   identity under sequential, timeout, and restart replays
-  (AC-M07-W01-01);
+
 - identity collision, mismatched payload hash, stale owner, ambiguous
   in-flight state, and missing approved decision freeze submission
-  without overwrite, fallback, or user question (AC-M07-W01-03).
+  without overwrite, fallback, or user question.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _reserve(
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W01-01: at most one submit identity under every replay
+# At most one submit identity under every replay
 # ---------------------------------------------------------------------------
 
 
@@ -128,7 +128,7 @@ def test_timeout_replay_preserves_in_flight_state(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W01-03: collision and misuse freeze without overwrite
+# Collision and misuse freeze without overwrite
 # ---------------------------------------------------------------------------
 
 

@@ -1,15 +1,15 @@
-"""M07-W05: evidence-backed freeze and unfreeze policy.
+"""Evidence-backed freeze and unfreeze policy.
 
 Covers:
 - every blocking diff, unresolved transaction gap, stale remote
   snapshot, failed resync, or corrupt projection raises one deduplicated
-  durable freeze before another new-exposure submit (AC-M07-W05-01);
+  durable freeze before another new-exposure submit;
 - unfreeze requires a fresh successful full sync, zero blocking diffs,
   matching cursor and projection hashes, resolved alerts, and an
-  immutable reason and evidence record (AC-M07-W05-02);
+  immutable reason and evidence record;
 - repeated freeze and unfreeze commands are idempotent and no API, CLI,
   scheduler, model, or fallback path can clear a freeze by omission or
-  confirmation prompt (AC-M07-W05-03).
+  confirmation prompt.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _freeze_all(
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W05-01: one deduplicated durable freeze before new-exposure submit
+# One deduplicated durable freeze before new-exposure submit
 # ---------------------------------------------------------------------------
 
 
@@ -111,7 +111,7 @@ def test_freeze_survives_restart(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W05-02: evidence-backed unfreeze only
+# Evidence-backed unfreeze only
 # ---------------------------------------------------------------------------
 
 
@@ -199,7 +199,7 @@ def test_unfreeze_requires_all_checks_and_writes_immutable_evidence(
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W05-03: idempotent, and no path clears by omission
+# Idempotent, and no path clears by omission
 # ---------------------------------------------------------------------------
 
 

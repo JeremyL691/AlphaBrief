@@ -103,7 +103,7 @@ class BacktestMetricsResponse(BaseModel):
     max_drawdown: float
     trade_count: int
     win_rate: float | None
-    # R21.4 credibility metrics. ``None`` fields stay ``None`` for
+    # Credibility metrics. ``None`` fields stay ``None`` for
     # degenerate runs (single bar, zero variance, no trades).
     benchmark_total_return: float | None = None
     alpha_vs_benchmark: float | None = None

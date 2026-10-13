@@ -1,6 +1,6 @@
-"""M17-W03: Electron release security inspection.
+"""Electron release security inspection.
 
-Covers AC-M17-W03-03: static and runtime inspection finds no live
+Covers: static and runtime inspection finds no live
 host, live selector, Alpaca or other broker, simulated production
 fallback, arbitrary broker proxy, or unapproved auto-update execution
 path in the packaged application.

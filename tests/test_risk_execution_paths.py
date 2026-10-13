@@ -1,12 +1,12 @@
-"""M08-W01: AI and manual paper execution paths resolve the same context service.
+"""AI and manual paper execution paths resolve the same context service.
 
 Covers:
 - the AI external backend and the manual paper API path build their
   pre-risk context through the same broker-fresh context service with
-  the same context and policy versions (AC-M08-W01-02);
+  the same context and policy versions;
 - a missing, stale, or frozen context rejects before submit with no
   order reaching the broker — no synthesized defaults, no fallback
-  account, no review bypass (AC-M08-W01-03, REQ-RISK-010).
+  account, no review bypass.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def _isolated_data_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Point the runtime data directory at tmp so the decision-binding
-    store (M08-W07) never touches the developer's real data directory."""
+    store never touches the developer's real data directory."""
     monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
 
 
@@ -207,7 +207,7 @@ def _backend_with(
 
 
 # ---------------------------------------------------------------------------
-# AC-M08-W01-02: both paths resolve the same builder and versions
+# Both paths resolve the same builder and versions
 # ---------------------------------------------------------------------------
 
 
@@ -243,7 +243,7 @@ def test_ai_backend_rejects_defective_context_before_submit(
     mutate: Any,
 ) -> None:
     """A stale, frozen, or unhealthy context rejects before submit with no
-    order reaching the broker (AC-M08-W01-03)."""
+    order reaching the broker."""
     sources = _FreshSources()
     mutate(sources)
     adapter = _FakeAdapter()

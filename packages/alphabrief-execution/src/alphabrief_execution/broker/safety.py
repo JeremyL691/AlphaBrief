@@ -1,4 +1,4 @@
-"""Deterministic OANDA-only production boundary gates (M01-W01..W05).
+"""Deterministic OANDA-only production boundary gates.
 
 This module proves the *selected* production configuration cannot express
 any execution venue other than the OANDA practice account: the execution
@@ -8,8 +8,8 @@ settings. Every check is a positive assertion — the loaders are strict
 validation, and the raw selector-line scan below guards against a future
 loader that stops validating.
 
-M01-W05 adds the milestone-wide safety scan (:func:`production_safety_
-violations`) that maps SAFE-001..003 structurally and leaves SAFE-004 to
+Adds the milestone-wide safety scan (:func:`production_safety_
+violations`) that maps structurally and leaves to
 the composition tests (missing credentials fail closed with no local
 fill).
 """
@@ -147,7 +147,7 @@ def _unexpected_selector_lines(text: str, source: Path) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# M01-W05 milestone-wide safety scan (SAFE-001..004)
+# Milestone-wide safety scan
 # ---------------------------------------------------------------------------
 
 #: Production source roots scanned for forbidden execution imports.
@@ -182,13 +182,13 @@ _URL_LITERAL_RE = re.compile(r"https?://([^\s\"'`]+)")
 def production_safety_violations(root: Path | str) -> list[str]:
     """Return deterministic violations of the M01 OANDA-only safety gates.
 
-    SAFE-001: the production graph imports no other-broker, routing, or
+    The production graph imports no other-broker, routing, or
     in-memory execution surface.
-    SAFE-002: production execution code only references the OANDA practice
+    Production execution code only references the OANDA practice
     host, with loopback test overrides excepted.
-    SAFE-003: production configuration cannot select a live host, another
+    Production configuration cannot select a live host, another
     broker, routing, or any in-memory substitute (config boundary scan).
-    SAFE-004: missing credentials fail closed with no local fill — proven
+    Missing credentials fail closed with no local fill — proven
     by the composition tests, not by a structural scan.
     """
     root_path = Path(root)

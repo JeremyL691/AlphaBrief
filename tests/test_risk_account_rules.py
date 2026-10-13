@@ -1,4 +1,4 @@
-"""R21.2 — stateless account-level risk rules.
+"""Stateless account-level risk rules.
 
 Each of the 7 rules (per-symbol exposure, concentration, max leverage,
 duplicate order, price deviation, market session, signal staleness) is
@@ -445,7 +445,7 @@ def test_signal_age_boundary_at_max_age_is_approved() -> None:
 
 def test_account_rules_never_reapprove_a_rejected_intent() -> None:
     # A symbol outside the allowlist is rejected by the base check. None
-    # of the R21.2 rules may turn it back into an approval.
+    # Of the rules may turn it back into an approval.
     gate = _gate(
         _base_limits(
             max_symbol_exposure=Decimal("10000"),

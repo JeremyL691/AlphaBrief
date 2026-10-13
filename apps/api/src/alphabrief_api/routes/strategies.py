@@ -1,6 +1,6 @@
 """Strategy registry routes — CRUD over persisted StrategySpec objects.
 
-This round (Phase 15 R15.2 + R15.4) wires the
+This round (+ ) wires the
 :class:`alphabrief_api.db.strategies.StrategySpecStore` to a read-write
 HTTP API. It is the entry point for the Strategy Lifecycle surface.
 

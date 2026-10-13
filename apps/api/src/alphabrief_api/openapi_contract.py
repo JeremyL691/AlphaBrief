@@ -1,4 +1,4 @@
-"""Deterministic OpenAPI contract for all exposed resources (M13-W05).
+"""Deterministic OpenAPI contract for all exposed resources.
 
 Builds the application OpenAPI deterministically and attaches a
 versioned ``x-alphabrief-contract`` extension declaring the shared
@@ -6,7 +6,7 @@ semantics every consumer can rely on: the 14 read domains, the 7
 approved operator mutations, the typed error model, cursor and
 freshness fields, the idempotency header, and the correlation
 identifier. ``verify_openapi_contract`` fails closed on any missing
-declaration (REQ-PLAT-009, REQ-UI-001, REQ-UI-002, REQ-UI-006).
+declaration.
 """
 
 from __future__ import annotations

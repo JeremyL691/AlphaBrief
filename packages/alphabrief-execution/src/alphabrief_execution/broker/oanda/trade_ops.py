@@ -1,4 +1,4 @@
-"""OANDA trade operations port (M06-W04).
+"""OANDA trade operations port.
 
 Get, list, partial close, full close, and protective dependent-order
 operations for trades with exact typed responses, request correlation on

@@ -1,17 +1,17 @@
-"""Home-currency exposure, concentration, and correlation aggregation (M08-W03).
+"""Home-currency exposure, concentration, and correlation aggregation.
 
 Computes pre-trade and post-trade gross, net, symbol, category,
 currency-direction, correlated-group, and concentration exposure in the
 account home currency using persisted conversion evidence
-(REQ-RISK-003, REQ-RISK-006). Everything is Decimal-safe and evidence-
+. Everything is Decimal-safe and evidence-
 backed: a missing, stale, zero, inconsistent, or unsupported conversion,
 price, category, or correlation input fails closed with a classified
 :class:`ExposureError` — exposure is never silently computed in nominal
-units or at cost basis (AC-M08-W03-03).
+units or at cost basis.
 
 Limits (single-order notional, symbol, category, direction, gross, net,
 leverage, concentration) are evaluated against the projected post-trade
-snapshot and produce stable typed rule results (AC-M08-W03-02).
+snapshot and produce stable typed rule results.
 """
 
 from __future__ import annotations
@@ -260,7 +260,7 @@ def compute_exposure(
 ) -> ExposureSnapshot:
     """Compute one deterministic home-currency exposure snapshot.
 
-    Fail-closed evidence requirements (AC-M08-W03-03):
+    Fail-closed evidence requirements:
 
     - every position and pending-order symbol needs a price, a
       conversion factor, a category, and a currency direction;

@@ -7,7 +7,7 @@ Tasks are declared as :class:`ScheduledTask` instances and the
 tracking last-run heartbeats in DuckDB so a restart resumes from
 the most recent successful run.
 
-Phase 18 contracts:
+Contracts:
 
 - Startup calls ``reconcile(scope='startup')``; if reconciliation
   raises a freeze, the scheduler stays in a paused state and exits
@@ -264,7 +264,7 @@ class SchedulerConfig:
     reconcile_on_start: bool = True
     max_consecutive_failures: int = 3
     on_failure_freeze_source: str = "scheduler"
-    # Phase 30 task #4: emit a clear "broker unreachable" alert after
+    # Task #4: emit a clear "broker unreachable" alert after
     # this many consecutive broker-probe failures, so the operator
     # sees the actual cause instead of N generic "transient error"
     # log lines. Defaults to 3 — same ceiling as the per-task
@@ -280,7 +280,7 @@ class SchedulerConfig:
 def _looks_like_broker_unavailable(exc: BaseException) -> bool:
     """Return ``True`` when ``exc`` looks like the broker is unreachable.
 
-    Phase 30 task #4: after N consecutive failures with this shape
+    Task #4: after N consecutive failures with this shape
     the scheduler should emit a clear alert. Transient broker errors
     and SSLError / URLError are all candidates.
     """
@@ -300,7 +300,7 @@ def _looks_like_broker_unavailable(exc: BaseException) -> bool:
 class BrokerAvailabilityTracker:
     """Tracks consecutive broker-probe failures and emits one alert per outage.
 
-    Phase 30 task #4: a single transient ``BrokerTransientError`` is
+    Task #4: a single transient ``BrokerTransientError`` is
     noise; a *pattern* of them is a real outage. This tracker counts
     consecutive failures with :func:`_looks_like_broker_unavailable`
     shape, raises one ``alert_sink.emit(severity="critical")`` when
@@ -405,7 +405,7 @@ class OperationsScheduler:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._stop = asyncio.Event()
         self._failure_counters: dict[str, int] = {task.name: 0 for task in self._tasks}
-        # Phase 30 task #4: optional broker-availability tracker. When
+        # Task #4: optional broker-availability tracker. When
         # not supplied we build a no-op tracker so the existing call
         # sites that do not pass one keep working unchanged.
         self._broker_tracker = broker_tracker or BrokerAvailabilityTracker(
@@ -543,7 +543,7 @@ def build_default_tasks(
     on_reconcile: Callable[[str], Awaitable[None]],
     on_ai_cycle: Callable[[], Awaitable[None]] | None = None,
 ) -> list[ScheduledTask]:
-    """Return the default task list (Phase 18 reconcile + Phase 26 AI).
+    """Return the default task list (reconcile + AI).
 
     ``on_reconcile(scope)`` is supplied by the application; it should
     call ``LiveReconciler.reconcile(scope=scope)``.
@@ -624,7 +624,7 @@ def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
-# Helper: imports kept honest if Phase 19 extends scheduler with
+# Helper: imports kept honest if extends scheduler with
 # back-off intervals.
 __all__ = [
     "AlertSink",

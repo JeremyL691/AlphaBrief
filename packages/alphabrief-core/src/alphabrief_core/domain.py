@@ -200,10 +200,10 @@ class RiskDecision(AlphaBriefModel):
     requires_human_review: bool
     source_module: str = ""
     created_at: datetime
-    # M08-W02: optional deterministic hash of the executable inputs the
+    # Optional deterministic hash of the executable inputs the
     # decision was approved for (symbol, units, price, instrument
     # version, snapshot hash). When set, execution validates the inputs
-    # against it and refuses on any post-decision change (REQ-RISK-010).
+    # Against it and refuses on any post-decision change.
     execution_input_hash: str | None = None
     # Serialized, credential-free facts and outcomes of configured rules.
     rule_evidence: dict[str, dict[str, str]] = Field(default_factory=dict)

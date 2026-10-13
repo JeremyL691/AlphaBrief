@@ -13,7 +13,7 @@ Routes
 
 The routes never place orders without a RiskDecision. ``/positions`` and
 ``/account`` perform live **read-only** probes against the API-side
-``BrokerAdapter`` singleton (Phase 20); the account-level exposure
+``BrokerAdapter`` singleton; the account-level exposure
 *enforcement* lives in :class:`alphabrief_risk.RiskGate`, not in these
 endpoints. The remaining routes proxy the in-process
 :class:`BrokerReconStore`.
@@ -195,7 +195,7 @@ def broker_reconcile(scope: str = Query("cycle")) -> dict[str, Any]:
     """Run one real reconciliation pass through the shared durable service.
 
     Uses the same :class:`LiveReconciler` as the CLI and the
-    scheduler startup (AC-M07-W06-03). With no OANDA practice
+    scheduler startup. With no OANDA practice
     credentials the runner records a fail-closed non-matching snapshot —
     never an unconditional all-match placeholder. Upstream broker
     failures map to HTTP 503.
@@ -270,7 +270,7 @@ def broker_positions() -> dict[str, Any]:
     positions. When no credentials are configured the null adapter
     returns an empty list so the API still boots in dev / CI.
 
-    The runtime account-exposure *enforcement* (Phase 19) is delivered
+    The runtime account-exposure *enforcement* is delivered
     by :class:`alphabrief_risk.RiskGate` against an
     :class:`AccountExposureContext`, not by this read endpoint. This
     route never places orders.
@@ -295,11 +295,11 @@ def broker_positions() -> dict[str, Any]:
 def broker_account() -> dict[str, Any]:
     """Return the account snapshot via the adapter singleton (live read).
 
-    Phase 20: when a live ``BrokerAdapter`` is wired this performs a
+    When a live ``BrokerAdapter`` is wired this performs a
     read-only ``get_account()`` probe. When no credentials are
     configured the null adapter returns a zero snapshot
     (``account_id="null-adapter"``, zero Decimals) — a real value object
-    rather than the pre-Phase-20 ``{"account": None}`` stub.
+    rather than the pre-``{"account": None}`` stub.
 
     Like ``/positions``, the enforcement path does not depend on this
     endpoint. This route never places orders.

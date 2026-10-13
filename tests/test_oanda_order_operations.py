@@ -1,13 +1,13 @@
-"""M06-W02: OANDA order operations port.
+"""OANDA order operations port.
 
 Covers:
 - create, get, list (paginated), cancel, and replace produce exact typed
-  responses and correct state transitions (AC-M06-W02-01);
+  responses and correct state transitions;
 - invalid request IDs, unknown orders, race conditions, and stale
-  replaces fail closed with classified errors (AC-M06-W02-02);
+  replaces fail closed with classified errors;
 - request correlation is preserved on every response and retries never
   duplicate orders — create is idempotent on clientExtensions.id
-  (AC-M06-W02-03).
+.
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ def _client(broker: _FakeBroker, captured: list[dict[str, Any]]) -> OrderOpsClie
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W02-01: typed responses and state transitions
+# Typed responses and state transitions
 # ---------------------------------------------------------------------------
 
 
@@ -205,7 +205,7 @@ def test_replace_creates_new_order_state() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W02-02: classified fail-closed errors
+# Classified fail-closed errors
 # ---------------------------------------------------------------------------
 
 
@@ -254,7 +254,7 @@ def test_stale_replace_fails_closed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W02-03: correlation and idempotent create
+# Correlation and idempotent create
 # ---------------------------------------------------------------------------
 
 

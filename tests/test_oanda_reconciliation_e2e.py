@@ -1,17 +1,17 @@
-"""M07-W07: prove idempotency and reconciliation and close M07.
+"""Prove idempotency and reconciliation and close M07.
 
 Local deterministic gates (always run):
 
 - the aggregate restart chain — crash after send -> restart resolve ->
   fact commit + cursor advance -> projection rebuild -> clean typed
   reconciliation — produces at most one external submit, a correct
-  cursor, correct projections, and zero freezes (AC-M07-W07-01);
+  cursor, correct projections, and zero freezes;
 - missing credentials fail closed with ENVIRONMENT_BLOCKED and no mock
-  substitution, waiver, fallback, or false DONE (AC-M07-W07-03);
+  substitution, waiver, fallback, or false DONE;
 - a nonzero blocking reconciliation diff or unresolved remote state
-  keeps the system frozen and never DONE (AC-M07-W07-03).
+  keeps the system frozen and never DONE.
 
-Controlled practice restart scenario (AC-M07-W07-02, T7): with
+Controlled practice restart scenario (T7): with
 ``ALPHABRIEF_OANDA_TOKEN`` and ``ALPHABRIEF_OANDA_ACCOUNT_ID`` set, the
 scenario submits a minimum-risk order through the durable
 ``SubmitWorkflow``, simulates a process restart, resolves the same
@@ -287,7 +287,7 @@ def _close(handles: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W07-01: deterministic aggregate restart chain
+# Deterministic aggregate restart chain
 # ---------------------------------------------------------------------------
 
 
@@ -389,7 +389,7 @@ def test_aggregate_restart_chain_reconciles_clean(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W07-03: fail closed — no fallback, no waiver, no false DONE
+# Fail closed — no fallback, no waiver, no false DONE
 # ---------------------------------------------------------------------------
 
 
@@ -498,7 +498,7 @@ def _blocking_report(ledger: OrderLedger) -> ReconciliationReport:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W07-02: controlled practice restart scenario (T7, creds-gated)
+# Controlled practice restart scenario (T7, creds-gated)
 # ---------------------------------------------------------------------------
 
 

@@ -1,13 +1,13 @@
-"""M09-W01: news ingestion contracts and distinct durable outcomes.
+"""News ingestion contracts and distinct durable outcomes.
 
 - fixture ingestion persists source, canonical URL, published and
   fetched UTC times, language, content hash, summary, fetch outcome, and
-  correlation ID for every attempted item (AC-M09-W01-01);
+  correlation ID for every attempted item;
 - success, empty response, timeout, rate-limit, malformed response, and
   source failure produce distinct durable outcomes without fabricated
-  headlines (AC-M09-W01-02);
+  headlines;
 - metadata-only sources never persist licensed full text and retain
-  only permitted metadata and bounded summaries (AC-M09-W01-03).
+  only permitted metadata and bounded summaries.
 """
 
 from __future__ import annotations
@@ -178,7 +178,7 @@ def test_unexpected_provider_failure_is_classified_timeout() -> None:
 
 
 def test_metadata_only_source_never_persists_full_text(tmp_path: Path) -> None:
-    """REQ-NEWS-008: metadata-only sources retain metadata + a bounded
+    """Metadata-only sources retain metadata + a bounded
     summary; licensed full text is never stored."""
     service = NewsIngestionService(clock=lambda: NOW)
     policy = SourceLicensePolicy(

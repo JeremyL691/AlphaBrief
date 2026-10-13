@@ -1,9 +1,9 @@
-"""Immutable persisted RiskDecision records (M08-W07).
+"""Immutable persisted RiskDecision records.
 
 Every approved decision is persisted before execution with immutable
 rule order, inputs and policy hashes, source IDs, timestamps, approved
 flag, max quantity, reasons, tags, context freshness, and decision
-expiry (REQ-RISK-009, AC-M08-W07-01). Records are append-only: there is
+expiry. Records are append-only: there is
 no API to modify the approved flag, inputs, or hashes after approval —
 the only state transition is a compare-and-set ``consume`` marking an
 executed decision as already consumed.
@@ -110,7 +110,7 @@ class RiskDecisionStore:
 
         There is no update path: the approved flag, inputs, hashes,
         reason, tags, and rule results can never be mutated after
-        approval (REQ-RISK-009).
+        approval.
         """
         inserted = self._conn.execute(
             """

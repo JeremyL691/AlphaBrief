@@ -1,6 +1,6 @@
-"""M12-W02: category-aware deterministic strategy families.
+"""Category-aware deterministic strategy families.
 
-Covers AC-M12-W02-01/03: every required family (trend, mean reversion,
+Covers: every required family (trend, mean reversion,
 breakout, volatility regime, no-trade) emits deterministic long, short,
 flat, and insufficient-data outcomes from declared inputs only;
 no-trade is a first-class benchmark strategy; all outputs are advisory

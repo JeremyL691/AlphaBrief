@@ -563,7 +563,7 @@ def test_heartbeat_store_list_heartbeats_orders_by_last_run_desc(
 
 
 # ---------------------------------------------------------------------------
-# Phase 30 task #4: BrokerAvailabilityTracker emits a clear
+# Task #4: BrokerAvailabilityTracker emits a clear
 # "broker unreachable" alert after N consecutive failures, and only
 # once per outage. A success resets the counter.
 # ---------------------------------------------------------------------------

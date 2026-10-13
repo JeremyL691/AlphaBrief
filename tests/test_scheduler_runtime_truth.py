@@ -1,6 +1,6 @@
-"""M11-W02: API and CLI task status share one persisted runtime truth.
+"""API and CLI task status share one persisted runtime truth.
 
-Covers AC-M11-W02-03: the API and CLI status surfaces expose the active
+Covers: the API and CLI status surfaces expose the active
 configuration, leader ID, running phase, heartbeat, last outcome, and
 next due time from the same persisted authority.
 """

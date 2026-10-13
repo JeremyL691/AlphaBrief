@@ -1,7 +1,7 @@
 """DuckDB-backed market data store for AlphaBrief.
 
 ``MarketDataStore`` provides persistent storage for OHLCV bars and symbol
-metadata, replacing the in-memory dictionary that was used before Phase 7.
+metadata, replacing the in-memory dictionary that was used before.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def bar_fact_id(
 
     Identical content always produces the same fact ID, so re-ingesting
     an identical fact is a no-op while different versions coexist with
-    their own identity and lineage (M03-W02).
+    their own identity and lineage.
     """
     import hashlib
 
@@ -104,7 +104,7 @@ class MarketDataStore:
         source: str,
         data_version: str,
     ) -> int:
-        """Append immutable, versioned bar facts (M03-W02).
+        """Append immutable, versioned bar facts.
 
         Every bar becomes a content-addressed fact: the primary key is
         ``(symbol, timestamp, data_version, source)`` and ``fact_id`` is
@@ -242,7 +242,7 @@ class MarketDataStore:
         """Return OHLCV bars for *symbol* with pagination.
 
         The decision view serves the latest data version per timestamp
-        (M03-W02); versioned facts remain queryable via
+versioned facts remain queryable via
         :meth:`get_bar_facts`.
         """
         rows = self._conn.execute(
@@ -278,7 +278,7 @@ class MarketDataStore:
         """Return the number of decision-view bars for *symbol*.
 
         Counts distinct (symbol, timestamp) pairs — one per timestamp in
-        the deduplicated latest-version view (M03-W02).
+        the deduplicated latest-version view.
         """
         row = self._conn.execute(
             "SELECT COUNT(DISTINCT symbol || '|' || timestamp) "
@@ -354,7 +354,7 @@ class MarketDataStore:
         Each row carries its content-addressed ``fact_id``, lineage
         (``source``/``data_version``), and UTC ``ingested_at``, ordered
         by data version, so historical snapshots can reconstruct the
-        exact facts they referenced (M03-W02).
+        exact facts they referenced.
         """
         rows = self._conn.execute(
             """SELECT symbol, timestamp, open, high, low, close,

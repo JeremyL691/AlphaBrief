@@ -1,6 +1,6 @@
 """Risk-context wiring through the risk CLI and API.
 
-Covers R13.2: ``alphabrief risk check`` and ``POST /api/v1/risk/check``
+Covers: ``alphabrief risk check`` and ``POST /api/v1/risk/check``
 accept optional ``risk_context`` payloads and apply them tighten-only.
 """
 
@@ -61,7 +61,7 @@ def _api_test_limits() -> RiskLimitConfig:
 def _isolate_market_data_store(tmp_path: Path) -> None:
     """Point the MarketDataStore singleton at a tmp dir (no env leakage).
 
-    R21.1: the paper order route resolves a mark price from stored bars,
+    The paper order route resolves a mark price from stored bars,
     so API-level paper tests must seed BTC-USD bars in an isolated
     DuckDB before submitting. Sets ``ALPHABRIEF_DATA_DIR`` and closes the
     process-wide store singleton so the next access rebuilds it at the
@@ -78,7 +78,7 @@ def _isolate_market_data_store(tmp_path: Path) -> None:
 def _load_btc_bars(client: object, tmp_path: Path) -> None:
     """Load a minimal BTC-USD bar so the paper route can resolve a mark.
 
-    R21.1: the paper route fails closed without stored bars. These r13
+    The paper route fails closed without stored bars. These r13
     tests exercise risk_context wiring, not pricing, so the close matches
     the historical $100 assumption the tests were written against.
     """
@@ -107,7 +107,7 @@ def _negative_context() -> RiskContextDecision:
 
 
 # ---------------------------------------------------------------------------
-# R13.3
+#
 # ---------------------------------------------------------------------------
 
 
@@ -217,7 +217,7 @@ def test_risk_check_cli_no_context_omits_applied_line(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# R13.2 API
+# API
 # ---------------------------------------------------------------------------
 
 

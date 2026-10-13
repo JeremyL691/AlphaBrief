@@ -1,15 +1,15 @@
-"""M04-W05: read-only instrument catalog API and CLI surfaces.
+"""Read-only instrument catalog API and CLI surfaces.
 
 Covers:
 - API and CLI return identical totals, filtered counts, metadata,
   taxonomy, active state, catalog version, and freshness for the same
-  query (AC-M04-W05-01);
+  query;
 - pagination, exact-name lookup, case-insensitive search, category
   filters, active filters, unknown categories, and empty results have
-  deterministic schemas and ordering (AC-M04-W05-02);
+  deterministic schemas and ordering;
 - missing, stale, or account-mismatched catalogs return explicit
   unavailable states and never substitute a hard-coded allowlist or
-  trigger a broker write (AC-M04-W05-03).
+  trigger a broker write.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def _seeded_store() -> InstrumentCatalogStore:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W05-01: API/CLI parity
+# API/CLI parity
 # ---------------------------------------------------------------------------
 
 
@@ -130,7 +130,7 @@ def test_api_and_cli_filter_parity() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W05-02: deterministic pagination, search, filters, ordering
+# Deterministic pagination, search, filters, ordering
 # ---------------------------------------------------------------------------
 
 
@@ -194,7 +194,7 @@ def test_items_carry_taxonomy_and_active_state() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M04-W05-03: explicit unavailable states, no substitutes
+# Explicit unavailable states, no substitutes
 # ---------------------------------------------------------------------------
 
 

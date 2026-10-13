@@ -1,11 +1,11 @@
-"""Versioned OANDA-semantic backtest instrument metadata (M12-W03).
+"""Versioned OANDA-semantic backtest instrument metadata.
 
 Backtest execution resolves the same instrument fields the OANDA
 practice runtime uses (display/trade-units precision, minimum trade
 size, maximum order units / position size, margin rate) through a
 versioned mirror. ``SEMANTICS_VERSION`` and ``SEMANTICS_DIFFERENCES``
 explicitly record the relationship to the practice runtime so any drift
-is visible (REQ-STRAT-008). Normalization mirrors
+is visible. Normalization mirrors
 ``alphabrief_risk.instrument_rules``: a value that is not representable
 at the declared precision is rejected, never silently rounded into a
 different order.
@@ -40,7 +40,7 @@ def _decimal_power(precision: int) -> Decimal:
 
 
 class BacktestSessionWindow(BaseModel):
-    """A weekly session window in UTC minutes (mirrors M05-W04 sessions).
+    """A weekly session window in UTC minutes (mirrors sessions).
 
     ``end`` at or before ``start`` wraps by a full week (overnight and
     24x7 sessions). UTC-fixed windows make DST transitions
@@ -116,7 +116,7 @@ def default_session_window(
 
 
 class BacktestInstrumentMetadata(BaseModel):
-    """One instrument's backtest-facing OANDA metadata (REQ-OANDA-003).
+    """One instrument's backtest-facing OANDA metadata.
 
     All numeric fields are ``Decimal``. ``session_window`` defaults to
     the category window when omitted; an unknown category has no window

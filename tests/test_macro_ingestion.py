@@ -1,4 +1,4 @@
-"""M09-W03: macro calendar ingestion (AC-M09-W03-01/02).
+"""Macro calendar ingestion.
 
 Macro fixtures persist release time, actual, forecast, previous,
 revision, importance, unit, source, and affected currencies/markets in

@@ -1,10 +1,10 @@
-"""M09-W06: immutable daily regime and sentiment snapshots.
+"""Immutable daily regime and sentiment snapshots.
 
 - a snapshot records its news, macro, sentiment, entity-link, quality,
   freshness, and source-version IDs under one immutable version ID and
-  hash (AC-M09-W06-01);
+  hash;
 - research context and news-risk context loaded by the same snapshot ID
-  resolve identical evidence and quality verdicts (AC-M09-W06-03).
+  resolve identical evidence and quality verdicts.
 """
 
 from __future__ import annotations

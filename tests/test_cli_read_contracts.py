@@ -1,6 +1,6 @@
-"""M13-W01: unified CLI read contracts and API/CLI parity.
+"""Unified CLI read contracts and API/CLI parity.
 
-Covers AC-M13-W01-02/03: API JSON and CLI JSON for the same fixture
+Covers: API JSON and CLI JSON for the same fixture
 normalize to the same domain payload and ordering; typed errors are
 shared verbatim across both surfaces.
 """

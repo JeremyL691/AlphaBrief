@@ -1,4 +1,4 @@
-"""Tests for the multi-asset trading environment (Phase 11)."""
+"""Tests for the multi-asset trading environment."""
 
 from __future__ import annotations
 

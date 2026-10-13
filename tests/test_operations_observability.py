@@ -1,6 +1,6 @@
-"""M15-W01: structured observability signals.
+"""Structured observability signals.
 
-Covers AC-M15-W01-01: ingestion, news, models, scheduler, cycle, risk,
+Covers: ingestion, news, models, scheduler, cycle, risk,
 OANDA, reconciliation, backup, API, and Electron publish structured
 health, readiness, heartbeat, latency, success, failure, and freshness
 signals.

@@ -50,7 +50,7 @@ class RiskLimitConfig:
     max_total_exposure: Decimal | None = None
     require_data_quality_passed: bool = True
     require_human_review: bool = False
-    # --- Account-level rules (R21.2, all tighten-only / fail-closed) ---
+    # --- Account-level rules (all tighten-only / fail-closed) ---
     # Per-symbol gross exposure cap. When set, a buy that would push a
     # single symbol's gross notional above the cap is rejected and
     # ``max_quantity`` is clamped to the headroom. Requires
@@ -93,7 +93,7 @@ class RiskLimitConfig:
     # is a persistent recent-intent store.
     duplicate_order_window_seconds: int | None = None
     duplicate_order_max_count: int = 1
-    # --- Stateful account rules (R21.3, tighten-only / fail-closed) ---
+    # --- Stateful account rules (tighten-only / fail-closed) ---
     # Rule 10: today's realized + current unrealized loss must stay below
     # this fraction of current NAV. Requires fresh broker evidence and a
     # durable UTC-day block; both long and short entries are checked.
@@ -351,7 +351,7 @@ class RiskGate:
             cap=total_cap,
         )
 
-        # R21.2 account-level rules (all tighten-only / fail-closed). The
+        # Account-level rules (all tighten-only / fail-closed). The
         # per-symbol exposure check returns a clamp like the total-exposure
         # check; the rest append failures/tags only.
         symbol_qty_clamp = self._check_symbol_exposure(
@@ -1163,7 +1163,7 @@ class RiskGate:
 
         Tighten-only / fail-closed. The HWM must be supplied by the caller
         from a persistent snapshot store so a restart cannot reset the
-        peak and silently widen the floor (the whole point of R21.3).
+        peak and silently widen the floor (the whole point ).
 
         ponytail:drawdown_on_unrealized: drawdown is measured against the
         current ``equity`` (cash + unrealized mark-to-market), not against

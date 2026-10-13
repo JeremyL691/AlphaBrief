@@ -1,14 +1,14 @@
-"""M06-W04: account summary and account changes operations.
+"""Account summary and account changes operations.
 
 Covers:
 - account summary and account changes match exact request and response
-  fixtures (AC-M06-W04-01);
+  fixtures;
 - balance, NAV, unrealized PnL, margins, open counts, and broker
   transaction IDs stay distinct and Decimal-safe; the durable
   ``sinceTransactionID`` cursor is passed through exactly
-  (AC-M06-W04-02);
+
 - missing, malformed, or invalid cursors fail closed and no local state
-  is fabricated (AC-M06-W04-03).
+  is fabricated.
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def _client(broker: _FakeAccountBroker) -> AccountOpsClient:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W04-01: summary and changes match exact fixtures
+# Summary and changes match exact fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -219,7 +219,7 @@ def test_changes_empty_page() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W04-02: cursor and Decimal-safety
+# Cursor and Decimal-safety
 # ---------------------------------------------------------------------------
 
 
@@ -260,7 +260,7 @@ def test_decimal_values_never_floats() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W04-03: fail-closed
+# Fail-closed
 # ---------------------------------------------------------------------------
 
 

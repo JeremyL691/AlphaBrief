@@ -1,12 +1,12 @@
-"""Reduce-only and close validation (M08-W06).
+"""Reduce-only and close validation.
 
 Emergency risk reduction is permitted only when the order provably
 reduces the relevant position and gross risk and still satisfies
-instrument, price, identity, and audit rules (REQ-RISK-008,
-AC-M08-W06-02). A mislabeled reduce request, side reversal, over-close,
+instrument, price, identity, and audit rules.
+ A mislabeled reduce request, side reversal, over-close,
 exposure-increasing dependent order, stale quantity, or missing
 position truth fails closed — reduce-only can never be used as a bypass
-(AC-M08-W06-03).
+.
 """
 
 from __future__ import annotations

@@ -229,11 +229,11 @@ CREATE TABLE IF NOT EXISTS strategy_specs (
 # future signal schema additions.
 #
 # ``source`` distinguishes the call site that produced the signal:
-# - ``"backtest"``  : vectorized backtester
-# - ``"manual"``    : explicit CLI / API call
-# - ``"other"``     : default for unknown callers
+# - ``"backtest"``: vectorized backtester
+# - ``"manual"``: explicit CLI / API call
+# - ``"other"``: default for unknown callers
 #
-# Phase 15 R15.5 records manual recordings from CLI/API; automatic
+# Records manual recordings from CLI/API; automatic
 # backtest recording is wired when the vectorized backtester emits
 # signals. Both code paths share this single table.
 
@@ -285,7 +285,7 @@ CREATE INDEX IF NOT EXISTS idx_strategy_admissions_strategy_created
 """
 
 # ---------------------------------------------------------------------------
-# Phase 17 broker reconciliation tables
+# Broker reconciliation tables
 # ---------------------------------------------------------------------------
 #
 # The broker reconciliation store keeps three append-only tables that
@@ -344,7 +344,7 @@ CREATE TABLE IF NOT EXISTS broker_freeze_events (
 # Table: account_equity_snapshots
 # ---------------------------------------------------------------------------
 #
-# R21.3: append-only account equity snapshots used by the daily-loss and
+# Append-only account equity snapshots used by the daily-loss and
 # drawdown risk rules. One row per fill (written by the paper route after
 # each execution). The gate reads the latest snapshot (current equity, the
 # drawdown high-water mark) and the day's first snapshot (day-start equity
@@ -370,7 +370,7 @@ CREATE INDEX IF NOT EXISTS idx_account_equity_snapshots_account_captured
 """
 
 # ---------------------------------------------------------------------------
-# AI Trading Committee tables (Phase 26)
+# AI Trading Committee tables
 # ---------------------------------------------------------------------------
 #
 # Three denormalized tables back ``AiTradingStore``:
@@ -499,7 +499,7 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
 # Schema helpers
 # ---------------------------------------------------------------------------
 
-#: M03-W01: the baseline DDL set becomes migration v1. Table DDL is the
+#: The baseline DDL set becomes migration v1. Table DDL is the
 #: transactional unit; index DDL runs idempotently after the commit
 #: (DuckDB cannot commit CREATE INDEX inside an explicit transaction when
 #: another open connection dropped the same index). Every later schema
@@ -526,7 +526,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         version=2,
         name="versioned-bar-facts",
         statements=(
-            # M03-W02: bars become immutable, versioned facts. The primary
+            # Bars become immutable, versioned facts. The primary
             # key includes data_version and source so different versions of
             # the same symbol+timestamp coexist; fact_id is the
             # content-addressed identity computed by the store. Legacy rows
@@ -659,7 +659,7 @@ def apply_schema(connection: Any) -> None:
 
     Runs the startup compatibility check (a newer or corrupt schema fails
     closed) and then applies every pending migration atomically and
-    idempotently (M03-W01).
+    idempotently.
     """
     check_compatibility(connection, migrations=MIGRATIONS)
     migrate(connection, migrations=MIGRATIONS)

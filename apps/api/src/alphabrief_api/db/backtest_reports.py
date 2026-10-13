@@ -1,7 +1,7 @@
 """DuckDB-backed backtest report store for AlphaBrief.
 
 ``BacktestReportStore`` provides persistent storage for backtest reports,
-replacing the in-memory dictionary that was used before Phase 7 Round 2.
+replacing the in-memory dictionary that was used before.
 """
 
 from __future__ import annotations

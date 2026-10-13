@@ -1,4 +1,4 @@
-"""M06-W01: OANDA order serialization contract fixtures (AC-M06-W01-02/03).
+"""OANDA order serialization contract fixtures.
 
 Market, Limit, Stop, Market-if-Touched, dependent orders, FOK, IOC, GTC,
 GTD, and supported trigger combinations serialize to exact contract
@@ -43,7 +43,7 @@ def _buy(units: str = "1000") -> Decimal:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W01-02: serialization fixtures
+# Serialization fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -164,7 +164,7 @@ def test_dependent_orders_fixture() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M06-W01-03: DAY and unsupported combinations fail validation
+# DAY and unsupported combinations fail validation
 # ---------------------------------------------------------------------------
 
 

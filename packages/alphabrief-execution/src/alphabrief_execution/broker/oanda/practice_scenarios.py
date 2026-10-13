@@ -1,4 +1,4 @@
-"""Controlled minimal-risk OANDA practice scenarios (M06-W07).
+"""Controlled minimal-risk OANDA practice scenarios.
 
 Runs one fixed minimum-risk scenario through the formal product path:
 OrderIntent -> RiskGate -> persisted RiskDecision -> idempotent OANDA

@@ -1,15 +1,15 @@
-"""M07-W02: atomic OANDA transaction cursor advancement.
+"""Atomic OANDA transaction cursor advancement.
 
 Covers:
 - cursor advancement and all transaction facts and projection changes
   commit in one transaction; injected crashes leave either the old
-  complete state or the new complete state (AC-M07-W02-01);
+  complete state or the new complete state;
 - duplicate and overlapping pages are idempotent while missing,
   nonmonotonic, corrupt, or account-mismatched IDs trigger bounded range
-  recovery and freeze unresolved gaps (AC-M07-W02-02);
+  recovery and freeze unresolved gaps;
 - restart resumes from the last committed OANDA transaction ID and never
   from wall-clock time or the newest partially seen response
-  (AC-M07-W02-03).
+.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ class _CrashConnection:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W02-01: one-transaction atomicity
+# One-transaction atomicity
 # ---------------------------------------------------------------------------
 
 
@@ -105,7 +105,7 @@ def test_injected_crash_leaves_old_complete_state(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W02-02: idempotent duplicates, bounded recovery, frozen gaps
+# Idempotent duplicates, bounded recovery, frozen gaps
 # ---------------------------------------------------------------------------
 
 
@@ -260,7 +260,7 @@ def test_frozen_cursor_blocks_every_advance(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M07-W02-03: restart resumes from the last committed broker ID
+# Restart resumes from the last committed broker ID
 # ---------------------------------------------------------------------------
 
 

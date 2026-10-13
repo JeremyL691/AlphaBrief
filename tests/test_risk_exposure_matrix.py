@@ -1,4 +1,4 @@
-"""M08-W03: home-currency exposure property matrix (AC-M08-W03-01).
+"""Home-currency exposure property matrix.
 
 Property matrices cover long and short FX legs, Metal and CFD exposure,
 pending orders, hedged and netted positions, account-currency

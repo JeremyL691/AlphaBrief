@@ -1,6 +1,6 @@
-"""M11-W01: durable daily-cycle state machine.
+"""Durable daily-cycle state machine.
 
-Covers AC-M11-W01-01/02/03: a normal cycle durably visits preflight,
+Covers: a normal cycle durably visits preflight,
 ingest, snapshot, discuss, propose, risk, execute (or no-trade),
 reconcile, report, complete in legal order; every transition atomically
 records input hashes, output IDs, attempt counts, timestamps, and prior

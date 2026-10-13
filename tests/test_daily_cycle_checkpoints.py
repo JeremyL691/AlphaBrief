@@ -1,4 +1,4 @@
-"""M11-W01: durable cycle checkpoint persistence.
+"""Durable cycle checkpoint persistence.
 
 Covers the persisted compare-and-set checkpoint layer: transitions
 survive store restarts, the transition log and the state projection stay

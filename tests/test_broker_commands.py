@@ -1,10 +1,10 @@
 """Unit tests for the CLI broker commands and the shared OANDA runtime.
 
-M01-W04: the API lifespan, CLI broker commands, and the scheduler resolve
+The API lifespan, CLI broker commands, and the scheduler resolve
 one runtime factory and one persistent data directory authority
-(AC-M01-W04-01); entry points cannot expose conflicting in-memory account
-state (AC-M01-W04-02); shutdown closes clients and stores without
-discarding durable mappings (AC-M01-W04-03).
+entry points cannot expose conflicting in-memory account
+state; shutdown closes clients and stores without
+discarding durable mappings.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def test_open_store_uses_persistent_data_directory_authority(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-M01-W04-01: CLI broker commands use the persistent data dir."""
+    """CLI broker commands use the persistent data dir."""
     from alphabrief_cli.broker_commands import _open_store
     from alphabrief_execution.broker.runtime import resolve_data_dir
 
@@ -72,7 +72,7 @@ def test_reconcile_cmd_fails_closed_offline_without_credentials(
 
     Without OANDA practice credentials the shared durable service
     records an explicitly non-matching snapshot — never a vacuous
-    all-match placeholder (AC-M07-W06-03) — and the cycle scope freezes.
+    all-match placeholder — and the cycle scope freezes.
     """
     from alphabrief_cli.broker_commands import reconcile_cmd
     from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -120,7 +120,7 @@ def test_entry_points_resolve_one_shared_runtime_adapter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-M01-W04-02: API and scheduler expose the same in-memory adapter."""
+    """API and scheduler expose the same in-memory adapter."""
     from alphabrief_api import broker_adapter
     from alphabrief_cli.scheduler_commands import _build_adapter
     from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
@@ -147,7 +147,7 @@ def test_shutdown_flushes_durable_mappings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-M01-W04-03: close() persists mappings instead of discarding them."""
+    """Close() persists mappings instead of discarding them."""
     from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
     from alphabrief_execution.broker.recon_store import BrokerReconStore
     from alphabrief_execution.broker.runtime import BrokerRuntime
@@ -179,7 +179,7 @@ def test_runtime_is_process_scoped_singleton(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-M01-W04-01: one runtime factory per process with one data dir."""
+    """One runtime factory per process with one data dir."""
     from alphabrief_execution.broker.runtime import (
         get_broker_runtime,
         resolve_data_dir,

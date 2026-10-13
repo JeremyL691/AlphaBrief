@@ -745,7 +745,7 @@ class TestSchedulerRunsAiTask:
         monkeypatch: pytest.MonkeyPatch,
         condition: str,
     ) -> None:
-        # Round 0063: default paper broker is OANDA, so set OANDA credentials
+        #: default paper broker is OANDA, so set OANDA credentials
         # to match the default policy. Insert a EUR_USD bar instead of SPY
         # because SPY is no longer in the default allowlist.
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")

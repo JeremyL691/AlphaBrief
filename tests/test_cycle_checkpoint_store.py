@@ -1,10 +1,10 @@
-"""M03-W03: atomic cycle checkpoints and compare-and-set (AC-01, AC-03).
+"""Atomic cycle checkpoints and compare-and-set.
 
 Covers:
 - every cycle transition and its referenced outputs commit together or
-  not at all under failure injection (AC-M03-W03-01);
+  not at all under failure injection;
 - compare-and-set rejects stale writers and illegal phase transitions
-  (AC-M03-W03-03).
+.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def _cycle(cycle_id: str = "cycle-1") -> DailyCycleRecord:
 
 
 # ---------------------------------------------------------------------------
-# AC-M03-W03-01: atomic cycle persistence under failure injection
+# Atomic cycle persistence under failure injection
 # ---------------------------------------------------------------------------
 
 
@@ -130,7 +130,7 @@ def test_failed_cycle_save_rolls_back_atomically(
 
 
 # ---------------------------------------------------------------------------
-# AC-M03-W03-03: compare-and-set checkpoint semantics
+# Compare-and-set checkpoint semantics
 # ---------------------------------------------------------------------------
 
 

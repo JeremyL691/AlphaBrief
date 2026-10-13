@@ -1,6 +1,6 @@
-"""M11-W03: deterministic execution-readiness preflight gate.
+"""Deterministic execution-readiness preflight gate.
 
-Covers AC-M11-W03-02/03: missing credentials, stale account truth,
+Covers: missing credentials, stale account truth,
 failed reconciliation, stale data, failed backup, unhealthy model, or an
 active kill switch produce a blocked verdict with stable reasons before
 any broker invocation; research-only, execution-disabled, blocked, and

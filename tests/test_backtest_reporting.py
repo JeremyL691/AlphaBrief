@@ -1,6 +1,6 @@
-"""M12-W05: research-grade metrics and attribution reports.
+"""Research-grade metrics and attribution reports.
 
-Covers AC-M12-W05-01/02/03: every report carries the full REQ-STRAT-005
+Covers: every report carries the full
 metric set; reports include instrument and category attribution, cost
 attribution, rejection attribution, benchmark delta, and IS/OOS labels;
 degenerate fixtures (zero-return, no-trade, all-loss, sparse,

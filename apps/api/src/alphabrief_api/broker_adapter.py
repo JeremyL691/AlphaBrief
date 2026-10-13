@@ -1,16 +1,16 @@
 """API-side broker adapter singleton (read-only observability).
 
-Phase 20 wires ONE :class:`BrokerAdapter` into the API process so the
+Wires ONE :class:`BrokerAdapter` into the API process so the
 ``GET /api/v1/broker/positions`` and ``GET /api/v1/broker/account``
 routes can return live reads from an external paper account instead of
-the Phase 19 stubs. The singleton is **read-only**: the API never calls
+the stubs. The singleton is **read-only**: the API never calls
 ``submit`` / ``cancel`` / ``get_order`` / ``list_orders`` / ``list_fills``
 through it — order placement stays inside the operations scheduler and
 behind a :class:`RiskDecision`. Account-level exposure *enforcement*
 already lives in :class:`alphabrief_risk.RiskGate`; this module closes
 the *observability* gap, not the enforcement path.
 
-M01-W04: the API resolves the shared :mod:`alphabrief_execution.broker
+The API resolves the shared :mod:`alphabrief_execution.broker
 .runtime` authority — the same fail-closed OANDA practice factory and
 persistent data directory used by the CLI broker commands and the
 scheduler, so no entry point can expose conflicting in-memory account

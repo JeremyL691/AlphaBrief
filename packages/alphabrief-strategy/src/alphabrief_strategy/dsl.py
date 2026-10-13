@@ -1,4 +1,4 @@
-"""Safe compiled strategy condition DSL (M12-W01).
+"""Safe compiled strategy condition DSL.
 
 StrategySpec conditions are compiled through a bounded typed AST that
 cannot execute arbitrary Python, SQL, shell, template, import, or

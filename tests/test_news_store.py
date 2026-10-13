@@ -1,4 +1,4 @@
-"""M03-W02: content facts are append-only and UTC stamped.
+"""Content facts are append-only and UTC stamped.
 
 News headlines are immutable content facts: re-ingesting the same
 headline id is a no-op instead of an overwrite, and every stored row

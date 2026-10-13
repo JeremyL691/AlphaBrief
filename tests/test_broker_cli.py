@@ -63,7 +63,7 @@ def test_cli_help_lists_broker_subcommand() -> None:
     assert "status" in combined
     assert "freeze" in combined
     assert "unfreeze" in combined
-    # Phase 20 read-only live-read commands are locked into the CLI surface.
+    # Read-only live-read commands are locked into the CLI surface.
     assert "positions" in combined
     assert "account" in combined
 
@@ -100,7 +100,7 @@ def test_cli_broker_reconcile_fails_closed_without_credentials(
 ) -> None:
     # Without OANDA practice credentials the shared durable service
     # records an explicitly non-matching snapshot — never a vacuous
-    # all-match placeholder (AC-M07-W06-03).
+    # All-match placeholder.
     result = _run_cli(["broker", "reconcile", "--scope", "eod"], env=isolated_data_dir)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)

@@ -64,11 +64,11 @@ class DebateStore:
 
         Parameters
         ----------
-        question : dict | str
+        question: dict | str
             The debate question / prompt payload (serialised to JSON).
-        responses : list[dict] | str
+        responses: list[dict] | str
             Agent responses (serialised to JSON).
-        consensus : dict | str
+        consensus: dict | str
             The consensus output (serialised to JSON).
         """
         record_id = f"deb_{uuid4().hex[:12]}"

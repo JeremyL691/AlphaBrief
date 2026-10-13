@@ -1,4 +1,4 @@
-"""Multi-instrument portfolio accounting in account home currency (M12-W03).
+"""Multi-instrument portfolio accounting in account home currency.
 
 A :class:`PortfolioSimulator` applies accepted fills and financing
 charges deterministically and marks positions to market, producing

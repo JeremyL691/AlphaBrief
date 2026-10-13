@@ -1,4 +1,4 @@
-"""M03-W03: rebuildable projections (AC-M03-W02-02).
+"""Rebuildable projections.
 
 Current cycle projections rebuild from the append-only fact tables and
 equal the stored projection byte-for-byte after normalization; later
@@ -74,7 +74,7 @@ def _cycle(cycle_id: str) -> DailyCycleRecord:
 def test_rebuilt_projection_matches_stored_byte_for_byte(
     tmp_path: Path,
 ) -> None:
-    """AC-M03-W03-02: rebuild equals the stored projection after normalization."""
+    """Rebuild equals the stored projection after normalization."""
     store = AiTradingStore(db_path=tmp_path / "ai.db")
     try:
         store.save_cycle(_cycle("cycle-a"))

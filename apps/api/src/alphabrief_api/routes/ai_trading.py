@@ -351,7 +351,7 @@ def _api_cycle_key(symbols: list[str]) -> str:
     """Deterministic API cycle key: one terminal result per day+universe.
 
     Repeating the same day and symbols returns the existing terminal
-    cycle record instead of running the committee again (REQ-AI-009);
+    cycle record instead of running the committee again;
     a different snapshot fingerprint still produces a new run.
     """
     return f"api:{datetime.now(UTC).date().isoformat()}:{','.join(sorted(symbols))}"

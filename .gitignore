@@ -23,20 +23,6 @@ apps/api/data/
 *.log
 _reference_sources/
 
-# Local agent / dev-tool state (not part of the project)
-.hermes/
-.omo/
-.claude/
-.codegraph/
-.codebase-memory/
-.mimosa/
-.mimocode/
-.pi/
-
-# Autonomous loop checkpoints and command artifacts stay local.
-.agent-state/
-.agent-artifacts/
-
 # Editor and IDE artifacts
 .idea/
 .vscode/
@@ -48,8 +34,6 @@ _reference_sources/
 *.orig
 *.rej
 
-# omp (oh-my-pi) runtime state - not source
-.omo/
 # S8 packaging artifacts (built by scripts/build_release.sh)
 electron/backend-dist/
 electron/dist/

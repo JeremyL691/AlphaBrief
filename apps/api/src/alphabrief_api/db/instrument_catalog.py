@@ -1,4 +1,4 @@
-"""Versioned instrument catalog snapshots and diffs (M04-W03).
+"""Versioned instrument catalog snapshots and diffs.
 
 ``InstrumentCatalogStore`` persists account-scoped immutable catalog
 versions atomically: a snapshot row, its instrument rows, the content
@@ -220,7 +220,7 @@ class InstrumentCatalogStore:
         """Return True when the rebuilt projection equals the latest rows.
 
         Both the projection rebuild and the latest snapshot content are
-        normalized to their canonical content hash (AC-M03-W03-02 style
+        normalized to their canonical content hash (style
         byte-for-byte equality after normalization).
         """
         projection = self.current_projection()

@@ -1,14 +1,14 @@
-"""M05-W04: category-aware session and holiday verdicts.
+"""Category-aware session and holiday verdicts.
 
 Covers:
 - Currency, Metal, each supported CFD category, unknown category,
   overnight boundaries, DST transitions, weekends, and configured
-  holidays have deterministic session verdict fixtures (AC-M05-W04-01);
+  holidays have deterministic session verdict fixtures;
 - broker tradeable false, inactive catalog state, closed session, stale
   session evidence, and unknown required calendar state all fail closed
-  for new exposure (AC-M05-W04-02);
+  for new exposure;
 - no execution-relevant path relies only on one global Monday-through-
-  Friday start and end window (AC-M05-W04-03).
+  Friday start and end window.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ FRIDAY_LATE = datetime(2026, 8, 7, 22, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W04-01: deterministic fixtures
+# Deterministic fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -88,7 +88,7 @@ def test_dst_transitions_are_deterministic() -> None:
 
 
 def test_category_windows_are_not_one_global_window() -> None:
-    """AC-M05-W04-03: the session table has distinct per-category windows."""
+    """The session table has distinct per-category windows."""
     assert len(CATEGORY_SESSIONS) >= 8
     windows = set(CATEGORY_SESSIONS.values())
     # Currency (overnight FX) differs from the equity-hours CFD window and
@@ -97,7 +97,7 @@ def test_category_windows_are_not_one_global_window() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-M05-W04-02: fail-closed readiness for new exposure
+# Fail-closed readiness for new exposure
 # ---------------------------------------------------------------------------
 
 

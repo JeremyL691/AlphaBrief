@@ -1,4 +1,4 @@
-"""M04-W03: instrument catalog schema migrations.
+"""Instrument catalog schema migrations.
 
 The catalog tables are created by migration v3; re-running migrations is
 idempotent and the tables survive a clear/reapply cycle.

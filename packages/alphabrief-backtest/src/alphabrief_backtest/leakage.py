@@ -1,10 +1,10 @@
-"""Automated data-leakage and lookahead gates (M12-W06).
+"""Automated data-leakage and lookahead gates.
 
 Each gate is a pure function over declared inputs and returns a
 deterministic :class:`LeakageVerdict`. A gate never silently passes:
 seeded lookahead, revised future data, target leakage, train/test
 overlap, and timestamp-boundary violations each fail with an explicit
-reason (REQ-STRAT-006).
+reason.
 """
 
 from __future__ import annotations

@@ -46,14 +46,14 @@ _default_limits = RiskLimitConfig(
     symbol_allowlist=frozenset(_execution_policy.symbols),
     max_order_value=_execution_policy.max_order_notional,
     max_order_quantity=None,
-    # Phase 19: pull the runtime account-exposure cap straight from the
+    # Pull the runtime account-exposure cap straight from the
     # reviewed PaperExecutionPolicy. This is the single point that turns
     # the static $300 boundary into a live RiskGate check.
     max_total_exposure=_execution_policy.max_total_exposure,
     # The data-quality requirement is the gate's default policy; only the
     # human-review boundary is overridden here.
     require_human_review=_execution_policy.require_human_review,
-    # R21.2: account-level stateless rules. Per-symbol exposure cap is
+    # Account-level stateless rules. Per-symbol exposure cap is
     # set above the per-order notional so a single symbol cannot
     # accumulate beyond it; concentration is a no-op while the allowlist
     # is single-symbol (paper MVP); leverage is 1.0 (long-only, no
@@ -72,7 +72,7 @@ _default_limits = RiskLimitConfig(
     session_policy=_execution_policy,
     duplicate_order_window_seconds=30,
     duplicate_order_max_count=1,
-    # R21.3: stateful account rules. Paper defaults are 5% daily loss
+    # Stateful account rules. Paper defaults are 5% daily loss
     # and 10% drawdown. The paper route injects ``equity_high_water_mark``
     # and ``day_start_equity`` from the persistent equity-snapshot store
     # so these caps remain tighten-only across restarts.
@@ -124,7 +124,7 @@ class RiskConfigResponse(BaseModel):
     max_total_exposure: str | None
     require_data_quality_passed: bool
     require_human_review: bool
-    # R21.2 account-level rules (all tighten-only / fail-closed).
+    # Account-level rules (all tighten-only / fail-closed).
     max_symbol_exposure: str | None
     max_concentration_pct: str | None
     max_leverage: str | None
@@ -133,7 +133,7 @@ class RiskConfigResponse(BaseModel):
     require_market_open: bool
     duplicate_order_window_seconds: int | None
     duplicate_order_max_count: int
-    # R21.3 stateful account rules.
+    # Stateful account rules.
     max_daily_loss_pct: str | None
     max_drawdown_floor_pct: str | None
 
@@ -183,7 +183,7 @@ class RiskCheckRequest(BaseModel):
     strategy_id: str | None = None
     data_quality_passed: bool = True
     risk_context: RiskContextDecision | None = None
-    # Phase 19: live account state for the runtime total-exposure check.
+    # Live account state for the runtime total-exposure check.
     # When ``max_total_exposure`` is configured and this is omitted, the
     # gate fails closed (``account_context_required``). Supply it to
     # enforce the cap against the caller's projected exposure.

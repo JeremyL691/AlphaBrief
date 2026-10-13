@@ -239,7 +239,7 @@ def get_data_status() -> DataStatus:
 
 
 # ---------------------------------------------------------------------------
-# New Phase 6 Round 2 endpoints
+# New endpoints
 # ---------------------------------------------------------------------------
 
 
@@ -248,7 +248,7 @@ def load_market_data(body: DataLoadRequest) -> DataLoadResponse:
     """Load OHLCV market data from a local CSV or Parquet file.
 
     The loaded bars are persisted in DuckDB as immutable versioned facts
-    (M03-W02): re-loading identical facts is a no-op, different versions
+re-loading identical facts is a no-op, different versions
     coexist, and ``bar_count`` reports the total decision-view bars
     available for the symbol after the load.
     """
@@ -331,7 +331,7 @@ def get_instrument_catalog(
     Backed only by the persisted account catalog with explicit freshness
     state: missing, stale, or account-mismatched catalogs return
     explicit unavailable states; a hard-coded allowlist is never
-    substituted and no broker write is triggered (M04-W05).
+    substituted and no broker write is triggered.
     """
     store = _get_catalog_store()
     return store.query(
@@ -416,7 +416,7 @@ def get_symbol_info(symbol: str) -> SymbolInfo:
 
 
 # ---------------------------------------------------------------------------
-# Phase 9: provider-driven fetch endpoint
+# Provider-driven fetch endpoint
 # ---------------------------------------------------------------------------
 
 

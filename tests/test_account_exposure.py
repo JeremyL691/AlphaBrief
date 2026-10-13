@@ -1,4 +1,4 @@
-"""Tests for AccountExposureContext (Phase 19 R19.1)."""
+"""Tests for AccountExposureContext."""
 
 from datetime import UTC, datetime
 from decimal import Decimal

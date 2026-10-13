@@ -1,9 +1,9 @@
-"""Machine-readable CLI contracts (M13-W04).
+"""Machine-readable CLI contracts.
 
 Script-safe CLI conventions shared by every read and control command:
 stable compact JSON output, documented deterministic exit codes with
 structured stderr, and a local/API parity path that never acquires the
-writer lease (REQ-UI-001, REQ-UI-002, REQ-UI-010).
+writer lease.
 """
 
 from __future__ import annotations

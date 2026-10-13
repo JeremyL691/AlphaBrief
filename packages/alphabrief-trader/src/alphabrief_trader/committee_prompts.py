@@ -1,6 +1,6 @@
 """Prompt templates for the AI Trading Committee.
 
-Five roles drive one decision (M10-W03):
+Five roles drive one decision:
 
 * ``technical``       — 趋势、支撑/阻力、动量、成交量结构
 * ``macro_news``      — 外汇两侧宏观、央行与新闻催化剂

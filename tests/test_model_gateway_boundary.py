@@ -1,6 +1,6 @@
 """Static boundary gate: production model calls resolve ModelGateway only.
 
-Covers AC-M10-W01-01: production committee and trading paths resolve the
+Covers: production committee and trading paths resolve the
 same ``ModelGateway`` boundary and contain no direct provider SDK call.
 This is a source-scan test: it inspects the checked-in runtime modules,
 not runtime behavior.

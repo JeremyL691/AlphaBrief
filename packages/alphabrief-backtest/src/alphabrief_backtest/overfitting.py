@@ -1,10 +1,10 @@
-"""Parameter-stability and overfitting audit (M12-W06).
+"""Parameter-stability and overfitting audit.
 
 Deterministic audits over declared inputs: parameter perturbation
 spread, subperiod stability, walk-forward degradation, and
 multiple-testing warnings. Every audit emits explicit stability
 metrics and warnings; ``None`` values mark degenerate inputs, never
-misleading numbers (REQ-STRAT-006).
+misleading numbers.
 """
 
 from __future__ import annotations

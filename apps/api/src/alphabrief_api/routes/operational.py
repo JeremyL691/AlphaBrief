@@ -4,8 +4,8 @@ Every value is read from (or derived from) the persisted runtime
 stores — the paper portfolio and equity snapshots, the broker order
 ledger, and the instrument catalog. Nothing is computed in route-local
 state and no offline-success placeholder is produced: fields the
-runtime stores do not carry are explicit ``null`` (REQ-EXEC-010,
-REQ-UI-007).
+runtime stores do not carry are explicit ``null``.
+
 """
 
 from __future__ import annotations

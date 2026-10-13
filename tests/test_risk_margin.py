@@ -1,10 +1,10 @@
-"""M08-W04: margin available/used, closeout proximity, projected leverage.
+"""Margin available/used, closeout proximity, projected leverage.
 
 Covers:
 - boundary tests for margin available and used, margin closeout
-  proximity, projected leverage, and margin freshness (AC-M08-W04-01);
+  proximity, projected leverage, and margin freshness;
 - missing or stale margin evidence rejects new exposure and never
-  silently disables a configured rule (AC-M08-W04-03).
+  silently disables a configured rule.
 """
 
 from __future__ import annotations

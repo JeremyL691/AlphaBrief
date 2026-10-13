@@ -1,6 +1,6 @@
-"""M10-W05: committee run idempotency and durable no-trade resolution.
+"""Committee run idempotency and durable no-trade resolution.
 
-Covers AC-M10-W05-02/03: exhausted repair, budget exhaustion, and
+Covers: exhausted repair, budget exhaustion, and
 unresolved grounding produce one durable blocked or no-trade result with
 no OrderIntent; repeating the same cycle key and snapshot returns the
 existing terminal result without creating another proposal or intent.

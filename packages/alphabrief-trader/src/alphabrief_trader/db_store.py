@@ -200,7 +200,7 @@ class AiTradingStore:
         ``DailyCycleRecord`` JSON; child tables denormalize votes and
         attempts for fast queries. The cycle, its votes, and its attempts
         commit in one transaction: a failure rolls everything back, so a
-        partially recorded cycle can never exist (M03-W03, REQ-PLAT-005).
+        partially recorded cycle can never exist.
         """
         cycle_id = record.cycle_id
         self._conn.execute("BEGIN")
@@ -349,7 +349,7 @@ class AiTradingStore:
     def get_cycle_by_key(self, cycle_key: str) -> dict[str, Any] | None:
         """Return the newest terminal cycle for a deterministic cycle key.
 
-        Used by the daily cycle's idempotency guard (REQ-AI-009): the
+        Used by the daily cycle's idempotency guard: the
         same (cycle key, snapshot fingerprint) must never produce a
         second committee run, proposal, or OrderIntent.
         """
@@ -605,7 +605,7 @@ class AiTradingStore:
 
 
 #: Legal cycle phase order — checkpoints only advance monotonically and
-#: resume from the last persisted gate (REQ-CYCLE-002).
+#: Resume from the last persisted gate.
 CYCLE_PHASE_ORDER: tuple[str, ...] = (
     "ingest",
     "snapshot",
@@ -615,7 +615,7 @@ CYCLE_PHASE_ORDER: tuple[str, ...] = (
     "record",
 )
 
-#: Legal daily-cycle phase order for the M11-W01 durable state machine.
+#: Legal daily-cycle phase order for the durable state machine.
 #: ``execute`` records its outcome (``executed`` | ``no_trade`` |
 #: ``blocked``) so the "execute or no-trade" gate is one phase.
 CYCLE_STATE_PHASE_ORDER: tuple[str, ...] = (
@@ -633,7 +633,7 @@ CYCLE_STATE_PHASE_ORDER: tuple[str, ...] = (
 
 
 class CycleCheckpointStore:
-    """Compare-and-set cycle checkpoints over append-only facts (M03-W03).
+    """Compare-and-set cycle checkpoints over append-only facts.
 
     Each checkpoint row records the phase a cycle reached plus the
     output fact IDs produced up to that gate. Advances are compare-and-
@@ -757,7 +757,7 @@ class CycleCheckpointStore:
 
         Both sides are normalized with ``sort_keys`` and ``default=str``
         so the comparison is byte-for-byte after normalization
-        (AC-M03-W03-02).
+.
         """
         stored = AiTradingStore(db_path=self._db_path).get_cycle(cycle_id)
         rebuilt = self.rebuild_projection(cycle_id)
@@ -778,7 +778,7 @@ class CycleCheckpointStore:
 
 
 class CycleStateStore:
-    """Persisted compare-and-set daily-cycle state machine (M11-W01).
+    """Persisted compare-and-set daily-cycle state machine.
 
     The current state lives in ``cycle_state`` (one row per cycle) and
     every legal advance appends one immutable row to

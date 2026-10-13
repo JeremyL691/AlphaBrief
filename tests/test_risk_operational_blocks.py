@@ -1,4 +1,4 @@
-"""M08-W06: operational health blocks (AC-M08-W06-01).
+"""Operational health blocks.
 
 Kill switch, open freeze, stale broker, unresolved reconciliation diff,
 transaction gap, failed required backup, lost writer lease, and

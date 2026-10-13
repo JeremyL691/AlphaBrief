@@ -1,6 +1,6 @@
-"""M15-W02: durable alert lifecycle.
+"""Durable alert lifecycle.
 
-Covers AC-M15-W02-02/03: alerts persist severity, dedupe key, first
+Covers: alerts persist severity, dedupe key, first
 and last occurrence, count, acknowledgement, escalation, resolution,
 incident link, and scrubbed evidence across restart; webhook or
 external sink failure never deletes or resolves the local alert and

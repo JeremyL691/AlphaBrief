@@ -1,11 +1,11 @@
-"""Deterministic news deduplication (M09-W02).
+"""Deterministic news deduplication.
 
 Canonicalizes URLs (tracking parameters, fragments, scheme/host case,
 trailing slashes), collapses tracking-parameter variants, URL aliases,
 identical content hashes, and bounded title similarity into one
 canonical cluster — while keeping reports with materially different
 claims or viewpoints separate even when their titles and entities
-overlap (REQ-NEWS-002, AC-M09-W02-01/02).
+overlap.
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ def dedup_verdict(
 
     Title similarity alone never merges: reports with materially
     different claims or viewpoints stay separate even when titles and
-    entities overlap (AC-M09-W02-02).
+    entities overlap.
     """
     if canonicalize_url(candidate.url) == canonicalize_url(representative.url):
         return DedupVerdict(

@@ -353,7 +353,7 @@ def test_validation_train_test_overlap_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/strategies/enabled (Phase 15 R15.4 — advisory activation)
+# GET /api/v1/strategies/enabled (advisory activation)
 # ---------------------------------------------------------------------------
 
 

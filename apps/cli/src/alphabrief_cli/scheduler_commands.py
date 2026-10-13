@@ -336,7 +336,7 @@ def _oanda_is_configured() -> bool:
 def _build_adapter() -> BrokerAdapter:
     """Return the process-scoped OANDA practice runtime adapter.
 
-    M01-W04: the API lifespan, CLI broker commands, and the scheduler
+    The API lifespan, CLI broker commands, and the scheduler
     resolve the same runtime factory and persistent data directory
     authority, so in-memory idempotency state cannot diverge between
     entry points. Missing OANDA credentials fail closed to a not-ready
@@ -690,7 +690,7 @@ def _assert_external_policy_matches_broker(
 ) -> None:
     """Fail closed when external AI paper config is internally inconsistent.
 
-    M01-W01: the execution policy accepts only the OANDA practice provider,
+    The execution policy accepts only the OANDA practice provider,
     so an external policy always requires OANDA practice credentials.
     """
 

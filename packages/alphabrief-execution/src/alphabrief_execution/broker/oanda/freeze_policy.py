@@ -1,4 +1,4 @@
-"""Evidence-backed exposure freeze and unfreeze (M07-W05).
+"""Evidence-backed exposure freeze and unfreeze.
 
 Freezes new exposure on unexplained reconciliation or cursor failures
 with one deduplicated durable record before any new-exposure submit.

@@ -1,4 +1,4 @@
-"""Evidence-grounded research proposal builder and validator (M10-W04).
+"""Evidence-grounded research proposal builder and validator.
 
 The committee produces votes and a transcript; this module converts that
 output into a strict :class:`ResearchProposal` that separates thesis,
@@ -6,7 +6,7 @@ anti-thesis, confidence, horizon, entry rationale, invalidation,
 suggested exposure, evidence citations, dissent, data freshness,
 uncertainty, and an explicit ``no_trade`` outcome.
 
-Grounding rules (REQ-AI-005/006, REQ-PLAT-009):
+Grounding rules:
 
 - every citation resolves to an evidence ID that exists in the exact
   snapshot the committee used (``CommitteeInput.evidence_ids``);
