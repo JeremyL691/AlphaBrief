@@ -55,6 +55,7 @@ from alphabrief_models.model_budget import (
 from alphabrief_models.openai_adapter import OpenAIProviderAdapter
 from alphabrief_models.openai_compatible import (
     FallbackConfig,
+    ModelChannelUnavailableError,
     OpenAiCompatibleAdapter,
     load_fallback_config,
 )
@@ -78,6 +79,7 @@ __all__ = [
     "ChatGptPlanAdapter",
     "ChatGptPlanError",
     "FallbackConfig",
+    "ModelChannelUnavailableError",
     "ModelSettings",
     "OpenAiCompatibleAdapter",
     "build_channel_gateway",

@@ -1,4 +1,4 @@
-"""Model channel composition: subscription first, optional explicit fallback.
+"""Model channel composition: configured primary, optional explicit fallback.
 
 Rules from the product spec:
 
@@ -39,7 +39,9 @@ from alphabrief_models.model_budget import (
     CHATGPT_PLAN_CHANNEL,
     DEFAULT_CHATGPT_DAILY_CALLS,
     DEFAULT_FALLBACK_DAILY_USD,
+    DEFAULT_OPENROUTER_FREE_DAILY_CALLS,
     OPENAI_COMPATIBLE_CHANNEL,
+    OPENROUTER_FREE_CHANNEL,
     ModelBudgetGuard,
     ModelBudgetPolicy,
 )
@@ -47,6 +49,7 @@ from alphabrief_models.openai_compatible import (
     FallbackConfig,
     OpenAiCompatibleAdapter,
     load_fallback_config,
+    load_openrouter_free_config,
 )
 
 CONFIG_PATH = Path("config/alphabrief.yaml")
@@ -56,6 +59,7 @@ CONFIG_PATH = Path("config/alphabrief.yaml")
 class ModelSettings:
     """Resolved ``model:`` configuration section."""
 
+    primary_channel: str = CHATGPT_PLAN_CHANNEL
     fallback_enabled: bool = False
     primary_model: str | None = None
     #: PROJECT_GUIDE 5.13 daily limits, configurable per installation.
@@ -65,8 +69,42 @@ class ModelSettings:
     output_cost_per_million: Decimal | None = None
     max_output_tokens: int = 2048
 
+    def __post_init__(self) -> None:
+        if self.primary_channel not in {CHATGPT_PLAN_CHANNEL, OPENROUTER_FREE_CHANNEL}:
+            raise ValueError(
+                "model.primary_channel must be chatgpt_plan or openrouter_free"
+            )
+        free = self.primary_channel == OPENROUTER_FREE_CHANNEL
+        if (
+            isinstance(self.daily_call_limit, bool)
+            or not isinstance(self.daily_call_limit, int)
+            or self.daily_call_limit <= 0
+        ):
+            raise ValueError("model.daily_call_limit must be positive")
+        if free:
+            if self.fallback_enabled:
+                raise ValueError("openrouter_free prohibits any fallback")
+            if not self.primary_model or not self.primary_model.endswith(":free"):
+                raise ValueError("openrouter_free requires an exact :free model ID")
+            if self.daily_call_limit > DEFAULT_OPENROUTER_FREE_DAILY_CALLS:
+                raise ValueError("openrouter_free daily call limit cannot exceed 45")
+        if (
+            not isinstance(self.daily_cost_limit_usd, Decimal)
+            or not self.daily_cost_limit_usd.is_finite()
+            or self.daily_cost_limit_usd < 0
+            or (not free and self.daily_cost_limit_usd == 0)
+        ):
+            raise ValueError(
+                "model.daily_cost_limit_usd must be positive unless free-only"
+            )
+
     def budget_policy(self) -> ModelBudgetPolicy:
         """The per-channel daily budget policy this configuration implies."""
+        if self.primary_channel == OPENROUTER_FREE_CHANNEL:
+            return ModelBudgetPolicy(
+                daily_call_limits={OPENROUTER_FREE_CHANNEL: self.daily_call_limit},
+                daily_cost_limits={},
+            )
         return ModelBudgetPolicy(
             daily_call_limits={CHATGPT_PLAN_CHANNEL: self.daily_call_limit},
             daily_cost_limits={OPENAI_COMPATIBLE_CHANNEL: self.daily_cost_limit_usd},
@@ -100,13 +138,22 @@ def load_model_settings(path: Path | None = None) -> ModelSettings:
     section = document.get("model") or {}
     if not isinstance(section, dict):
         raise ValueError(f"{config_path}: model section must be a mapping")
+    primary_channel = section.get("primary_channel", CHATGPT_PLAN_CHANNEL)
+    if primary_channel not in {CHATGPT_PLAN_CHANNEL, OPENROUTER_FREE_CHANNEL}:
+        raise ValueError(
+            "model.primary_channel must be chatgpt_plan or openrouter_free"
+        )
+    free = primary_channel == OPENROUTER_FREE_CHANNEL
     fallback = section.get("fallback_enabled", False)
     if not isinstance(fallback, bool):
         raise ValueError(f"{config_path}: model.fallback_enabled must be true or false")
     primary_model = section.get("primary_model")
     if primary_model is not None and not isinstance(primary_model, str):
         raise ValueError(f"{config_path}: model.primary_model must be a string")
-    daily_call_limit = section.get("daily_call_limit", DEFAULT_CHATGPT_DAILY_CALLS)
+    daily_call_limit = section.get(
+        "daily_call_limit",
+        DEFAULT_OPENROUTER_FREE_DAILY_CALLS if free else DEFAULT_CHATGPT_DAILY_CALLS,
+    )
     if isinstance(daily_call_limit, bool) or not isinstance(daily_call_limit, int):
         raise ValueError(f"{config_path}: model.daily_call_limit must be an integer")
     if daily_call_limit <= 0:
@@ -120,7 +167,11 @@ def load_model_settings(path: Path | None = None) -> ModelSettings:
         raise ValueError(
             f"{config_path}: model.daily_cost_limit_usd must be a decimal"
         ) from exc
-    if not daily_cost_limit.is_finite() or daily_cost_limit <= 0:
+    if (
+        not daily_cost_limit.is_finite()
+        or daily_cost_limit < 0
+        or (not free and daily_cost_limit == 0)
+    ):
         raise ValueError(f"{config_path}: model.daily_cost_limit_usd must be positive")
     prices: dict[str, Decimal | None] = {}
     for key in ("input_cost_per_million", "output_cost_per_million"):
@@ -147,6 +198,7 @@ def load_model_settings(path: Path | None = None) -> ModelSettings:
     ):
         raise ValueError("model.max_output_tokens must be a positive integer")
     return ModelSettings(
+        primary_channel=primary_channel,
         fallback_enabled=fallback,
         primary_model=primary_model,
         daily_call_limit=daily_call_limit,
@@ -272,29 +324,42 @@ def build_channel_gateway(
     current = clock or (lambda: datetime.now(UTC))
     state = ChannelState()
 
-    stored = credentials
-    if stored is None:
-        stored = load_credentials()
-
-    def _refresh(credentials_to_refresh: ChatGptCredentials) -> ChatGptCredentials:
-        return refresh_credentials(
-            credentials_to_refresh, http_send=http_send, clock=current
-        )
-
-    primary: ProviderAdapter = ChatGptPlanAdapter(
-        credentials=stored,
-        model_name=primary_model or resolved.primary_model,
-        http_send=http_send,
-        clock=current,
-        refresh_handler=_refresh,
+    fallback_configured = (
+        resolved.fallback_enabled if allow_fallback is None else allow_fallback
     )
-    providers: Sequence[ProviderAdapter] = [
-        _RecordingAdapter(primary, state=state, clock=current)
-    ]
+    primary: ProviderAdapter
+    if resolved.primary_channel == OPENROUTER_FREE_CHANNEL:
+        if fallback_configured:
+            raise ValueError("openrouter_free prohibits any fallback")
+        if primary_model is not None and primary_model != resolved.primary_model:
+            raise ValueError("openrouter_free model overrides are prohibited")
+        assert resolved.primary_model is not None
+        config = load_openrouter_free_config(
+            resolved.primary_model,
+            environ=environ,
+            max_output_tokens=resolved.max_output_tokens,
+        )
+        primary = OpenAiCompatibleAdapter(
+            config, http_send=http_send, clock=current, free_only=True
+        )
+        providers: Sequence[ProviderAdapter] = [primary]
+    else:
+        stored = credentials if credentials is not None else load_credentials()
 
-    fallback_configured = allow_fallback
-    if fallback_configured is None:
-        fallback_configured = resolved.fallback_enabled
+        def _refresh(credentials_to_refresh: ChatGptCredentials) -> ChatGptCredentials:
+            return refresh_credentials(
+                credentials_to_refresh, http_send=http_send, clock=current
+            )
+
+        primary = ChatGptPlanAdapter(
+            credentials=stored,
+            model_name=primary_model or resolved.primary_model,
+            http_send=http_send,
+            clock=current,
+            refresh_handler=_refresh,
+        )
+        providers = [_RecordingAdapter(primary, state=state, clock=current)]
+
     fallback_channel: str | None = None
     if fallback_configured:
         fallback: FallbackConfig | None = load_fallback_config(environ)

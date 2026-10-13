@@ -5,21 +5,21 @@
 schema_version: 1
 
 model:
-  # The main channel is always the ChatGPT subscription sign-in. The
-  # fallback channel is used only when this is explicitly true, so a
-  # billing channel can never switch silently.
+  # Free availability and pricing are rechecked per call, not guaranteed.
+  primary_channel: openrouter_free
   fallback_enabled: false
-  # Globally locked to GPT 6 Luna per operator directive.
-  primary_model: "gpt-6-luna"
-  # Daily budget (PROJECT_GUIDE 5.13). The subscription channel is capped
-  # by call count, the optional paid fallback by estimated USD cost.
-  daily_call_limit: 150
-  daily_cost_limit_usd: "2.00"
+  # Verified live 2026-10-13: exact model ID echoed, zero catalog pricing,
+  # no upstream shared-pool rate limit. Reasoning models emit reasoning
+  # before content, so the output budget must cover both.
+  primary_model: "nvidia/nemotron-3-super-120b-a12b:free"
+  # Lowest free tier currently allows 50/day; leave five calls of headroom.
+  daily_call_limit: 45
+  daily_cost_limit_usd: "0"
   # Paid channel admission requires both configured prices. Unknown prices
   # fail closed, even when fallback is enabled. Values are USD per million.
   input_cost_per_million: null
   output_cost_per_million: null
-  max_output_tokens: 2048
+  max_output_tokens: 4096
 
 trading:
   # off | on. `off` runs the whole cycle but stops before submitting.

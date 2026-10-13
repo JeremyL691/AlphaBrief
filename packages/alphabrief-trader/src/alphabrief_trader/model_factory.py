@@ -26,6 +26,7 @@ from alphabrief_models import (
     ModelCallBudget,
     ModelCallRecord,
     ModelCapability,
+    ModelChannelUnavailableError,
     ModelGateway,
     ModelSettings,
     ProviderAdapter,
@@ -82,7 +83,15 @@ def build_ai_trading_channels(
             primary_channel="fake",
             fallback_channel=None,
         )
-    channels = build_channel_gateway(record_sink=record_sink, daily_budget=daily_budget)
+    try:
+        channels = build_channel_gateway(
+            record_sink=record_sink, daily_budget=daily_budget
+        )
+    except ModelChannelUnavailableError as exc:
+        # A configured channel with no usable credentials must fail closed
+        # as an unavailable provider, so the cycle records a durable
+        # no-trade result instead of an unhandled configuration error.
+        raise ModelProviderUnavailableError(str(exc)) from exc
     if budget is not None:
         channels.gateway.set_budget(budget)
     return channels

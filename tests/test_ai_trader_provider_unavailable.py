@@ -18,6 +18,7 @@ import pytest
 from alphabrief_api.main import app
 from alphabrief_api.routes.ai_trading import _reset_ai_state
 from alphabrief_core import paths as _paths
+from alphabrief_models import ModelSettings
 from alphabrief_trader import (
     ModelProviderUnavailableError,
     build_ai_trading_committee,
@@ -43,6 +44,13 @@ def _isolate(
     monkeypatch.delenv("ALPHABRIEF_AI_TRADING_ENABLED", raising=False)
     for name in _PROVIDER_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+    # The shipped configuration selects the free OpenRouter primary. These
+    # tests cover the ChatGPT subscription channel's fail-closed behavior,
+    # so pin the code default instead of the repository configuration.
+    monkeypatch.setattr(
+        "alphabrief_models.channels.load_model_settings",
+        lambda path=None: ModelSettings(),
+    )
     _reset_ai_state()
     yield
     _reset_ai_state()
@@ -116,6 +124,42 @@ def test_api_ai_run_unavailable_record_is_durable(
     assert stored["plans"] == []
     assert stored["attempts"] == []
     assert stored["votes"] == []
+
+
+def test_free_primary_without_credential_records_a_no_trade_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured free primary with no key still records a durable cycle.
+
+    Composition fails closed, and the route must turn that into a no-trade
+    record rather than an unhandled configuration error: the trading-day
+    ledger stays honest and no order can exist.
+    """
+    from decimal import Decimal
+
+    monkeypatch.delenv("ALPHABRIEF_HOME", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "alphabrief_models.channels.load_model_settings",
+        lambda path=None: ModelSettings(
+            primary_channel="openrouter_free",
+            primary_model="nvidia/nemotron-3-super-120b-a12b:free",
+            daily_call_limit=45,
+            daily_cost_limit_usd=Decimal(0),
+        ),
+    )
+    monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+
+    resp = client.post(
+        "/api/v1/ai/run",
+        json={"symbols": ["SPY"], "reference_prices": {"SPY": "450"}},
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["plans"] == []
+    assert body["attempts"] == []
+    assert body["outcome"] != "executed"
 
 
 def test_api_ai_run_with_explicit_fake_is_explicit_composition(

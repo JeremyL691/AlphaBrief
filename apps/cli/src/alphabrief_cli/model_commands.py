@@ -29,7 +29,8 @@ from alphabrief_models.chatgpt_plan import (
     clear_credentials,
     load_credentials,
 )
-from alphabrief_models.model_budget import ModelBudgetGuard
+from alphabrief_models.model_budget import OPENROUTER_FREE_CHANNEL, ModelBudgetGuard
+from alphabrief_models.openai_compatible import load_openrouter_api_key
 from pydantic import BaseModel, ConfigDict
 
 model_app = typer.Typer(help="ChatGPT subscription channel and fallback channel.")
@@ -116,11 +117,18 @@ def status_cmd(
 ) -> None:
     """Show channel state; never prints tokens."""
     settings = load_model_settings()
-    credentials = load_credentials()
+    free = settings.primary_channel == OPENROUTER_FREE_CHANNEL
+    credentials = None if free else load_credentials()
     primary: dict[str, Any] = {
-        "channel": "chatgpt_plan",
-        "authorized": credentials is not None,
+        "channel": settings.primary_channel,
+        "authorized": (
+            bool(load_openrouter_api_key()) if free else credentials is not None
+        ),
     }
+    if free:
+        primary["default_model"] = settings.primary_model
+        primary["free_only"] = True
+        primary["pricing_verified"] = False
     if credentials is not None:
         now = datetime.now(UTC)
         primary.update(
@@ -175,14 +183,17 @@ def test_cmd(
         records.append(record)
         call_store.save_call(record)
 
+    settings = load_model_settings()
     channels = build_channel_gateway(
+        settings=settings,
         record_sink=_persist,
-        credentials=load_credentials(),
-        daily_budget=ModelBudgetGuard(
-            call_store, policy=load_model_settings().budget_policy()
-        ),
+        daily_budget=ModelBudgetGuard(call_store, policy=settings.budget_policy()),
     )
-    credentials = load_credentials()
+    credentials = (
+        None
+        if settings.primary_channel == OPENROUTER_FREE_CHANNEL
+        else load_credentials()
+    )
     if credentials is not None and credentials.is_expired():
         try:
             refresh_credentials(credentials)
