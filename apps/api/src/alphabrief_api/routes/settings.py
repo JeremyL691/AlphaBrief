@@ -21,6 +21,8 @@ from alphabrief_core import redact
 from alphabrief_core.secrets import read_secret, write_secret
 from alphabrief_models.channels import load_model_settings
 from alphabrief_models.chatgpt_plan import load_credentials
+from alphabrief_models.model_budget import OPENROUTER_FREE_CHANNEL
+from alphabrief_models.openai_compatible import load_openrouter_api_key
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,8 +62,10 @@ def get_settings_overview() -> dict[str, Any]:
     # OANDA credentials
     oanda_token, oanda_account = _read_oanda_stored_creds()
 
-    # ChatGPT subscription status
-    chatgpt_creds = load_credentials()
+    model_settings = load_model_settings()
+    free = model_settings.primary_channel == OPENROUTER_FREE_CHANNEL
+    # Inactive ChatGPT credentials are neither required nor read by free primary.
+    chatgpt_creds = None if free else load_credentials()
     chatgpt_status: dict[str, Any] = {
         "configured": chatgpt_creds is not None,
         "default_model": chatgpt_creds.default_model if chatgpt_creds else None,
@@ -73,9 +77,6 @@ def get_settings_overview() -> dict[str, Any]:
             chatgpt_creds.expires_at.isoformat() if chatgpt_creds else None
         ),
     }
-
-    # Model settings & daily budget
-    model_settings = load_model_settings()
 
     # LaunchAgent service status
     try:
@@ -112,6 +113,12 @@ def get_settings_overview() -> dict[str, Any]:
             ),
         },
         "model_channel": {
+            "primary_channel": model_settings.primary_channel,
+            "primary_model": model_settings.primary_model,
+            "primary_configured": (
+                bool(load_openrouter_api_key()) if free else chatgpt_creds is not None
+            ),
+            "free_only": free,
             "chatgpt": chatgpt_status,
             "fallback_enabled": model_settings.fallback_enabled,
             "budget": {

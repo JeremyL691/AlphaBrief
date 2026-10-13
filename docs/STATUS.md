@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S11 发布** |
-| 状态 | `READY` |
-| 下一项任务 | 全量质量门禁与安全扫描验证，完成提交与推送 |
-| 最近更新 | 2026-10-09 UTC，上一大轮研发任务完整收尾落地，修复备份扫描误报，清理 open freeze 状态，doctor 0 FAIL，全仓 3532 个测试全绿，仓库处于就绪状态。 |
+| 当前阶段 | **S10 收尾前提复验（S11 发布未就绪）** |
+| 状态 | `IN_PROGRESS` |
+| 下一项任务 | 修复 scheduler 冻结自动解除与重复冻结缺口，解冻后跑通一次完整真实 practice 交易验收（免费主通道已实现、实测并过本地门禁，等待独立审查） |
+| 最近更新 | 2026-10-13 UTC：免费主通道迁移完成实现与真实隔离实测（固定模型改用 `nvidia/nemotron-3-super-120b-a12b:free`），本地质量门禁 `ruff`/`mypy`/非 practice 全量测试已通过；独立审查通道因订阅额度用尽未启动，真实交易仍未验证。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -698,6 +698,17 @@
   - 日报生成与运行态代理：为 `alphabrief report daily` 接入快照只读降级，使其在后台独占写锁时仍可安全直接输出当日报告；为 `alphabrief broker freeze/unfreeze` 接入运行态 API 代理；修复 3 处运行态单测隔离。
   - 验证：成功生成 `reports/daily/2026-10-04.md`（包含 200 次干净对账、零异常订单）；全量 189 个 CLI/Report/Broker 测试全部通过；Ruff 与 Mypy 全绿；`alphabrief doctor run` 保持 0 FAIL。
 
+#### S10 免费主通道迁移证据（2026-10-13 UTC 实测，本提交）
+
+- 实现：`ModelSettings.primary_channel`（代码默认 `chatgpt_plan`，可选 `openrouter_free`）。免费主通道禁止任何 fallback、要求精确 `:free` 模型 ID、允许 `daily_cost_limit_usd=0`；工厂级覆盖与配置级覆盖均被拒绝。
+- 零价强制：每次补全前 GET `https://openrouter.ai/api/v1/models`，要求目录中精确匹配唯一模型条目且所有 pricing 维度为有限 Decimal 0；POST 携带 `provider.max_price={prompt:0,completion:0,request:0,image:0}` 与 `allow_fallbacks=false`；禁用重定向；POST 不重试；响应 `model` 必须与配置精确一致，否则记为失败并保留 `provider_payload` 审计。
+- 持久预算：`ModelBudgetGuard.call_limit` 对 `openrouter_free` 强制上限 45（与传入策略无关）；无持久预算时网关直接拒绝，不发出站请求。
+- 真实隔离实测（`ALPHABRIEF_HOME` 为临时目录，不接触运行中后台数据库，不触碰交易执行链路）：`nvidia/nemotron-3-super-120b-a12b:free` 两次真实调用（technical / manager 角色提示）均成功、`response.model` 与配置完全一致、返回可解析 JSON、记录 `openrouter_free` 用量 2。
+- 同批实测中的反例：`google/gemma-4-31b-it:free`、`google/gemma-4-26b-a4b-it:free` 返回上游共享池 429，`thinkingmachines/inkling:free` 仅限 agentic harness；据此更换固定模型，未做静默降级。
+- 选择依据：实时目录 14 个 `:free` 条目价格全为零；所选模型 262144 上下文且列出 response_format/structured_outputs；因推理模型先输出 reasoning，`max_output_tokens` 由 2048 提到 4096，避免内容被截断为空（`nemotron-3.5-lightning:free` 在 512 预算下真实复现过空输出）。
+- 凭证现状：只读 `GET /api/v1/key` 返回 HTTP 200，`is_free_tier=false`，月度限额 USD 0.01（非用户所述严格零）；`free_model_daily_requests` 上限 1000。软件侧仍独立强制零价与 45/天上限，不依赖 key 限额。
+- 质量门禁：`.venv/bin/python -m ruff check .` All checks passed；`.venv/bin/python -m mypy` 507 files 无问题；`.venv/bin/python -m pytest tests/ -q -m "not practice"` 3576 passed / 1 failed（唯一失败为既有用户改动，见阻塞）。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -709,6 +720,8 @@
 
 ## 需要用户做的事
 
+- 2026-10-13 UTC：用户已提供 OpenRouter 测试凭证并授权使用，已通过现有 `write_secret` 原子写入本机 `secrets/openrouter.json`，权限 0600，过程不回显密钥。官方 `/api/v1/key` 只读返回 HTTP 200；实际月限额为 USD 0.01、已用 0，并不是用户所述的严格零；免费日请求额度为 1000、已用 3。软件仍独立强制零价模型和零价 provider，不能依赖 key 限额。建议撤销聊天中暴露的旧 key，再通过本机 `secrets/` 配置新 key。
+
 - 2026-10-03 UTC 交接：当前开发按用户要求停止；用户在另一位 Agent 中提交 docs/AGENT_PROMPT.md 的提示词正文即可开始接手。当前没有新增登录/凭证请求；下方“现在需要，只此一次”属于已被 S2 完成证据满足的历史要求，接任者不得据此重复索取授权。
 
 - 2026-10-01 接管补充：下方历史登录要求已由 S2 完成证据满足，目前不要求重复授权；只有当前凭证被真实判定失效时才重新请求。用户本次授权已恢复开发。
@@ -719,6 +732,11 @@
 - （可选）申请免费的 `FRED_API_KEY` 以启用宏观日历；没有也能运行（会用新闻冲击过滤代替）。
 
 ## 决策记录
+
+- 2026-10-13 UTC / 免费主通道固定模型更换 / 固定模型由 `google/gemma-4-31b-it:free` 改为 `nvidia/nemotron-3-super-120b-a12b:free`，`max_output_tokens` 2048→4096 / 原模型真实调用持续返回上游共享池 429，无法承担 5 角色委员会；所选模型真实调用全部成功且模型 ID 精确回显。零价复核、无付费 fallback 与 45 次/天上限不变。目录免费状态不是长期承诺，每次调用前仍复核。
+- 2026-10-13 UTC / 用户替换 AI 委员会模型 / 新主通道选择固定 `google/gemma-4-31b-it:free`，废止此前仅允许 GPT 6 Luna 的产品模型限制；五角色协议和确定性风控不变 / 当前 OpenRouter `/api/v1/models` 实时目录列出 14 个 `:free` 零价模型，所选模型列出 262144 上下文及 response_format；目录免费状态不是长期免费承诺，请求前必须复核、收费或无法确认时停止，禁止付费 fallback。
+- 2026-10-13 UTC / 一天分段历史运行 / 只能记录为明确标注的历史回放场景，不写入自然日 soak 计数，不声称满足 14 天连续真实运行 / 用户不要求等待自然试运行，但 GUIDE 第 9 节时间与证据不变量仍有效；未满足原发布门禁前不得宣称 v1.0.0 已验收或创建正式 Release。
+- 2026-10-13 UTC / 收尾执行顺序 / 先免费主通道及零费用限制、测试和独立审查，再实际委员会与 OANDA practice 验证，最后处理回放与报告证据缺口 / 每次真实订单仍必须走完整意图、风控、持久决策和对账；不为凑次数解冻、放宽数据门禁或强制方向。
 
 - 2026-10-02 UTC：GUIDE未另定持仓监控周期，采用启动立即/每60秒检查，与对账/报价监控一致；未知时间保守退出，交易/持仓或流水不一致拒绝提交。已留证的提交错误/结果未知不在下一次定时检查重新发单，完整提交前恢复仍按S5验收。双边对冲账户当前单净仓退出路径拒绝并告警，不能把净零误报为已经全平。
 
@@ -765,5 +783,16 @@
 | 2026-10-03 UTC | S9 后台与 LaunchAgent 运行环境安全 | 引入 certifi 统一安全 HTTPS 传输，service install/run run 接入 --units 与 --trading-mode | 打包/LaunchAgent 环境无全局 SSL 证书配置，需随包携带根证书；S9 需固定 1000 units 预跑 |
 
 ## 阻塞
+
+- 2026-10-13 UTC 免费主通道迁移的独立审查未执行：原计划由子代理先实现再独立只读审查，负责实现的子代理因 ChatGPT 订阅共享额度用尽失败（`Run fan-out: 1/2 used`），审查通道从未启动（preflight 报告 `declared lane 'openrouter-review' was not launched`）。本次迁移目前只有主控自审与本地门禁证据，缺独立复核；在补齐独立审查前不得记为已完成验收。
+- 2026-10-13 UTC 迁移后真实交易仍未验证：免费主通道的隔离真实调用已通过，但尚未部署到运行中后台，也未经完整后台链路产生真实 practice 订单；25 个 scheduler 冻结仍未解除，quote_poll 仍停在旧错误。下一项任务为修复调度器自动解除与重复冻结缺口，再做一次完整真实 practice 交易验收。
+
+- 2026-10-13 22:09 UTC 收尾验收入口复核：`tests/test_submit_recovery.py::test_crash_hook_kills_process_and_restart_recovers` 实际只启动一次子进程并断言 SIGKILL，没有再次启动、核对券商订单或对账；practice 恢复测试仍只查历史/不存在订单。不能把这些测试名称当作新订单重启恢复证据。真实恢复验收需新增新订单、实际重启、唯一订单及清仓对账断言，未执行前保留缺项。
+- 2026-10-13 22:09 UTC 主控只读健康探测：`GET http://127.0.0.1:8000/health` healthy / rc.1；broker/status 仍为 25 个 open_freezes；心跳 reconcile/position_monitor/market_sync 为 ok，quote_poll 仍停在 10-10 error。`/api/v1/ai/run` 现有工厂使用旧简化 snapshot/risk/backend，并非默认后台完整交易工厂，且不提供显式 off/固定 units 控制；因此不选它作为迁移后的实际交易验收入口，也不为方便验证绕过完整路径。没有模型请求、服务操作或订单。
+- 2026-10-13 UTC 当前工作区原有 5 个未提交文件（`AGENTS.md`、`docs/PROJECT_GUIDE.md`、`packages/alphabrief-trader/src/alphabrief_trader/schemas.py`、`tests/test_project_scaffold.py`、`tests/test_secret_scan_tool.py`）不属于本轮 Agent 修改；保留、不开分支、不 stash、不合并提交，不覆盖其内容。提交与推送暂阻塞，独立文件的免费通道实现可继续。
+- 2026-10-13 UTC 实现前复现 `.venv/bin/pytest -q tests/test_project_scaffold.py`：exit 1，8 passed / 1 failed；既有用户改动把 `STATUS.md`、`AGENT_PROMPT.md` 排除出允许文档集合，现有权威文档被判多余。不能删除权威文档或改弱测试掩盖问题，本轮不触碰该既有改动；全量质量验收必须如实报告该失败。
+- 2026-10-13 UTC 前一轮只读实时审查：soak 为 3/14 合格日、5 次顺延且仍 active，25 个未解除冻结，离线 doctor 对账 FAIL；无正式 GitHub Release。soak 评估存在缺记录默认干净/低样本停机默认零/5000 条截断问题，最终报告存在硬编码 PASSED/NAV 及未知指标填零问题；这些尚未修复，旧完整验收声明不成立。
+- 2026-10-13 22:01 UTC 只读复核：后台 `/health` healthy / rc.1；OANDA 当前现金与 NAV 均为 99999.9200 USD，持仓和挂单为空。最新对账 clean，reconcile/position_monitor/market_sync 心跳恢复正常，但 25 个 scheduler 失败冻结未自动解除。`run_commands.py` 的 quote_poll 未设置 `run_when_frozen=True`，scheduler 在冻结时跳过它，解释了报价采样从 10-10 停留 error 的现象；不可用“最新对账成功”替代任务恢复证据。尚未解冻、未部署新代码、未执行新订单。
+- 2026-10-13 UTC 调度恢复调查：临时数据库确定性复现 `run_when_frozen=True` 任务连续失败 6 次、阈值 3 时创建 4 个冻结，确认 scheduler 每次超阈值都会新增冻结而非一次故障一个事件。当前 LiveReconciler 只创建冻结、没有 GUIDE 5.9 所述连续三次干净后的自动解除路径；quote_poll/shadow_score 又会在冻结时停跑。这项恢复缺口尚未改动，仍保留真实冻结。复现脚本前半段证据有效；后半段构造 Runtime 因并发实现中的新模块符号尚未写完而 ImportError，不能把它当成最终实现失败或运行中后台故障。
 
 - 2026-10-01：模型通道返回 `usage_limit_exceeded`（`alphabrief model test` → `ChatGptPlanError:usage_limit_exceeded`）。ChatGPT 计划的本窗口调用额度已用尽（本轮为取 S4-2/S4-3 真实证据跑了多次 5 角色委员会）。S4-4 的每日预算（5.13）已上线并实测：额度错误被分类为 `provider_unavailable:usage_limit_exceeded`，该通道当天被禁用，后续轮次记录 `NO_TRADE_MODEL_UNAVAILABLE` 而不再调用。额度按窗口自动恢复，不需要用户操作；恢复前所有需要委员会的验证（S4-2 余项真实复验、S4-4 影子评估的单次调用基准、S4-6 全 universe 退出标准）暂停，先做不依赖模型的工作（S4-5 新闻、S5 运行时）。额度长期不足时改用"需要用户做的事"里的备用付费通道。

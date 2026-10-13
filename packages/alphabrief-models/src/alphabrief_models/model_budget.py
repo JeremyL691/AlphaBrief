@@ -29,6 +29,8 @@ from typing import Literal, Protocol, cast
 #: Channel identifiers as recorded on model-call rows.
 CHATGPT_PLAN_CHANNEL = "chatgpt_plan"
 OPENAI_COMPATIBLE_CHANNEL = "openai_compatible"
+OPENROUTER_FREE_CHANNEL = "openrouter_free"
+DEFAULT_OPENROUTER_FREE_DAILY_CALLS = 45
 
 #: Reason codes the runtime records when a round cannot call a model.
 NO_TRADE_MODEL_BUDGET = "NO_TRADE_MODEL_BUDGET"
@@ -155,7 +157,7 @@ class ModelBudgetGuard:
             )
         since = now.replace(hour=0, minute=0, second=0, microsecond=0)
         usage = self._usage.daily_usage(since).get(channel, ChannelUsage())
-        call_limit = self._policy.call_limit(channel)
+        call_limit = self.call_limit(channel)
         if call_limit is not None and usage.calls >= call_limit:
             return BudgetVerdict(
                 allowed=False,
@@ -214,7 +216,7 @@ class ModelBudgetGuard:
                 channel=channel,
                 call_id=call_id,
                 observed_at=self._clock().astimezone(UTC),
-                call_limit=self._policy.call_limit(channel),
+                call_limit=self.call_limit(channel),
                 cost_limit=self._policy.cost_limit(channel),
                 estimated_cost=estimated_cost,
                 round_key=round_key,
@@ -228,6 +230,15 @@ class ModelBudgetGuard:
                 NO_TRADE_MODEL_BUDGET,
                 "durable model admission unavailable",
             )
+
+    def call_limit(self, channel: str) -> int | None:
+        limit = self._policy.call_limit(channel)
+        if channel == OPENROUTER_FREE_CHANNEL:
+            return min(
+                limit or DEFAULT_OPENROUTER_FREE_DAILY_CALLS,
+                DEFAULT_OPENROUTER_FREE_DAILY_CALLS,
+            )
+        return limit
 
     def cost_limited(self, channel: str) -> bool:
         return self._policy.cost_limit(channel) is not None

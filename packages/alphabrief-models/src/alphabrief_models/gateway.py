@@ -17,7 +17,11 @@ from uuid import uuid4
 from alphabrief_core.secrets import scrub_payload
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from alphabrief_models.model_budget import ModelBudgetGuard, ModelCallKind
+from alphabrief_models.model_budget import (
+    OPENROUTER_FREE_CHANNEL,
+    ModelBudgetGuard,
+    ModelCallKind,
+)
 
 ModelCapability = Literal[
     "text_generation",
@@ -152,6 +156,7 @@ class ModelResponse(AlphaBriefModelSchema):
     model: str = Field(min_length=1)
     output_text: str
     structured_output: dict[str, Any] | None = None
+    provider_payload: dict[str, Any] | None = None
     status: ModelResponseStatus = "succeeded"
     finish_reason: str = Field(min_length=1)
     input_tokens: int | None = Field(default=None, ge=0)
@@ -337,6 +342,12 @@ def _default_fallback_eligible(record: ModelCallRecord) -> bool:
 class ModelProviderError(Exception):
     """Raised when a provider adapter cannot complete a model call."""
 
+    def __init__(
+        self, detail: str, *, provider_payload: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(detail)
+        self.provider_payload = provider_payload
+
 
 class ProviderAdapter(Protocol):
     """Provider adapter contract used by ModelGateway."""
@@ -411,6 +422,10 @@ class ModelGateway:
         daily_budget: ModelBudgetGuard | None = None,
     ) -> None:
         self._providers = list(providers)
+        if any(p.provider_name == OPENROUTER_FREE_CHANNEL for p in providers) and (
+            fallback_enabled or len(providers) != 1
+        ):
+            raise ValueError("openrouter_free prohibits channel/model fallback")
         self._clock = clock or (lambda: datetime.now(UTC))
         self._call_id_factory = call_id_factory or (lambda: f"model_call_{uuid4().hex}")
         self._budget = budget
@@ -519,6 +534,24 @@ class ModelGateway:
         last_result: ModelGatewayResult | None = None
         for index, provider in enumerate(candidates):
             call_id = self._call_id_factory()
+            if (
+                provider.provider_name == OPENROUTER_FREE_CHANNEL
+                and self._daily_budget is None
+            ):
+                record = self._build_record(
+                    request=request,
+                    provider=provider.provider_name,
+                    model=provider.model_name,
+                    output_text="",
+                    latency_ms=0,
+                    status="rejected",
+                    classification="budget_exhausted",
+                    error_type="BudgetExhausted:durable free admission required",
+                    retry_count=retry_count,
+                    call_id=call_id,
+                )
+                self._emit(record)
+                return ModelGatewayResult(response=None, record=record)
             if self._daily_budget is not None:
                 estimate = getattr(provider, "budget_cost", None)
                 try:
@@ -566,6 +599,7 @@ class ModelGateway:
                     latency_ms=latency_ms,
                     status="failed",
                     error_type=_error_type_for(exc),
+                    provider_payload=getattr(exc, "provider_payload", None),
                     classification=classify_provider_error(exc, str(exc)),
                     retry_count=retry_count,
                     call_id=call_id,
@@ -653,6 +687,7 @@ class ModelGateway:
         cost_estimate: Decimal | None = None,
         call_id: str | None = None,
         response: ModelResponse | None = None,
+        provider_payload: dict[str, Any] | None = None,
     ) -> ModelCallRecord:
         return ModelCallRecord(
             call_id=call_id or self._call_id_factory(),
@@ -683,5 +718,12 @@ class ModelGateway:
                 else response.structured_output,
                 "response_status": None if response is None else response.status,
                 "finish_reason": None if response is None else response.finish_reason,
+                **(
+                    {"provider_payload": response.provider_payload}
+                    if response is not None and response.provider_payload is not None
+                    else {"provider_payload": provider_payload}
+                    if provider_payload is not None
+                    else {}
+                ),
             },
         )

@@ -23,11 +23,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, Decimal
+from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
+
+from alphabrief_core.http import ca_bundle_context
+from alphabrief_core.secrets import read_secret
 
 from alphabrief_models.chatgpt_plan import (
     USER_AGENT,
     ChatGptPlanError,
+    HttpResponse,
     HttpSend,
     default_http_send,
 )
@@ -41,6 +48,86 @@ from alphabrief_models.gateway import (
 ENV_BASE_URL = "ALPHABRIEF_LLM_BASE_URL"
 ENV_API_KEY = "ALPHABRIEF_LLM_API_KEY"
 ENV_MODEL = "ALPHABRIEF_LLM_MODEL"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
+
+
+class ModelChannelUnavailableError(ValueError):
+    """The configured model channel has no usable credentials.
+
+    Raised while composing a channel so callers can fail closed with a
+    durable no-trade record instead of surfacing an unhandled
+    configuration error.
+    """
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def _free_http_send(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes | None,
+    timeout: float,
+) -> HttpResponse:
+    """One verified HTTPS attempt, with redirects disabled for GET and POST."""
+    request = Request(url, data=body, headers=headers, method=method)
+    opener = build_opener(HTTPSHandler(context=ca_bundle_context()), _NoRedirect())
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            return HttpResponse(
+                int(response.status), response.read(), dict(response.headers.items())
+            )
+    except HTTPError as exc:
+        return HttpResponse(
+            int(exc.code), exc.read(), dict(exc.headers.items()) if exc.headers else {}
+        )
+    except (URLError, TimeoutError, OSError) as exc:
+        raise ModelProviderError(
+            f"OpenRouter transport error: {type(exc).__name__}"
+        ) from exc
+
+
+def load_openrouter_api_key(environ: dict[str, str] | None = None) -> str | None:
+    """Only the dedicated environment key or secure application secret is read."""
+    source = os.environ if environ is None else environ
+    value: Any = source.get(OPENROUTER_API_KEY_ENV)
+    if not value:
+        value = (read_secret("openrouter") or {}).get("api_key")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def load_openrouter_free_config(
+    model: str,
+    *,
+    environ: dict[str, str] | None = None,
+    max_output_tokens: int = 2048,
+) -> FallbackConfig:
+    key = load_openrouter_api_key(environ)
+    if key is None:
+        raise ModelChannelUnavailableError(
+            "openrouter_free requires OPENROUTER_API_KEY or secrets/openrouter.json"
+        )
+    return FallbackConfig(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=key,
+        model=model,
+        input_cost_per_million=Decimal(0),
+        output_cost_per_million=Decimal(0),
+        max_output_tokens=max_output_tokens,
+    )
+
 
 #: Hosts that must never be used as the product's model backend.
 FORBIDDEN_HOST_FRAGMENTS = ("opencode.ai",)
@@ -142,10 +229,25 @@ class OpenAiCompatibleAdapter:
         http_send: HttpSend | None = None,
         timeout_seconds: float = 60.0,
         clock: Callable[[], datetime] | None = None,
+        free_only: bool = False,
     ) -> None:
         _reject_forbidden_host(config.base_url)
+        if free_only and (
+            config.base_url != OPENROUTER_BASE_URL
+            or not config.model.endswith(":free")
+            or config.model.strip() != config.model
+            or not config.api_key
+        ):
+            raise ValueError(
+                "free-only routing requires pinned OpenRouter URL and exact :free model"
+            )
+        self._free_only = free_only
+        if free_only:
+            self.provider_name = "openrouter_free"
         self._config = config
-        self._http_send = http_send or default_http_send
+        self._http_send = http_send or (
+            _free_http_send if free_only else default_http_send
+        )
         self._timeout = timeout_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         capabilities: frozenset[ModelCapability] = frozenset(
@@ -165,13 +267,69 @@ class OpenAiCompatibleAdapter:
             output_tokens=self._config.max_output_tokens,
         )
 
+    def _verify_free_catalog(self) -> None:
+        """Fail closed on unknown pricing, including newly introduced dimensions."""
+        response = self._http_send(
+            "GET",
+            f"{OPENROUTER_BASE_URL}/models",
+            {"Accept": "application/json", "User-Agent": USER_AGENT},
+            None,
+            self._timeout,
+        )
+        try:
+            # Preserve numeric prices as Decimal, including sub-float values.
+            body = json.loads(response.text(), parse_float=Decimal, parse_int=Decimal)
+        except (ValueError, ArithmeticError):
+            body = None
+        entries = body.get("data") if isinstance(body, dict) else None
+        if response.status != 200 or not isinstance(entries, list):
+            raise ModelProviderError(
+                f"OpenRouter catalog unavailable: HTTP {response.status}"
+            )
+        matches = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and entry.get("id") == self.model_name
+        ]
+        if len(matches) != 1:
+            raise ModelProviderError(
+                "OpenRouter exact free model absent or ambiguous in catalog"
+            )
+        prices = matches[0].get("pricing")
+        if not isinstance(prices, dict) or not {"prompt", "completion"}.issubset(
+            prices
+        ):
+            raise ModelProviderError(
+                "OpenRouter catalog missing prompt/completion pricing"
+            )
+        for raw in prices.values():
+            try:
+                if isinstance(raw, bool) or not isinstance(raw, (str, int, Decimal)):
+                    raise ValueError("unknown price")
+                price = Decimal(str(raw))
+                if not price.is_finite() or price != 0:
+                    raise ValueError("nonzero price")
+            except (ArithmeticError, ValueError) as exc:
+                raise ModelProviderError(
+                    "OpenRouter catalog price is not finite zero"
+                ) from exc
+
     def call(self, request: ModelRequest) -> ModelResponse:
-        payload = {
+        if self._free_only:
+            self._verify_free_catalog()
+        payload: dict[str, Any] = {
             "model": self._config.model,
             "messages": [{"role": "user", "content": request.input_text}],
             "stream": False,
             "max_completion_tokens": self._config.max_output_tokens,
         }
+        if self._free_only:
+            # OpenRouter documents prompt/completion (USD per million), request
+            # and image. There is no documented reasoning max_price dimension.
+            payload["provider"] = {
+                "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
+                "allow_fallbacks": False,
+            }
         response = self._http_send(
             "POST",
             f"{self._config.base_url}/chat/completions",
@@ -193,14 +351,35 @@ class OpenAiCompatibleAdapter:
                     detail = str(error.get("message") or error.get("code") or "")
                 elif body.get("detail"):
                     detail = str(body["detail"])
+            if self._free_only:
+                raise ModelProviderError(
+                    f"OpenRouter HTTP {response.status}",
+                    provider_payload=body
+                    if isinstance(body, dict)
+                    else {"raw_body": response.text()},
+                )
             raise ChatGptPlanError(
                 "stream_failed",
                 f"HTTP {response.status}{f': {detail[:200]}' if detail else ''}",
             )
         body = response.json()
         choices = body.get("choices") if isinstance(body, dict) else None
+        if self._free_only and (
+            not isinstance(body, dict) or body.get("model") != self.model_name
+        ):
+            raise ModelProviderError(
+                "OpenRouter returned an unexpected model",
+                provider_payload=body
+                if isinstance(body, dict)
+                else {"raw_body": response.text()},
+            )
         if not isinstance(choices, list) or not choices:
-            raise ModelProviderError("compatible endpoint returned no choices")
+            raise ModelProviderError(
+                "compatible endpoint returned no choices",
+                provider_payload=body
+                if self._free_only and isinstance(body, dict)
+                else None,
+            )
         message = choices[0].get("message") if isinstance(choices[0], dict) else None
         text = ""
         if isinstance(message, dict):
@@ -231,13 +410,16 @@ class OpenAiCompatibleAdapter:
             request_id=request.request_id,
             provider=self.provider_name,
             model=self._config.model,
-            output_text=text.strip(),
+            output_text=text if self._free_only else text.strip(),
+            provider_payload=body if self._free_only else None,
             structured_output=None,
             status="succeeded",
             finish_reason=finish or "stop",
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_estimate=self._config.estimate_cost(
+            cost_estimate=Decimal(0)
+            if self._free_only
+            else self._config.estimate_cost(
                 input_tokens=input_tokens, output_tokens=output_tokens
             ),
         )

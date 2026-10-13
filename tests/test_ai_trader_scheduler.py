@@ -1786,6 +1786,13 @@ def test_default_backend_checks_budget_between_analyst_calls(
     monkeypatch.setenv("ALPHABRIEF_OANDA_TOKEN", "test-token")
     monkeypatch.setenv("ALPHABRIEF_OANDA_ACCOUNT_ID", "test-account")
     monkeypatch.setattr(scheduler_commands, "_build_adapter", _SubmittingAdapter)
+    # The shipped configuration selects the free OpenRouter primary, whose
+    # call budget does not bound this ChatGPT-channel fake; pin the code
+    # default so the seeded 149 calls still reach the documented 150/day cap.
+    monkeypatch.setattr(
+        "alphabrief_models.channels.load_model_settings",
+        lambda path=None: ModelSettings(),
+    )
     monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
     symbols = cycle_commands.DEFAULT_UNIVERSE if full_round else ("EUR_USD",)
     monkeypatch.setenv("ALPHABRIEF_AI_SCHEDULER_UNIVERSE", ",".join(symbols))

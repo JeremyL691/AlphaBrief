@@ -10,7 +10,7 @@ operator's ``OPENAI_API_KEY`` is never read by the product.
 from __future__ import annotations
 
 import pytest
-from alphabrief_models import FakeProviderAdapter
+from alphabrief_models import FakeProviderAdapter, ModelSettings
 from alphabrief_trader import (
     build_ai_trading_committee,
     build_ai_trading_provider,
@@ -35,6 +35,13 @@ def _clean_ai_model_env(
     # Keep any accidental credential writes inside the test directory.
     monkeypatch.setenv(
         "ALPHABRIEF_HOME", str(tmp_path_factory.mktemp("ai-model-home"))
+    )
+    # The shipped configuration selects the free OpenRouter primary. These
+    # tests cover the ChatGPT subscription wiring, so pin the code default
+    # explicitly instead of depending on the repository configuration.
+    monkeypatch.setattr(
+        "alphabrief_models.channels.load_model_settings",
+        lambda path=None: ModelSettings(),
     )
 
 

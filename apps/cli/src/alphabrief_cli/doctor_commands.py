@@ -186,17 +186,26 @@ def check_oanda_read_only() -> CheckResult:
 def check_model_channel() -> CheckResult:
     """The model channel has credentials and a recent recorded call."""
     from alphabrief_api.db.model_call import ModelCallStore
+    from alphabrief_models.channels import load_model_settings
     from alphabrief_models.chatgpt_plan import load_credentials
-    from alphabrief_models.model_budget import ModelBudgetGuard, ModelBudgetPolicy
+    from alphabrief_models.model_budget import OPENROUTER_FREE_CHANNEL, ModelBudgetGuard
+    from alphabrief_models.openai_compatible import load_openrouter_api_key
 
     from alphabrief_cli.api_client import is_api_running
 
-    credentials = load_credentials()
-    if credentials is None:
+    settings = load_model_settings()
+    channel = settings.primary_channel
+    free = channel == OPENROUTER_FREE_CHANNEL
+    configured = (
+        bool(load_openrouter_api_key()) if free else load_credentials() is not None
+    )
+    if not configured:
         return CheckResult(
             "model_channel",
             "FAIL",
-            "the ChatGPT channel is not signed in (`alphabrief model login`)",
+            "openrouter_free requires OPENROUTER_API_KEY or secrets/openrouter.json"
+            if free
+            else "the ChatGPT channel is not signed in (`alphabrief model login`)",
         )
     if is_api_running():
         return CheckResult(
@@ -210,14 +219,17 @@ def check_model_channel() -> CheckResult:
     try:
         since = datetime.now(UTC) - timedelta(days=1)
         usage = store.daily_usage(since)
-        guard = ModelBudgetGuard(store, policy=ModelBudgetPolicy.default())
-        verdict = guard.admit("chatgpt_plan")
+        guard = ModelBudgetGuard(store, policy=settings.budget_policy())
+        verdict = guard.admit(channel)
     finally:
         store.close()
-    calls = usage.get("chatgpt_plan")
+    calls = usage.get(channel)
     detail = (
-        f"credentials present; last 24h calls {0 if calls is None else calls.calls}"
+        f"{channel}: credentials present; last 24h calls "
+        f"{0 if calls is None else calls.calls}"
     )
+    if free:
+        detail += "; catalog pricing checked per completion, not probed by doctor"
     if not verdict.allowed:
         return CheckResult(
             "model_channel", "WARN", f"{detail}; channel unavailable: {verdict.detail}"

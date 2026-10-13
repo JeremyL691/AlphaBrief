@@ -124,6 +124,7 @@ class TestAiHistory:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
         client.post("/api/v1/ai/run", json={"symbols": ["SPY"]})
         res = client.get("/api/v1/ai/history")
         assert res.status_code == 200
@@ -149,6 +150,10 @@ class TestAiCycle:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_AI_TRADING_ENABLED", "true")
+        # Explicit fake composition keeps this test deterministic without a
+        # live model credential; channel fail-closed behavior is covered by
+        # the provider-unavailable tests.
+        monkeypatch.setenv("ALPHABRIEF_AI_MODEL_PROVIDER", "fake")
         run_res = client.post("/api/v1/ai/run", json={"symbols": ["SPY"]})
         cycle_id = run_res.json()["cycle_id"]
         res = client.get(f"/api/v1/ai/cycles/{cycle_id}")
