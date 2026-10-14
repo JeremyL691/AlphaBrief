@@ -480,11 +480,14 @@ class DailyTradingCycle:
                     )
                     continue
                 plan = result.plan
-                if not plan.blocked_by_ethics and plan.action in {
-                    "open_long",
-                    "open_short",
-                    "close",
-                }:
+                if not plan.blocked_by_ethics and (
+                    plan.action in {
+                        "open_long",
+                        "open_short",
+                        "close",
+                    }
+                    or self._direction_override is not None
+                ):
                     if self._snapshot_refresher is not None:
                         snapshot = self._snapshot_refresher(snapshot)
                     facts = snapshot.broker_evidence

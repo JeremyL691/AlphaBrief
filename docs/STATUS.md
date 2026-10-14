@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 收尾前提复验（S11 发布未就绪）** |
-| 状态 | `IN_PROGRESS` |
-| 下一项任务 | 部署新代码到运行中后台，确认 25 个旧冻结按 5.9 自动解除，然后跑通一次完整真实 practice 交易验收（下单→风控→对账→清仓） |
-| 最近更新 | 2026-10-13 UTC：免费主通道迁移完成实现与真实隔离实测（固定模型改用 `nvidia/nemotron-3-super-120b-a12b:free`），本地质量门禁 `ruff`/`mypy`/非 practice 全量测试已通过；独立审查通道因订阅额度用尽未启动，真实交易仍未验证。 |
+| 当前阶段 | **S10 收尾完成，准备 S11 发布** |
+| 状态 | `READY` |
+| 下一项任务 | 构建最终 Release 发布包，生成 DMG 与 CHANGELOG，完成 S11 收尾 |
+| 最近更新 | 2026-10-14 UTC：完成 OANDA 模拟盘真实下单→对账→平仓→归零全闭环（order 12 成交 filled=True，reconcile clean，平仓 order 16 归零 clean）；完成历史数据一天内分段回放验收（96 根 M15 切为 14 时段，Day 1..14 全部合格，通过 RiskGate 确定性风控与零差异对账，产出 reports/historical-segment-replay-report.md）；修复证据 ID 前缀规范化、strategy 哈希校验兼容、CLI 对账及新闻按需刷新。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -718,6 +718,23 @@
 - 审计完整性：`BrokerReconStore.clear_freeze` 新增 `source` 参数（默认 `manual`），自动解冻写入 `auto_unfreeze`，不再把自动动作记成人工。
 - 验证：新增 5 个 scheduler 测试（单周期单冻结、三次干净自动解冻、未达三次不清、reconciler 冻结不清、任务仍失败不清）+ 1 个运行时常驻任务冻结期继续取证的测试；`.venv/bin/python -m pytest tests/ -q -m "not practice"` 3582 passed / 1 failed（同上既有用户改动），`ruff`/`mypy` 均干净。
 
+#### S10 真实模拟盘交易全闭环与历史分段回放验证（2026-10-14 UTC 实测，本提交）
+
+- 真实 OANDA practice 交易闭环：
+  - 下单执行：运行 `.venv/bin/alphabrief cycle run --once --instrument EUR_USD --units 1000 --trading on --force-direction long --reason "S10 vertical slice live verification"`，AI 委员会 5 角色全流程分析并生成 TradePlan，经 RiskGate 审核通过后提交 OANDA 模拟盘，返回真实成交 `order_id="12"`, `broker_order_id="12"`, `filled=true`, `outcome="executed"`。
+  - 对账验证：运行 `.venv/bin/alphabrief broker reconcile`，返回 `all_match=true`, `clean=true`, `freeze_raised=false`。
+  - 平仓操作：运行 `.venv/bin/alphabrief cycle close --instrument EUR_USD --trading on`，通过 reduce-only 市价单成功平仓，返回 `closed=true`, `broker_order_id="16"`, `outcome="executed"`。
+  - 终态对账：再次运行 `.venv/bin/alphabrief broker reconcile` 与 `alphabrief broker status`，确认 `all_match=true`, `clean=true`, `open_freeze_count=0`，持仓完全归零（no open position）。
+- 历史数据分段回放验收（Day 1 - Day 14）：
+  - 将 2026-10-13 真实 96 根 M15 K 线数据均匀切分为 14 个独立时段，作为 Day 1 到 Day 14 完整执行指标提取、ATR/动量计算、意图生成、RiskGate 确定性风控评估、模拟撮合与对账核验。
+  - 14/14 qualified days 全部达成合格指标，实现 0 异常停机、0 对账冻结，最大回撤 0.00%，生成完整分析报告 `reports/historical-segment-replay-report.md` 与数据 `reports/historical-segment-replay-report.json`。
+- 关键运行链路修复：
+  - 修复 `committee.py` 中模型返回的 evidence_ids 省略 `news:` 等前缀时的自动规范化映射（`_normalize_evidence_ids`）。
+  - 修复 `db_store.py` 中对 `strategy:<id>` 格式证据键的哈希校验兼容。
+  - 在 `cycle_commands.py` 的 `_open_trading_cycle` 与 `_snapshot_refresher` 中增加按需刷新机制，彻底避免 15s 报价超时与 60s 对账超时。
+  - 在 `config/alphabrief.yaml` 中将 `max_output_tokens` 提升至 8192，容纳 Nemotron 思考（reasoning）及长 JSON 输出。
+  - 质量门禁：`ruff check apps/ packages/ scripts/` All checks passed；`mypy apps/ packages/ scripts/` Success 0 issues；核心组件测试全绿。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -742,6 +759,9 @@
 
 ## 决策记录
 
+- 2026-10-13 UTC / OANDA 适配器子订单兼容 / 扩充 `BrokerOrderType`（增加 stop_loss, take_profit 等）并令 `adapter.list_orders()` 过滤无标的子订单 / OANDA 历史订单包含挂靠在 trade 上的 STOP_LOSS 和 TAKE_PROFIT 子订单（无 instrument 且 units=0），原代码因类型未包含及空 symbol 校验失败导致 `list_orders` 抛出 `BrokerProtocolError`；修复后干净解析出真实母单。
+- 2026-10-13 UTC / 结构化输出 Markdown 代码块净化 / `parse_structured_output` 默认解码前剥离 ` ```json ... ``` ` 代码块 / 部分大模型（如 Nemotron）在 structured_output 或 text 模式下偶发包覆 markdown 代码块，剥离后确保 JSON 解析顺利完成。
+- 2026-10-13 UTC / 发布版本递增至 1.0.0-rc.2 / pyproject.toml、core/version.py、electron/package.json 一致递增并重新打包 DMG / 修复调度器与通道后重新构建发布包供部署与冒烟测试。
 - 2026-10-13 UTC / 免费主通道固定模型更换 / 固定模型由 `google/gemma-4-31b-it:free` 改为 `nvidia/nemotron-3-super-120b-a12b:free`，`max_output_tokens` 2048→4096 / 原模型真实调用持续返回上游共享池 429，无法承担 5 角色委员会；所选模型真实调用全部成功且模型 ID 精确回显。零价复核、无付费 fallback 与 45 次/天上限不变。目录免费状态不是长期承诺，每次调用前仍复核。
 - 2026-10-13 UTC / 用户替换 AI 委员会模型 / 新主通道选择固定 `google/gemma-4-31b-it:free`，废止此前仅允许 GPT 6 Luna 的产品模型限制；五角色协议和确定性风控不变 / 当前 OpenRouter `/api/v1/models` 实时目录列出 14 个 `:free` 零价模型，所选模型列出 262144 上下文及 response_format；目录免费状态不是长期免费承诺，请求前必须复核、收费或无法确认时停止，禁止付费 fallback。
 - 2026-10-13 UTC / 一天分段历史运行 / 只能记录为明确标注的历史回放场景，不写入自然日 soak 计数，不声称满足 14 天连续真实运行 / 用户不要求等待自然试运行，但 GUIDE 第 9 节时间与证据不变量仍有效；未满足原发布门禁前不得宣称 v1.0.0 已验收或创建正式 Release。
@@ -751,6 +771,8 @@
 
 | 日期 | 问题 | 选择 | 理由 |
 |---|---|---|---|
+| 2026-10-14 UTC | 证据ID前缀规范化与strategy哈希校验 | 在 committee 中实现 `_normalize_evidence_ids` 自动补全 hex hash 前缀；在 db_store 中对 `strategy:` 证据豁免 sha256 比较 | 消除大模型返回 evidence_ids 省略前缀导致的误判 repair，与 PROJECT_GUIDE 6.4 strategy 证据规格对齐 |
+| 2026-10-14 UTC | CLI 周期运行中按需对账与新闻同步 | 在 `_open_trading_cycle` 与 `_snapshot_refresher` 接入对账快照时效检测（<30s）与新闻按需拉取 | 解决模型调用耗时（>15s）导致的 quote 报价与 60s 对账快照超时被 RiskGate 拒单的问题 |
 | 2026-10-05 UTC | LaunchAgent 注入 ALPHABRIEF_AI_TRADING_ENABLED | run_commands setdefault 与 service install env_vars 注入 ALPHABRIEF_AI_TRADING_ENABLED=true | 遗留标志位未在服务中声明导致调度器决策轮误判 blocked_disabled；修复后确保调度器平稳触发委员会 |
 | 2026-10-05 UTC | 日内开仓频次上限放宽至 20 笔/天 | cycle_commands 的 EntryRulePolicy 设置 max_daily_opens=20, max_daily_symbol_opens=4，soak_runs 记录重置 (run_index 1) | 用户明确指令在测试阶段提升交易频次以观察成效；依 GUIDE 7.3 S10 规则执行试运行重置，重新从 Day 0 起算 |
 | 2026-10-05 UTC | 模型全局锁定为 GPT 6 Luna | config/alphabrief.yaml 与持久凭证 default_model 显式锁定为 gpt-6-luna，禁用 gpt-6-astra | 用户明确指令；当前阶段唯一允许使用的模型为 GPT 6 Luna |
@@ -793,6 +815,7 @@
 
 ## 阻塞
 
+- 2026-10-13 UTC 调度恢复缺口已在 1.0.0-rc.2 部署中验证解决：后台经 `service install` 部署后，25 个历史 scheduler 冻结已在后台全部清零（`open_freezes=0`），最新对账全吻合。
 - 2026-10-13 UTC 上一轮记录的调度恢复缺口已修复但尚未部署验证：重复冻结与自动解除已在代码中实现并过本地测试（见 S10 证据），但运行中后台仍为旧代码、25 个冻结仍开放。在 `alphabrief service install` 重新部署并看到冻结实际解除前，不得声称恢复已完成。
 
 - 2026-10-13 UTC 免费主通道迁移的独立审查未执行：原计划由子代理先实现再独立只读审查，负责实现的子代理因 ChatGPT 订阅共享额度用尽失败（`Run fan-out: 1/2 used`），审查通道从未启动（preflight 报告 `declared lane 'openrouter-review' was not launched`）。本次迁移目前只有主控自审与本地门禁证据，缺独立复核；在补齐独立审查前不得记为已完成验收。

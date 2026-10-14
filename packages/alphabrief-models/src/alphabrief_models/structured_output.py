@@ -43,8 +43,20 @@ class StructuredOutputResult[TargetModel: BaseModel](BaseModel):
 _JsonDecoder = Callable[[str], Any]
 
 
+def _clean_json_text(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    return cleaned
+
+
 def _default_json_decode(value: str) -> Any:
-    return json.loads(value)
+    return json.loads(_clean_json_text(value))
 
 
 def _select_payload(

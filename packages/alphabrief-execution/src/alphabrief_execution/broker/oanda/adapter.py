@@ -315,6 +315,11 @@ class OandaPaperAdapter(BrokerAdapter):
             _parse_order_state(item)
             for item in body["orders"]
             if isinstance(item, dict)
+            and not (
+                not item.get("instrument")
+                and str(item.get("type", "")).upper()
+                in ("STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP_LOSS")
+            )
         ]
         if status is None:
             return orders

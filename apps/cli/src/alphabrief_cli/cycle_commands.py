@@ -659,6 +659,24 @@ def _snapshot_refresher(
     """Observe broker inputs at each model/submit boundary; never fill missing facts."""
 
     def refresh(snapshot: MarketSnapshot) -> MarketSnapshot:
+        recon_store = getattr(sources, "_recon_store", None)
+        if recon_store is not None:
+            latest_recon = recon_store.latest_snapshot()
+            need_recon = True
+            if latest_recon is not None:
+                try:
+                    recon_dt = datetime.fromisoformat(latest_recon.captured_at)
+                    if (datetime.now(UTC) - recon_dt).total_seconds() < 30:
+                        need_recon = False
+                except Exception:
+                    pass
+            if need_recon:
+                try:
+                    from alphabrief_cli.scheduler_commands import _reconcile_runner
+
+                    _reconcile_runner(recon_store)("cycle")
+                except Exception as exc:
+                    _LOGGER.warning("cycle refresher reconcile failed: %s", exc)
         try:
             facts: BrokerInputFacts = sources.decision_input_facts(snapshot.symbol)
         except Exception as exc:  # noqa: BLE001 - safe refusal rather than zero facts
@@ -850,12 +868,35 @@ def _open_trading_cycle(
         resources.callback(news.close)
         news_health = NewsIngestionStore(db_path=resolved)
         resources.callback(news_health.close)
+        if len(news_health.successful_source_family_times(now=datetime.now(UTC))) < 2:
+            try:
+                from alphabrief_cli.scheduler_commands import _run_ai_pre_cycle_ingestion
+
+                _run_ai_pre_cycle_ingestion(news_store=news, symbols=symbols)
+            except Exception as exc:
+                _LOGGER.warning("pre-cycle news ingestion skipped: %s", exc)
         calls = ModelCallStore(db_path=resolved)
         resources.callback(calls.close)
         shadows = ShadowStore(db_path=resolved)
         resources.callback(shadows.close)
         recon = BrokerReconStore(db_path=resolved)
         resources.callback(recon.close)
+        latest_recon = recon.latest_snapshot()
+        need_recon = True
+        if latest_recon is not None:
+            try:
+                recon_dt = datetime.fromisoformat(latest_recon.captured_at)
+                if (datetime.now(UTC) - recon_dt).total_seconds() < 30:
+                    need_recon = False
+            except Exception:
+                pass
+        if need_recon:
+            try:
+                from alphabrief_cli.scheduler_commands import _reconcile_runner
+
+                _reconcile_runner(recon)("cycle")
+            except Exception as exc:
+                _LOGGER.warning("pre-cycle reconcile failed: %s", exc)
         sources = _risk_sources(symbols, recon_store=recon)
         decisions = RiskDecisionStore(db_path=resolved)
         resources.callback(decisions.close)

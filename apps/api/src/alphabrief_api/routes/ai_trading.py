@@ -262,6 +262,11 @@ def _build_execution_backend() -> ExecutionBackend:
     return ExternalPaperExecutionBackend(get_broker_runtime().adapter)
 
 
+def _trading_mode() -> str:
+    raw = os.environ.get("ALPHABRIEF_TRADING_MODE", "").strip().lower()
+    return "on" if raw == "on" else "off"
+
+
 def _build_cycle(
     *,
     snapshot_loader: SnapshotLoader,
@@ -275,6 +280,7 @@ def _build_cycle(
         store=_get_store(),
         snapshot_loader=snapshot_loader,
         enabled=is_ai_trading_enabled(),
+        trading_mode=_trading_mode(),
     )
 
 
