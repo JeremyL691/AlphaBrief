@@ -35,6 +35,11 @@ class BrokerOrderType(StrEnum):
 
     MARKET = "market"
     LIMIT = "limit"
+    STOP_LOSS = "stop_loss"
+    TAKE_PROFIT = "take_profit"
+    TRAILING_STOP_LOSS = "trailing_stop_loss"
+    STOP = "stop"
+    MARKET_IF_TOUCHED = "market_if_touched"
 
 
 class BrokerTimeInForce(StrEnum):

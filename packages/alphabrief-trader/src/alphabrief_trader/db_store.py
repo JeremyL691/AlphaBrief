@@ -129,6 +129,7 @@ class AiTradingStore:
         if any(
             key.rpartition(":")[2] != sha256(body.encode("utf-8")).hexdigest()
             for key, body in record.input_quality.evidence_catalog.items()
+            if not key.startswith("strategy:")
         ):
             raise ValueError("final decision input body hash mismatch")
         refs: dict[str, DecisionCallReference] = {}

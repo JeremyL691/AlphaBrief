@@ -878,12 +878,38 @@ def _select_manager(votes: list[CommitteeVote]) -> CommitteeVote | None:
     return None
 
 
+def _normalize_evidence_ids(
+    parsed: _PartialEvidenceOutput,
+    payload: CommitteeInput,
+) -> None:
+    available = set(payload.evidence_ids)
+    suffix_map: dict[str, str] = {}
+    for avail in available:
+        if ":" in avail:
+            suffix = avail.split(":", 1)[1]
+            if suffix not in suffix_map:
+                suffix_map[suffix] = avail
+            else:
+                suffix_map[suffix] = ""
+
+    normalized: list[str] = []
+    for entry in parsed.evidence_ids:
+        if entry in available:
+            normalized.append(entry)
+        elif entry in suffix_map and suffix_map[entry]:
+            normalized.append(suffix_map[entry])
+        else:
+            normalized.append(entry)
+    parsed.evidence_ids = normalized
+
+
 def _vote_grounding_violations(
     parsed: _PartialEvidenceOutput,
     payload: CommitteeInput,
 ) -> list[str]:
     from hashlib import sha256
 
+    _normalize_evidence_ids(parsed, payload)
     available = set(payload.evidence_ids)
     return [
         "nonexistent_citation:" + sha256(entry.encode("utf-8")).hexdigest()
@@ -897,7 +923,21 @@ def _extract_cited_evidence_ids(
     available_evidence_ids: Sequence[str],
 ) -> list[str]:
     available = set(available_evidence_ids)
-    return sorted({entry for entry in evidence if entry in available})
+    suffix_map: dict[str, str] = {}
+    for avail in available:
+        if ":" in avail:
+            suffix = avail.split(":", 1)[1]
+            if suffix not in suffix_map:
+                suffix_map[suffix] = avail
+            else:
+                suffix_map[suffix] = ""
+    normalized: set[str] = set()
+    for entry in evidence:
+        if entry in available:
+            normalized.add(entry)
+        elif entry in suffix_map and suffix_map[entry]:
+            normalized.add(suffix_map[entry])
+    return sorted(normalized)
 
 
 def _complete_repair_prompt(
