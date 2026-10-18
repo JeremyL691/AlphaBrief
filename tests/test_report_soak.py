@@ -7,9 +7,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from alphabrief_trader.soak_evaluator import SoakStatus
 from alphabrief_trader.soak_report import (
     SoakReportData,
+    SoakReportNotReadyError,
     generate_soak_report_data,
     render_soak_markdown,
     write_soak_report,
@@ -78,6 +80,20 @@ def _sample_data() -> SoakReportData:
                 }
             ]
         },
+        safety_metrics={
+            "invariants": [
+                {
+                    "invariant": "Duplicate orders across all runs",
+                    "violations": 0,
+                    "status": "PASSED",
+                },
+                {
+                    "invariant": "Orders without persisted RiskDecision",
+                    "violations": 0,
+                    "status": "PASSED",
+                },
+            ]
+        },
         hotfixes=[],
         version="1.0.0-rc.1",
     )
@@ -114,10 +130,25 @@ def test_render_soak_markdown_headings_and_structure() -> None:
     assert "PASSED" in md
 
 
-def test_write_soak_report_custom_and_final(tmp_path: Path) -> None:
+def _complete_status() -> SoakStatus:
+    return SoakStatus(
+        soak_started=True,
+        run_index=0,
+        started_at=datetime(2026, 10, 4, 4, 0, tzinfo=UTC),
+        state="completed",
+        qualified_days=14,
+        extension_days=0,
+        target_days=14,
+        is_complete=True,
+        days=[],
+        extensions=[],
+        resets=[],
+    )
+
+
+def test_write_soak_report_custom_path(tmp_path: Path) -> None:
     data = _sample_data()
 
-    # Custom path
     custom_md = tmp_path / "custom-report.md"
     md_path, json_path = write_soak_report(data, out_file=custom_md, final=False)
     assert md_path == custom_md
@@ -128,13 +159,38 @@ def test_write_soak_report_custom_and_final(tmp_path: Path) -> None:
         encoding="utf-8"
     )
 
-    # Final mode writes to repo reports directory
+
+def test_write_soak_report_final_requires_a_qualified_soak(
+    tmp_path: Path,
+) -> None:
+    """The release artifact must not be writable before the soak qualifies."""
+    incomplete = _sample_data()
+    with (
+        patch("alphabrief_trader.soak_report.project_root", return_value=tmp_path),
+        pytest.raises(SoakReportNotReadyError),
+    ):
+        write_soak_report(incomplete, final=True)
+    assert not (tmp_path / "reports").exists()
+
+    complete = SoakReportData(
+        status=_complete_status(),
+        generated_at=datetime(2026, 10, 18, 4, 0, tzinfo=UTC),
+        masked_account_id="...0001",
+        equity_metrics={},
+        order_metrics={},
+        risk_metrics={},
+        model_metrics={},
+        shadow_metrics={},
+        safety_metrics={"invariants": []},
+        hotfixes=[],
+        version="1.0.0",
+    )
     with patch("alphabrief_trader.soak_report.project_root", return_value=tmp_path):
-        final_md, final_json = write_soak_report(data, final=True)
-        assert final_md == tmp_path / "reports" / f"soak-report-v{data.version}.md"
-        assert final_json == tmp_path / "reports" / f"soak-report-v{data.version}.json"
-        assert final_md.is_file()
-        assert final_json.is_file()
+        final_md, final_json = write_soak_report(complete, final=True)
+    assert final_md == tmp_path / "reports" / "soak-report-v1.0.0.md"
+    assert final_json == tmp_path / "reports" / "soak-report-v1.0.0.json"
+    assert final_md.is_file()
+    assert final_json.is_file()
 
 
 def test_generate_soak_report_data_from_db(tmp_path: Path) -> None:

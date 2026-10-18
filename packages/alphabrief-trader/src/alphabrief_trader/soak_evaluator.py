@@ -1,15 +1,33 @@
 """Evaluation of soak test status and days (PROJECT_GUIDE 5.7, 7.3 S10).
 
 Computes qualified days, extensions, downtime, and resets directly from
-database facts (soak runs, cycles, order attempts, reconciliation snapshots,
-and daily reports). Never hardcodes or simulates day counts.
+database facts (soak runs, scheduler run history, cycles, order ledger,
+reconciliation snapshots, and daily reports). Never hardcodes or
+simulates day counts.
+
+The evaluation rules (PROJECT_GUIDE S10):
+
+- a qualified UTC calendar day requires cumulative backend downtime
+  <= 6 hours, every scheduled opportunity round recorded, a clean
+  end-of-day reconciliation (or a freeze lifted by the rules), the daily
+  report generated, and no reset event;
+- weekends run no opportunity rounds; sync, reconciliation and the
+  daily report are still required;
+- a non-safety failure (downtime 6-12h, a missing report, an unclean
+  reconciliation without a safety violation) extends the soak by one
+  day, at most three times, then resets;
+- a safety event resets the soak from a new Day 0: a duplicate order,
+  an order without a persisted RiskDecision, an unexplained
+  reconciliation difference left unfrozen past one cycle, more than 12
+  hours of downtime in a day, or a deployed change to the safety /
+  execution semantics.
 """
 
 from __future__ import annotations
 
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -21,12 +39,28 @@ from alphabrief_api.db.ai_trading import AiTradingStore
 from alphabrief_api.db.paper import PaperStore
 from alphabrief_core import paths as _paths
 from alphabrief_core.policy_version import project_root
+from alphabrief_execution.broker.oanda.order_ledger import OrderLedger
 from alphabrief_execution.broker.recon_store import BrokerReconStore
+from alphabrief_execution.operations.scheduler import HeartbeatStore
+from alphabrief_risk.decision_store import RiskDecisionStore
 
-from alphabrief_trader.soak_store import SoakStore
+from alphabrief_trader.soak_store import SoakRun, SoakStore
 
 TARGET_QUALIFIED_DAYS = 14
 MAX_ALLOWED_EXTENSIONS = 3
+#: A day with more downtime than this resets the soak (GUIDE S10).
+RESET_DOWNTIME_HOURS = 12.0
+#: A day with more downtime than this (but at most the reset limit)
+#: extends the soak by one day (GUIDE S10).
+EXTENSION_DOWNTIME_HOURS = 6.0
+#: The scheduler's opportunity-check task. Its run history is the
+#: authority for downtime and per-round completeness.
+CYCLE_TASK_NAME = "ai_daily_cycle"
+#: How many missed opportunity rounds in one day count as an incomplete
+#: day. The scheduler runs the task every 300s (GUIDE: every 1-5
+#: minutes); a handful of gaps is normal (a slow committee round
+#: overlaps the next tick), a whole missing stretch is not.
+MAX_MISSED_ROUNDS_PER_DAY = 3
 
 
 @contextmanager
@@ -66,6 +100,14 @@ class SoakDayEvaluation:
     open_freezes_count: int
     reset_reasons: list[str] = field(default_factory=list)
     extension_reasons: list[str] = field(default_factory=list)
+    #: Opportunity-check rounds the scheduler recorded on this day.
+    rounds_recorded: int = 0
+    #: Opportunity rounds that should have run but have no record.
+    missed_rounds: int = 0
+    #: Broker submits recorded in the durable order ledger for this day.
+    ledger_orders: int = 0
+    #: Ledger submits whose bound RiskDecision is not persisted.
+    orders_without_decision: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +121,10 @@ class SoakDayEvaluation:
             "open_freezes_count": self.open_freezes_count,
             "reset_reasons": list(self.reset_reasons),
             "extension_reasons": list(self.extension_reasons),
+            "rounds_recorded": self.rounds_recorded,
+            "missed_rounds": self.missed_rounds,
+            "ledger_orders": self.ledger_orders,
+            "orders_without_decision": self.orders_without_decision,
         }
 
 
@@ -97,6 +143,9 @@ class SoakStatus:
     days: list[SoakDayEvaluation] = field(default_factory=list)
     extensions: list[dict[str, Any]] = field(default_factory=list)
     resets: list[dict[str, Any]] = field(default_factory=list)
+    #: Safety findings that are not tied to one day's evaluation (for
+    #: example a live-trading lock or a failed broker reconciliation).
+    safety_findings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -111,6 +160,7 @@ class SoakStatus:
             "days": [d.to_dict() for d in self.days],
             "extensions": self.extensions,
             "resets": self.resets,
+            "safety_findings": list(self.safety_findings),
         }
 
 
@@ -149,39 +199,187 @@ def _parse_ts(val: Any) -> datetime | None:
         return None
 
 
-def _calculate_day_downtime_hours(
-    events_timestamps: list[datetime],
+def _expected_rounds(
     day_start: datetime,
     day_end: datetime,
+    interval_seconds: float,
+) -> int:
+    """How many opportunity rounds should have run in the window."""
+    if interval_seconds <= 0:
+        return 0
+    return max(0, int((day_end - day_start).total_seconds() // interval_seconds))
+
+
+def _calculate_day_downtime_hours(
+    run_intervals: Sequence[tuple[datetime, datetime]],
+    day_start: datetime,
+    day_end: datetime,
+    *,
+    grace_hours: float,
 ) -> float:
-    """Estimate downtime hours during a UTC day.
+    """Downtime is the part of the day no backend task was running.
 
-    If 0 events occurred the entire day, returns 24.0 (full day downtime).
-    If events exist in low-frequency test fixtures (<10 samples), returns 0.0.
-    In continuous operation (dense samples), gaps > 6 hours accumulate downtime.
+    ``run_intervals`` are the recorded (started_at, finished_at) spans of
+    the scheduler tasks. The union of those spans is "running"; every
+    uncovered second in the day is downtime. The scheduler sleeps
+    ``interval`` seconds between rounds, so a gap of at most
+    ``grace_hours`` (one round interval plus scheduling slack) is normal
+    idle time, not downtime; longer uncovered gaps count in full.
+
+    An empty history means the backend never ran that day: full-day
+    downtime, which is exactly what a reset rule needs to see.
     """
-    if not events_timestamps:
-        return 24.0
-
-    sorted_times = sorted(events_timestamps)
-    if len(sorted_times) < 10:
+    if day_start >= day_end:
         return 0.0
+    spans = sorted(
+        (max(start, day_start), min(end, day_end))
+        for start, end in run_intervals
+        if end > day_start and start < day_end
+    )
+    covered = 0.0
+    cursor = day_start
+    for start, end in spans:
+        if start > cursor:
+            gap = (start - cursor).total_seconds()
+            if gap > grace_hours * 3600.0:
+                covered += 0.0  # the gap is downtime, not coverage
+            else:
+                # A short gap is the scheduler's normal sleep between
+                # rounds; it still counts as "the backend was running".
+                covered += gap
+        if end > cursor:
+            covered += (end - max(cursor, start)).total_seconds()
+            cursor = end
+    tail_gap = (day_end - cursor).total_seconds()
+    if tail_gap <= grace_hours * 3600.0:
+        covered += max(0.0, tail_gap)
+    running_hours = min(
+        (day_end - day_start).total_seconds(), max(0.0, covered)
+    ) / 3600.0
+    return max(0.0, (day_end - day_start).total_seconds() / 3600.0 - running_hours)
 
-    total_gap_seconds = 0.0
-    first_gap = (sorted_times[0] - day_start).total_seconds()
-    if first_gap > 21600.0:
-        total_gap_seconds += first_gap
 
-    for prev, curr in zip(sorted_times[:-1], sorted_times[1:], strict=False):
-        gap = (curr - prev).total_seconds()
-        if gap > 21600.0:
-            total_gap_seconds += gap
+def _run_overlaps_day(run: SoakRun, day_start: datetime, day_end: datetime) -> bool:
+    """True when the soak run covers any part of this UTC day."""
+    return run.started_at < day_end
 
-    last_gap = (day_end - sorted_times[-1]).total_seconds()
-    if last_gap > 21600.0:
-        total_gap_seconds += last_gap
 
-    return min(24.0, total_gap_seconds / 3600.0)
+def _day_runs(
+    run: SoakRun, all_runs: Sequence[SoakRun], day_start: datetime, day_end: datetime
+) -> list[SoakRun]:
+    """The soak run(s) that were authoritative during this day.
+
+    A reset starts a new Day 0; days before the newest run's start
+    belong to the superseded run and are not part of the current
+    qualification period.
+    """
+    del all_runs  # reserved for multi-run attribution
+    if run.started_at >= day_end:
+        return []
+    return [run]
+
+
+def _count_recorded_rounds(
+    history: Sequence[dict[str, Any]],
+    day_start: datetime,
+    day_end: datetime,
+) -> tuple[int, int]:
+    """Recorded opportunity rounds and the failed ones among them."""
+    recorded = 0
+    failed = 0
+    for row in history:
+        started = row.get("started_at")
+        if not isinstance(started, datetime):
+            continue
+        if day_start <= started < day_end:
+            recorded += 1
+            if row.get("status") != "ok":
+                failed += 1
+    return recorded, failed
+
+
+def _round_interval_seconds(history: Sequence[dict[str, Any]]) -> float:
+    """Infer the scheduler's round interval from its own run history.
+
+    The median gap between consecutive starts is the observed cadence;
+    it keeps the completeness rule tied to what the backend actually
+    did rather than a number copied into the evaluator.
+    """
+    starts = sorted(
+        started
+        for row in history
+        if isinstance(started := row.get("started_at"), datetime)
+    )
+    if len(starts) < 2:
+        return 300.0
+    gaps = sorted(
+        gap
+        for earlier, later in zip(starts[:-1], starts[1:], strict=False)
+        if (gap := (later - earlier).total_seconds()) > 0
+    )
+    if not gaps:
+        return 300.0
+    return float(gaps[len(gaps) // 2])
+
+
+def _ledger_rows_for_day(
+    db_path: Path | str | None,
+    day_start: datetime,
+    day_end: datetime,
+) -> list[dict[str, Any]]:
+    """Durable submit reservations created during the day."""
+    if db_path is None or not Path(db_path).exists():
+        return []
+    ledger = OrderLedger(db_path=db_path)
+    try:
+        rows = ledger._conn.execute(
+            """SELECT submit_id, cycle_id, intent_id, decision_id, status,
+                      client_order_id, broker_order_id, created_at
+               FROM order_ledger_reservations
+               ORDER BY created_at ASC"""
+        ).fetchall()
+    finally:
+        ledger.close()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        created = _parse_ts(row[7])
+        if created is None or not (day_start <= created < day_end):
+            continue
+        out.append(
+            {
+                "submit_id": str(row[0]),
+                "cycle_id": str(row[1]),
+                "intent_id": str(row[2]),
+                "decision_id": str(row[3]),
+                "status": str(row[4]),
+                "client_order_id": str(row[5]) if row[5] is not None else None,
+                "broker_order_id": str(row[6]) if row[6] is not None else None,
+            }
+        )
+    return out
+
+
+def _decision_ids_for_day(
+    db_path: Path | str | None,
+    day_start: datetime,
+    day_end: datetime,
+) -> set[str]:
+    """RiskDecision ids persisted during the day."""
+    if db_path is None or not Path(db_path).exists():
+        return set()
+    store = RiskDecisionStore(db_path=db_path)
+    try:
+        rows = store._conn.execute(
+            "SELECT decision_id, created_at FROM risk_decisions"
+        ).fetchall()
+    finally:
+        store.close()
+    ids: set[str] = set()
+    for row in rows:
+        created = _parse_ts(row[1])
+        if created is not None and day_start <= created < day_end:
+            ids.add(str(row[0]))
+    return ids
 
 
 def evaluate_soak_status(
@@ -232,15 +430,28 @@ def _evaluate_soak_status_impl(
     ai_store = AiTradingStore(db_path=db_path)
     recon_store = BrokerReconStore(db_path=db_path)
     paper_store = PaperStore(db_path=db_path)
+    heartbeats = HeartbeatStore(db_path=db_path)
     try:
         cycles = ai_store.list_cycles(limit=5000)
         recon_snapshots = recon_store.list_snapshots(limit=5000)
         freezes = recon_store.list_freezes(only_open=False)
         orders = paper_store.get_orders()
+        # Every task's executions prove the backend was up; the cycle
+        # task alone proves the opportunity checks ran.
+        all_task_runs = heartbeats.list_task_runs()
+        round_history = [
+            row for row in all_task_runs if row.get("task_name") == CYCLE_TASK_NAME
+        ]
     finally:
+        heartbeats.close()
         paper_store.close()
         recon_store.close()
         ai_store.close()
+
+    round_interval = _round_interval_seconds(round_history)
+    # One round interval of uncovered time is the scheduler's own sleep
+    # between rounds, not downtime; allow two for a slow round.
+    grace_hours = max(2.0 * round_interval / 3600.0, 1.0 / 60.0)
 
     start_date = active_run.started_at.date()
     current_date = now.date()
@@ -253,17 +464,25 @@ def _evaluate_soak_status_impl(
         day_str = current_day.isoformat()
         is_weekend = current_day.weekday() >= 5
         is_today = current_day == current_date
+        d_start = datetime(
+            current_day.year, current_day.month, current_day.day, 0, 0, tzinfo=UTC
+        )
+        d_end = d_start + timedelta(days=1)
+        # Day 0 starts at the recorded soak start, not midnight: evidence
+        # from before Day 0 never counts toward the run.
+        window_start = max(d_start, active_run.started_at)
+        window_end = min(d_end, now) if is_today else d_end
+        if window_start >= window_end:
+            current_day += timedelta(days=1)
+            continue
 
         # 1. Cycles for this day
         day_cycles: list[Any] = []
-        timestamps: list[datetime] = []
         for c in cycles:
             c_day = getattr(c, "trading_day", None)
             c_ts = _parse_ts(getattr(c, "created_at", None))
             if c_day == day_str or (c_ts and c_ts.date().isoformat() == day_str):
                 day_cycles.append(c)
-                if c_ts:
-                    timestamps.append(c_ts)
 
         # 2. Reconciliations for this day
         day_snaps: list[Any] = []
@@ -271,7 +490,6 @@ def _evaluate_soak_status_impl(
             s_ts = _parse_ts(s.captured_at)
             if s_ts and s_ts.date().isoformat() == day_str:
                 day_snaps.append(s)
-                timestamps.append(s_ts)
 
         recon_clean = all(s.all_match for s in day_snaps) if day_snaps else True
 
@@ -284,7 +502,11 @@ def _evaluate_soak_status_impl(
                 if f_cleared is None or f_cleared.date().isoformat() > day_str:
                     day_open_freezes.append(f)
 
-        # 4. Check orders for this day
+        # 4. Broker orders recorded for this day. Two sources: the durable
+        # order ledger (every real submit) and the paper audit log (used
+        # only by deterministic tests and legacy tooling).
+        ledger_rows = _ledger_rows_for_day(db_path, window_start, window_end)
+        decision_ids = _decision_ids_for_day(db_path, window_start, window_end)
         day_orders: list[dict[str, Any]] = []
         for o in orders:
             raw_details = o.get("details")
@@ -294,15 +516,33 @@ def _evaluate_soak_status_impl(
             order_ts = _parse_ts(details.get("created_at") or o.get("created_at"))
             if order_ts and order_ts.date().isoformat() == day_str:
                 day_orders.append(details)
-                timestamps.append(order_ts)
 
-        d_start = datetime(
-            current_day.year, current_day.month, current_day.day, 0, 0, tzinfo=UTC
+        # 5. Opportunity-round completeness from the scheduler's own
+        # recorded executions.
+        recorded_rounds, failed_rounds = _count_recorded_rounds(
+            round_history, window_start, window_end
         )
-        d_end = d_start + timedelta(days=1)
+        expected_rounds = (
+            0
+            if is_weekend
+            else _expected_rounds(window_start, window_end, round_interval)
+        )
+        missed_rounds = max(0, expected_rounds - recorded_rounds)
+
+        # 6. Downtime from the union of recorded task execution windows.
+        # Any task execution proves the backend process was alive; a
+        # stretch with no execution from any task is downtime.
+        task_spans: list[tuple[datetime, datetime]] = []
+        for row in all_task_runs:
+            started = row.get("started_at")
+            finished = row.get("finished_at")
+            if isinstance(started, datetime) and isinstance(finished, datetime):
+                task_spans.append((started, finished))
         downtime_hrs = 0.0
         if not is_today:
-            downtime_hrs = _calculate_day_downtime_hours(timestamps, d_start, d_end)
+            downtime_hrs = _calculate_day_downtime_hours(
+                task_spans, d_start, d_end, grace_hours=grace_hours
+            )
 
         report_exists = _daily_report_exists(day_str)
 
@@ -321,26 +561,49 @@ def _evaluate_soak_status_impl(
                 open_freezes_count=len(day_open_freezes),
                 reset_reasons=[],
                 extension_reasons=[],
+                rounds_recorded=recorded_rounds,
+                missed_rounds=missed_rounds,
+                ledger_orders=len(ledger_rows),
+                orders_without_decision=0,
             )
             evaluated_days.append(day_eval)
             current_day += timedelta(days=1)
             continue
 
-        # Check Safety Invariant Resets (PROJECT_GUIDE 860-867):
-        # 1. Duplicate orders check
+        # Check Safety Invariant Resets (PROJECT_GUIDE S10):
+        # 1. Duplicate orders: the same broker-facing client identity was
+        # submitted more than once, or the same submit identity exists
+        # twice (the ledger's unique key makes the latter impossible,
+        # which is itself the evidence).
+        ledger_client_ids = [
+            row["client_order_id"]
+            for row in ledger_rows
+            if row["client_order_id"]
+        ]
+        if len(ledger_client_ids) != len(set(ledger_client_ids)):
+            reset_reasons.append("duplicate orders detected on trading day")
         client_ids = [
             o.get("client_order_id") for o in day_orders if o.get("client_order_id")
         ]
         if len(client_ids) != len(set(client_ids)):
             reset_reasons.append("duplicate orders detected on trading day")
 
-        # 2. Orders without RiskDecision
+        # 2. Orders without a persisted RiskDecision. Every ledger
+        # reservation is created only after the gate approved and the
+        # decision was persisted, so a missing record is a reset.
+        orders_without_decision = sum(
+            1
+            for row in ledger_rows
+            if row["decision_id"] not in decision_ids
+        )
         for o in day_orders:
             if not o.get("decision_id") and o.get("status") in ("filled", "submitted"):
-                reset_reasons.append("order without persisted RiskDecision")
+                orders_without_decision += 1
                 break
+        if orders_without_decision:
+            reset_reasons.append("order without persisted RiskDecision")
 
-        # 3. Unclean recon without freeze
+        # 3. Unclean recon without a freeze raised for that day.
         if day_snaps:
             for snap in day_snaps:
                 if not snap.all_match:
@@ -356,17 +619,28 @@ def _evaluate_soak_status_impl(
                         break
 
         # 4. Downtime > 12h
-        if downtime_hrs > 12.0:
-            reset_reasons.append(f"downtime {downtime_hrs:.1f}h exceeded 12-hour limit")
+        if downtime_hrs > RESET_DOWNTIME_HOURS:
+            reset_reasons.append(
+                f"downtime {downtime_hrs:.1f}h exceeded "
+                f"{RESET_DOWNTIME_HOURS:.0f}-hour limit"
+            )
 
-        # Check Non-fatal Extensions (PROJECT_GUIDE 859):
+        # Check Non-fatal Extensions (PROJECT_GUIDE S10):
         if not reset_reasons:
-            if 6.0 < downtime_hrs <= 12.0:
+            if EXTENSION_DOWNTIME_HOURS < downtime_hrs <= RESET_DOWNTIME_HOURS:
                 extension_reasons.append(
-                    f"downtime {downtime_hrs:.1f}h between 6h and 12h"
+                    f"downtime {downtime_hrs:.1f}h between "
+                    f"{EXTENSION_DOWNTIME_HOURS:.0f}h and "
+                    f"{RESET_DOWNTIME_HOURS:.0f}h"
                 )
-            if not is_weekend and len(day_cycles) == 0:
-                extension_reasons.append("no decision cycles recorded on weekday")
+            if not is_weekend and missed_rounds > MAX_MISSED_ROUNDS_PER_DAY:
+                extension_reasons.append(
+                    f"{missed_rounds} scheduled opportunity rounds have no record"
+                )
+            if failed_rounds:
+                extension_reasons.append(
+                    f"{failed_rounds} opportunity rounds ended in error"
+                )
             if not recon_clean or len(day_open_freezes) > 0:
                 extension_reasons.append(
                     "unclean reconciliation or open freeze at day end"
@@ -395,12 +669,27 @@ def _evaluate_soak_status_impl(
                 open_freezes_count=len(day_open_freezes),
                 reset_reasons=reset_reasons,
                 extension_reasons=extension_reasons,
+                rounds_recorded=recorded_rounds,
+                missed_rounds=missed_rounds,
+                ledger_orders=len(ledger_rows),
+                orders_without_decision=orders_without_decision,
             )
         )
         current_day += timedelta(days=1)
 
     qualified_count = sum(1 for d in evaluated_days if d.status == "qualified")
     extension_count = sum(1 for d in evaluated_days if d.status == "extension")
+    reset_days = [d for d in evaluated_days if d.status == "reset"]
+
+    # A reset day means the run restarts from a new Day 0: no day of the
+    # current run can qualify past it.
+    if reset_days:
+        first_reset = reset_days[0].date
+        qualified_count = sum(
+            1
+            for d in evaluated_days
+            if d.status == "qualified" and d.date < first_reset
+        )
 
     if extension_count > MAX_ALLOWED_EXTENSIONS:
         reason = (
@@ -419,8 +708,13 @@ def _evaluate_soak_status_impl(
     is_complete = (
         qualified_count >= TARGET_QUALIFIED_DAYS
         and not has_active_freezes
-        and not any(d.status == "reset" for d in evaluated_days)
+        and not reset_days
+        and extension_count <= MAX_ALLOWED_EXTENSIONS
     )
+
+    safety_findings: list[str] = []
+    if has_active_freezes:
+        safety_findings.append("an exposure freeze is still open")
 
     return SoakStatus(
         soak_started=True,
@@ -434,11 +728,16 @@ def _evaluate_soak_status_impl(
         days=evaluated_days,
         extensions=extensions_list,
         resets=resets_history,
+        safety_findings=safety_findings,
     )
 
 
 __all__ = [
+    "CYCLE_TASK_NAME",
+    "EXTENSION_DOWNTIME_HOURS",
     "MAX_ALLOWED_EXTENSIONS",
+    "MAX_MISSED_ROUNDS_PER_DAY",
+    "RESET_DOWNTIME_HOURS",
     "SoakDayEvaluation",
     "SoakStatus",
     "TARGET_QUALIFIED_DAYS",

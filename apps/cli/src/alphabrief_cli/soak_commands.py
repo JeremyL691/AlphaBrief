@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import typer
 from alphabrief_trader.soak_evaluator import evaluate_soak_status
-from alphabrief_trader.soak_store import SoakStore
+from alphabrief_trader.soak_store import SoakStartTimeError, SoakStore
 
 soak_app = typer.Typer(help="Inspect and manage soak testing runs.")
 
@@ -58,6 +58,10 @@ def start_cmd(
     store = SoakStore()
     try:
         run = store.start_soak(started_at=dt)
+    except SoakStartTimeError as exc:
+        # A backdated Day 0 would fake elapsed days; refuse it loudly.
+        _dump({"action": "refused", "error": str(exc)}, pretty=pretty)
+        raise typer.Exit(code=1) from exc
     finally:
         store.close()
 

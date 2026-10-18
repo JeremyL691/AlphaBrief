@@ -413,8 +413,11 @@ class TestClosePath:
 
         assert _current_soak_day() is None
 
-        store = SoakStore(db_path=db)
-        store.start_soak(started_at=datetime.now(UTC) - timedelta(days=2))
+        # Simulate a run that began two days ago: the store's clock is the
+        # simulated start, so the backdate guard sees a real start time.
+        started = datetime.now(UTC) - timedelta(days=2)
+        store = SoakStore(db_path=db, now_fn=lambda: started)
+        store.start_soak(started_at=started)
         store.close()
 
         assert _current_soak_day() == 3

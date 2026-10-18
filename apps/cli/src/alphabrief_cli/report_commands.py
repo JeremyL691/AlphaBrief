@@ -285,12 +285,19 @@ def soak_cmd(
 ) -> None:
     """Write the comprehensive 14-day soak test report."""
     from alphabrief_trader.soak_report import (
+        SoakReportNotReadyError,
         generate_soak_report_data,
         write_soak_report,
     )
 
     data = generate_soak_report_data()
-    md_path, json_path = write_soak_report(data, out_file=out_file, final=final)
+    try:
+        md_path, json_path = write_soak_report(data, out_file=out_file, final=final)
+    except SoakReportNotReadyError as exc:
+        # A final report is the release artifact; an incomplete soak must
+        # fail loudly instead of shipping a report that looks final.
+        _dump({"final": True, "error": str(exc)}, pretty=pretty)
+        raise typer.Exit(code=1) from exc
 
     _dump(
         {

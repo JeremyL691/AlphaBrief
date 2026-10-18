@@ -7,8 +7,9 @@ UTC timestamps.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,34 @@ CREATE TABLE IF NOT EXISTS soak_runs (
     PRIMARY KEY (run_index)
 )
 """
+
+#: A soak start may be at most this far in the past. The tolerance only
+#: absorbs clock skew and the seconds between reading the clock and
+#: writing the row; anything larger would let an operator backfill Day 0,
+#: which the soak rules forbid (days come from real elapsed time only).
+MAX_START_BACKDATE = timedelta(minutes=10)
+#: A start time further in the future than this is a typo, not a plan.
+MAX_START_FUTURE = timedelta(minutes=1)
+
+
+class SoakStartTimeError(ValueError):
+    """Raised when a requested soak start time is not real elapsed time."""
+
+
+def _validate_start_time(value: datetime, *, now: datetime) -> datetime:
+    """Reject backdated or future soak start times."""
+    start = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    if start > now + MAX_START_FUTURE:
+        raise SoakStartTimeError(
+            f"soak start {start.isoformat()} is in the future"
+        )
+    if now - start > MAX_START_BACKDATE:
+        raise SoakStartTimeError(
+            f"soak start {start.isoformat()} is more than "
+            f"{int(MAX_START_BACKDATE.total_seconds() // 60)} minutes in the "
+            "past; soak days only count from real elapsed time"
+        )
+    return start
 
 
 @dataclass(frozen=True)
@@ -72,13 +101,25 @@ def _row_to_run(row: tuple[Any, ...]) -> SoakRun:
 
 
 class SoakStore:
-    """Store for managing soak run lifecycles in DuckDB."""
+    """Store for managing soak run lifecycles in DuckDB.
 
-    def __init__(self, db_path: Path | str | None = None) -> None:
+    ``now_fn`` exists so tests can simulate a soak that started in the
+    past without backdating production data: the start-time guard always
+    compares against the store's own clock, so a real runtime clock makes
+    backdating impossible.
+    """
+
+    def __init__(
+        self,
+        db_path: Path | str | None = None,
+        *,
+        now_fn: Callable[[], datetime] | None = None,
+    ) -> None:
         self._db_path = Path(db_path) if db_path else _paths.db_path()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(CREATE_SOAK_RUNS_TABLE)
+        self._now = now_fn or (lambda: datetime.now(UTC))
 
     def get_active_run(self) -> SoakRun | None:
         """Return the active soak run, or None if no active run exists."""
@@ -119,8 +160,8 @@ class SoakStore:
         if active is not None:
             return active
 
-        now = datetime.now(UTC)
-        start_time = started_at or now
+        now = self._now()
+        start_time = _validate_start_time(started_at, now=now) if started_at else now
         latest = self.get_latest_run()
         next_index = (latest.run_index + 1) if latest else 0
 
@@ -149,7 +190,7 @@ class SoakStore:
         new_started_at: datetime | None = None,
     ) -> SoakRun:
         """Reset the current active soak run and start a new one from Day 0."""
-        now = datetime.now(UTC)
+        now = self._now()
         active = self.get_active_run()
         latest = self.get_latest_run()
         next_index = (latest.run_index + 1) if latest else 0
@@ -164,7 +205,11 @@ class SoakStore:
                 [reason, next_index, active.run_index],
             )
 
-        start_time = new_started_at or now
+        start_time = (
+            _validate_start_time(new_started_at, now=now)
+            if new_started_at
+            else now
+        )
         self._conn.execute(
             """
             INSERT INTO soak_runs (
@@ -216,4 +261,10 @@ class SoakStore:
         self._conn.close()
 
 
-__all__ = ["SoakRun", "SoakStore"]
+__all__ = [
+    "MAX_START_BACKDATE",
+    "MAX_START_FUTURE",
+    "SoakRun",
+    "SoakStartTimeError",
+    "SoakStore",
+]

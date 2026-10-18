@@ -68,6 +68,25 @@ CREATE TABLE IF NOT EXISTS scheduler_alerts (
 )
 """
 
+#: One row per task execution. The heartbeat table only keeps the last
+#: run; soak evidence (downtime and per-round completeness) needs every
+#: run of the period, so each execution appends here. The shape matches
+#: API migration 5, which owns the authoritative definition.
+CREATE_TASK_RUNS = """
+CREATE TABLE IF NOT EXISTS scheduler_task_runs (
+    task_name        TEXT NOT NULL,
+    started_at       TIMESTAMPTZ NOT NULL,
+    finished_at      TIMESTAMPTZ,
+    status           TEXT NOT NULL,
+    error            TEXT
+)
+"""
+
+CREATE_TASK_RUNS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_scheduler_task_runs_time
+    ON scheduler_task_runs (started_at)
+"""
+
 
 class HeartbeatStore:
     """Persists scheduler task heartbeats and alert history."""
@@ -77,8 +96,30 @@ class HeartbeatStore:
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(CREATE_HEARTBEATS)
         self._conn.execute(CREATE_ALERTS)
+        self._conn.execute(CREATE_TASK_RUNS)
+        self._conn.execute(CREATE_TASK_RUNS_INDEX)
 
-    def record_run(self, *, task_name: str, status: str, error: str | None) -> None:
+    def record_run(
+        self,
+        *,
+        task_name: str,
+        status: str,
+        error: str | None,
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+    ) -> None:
+        now = datetime.now(UTC)
+        started = started_at or now
+        finished = finished_at or now
+        self._conn.execute(
+            """
+            INSERT INTO scheduler_task_runs (
+                task_name, started_at, finished_at, status, error
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [task_name, started, finished, status, error],
+        )
         self._conn.execute(
             """
             INSERT INTO scheduler_heartbeats (
@@ -91,8 +132,55 @@ class HeartbeatStore:
                 last_error  = EXCLUDED.last_error,
                 run_count   = scheduler_heartbeats.run_count + 1
             """,
-            [task_name, datetime.now(UTC).isoformat(), status, error],
+            [task_name, finished.isoformat(), status, error],
         )
+
+    def list_task_runs(
+        self,
+        *,
+        task_name: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return recorded executions in time order, newest last.
+
+        ``start``/``end`` bound the execution's start time. The soak
+        evaluator uses this history to compute downtime and per-round
+        completeness from real facts instead of the last-run heartbeat.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if task_name is not None:
+            clauses.append("task_name = ?")
+            params.append(task_name)
+        if start is not None:
+            clauses.append("started_at >= ?")
+            params.append(start)
+        if end is not None:
+            clauses.append("started_at < ?")
+            params.append(end)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._conn.execute(
+            f"""
+            SELECT task_name, started_at, finished_at, status, error
+            FROM scheduler_task_runs
+            {where}
+            ORDER BY started_at ASC
+            """,
+            params,
+        ).fetchall()
+        return [
+            {
+                "task_name": str(row[0]),
+                "started_at": _parse_iso(str(row[1])),
+                "finished_at": (
+                    _parse_iso(str(row[2])) if row[2] is not None else None
+                ),
+                "status": str(row[3]),
+                "error": str(row[4]) if row[4] is not None else None,
+            }
+            for row in rows
+        ]
 
     def last_run_at(self, task_name: str) -> datetime | None:
         row = self._conn.execute(
@@ -470,10 +558,15 @@ class OperationsScheduler:
                 await self._sleep(self._short_poll_seconds())
                 continue
             alerted_freeze_id = None
+            run_started = datetime.now(UTC)
             try:
                 await asyncio.wait_for(task.handler(), timeout=task.timeout_seconds)
                 self._heartbeats.record_run(
-                    task_name=task.name, status="ok", error=None
+                    task_name=task.name,
+                    status="ok",
+                    error=None,
+                    started_at=run_started,
+                    finished_at=datetime.now(UTC),
                 )
                 self._failure_counters[task.name] = 0
                 if is_broker_task:
@@ -482,7 +575,11 @@ class OperationsScheduler:
             except Exception as exc:  # noqa: BLE001 — record, alert, decide
                 self._failure_counters[task.name] += 1
                 self._heartbeats.record_run(
-                    task_name=task.name, status="error", error=str(exc)
+                    task_name=task.name,
+                    status="error",
+                    error=str(exc),
+                    started_at=run_started,
+                    finished_at=datetime.now(UTC),
                 )
                 if is_broker_task:
                     await self._broker_tracker.record_failure(error=exc)
