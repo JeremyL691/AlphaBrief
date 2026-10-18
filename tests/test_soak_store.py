@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from alphabrief_trader.soak_store import SoakStore
+import pytest
+from alphabrief_trader.soak_store import (
+    MAX_START_BACKDATE,
+    SoakStartTimeError,
+    SoakStore,
+)
 
 
 def test_soak_store_initial_state_empty(tmp_path: Path) -> None:
@@ -19,9 +24,11 @@ def test_soak_store_initial_state_empty(tmp_path: Path) -> None:
 
 
 def test_soak_store_start_run_creates_active(tmp_path: Path) -> None:
-    store = SoakStore(db_path=tmp_path / "test.duckdb")
+    t0 = datetime(2026, 10, 4, 4, 0, tzinfo=UTC)
+    # Simulated clock: production uses the real clock, so a past start is
+    # only reachable here by moving the store's own notion of "now".
+    store = SoakStore(db_path=tmp_path / "test.duckdb", now_fn=lambda: t0)
     try:
-        t0 = datetime(2026, 10, 4, 4, 0, tzinfo=UTC)
         run = store.start_soak(started_at=t0)
         assert run.run_index == 0
         assert run.state == "active"
@@ -42,13 +49,15 @@ def test_soak_store_start_run_creates_active(tmp_path: Path) -> None:
 
 
 def test_soak_store_reset_supersedes_and_increments(tmp_path: Path) -> None:
-    store = SoakStore(db_path=tmp_path / "test.duckdb")
+    t0 = datetime(2026, 10, 4, 4, 0, tzinfo=UTC)
+    clock = {"now": t0}
+    store = SoakStore(db_path=tmp_path / "test.duckdb", now_fn=lambda: clock["now"])
     try:
-        t0 = datetime(2026, 10, 4, 4, 0, tzinfo=UTC)
         run0 = store.start_soak(started_at=t0)
         assert run0.run_index == 0
 
         t1 = datetime(2026, 10, 6, 12, 0, tzinfo=UTC)
+        clock["now"] = t1
         run1 = store.record_reset(
             reason="duplicate orders detected",
             new_started_at=t1,
@@ -91,5 +100,34 @@ def test_soak_store_complete_and_halt(tmp_path: Path) -> None:
         assert latest2 is not None
         assert latest2.state == "halted"
         assert latest2.reason == "manual operator abort"
+    finally:
+        store.close()
+
+
+def test_soak_store_rejects_backdated_start(tmp_path: Path) -> None:
+    """Day 0 must be real elapsed time, never a backfilled date."""
+    now = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
+    store = SoakStore(db_path=tmp_path / "test.duckdb", now_fn=lambda: now)
+    try:
+        with pytest.raises(SoakStartTimeError):
+            store.start_soak(
+                started_at=now - MAX_START_BACKDATE - timedelta(minutes=1)
+            )
+        assert store.get_active_run() is None
+        # The tolerance still admits a start a few minutes ago (clock skew
+        # and the gap between reading the clock and writing the row).
+        run = store.start_soak(started_at=now - timedelta(minutes=2))
+        assert run.started_at == now - timedelta(minutes=2)
+    finally:
+        store.close()
+
+
+def test_soak_store_rejects_future_start(tmp_path: Path) -> None:
+    now = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
+    store = SoakStore(db_path=tmp_path / "test.duckdb", now_fn=lambda: now)
+    try:
+        with pytest.raises(SoakStartTimeError):
+            store.start_soak(started_at=now + timedelta(hours=1))
+        assert store.get_active_run() is None
     finally:
         store.close()

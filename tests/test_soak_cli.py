@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
 from alphabrief_cli.main import app
+from alphabrief_trader.soak_evaluator import SoakStatus
+from alphabrief_trader.soak_report import SoakReportData
 from typer.testing import CliRunner
 
 runner = CliRunner()
@@ -66,7 +69,8 @@ def test_cli_report_soak(tmp_path: Path) -> None:
         assert "## Period & Qualification" in content
 
 
-def test_cli_report_soak_final(tmp_path: Path) -> None:
+def test_cli_report_soak_final_refuses_an_incomplete_soak(tmp_path: Path) -> None:
+    """The final report is a release artifact: incomplete soak fails loudly."""
     db = tmp_path / "test.duckdb"
 
     with (
@@ -77,6 +81,53 @@ def test_cli_report_soak_final(tmp_path: Path) -> None:
         # Start soak
         runner.invoke(app, ["soak", "start"])
 
+        res = runner.invoke(app, ["report", "soak", "--final"])
+        assert res.exit_code == 1
+        payload = json.loads(res.stdout)
+        assert payload["final"] is True
+        assert "qualified days" in payload["error"]
+        assert not (tmp_path / "reports").exists()
+
+
+def test_cli_report_soak_final_writes_when_complete(tmp_path: Path) -> None:
+    db = tmp_path / "test.duckdb"
+
+    complete = SoakStatus(
+        soak_started=True,
+        run_index=0,
+        started_at=datetime(2026, 10, 4, 4, 0, tzinfo=UTC),
+        state="completed",
+        qualified_days=14,
+        extension_days=0,
+        target_days=14,
+        is_complete=True,
+        days=[],
+        extensions=[],
+        resets=[],
+    )
+    data = SoakReportData(
+        status=complete,
+        generated_at=datetime(2026, 10, 18, 4, 0, tzinfo=UTC),
+        masked_account_id="...0001",
+        equity_metrics={},
+        order_metrics={},
+        risk_metrics={},
+        model_metrics={},
+        shadow_metrics={},
+        safety_metrics={"invariants": []},
+        hotfixes=[],
+        version="1.0.0",
+    )
+
+    with (
+        patch("alphabrief_core.paths.db_path", return_value=db),
+        patch("alphabrief_cli.api_client.is_api_running", return_value=False),
+        patch("alphabrief_trader.soak_report.project_root", return_value=tmp_path),
+        patch(
+            "alphabrief_trader.soak_report.generate_soak_report_data",
+            return_value=data,
+        ),
+    ):
         res = runner.invoke(app, ["report", "soak", "--final"])
         assert res.exit_code == 0
         payload = json.loads(res.stdout)
