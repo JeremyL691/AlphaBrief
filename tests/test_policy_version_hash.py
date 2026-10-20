@@ -113,3 +113,26 @@ class TestSnapshotContentHash:
         assert len(digest) == 64
         assert NOW.isoformat() not in digest
         assert "2026" not in digest
+
+
+def test_project_root_is_found_when_the_working_directory_is_the_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon starts in the data directory, not in the checkout.
+
+    ``project_root`` walked only cwd ancestors, so the LaunchAgent (which the
+    plist starts with the data directory as its working directory) could not
+    find ``pyproject.toml``. ``policy_version_hash`` then raised and the
+    execution backend refused every order with "the reviewed configuration
+    files cannot be read", which is a deployment-path bug rather than a real
+    policy change. The package location is the fallback ``runtime_config``
+    already uses.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "not_a_checkout.txt").write_text("x", encoding="utf-8")
+
+    root = project_root()
+
+    assert (root / "pyproject.toml").is_file()
+    # The hash must be derivable from an unrelated cwd.
+    assert policy_version_hash() != ""
