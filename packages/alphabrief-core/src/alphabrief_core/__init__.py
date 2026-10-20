@@ -83,6 +83,13 @@ from alphabrief_core.read_contracts import (
     unavailable_source_error,
     unknown_filter_error,
 )
+from alphabrief_core.runtime_config import (
+    LoadedRuntimeSettings,
+    OpportunitySettings,
+    RuntimeSettings,
+    load_opportunity_settings,
+    load_runtime_settings,
+)
 from alphabrief_core.runtime_lock import (
     RuntimeLock,
     RuntimeLockError,
@@ -170,6 +177,11 @@ __all__ = [
     "RuntimeLock",
     "DEFAULT_CATCH_UP_MINUTES",
     "DEFAULT_SCHEDULE",
+    "LoadedRuntimeSettings",
+    "OpportunitySettings",
+    "RuntimeSettings",
+    "load_opportunity_settings",
+    "load_runtime_settings",
     "DueEvent",
     "PlannedEvent",
     "due_events",

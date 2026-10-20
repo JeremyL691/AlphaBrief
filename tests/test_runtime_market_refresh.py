@@ -11,6 +11,7 @@ from alphabrief_api.db import MarketDataStore
 from alphabrief_cli import cycle_commands, run_commands, scheduler_commands
 from alphabrief_cli.run_commands import Runtime
 from alphabrief_execution.broker.oanda import market_sync
+from alphabrief_execution.broker.oanda.market_sync import SIGNAL_INSTRUMENTS
 from alphabrief_execution.operations.scheduler import OperationsScheduler
 from test_market_sync import _client, _MemoryStore
 
@@ -55,7 +56,11 @@ def test_worker_closes_its_market_connection(
     original = MarketDataStore.close
 
     def refresh(store: MarketDataStore, symbols: tuple[str, ...]) -> dict[str, str]:
-        assert symbols == ("EUR_USD",)
+        # GUIDE 5.3: the sync covers the traded universe plus the
+        # cross-market signals, otherwise their H1 series ages out and
+        # every symbol fails data quality.
+        assert symbols[0] == "EUR_USD"
+        assert set(SIGNAL_INSTRUMENTS) <= set(symbols)
         stores.append(store)
         owner.append(threading.get_ident())
         return {"EUR_USD:H1": "TimeoutError"} if failure else {}

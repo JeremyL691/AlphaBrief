@@ -1,4 +1,10 @@
-"""Tests for the clock schedule and the single-process runtime (GUIDE 5.1/S5)."""
+"""Tests for the clock schedule and the single-process runtime (GUIDE 5.1/S5).
+
+Trading opportunities are a resident task checked every 1-5 minutes
+(`test_runtime_opportunity_task.py` and `test_opportunity_scan.py`).
+This module covers the remaining clock anchors and the planner that
+dispatches them.
+"""
 
 from __future__ import annotations
 
@@ -21,66 +27,80 @@ def _at(day: datetime, hour: int, minute: int) -> datetime:
 
 
 class TestSchedulePlan:
-    def test_round_fires_on_time(self) -> None:
+    def test_anchor_fires_on_time(self) -> None:
         verdicts = {
-            v.name: v for v in evaluate_schedule(now=_at(THURSDAY, 0, 30))
+            v.name: v for v in evaluate_schedule(now=_at(THURSDAY, 21, 30))
         }
 
-        assert verdicts["decision_round_tokyo"].due is True
-        assert verdicts["decision_round_tokyo"].reason == "due"
+        assert verdicts["daily_report"].due is True
+        assert verdicts["daily_report"].reason == "due"
 
-    def test_round_inside_the_catch_up_window_runs_late(self) -> None:
+    def test_anchor_inside_the_catch_up_window_runs_late(self) -> None:
         verdicts = {
-            v.name: v for v in evaluate_schedule(now=_at(THURSDAY, 1, 30))
+            v.name: v for v in evaluate_schedule(now=_at(THURSDAY, 22, 30))
         }
 
-        assert verdicts["decision_round_tokyo"].due is True
-        assert verdicts["decision_round_tokyo"].reason == "catch_up"
+        assert verdicts["daily_report"].due is True
+        assert verdicts["daily_report"].reason == "catch_up"
 
-    def test_round_outside_the_window_is_missed_not_run(self) -> None:
+    def test_anchor_outside_the_window_is_missed_not_run(self) -> None:
         verdicts = {
-            v.name: v for v in evaluate_schedule(now=_at(THURSDAY, 2, 1))
+            v.name: v
+            for v in evaluate_schedule(
+                now=_at(THURSDAY, 21, 30) + timedelta(minutes=91)
+            )
         }
 
-        assert verdicts["decision_round_tokyo"].due is False
-        assert verdicts["decision_round_tokyo"].reason == "missed_window"
-        assert "never run late" in verdicts["decision_round_tokyo"].detail
+        assert verdicts["daily_report"].due is False
+        assert verdicts["daily_report"].reason == "missed_window"
+        assert "never run late" in verdicts["daily_report"].detail
 
     def test_catch_up_boundary_is_inclusive(self) -> None:
         at_edge = {
             v.name: v
-            for v in evaluate_schedule(now=_at(THURSDAY, 0, 30) + timedelta(minutes=90))
+            for v in evaluate_schedule(
+                now=_at(THURSDAY, 21, 30) + timedelta(minutes=90)
+            )
         }
 
-        assert at_edge["decision_round_tokyo"].due is True
+        assert at_edge["daily_report"].due is True
         one_second_late = {
             v.name: v
             for v in evaluate_schedule(
-                now=_at(THURSDAY, 0, 30) + timedelta(minutes=90, seconds=1)
+                now=_at(THURSDAY, 21, 30) + timedelta(minutes=90, seconds=1)
             )
         }
-        assert one_second_late["decision_round_tokyo"].due is False
+        assert one_second_late["daily_report"].due is False
 
-    def test_a_finished_round_is_not_due_again(self) -> None:
-        runs = {"decision_round_tokyo": _at(THURSDAY, 0, 31)}
+    def test_a_finished_anchor_is_not_due_again(self) -> None:
+        runs = {"daily_report": _at(THURSDAY, 21, 31)}
 
         verdicts = {
             v.name: v
-            for v in evaluate_schedule(now=_at(THURSDAY, 0, 45), last_runs=runs)
+            for v in evaluate_schedule(now=_at(THURSDAY, 21, 45), last_runs=runs)
         }
 
-        assert verdicts["decision_round_tokyo"].due is False
-        assert verdicts["decision_round_tokyo"].reason == "already_ran"
+        assert verdicts["daily_report"].due is False
+        assert verdicts["daily_report"].reason == "already_ran"
 
-    def test_weekends_skip_rounds_but_keep_report_and_backup(self) -> None:
+    def test_weekends_keep_report_and_backup(self) -> None:
         verdicts = {
             v.name: v for v in evaluate_schedule(now=_at(SATURDAY, 21, 30))
         }
 
-        assert verdicts["decision_round_tokyo"].reason == "market_closed"
-        assert verdicts["decision_round_tokyo"].due is False
         assert verdicts["daily_report"].due is True
         assert verdicts["backup"].due is False  # 22:00 has not arrived yet
+
+    def test_the_schedule_no_longer_holds_fixed_trading_rounds(self) -> None:
+        """GUIDE 5.1 replaced the three rounds with a 1-5 minute check."""
+        kinds = {event.kind for event in DEFAULT_SCHEDULE}
+
+        assert "decision_round" not in kinds
+        assert {event.name for event in DEFAULT_SCHEDULE} == {
+            "weekend_close_out",
+            "daily_report",
+            "backup",
+        }
 
     def test_friday_close_out_fires_only_on_friday(self) -> None:
         friday = {v.name: v for v in evaluate_schedule(now=_at(FRIDAY, 19, 5))}
@@ -102,10 +122,10 @@ class TestSchedulePlan:
         with pytest.raises(ValueError, match="catch_up_minutes"):
             evaluate_schedule(now=THURSDAY, catch_up_minutes=0)
 
-    def test_cycle_key_is_per_round_and_day(self) -> None:
+    def test_cycle_key_is_per_event_and_day(self) -> None:
         event = DEFAULT_SCHEDULE[0]
 
-        assert cycle_key_for(event, THURSDAY) == "decision_round_tokyo:2026-10-01"
+        assert cycle_key_for(event, THURSDAY) == "weekend_close_out:2026-10-01"
         assert cycle_key_for(event, FRIDAY) != cycle_key_for(event, THURSDAY)
 
 
@@ -142,16 +162,16 @@ class TestRuntimePlanner:
         # planner sees every event as not-yet-run.
         return runtime
 
-    def test_planner_dispatches_the_due_round(
+    def test_planner_dispatches_the_due_report(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
         calls: list[str] = []
-        runtime = self._runtime(now=_at(THURSDAY, 0, 30), calls=calls)
+        runtime = self._runtime(now=_at(THURSDAY, 21, 30), calls=calls)
 
         asyncio.run(runtime.planner_tick())
 
-        assert calls == ["decision:decision_round_tokyo:2026-10-01"]
+        assert calls == ["report"]
 
     def test_planner_dispatches_report_and_backup(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

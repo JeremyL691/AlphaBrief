@@ -1,18 +1,20 @@
-"""The clock-based trading schedule (PROJECT_GUIDE 5.1).
+"""The clock-based daily schedule (PROJECT_GUIDE 5.1).
 
-The runtime decides what to run from the wall clock, not from an interval:
-decision rounds at 00:30, 07:30 and 13:00 UTC (Monday–Friday), the Friday
-19:00 close-out, the 21:30 daily report, and the 22:00 backup.
+Trading opportunities are no longer driven by a handful of fixed rounds.
+GUIDE 5.1 requires a check every 1-5 minutes throughout the FX session,
+so the opportunity check is a resident scheduler task (``ai_daily_cycle``)
+and this planner owns only the daily anchors: the Friday 19:00 close-out,
+the 21:30 daily report, and the 22:00 backup.
 
 Rules the planner implements:
 
-* a missed round may run **within 90 minutes** of its scheduled time;
+* an event may run **within 90 minutes** of its scheduled time;
 * after that it is recorded as ``MISSED_WINDOW`` and never runs late — an
   order must not be placed in the wrong session;
-* weekends skip decision rounds (the report records that the market was
-  closed) while sync, reconciliation, report and backup still run;
+* weekends skip nothing here (the FX session itself is what closes, and
+  that is decided by the incumbent session verdict, not this module);
 * an event already run at or after its scheduled instant is not due again,
-  so a restart cannot repeat a completed round.
+  so a restart cannot repeat a completed run.
 
 The planner is pure: callers pass ``now`` and the last-run instants.
 """
@@ -53,29 +55,12 @@ class PlannedEvent:
     skip_weekends: bool = False
 
 
-#: The reviewed schedule (PROJECT_GUIDE 5.1).
+#: The reviewed daily anchors (PROJECT_GUIDE 5.1).
+#:
+#: Trading itself is not on this clock: the opportunity check runs as a
+#: resident task every 1-5 minutes while the FX session is open. What
+#: remains here is the work that genuinely happens once a day.
 DEFAULT_SCHEDULE: tuple[PlannedEvent, ...] = (
-    PlannedEvent(
-        name="decision_round_tokyo",
-        kind="decision_round",
-        at_utc=time(0, 30),
-        weekdays_only=True,
-        skip_weekends=True,
-    ),
-    PlannedEvent(
-        name="decision_round_london",
-        kind="decision_round",
-        at_utc=time(7, 30),
-        weekdays_only=True,
-        skip_weekends=True,
-    ),
-    PlannedEvent(
-        name="decision_round_newyork",
-        kind="decision_round",
-        at_utc=time(13, 0),
-        weekdays_only=True,
-        skip_weekends=True,
-    ),
     PlannedEvent(
         name="weekend_close_out",
         kind="close_out",

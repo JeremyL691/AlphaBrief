@@ -40,6 +40,11 @@ from alphabrief_execution.broker.recon_store import BrokerReconStore
 
 _LOGGER = logging.getLogger(__name__)
 
+#: Default cadence of the opportunity check (PROJECT_GUIDE 5.1: every
+#: 1-5 minutes). The reviewed configuration overrides it; the constant
+#: exists so a bare scheduler call still honours the guide.
+DEFAULT_OPPORTUNITY_SCAN_SECONDS = 180.0
+
 
 # ---------------------------------------------------------------------------
 # Heartbeat store
@@ -696,18 +701,21 @@ def build_default_tasks(
     *,
     on_reconcile: Callable[[str], Awaitable[None]],
     on_ai_cycle: Callable[[], Awaitable[None]] | None = None,
+    ai_cycle_interval_seconds: float = DEFAULT_OPPORTUNITY_SCAN_SECONDS,
 ) -> list[ScheduledTask]:
-    """Return the default task list (reconcile + AI).
+    """Return the default task list (reconcile + opportunity check).
 
     ``on_reconcile(scope)`` is supplied by the application; it should
     call ``LiveReconciler.reconcile(scope=scope)``.
 
-    ``on_ai_cycle`` is optional. When supplied, the scheduler registers
-    a disabled-by-default ``ai_daily_cycle`` task — the operator enables
-    it by setting ``ALPHABRIEF_AI_TRADING_ENABLED=true`` in the
-    environment. The task itself stays a no-op until the application
-    flips ``ScheduledTask.enabled = True`` on the returned entry, so
-    the default remains paper + read-only.
+    ``on_ai_cycle`` is the opportunity check (PROJECT_GUIDE 5.1). When
+    supplied, the scheduler registers it under the durable name
+    ``ai_daily_cycle`` - the name the soak evaluator counts - at
+    ``ai_cycle_interval_seconds``, which the reviewed configuration
+    bounds to the guide's 1-5 minute window.
+
+    The task is registered disabled so a bare scheduler stays read-only;
+    the runtime enables it when ``ALPHABRIEF_AI_TRADING_ENABLED`` is set.
     """
 
     async def reconcile_cycle() -> None:
@@ -727,22 +735,23 @@ def build_default_tasks(
         tasks.append(
             ScheduledTask(
                 name="ai_daily_cycle",
-                interval_seconds=86_400.0,
+                interval_seconds=ai_cycle_interval_seconds,
                 handler=on_ai_cycle,
-                # The cycle includes pre-cycle market/news ingestion plus
-                # one committee run per symbol (4 roles each); with a
-                # per-call model timeout of up to 30s this can exceed
-                # 120s. Keep the task timeout well above the worst-case
-                # cycle so a slow provider never trips the scheduler's
-                # auto-freeze (3 consecutive timeouts).
+                # A scan alone is cheap, but an escalating scan runs the
+                # whole committee (pre-cycle ingestion plus one run per
+                # symbol). Keep the timeout above that worst case so a
+                # slow provider never trips the auto-freeze.
                 timeout_seconds=900.0,
-                max_retries=1,
-                # GUIDE 5.9: the committee keeps running while frozen and
-                # the RiskGate turns any entry into a FROZEN no-trade. The
-                # daily interval also means a freeze that happens to be open
-                # at cycle time must not silently lose the day's run.
+                # The scan only reads stored facts and the next tick is
+                # 1-5 minutes away, so a retry buys nothing. An escalated
+                # round is idempotent through its cycle key regardless.
+                max_retries=0,
+                # GUIDE 5.9: a freeze stops new exposure, not evidence
+                # collection; the RiskGate turns an entry into a FROZEN
+                # no-trade. Without this the task's own failure episode
+                # could never clear.
                 run_when_frozen=True,
-                enabled=False,  # gated by ALPHABRIEF_AI_TRADING_ENABLED
+                enabled=False,  # enabled by the runtime when AI trading is on
             )
         )
     return tasks

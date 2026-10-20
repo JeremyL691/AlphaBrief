@@ -64,14 +64,28 @@ MARKET_SYNC_TIMEOUT = 300.0
 
 
 def market_sync_once(*, symbols: tuple[str, ...]) -> None:
-    """Refresh real FX candles, with the connection owned by this worker."""
+    """Refresh real FX candles, with the connection owned by this worker.
+
+    The cross-market signal instruments (GUIDE 5.3: gold, S&P 500, Brent)
+    are decision inputs too, and their freshness rule is the same two-hour
+    limit as the traded K lines. Refreshing them only as a side effect of
+    a committee round let their H1 series age out, which then failed data
+    quality for every symbol. One sync therefore covers both sets.
+    """
     from alphabrief_api.db import MarketDataStore
+    from alphabrief_execution.broker.oanda.market_sync import SIGNAL_INSTRUMENTS
 
     from alphabrief_cli.cycle_commands import _refresh_market_bars
 
+    # Preserve the caller's order, drop duplicates, then append whichever
+    # signal instruments the universe does not already cover.
+    requested = list(dict.fromkeys(symbols))
+    requested.extend(
+        signal for signal in SIGNAL_INSTRUMENTS if signal not in requested
+    )
     store = MarketDataStore(db_path=_paths.db_path())
     try:
-        errors = _refresh_market_bars(store, symbols)
+        errors = _refresh_market_bars(store, tuple(requested))
         if errors:
             # Values are classifications, never provider messages or URLs.
             _LOGGER.warning("runtime: market refresh failures %s", errors)
@@ -465,6 +479,156 @@ class Runtime:
         if scored:
             _LOGGER.info("runtime: scored %s shadow decision(s)", scored)
 
+    # -- opportunity check (GUIDE 5.1) ------------------------------------
+
+    def _opportunity_snapshot(self, now: datetime) -> Any:
+        """Collect the scan inputs without calling a model or a broker order.
+
+        The scan reasons over what the runtime already holds: the stored
+        candles (refreshed by ``market_sync``), the enabled strategy
+        signals computed from those same candles, and the news bookkeeping
+        that the snapshot loader's evidence needs. A missing piece makes
+        that symbol unusable for this check, never a guess.
+        """
+        from alphabrief_api.db import NewsStore
+        from alphabrief_api.db.market_data import MarketDataStore
+        from alphabrief_news.ingestion import NewsIngestionStore
+
+        from alphabrief_cli.cycle_commands import _snapshot_loader
+
+        database = _paths.db_path()
+        market = MarketDataStore(db_path=database)
+        news = NewsStore(db_path=database)
+        health = NewsIngestionStore(db_path=database)
+        try:
+            loader = _snapshot_loader(market, news, health)
+            snapshots = []
+            for symbol in self._universe:
+                snapshot = loader(symbol)
+                if snapshot is not None:
+                    snapshots.append(snapshot)
+            return snapshots
+        finally:
+            health.close()
+            news.close()
+            market.close()
+
+    def _opportunity_facts(self) -> tuple[int, datetime | None]:
+        """Today's recorded committee rounds and the newest one's instant.
+
+        Read from the durable cycle history, so a restart cannot hand the
+        runtime a fresh allowance (PROJECT_GUIDE 5.13).
+        """
+        from alphabrief_api.db import AiTradingStore
+
+        day = self._clock().astimezone(UTC).date().isoformat()
+        store = AiTradingStore(db_path=_paths.db_path())
+        try:
+            cycles = store.list_cycles_for_day(day)
+        finally:
+            store.close()
+        rounds = 0
+        last: datetime | None = None
+        for cycle in cycles:
+            key = getattr(cycle, "cycle_key", None) or ""
+            created = getattr(cycle, "created_at", None)
+            if isinstance(key, str) and not key.startswith("opportunity:"):
+                continue
+            rounds += 1
+            if isinstance(created, datetime):
+                instant = (
+                    created.astimezone(UTC)
+                    if created.tzinfo
+                    else created.replace(tzinfo=UTC)
+                )
+                if last is None or instant > last:
+                    last = instant
+        return rounds, last
+
+    async def _run_opportunity_check(self) -> None:
+        """One cheap check; a full committee round only when justified."""
+        from alphabrief_execution.broker.oanda.sessions import session_verdict
+        from alphabrief_trader.opportunity import scan_opportunities
+
+        now = self._clock().astimezone(UTC)
+        limits = self._opportunity_limits()
+        closed = not session_verdict("CURRENCY", now).open
+        if closed:
+            # Outside the FX session there is nothing to check. Recording
+            # the run still proves the backend was alive, which is what
+            # the soak evaluator measures.
+            _LOGGER.info("runtime: opportunity check skipped (session closed)")
+            return
+
+        snapshots, budget_available = await asyncio.to_thread(
+            self._opportunity_inputs
+        )
+        rounds_today, last_round_at = await asyncio.to_thread(self._opportunity_facts)
+        scan = scan_opportunities(
+            snapshots,
+            session_open=True,
+            limits=limits,
+            now=now,
+            rounds_today=rounds_today,
+            last_round_at=last_round_at,
+            budget_available=budget_available,
+        )
+        if not scan.escalate:
+            _LOGGER.info("runtime: %s", scan.summary())
+            return
+
+        # One round per minute bucket: a replay of the same bucket returns
+        # the stored cycle instead of evaluating a second time.
+        bucket = now.strftime("%Y%m%dT%H%M")
+        cycle_key = f"opportunity:{bucket}"
+        _LOGGER.info(
+            "runtime: %s -> committee round %s", scan.summary(), cycle_key
+        )
+        result = self._decision_round(cycle_key)
+        if asyncio.iscoroutine(result):
+            await result
+
+    def _opportunity_limits(self) -> Any:
+        """The reviewed opportunity guards from the configuration file."""
+        from alphabrief_core import load_runtime_settings
+        from alphabrief_trader.opportunity import OpportunityLimits
+
+        settings = load_runtime_settings().opportunity
+        return OpportunityLimits(
+            scan_interval_seconds=settings.scan_interval_seconds,
+            max_rounds_per_day=settings.max_rounds_per_day,
+            min_spacing_seconds=settings.min_spacing_seconds,
+            escalation_min_confidence=settings.escalation_min_confidence,
+        )
+
+    def _opportunity_inputs(self) -> tuple[list[Any], bool]:
+        """Snapshot the universe and read the model budget's verdict."""
+        from alphabrief_api.db.model_call import ModelCallStore
+        from alphabrief_models.channels import load_model_settings
+        from alphabrief_models.model_budget import ModelBudgetGuard
+
+        database = _paths.db_path()
+        calls = ModelCallStore(db_path=database)
+        try:
+            budget = ModelBudgetGuard(
+                calls, policy=load_model_settings().budget_policy()
+            )
+            verdict = budget.admit(self._model_channel())
+        finally:
+            calls.close()
+        try:
+            snapshots = self._opportunity_snapshot(self._clock())
+        except Exception as exc:  # noqa: BLE001 - a scan failure is not an order
+            _LOGGER.warning("runtime: opportunity inputs unavailable: %s", exc)
+            snapshots = []
+        return snapshots, verdict.allowed
+
+    def _model_channel(self) -> str:
+        """The configured primary channel identifier."""
+        from alphabrief_models.channels import load_model_settings
+
+        return load_model_settings().primary_channel
+
     async def _run_market_sync(self) -> None:
         async with self._market_sync_lock:
             worker = asyncio.create_task(asyncio.to_thread(self._market_refresher))
@@ -536,6 +700,7 @@ class Runtime:
             SchedulerConfig,
             build_default_tasks,
         )
+        from alphabrief_trader import is_ai_trading_enabled
 
         from alphabrief_cli.scheduler_commands import (
             _open_heartbeat_store,
@@ -552,10 +717,28 @@ class Runtime:
         async def _on_reconcile(scope: str) -> None:
             await asyncio.to_thread(_reconcile_runner(recon_store), scope)
 
-        tasks = build_default_tasks(on_reconcile=_on_reconcile, on_ai_cycle=None)
+        # GUIDE 5.1: the opportunity check is a first-class resident task.
+        # Its name must stay ``ai_daily_cycle`` (what the soak evaluator
+        # counts) and its cadence is the reviewed 1-5 minute window.
+        opportunity = self._opportunity_limits()
+        tasks = build_default_tasks(
+            on_reconcile=_on_reconcile,
+            on_ai_cycle=self._run_opportunity_check,
+            ai_cycle_interval_seconds=float(opportunity.scan_interval_seconds),
+        )
         tasks = [
             replace(task, interval_seconds=RECONCILE_SECONDS)
             if task.name == "reconcile"
+            else task
+            for task in tasks
+        ]
+        # The reviewed feature flag decides whether the check may escalate;
+        # a disabled check would also leave the soak evaluator with no
+        # opportunity evidence at all, so it stays enabled whenever AI
+        # trading is.
+        tasks = [
+            replace(task, enabled=is_ai_trading_enabled())
+            if task.name == "ai_daily_cycle"
             else task
             for task in tasks
         ]

@@ -433,7 +433,28 @@ class TestBuildDefaultTasksAiHook:
         assert "ai_daily_cycle" in names
         ai_task = next(t for t in tasks if t.name == "ai_daily_cycle")
         assert ai_task.enabled is False
-        assert ai_task.interval_seconds == 86_400.0
+        # GUIDE 5.1: the opportunity check runs every 1-5 minutes, not once
+        # a day. The default is the guide's own bound, not 86_400.
+        assert 60 <= ai_task.interval_seconds <= 300
+
+    def test_ai_cycle_interval_is_configurable_within_the_guide_window(
+        self,
+    ) -> None:
+        """The reviewed configuration supplies the cadence; it stays bounded."""
+
+        async def _reconcile(scope: str) -> None:
+            return None
+
+        async def _ai_cycle() -> None:
+            return None
+
+        tasks = build_default_tasks(
+            on_reconcile=_reconcile,
+            on_ai_cycle=_ai_cycle,
+            ai_cycle_interval_seconds=300.0,
+        )
+        ai_task = next(t for t in tasks if t.name == "ai_daily_cycle")
+        assert ai_task.interval_seconds == 300.0
 
 
 class TestSchedulerRunsAiTask:

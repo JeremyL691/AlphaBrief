@@ -24,4 +24,17 @@ model:
 
 trading:
   # off | on. `off` runs the whole cycle but stops before submitting.
+  # YAML reads a bare `off` as a boolean; the loader treats that as "off"
+  # and refuses an implicit boolean that would enable trading.
   trading_mode: off
+  # Opportunity check cadence and its escalation guards (PROJECT_GUIDE 5.1).
+  # The runtime scans the stored candles, strategy signals and broker facts
+  # every `scan_interval_seconds` and only spends a full committee round
+  # when a signal clears every guard below. That keeps the free channel's
+  # 1000 calls/day intact: one round costs about 39 calls, so 15 rounds is
+  # 585 and the repair/shadow calls still fit.
+  opportunity:
+    scan_interval_seconds: 180
+    max_rounds_per_day: 15
+    min_spacing_seconds: 600
+    escalation_min_confidence: "0.60"
