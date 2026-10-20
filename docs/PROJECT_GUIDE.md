@@ -850,6 +850,8 @@ electron/       桌面外壳与打包配置
   - 单日停机超过 12 小时；
   - 修改了安全或执行语义（第 9 节相关代码、RiskGate、下单、对账）并部署到运行中的后台。
 
+重置只能用 `alphabrief soak reset --reason "<原因>"` 执行：它把当前 active run 标为 `reset` 并保留原记录，再以 `run_index + 1` 开新的 Day 0。命令要求非空原因（重置历史就是审计线索），后台在线时拒绝直写数据库，并且和 `soak start` 一样拒绝回填起始时间。不要手工改 `soak_runs`。
+
 **退出标准**：`alphabrief soak status` 显示 `qualified_days=14`，且没有未解决的冻结或阻塞。
 
 ### S11 发布
