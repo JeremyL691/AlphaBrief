@@ -36,7 +36,15 @@ class PolicyVersionError(RuntimeError):
 
 
 def project_root(start: Path | None = None) -> Path:
-    """The first ancestor holding pyproject.toml, or the bundle directory."""
+    """The first ancestor holding pyproject.toml, or the bundle directory.
+
+    ``cwd`` alone is not enough: the LaunchAgent starts the backend with the
+    data directory as its working directory, so walking cwd's ancestors found
+    no ``pyproject.toml`` and every order was refused with "the reviewed
+    configuration files cannot be read". After the cwd walk this falls back to
+    the package location, which is how the editable install proves where the
+    reviewed files live regardless of the caller's working directory.
+    """
     import sys
 
     meipass = getattr(sys, "_MEIPASS", None)
@@ -51,6 +59,14 @@ def project_root(start: Path | None = None) -> Path:
             return directory
     if (base / "config/paper_execution_policy.yaml").is_file():
         return base
+    # The checkout may be elsewhere entirely; the installed package knows
+    # where it lives, and the reviewed files sit above it.
+    if start is None:
+        for ancestor in Path(__file__).resolve().parents:
+            if (ancestor / "pyproject.toml").is_file():
+                return ancestor
+            if (ancestor / "config/paper_execution_policy.yaml").is_file():
+                return ancestor
     raise PolicyVersionError(
         f"no pyproject.toml found at or above {base}: cannot locate the "
         "reviewed configuration files"
