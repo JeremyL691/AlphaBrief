@@ -788,6 +788,19 @@
 - 出站边界复核：OANDA 基址为常量 `https://api-fxpractice.oanda.com`，模型通道为 `https://openrouter.ai/api/v1`，`production_safety_violations()` 返回 none；结构扫描确认没有 live 主机或第二券商。
 - 质量门禁：全量 `pytest -q -m "not practice" --ignore=tests/test_e2e_playwright.py` → 3679 passed / 13 deselected；`ruff check .`、`mypy` 523 文件通过。
 
+#### S10 CI 转绿与 surfaces 一致性（2026-10-20 UTC，本提交）
+
+本轮推送首次真正跑起 CI（`gh api .../actions/permissions` 此前为 `enabled: false`，已在仓库设置侧恢复；随后 `gh workflow run` 与推送都能触发）。CI 暴露四类问题，逐一处理：
+
+1. **CI 未安装 Playwright 浏览器**：8 个 e2e 用例全部 `Executable doesn't exist`。`ci.yml` 增加 `python -m playwright install --with-deps chromium`，让真实浏览器断言继续被覆盖而不是跳过；`browser` fixture 在缺浏览器时 `pytest.skip` 并给出修复命令（环境缺口不等于代码缺陷）。
+2. **帮助文本断言受终端宽度影响**：三处测试断言渲染后的 `--help`。本机宽 TTY 显示 `--risk-context`，CI 窄日志会**截断**成 `--risk-c…`。改为读取命令对象声明的 `param.opts`，与宽度无关；实测在 `COLUMNS=40/80/200` 下均通过。
+3. **本地文档契约在 CI 不成立**：`AGENTS.md` / `docs/AGENT_PROMPT.md` 正是推送 hook 禁止发布的文件，干净 clone 里没有它们。改为非开发检出或无本地文档时明确 skip，只有"部分存在"的歧义状态才失败。
+4. **真实契约缺陷**：`alphabrief scheduler status` 与 `GET /api/v1/scheduler/status` 描述同一份持久状态，但 CLI 用 `_iso` 渲染、API 直接透传 DuckDB 返回的 datetime，且 CLI 输出带 `-07:00` 本地偏移。两端统一为 UTC ISO-8601（符合"时间一律以 UTC 存储"），新增 `tests/test_scheduler_surface_parity.py` 逐字段比对两个表面的输出。
+
+- CI 结果：`gh run list` → **conclusion=success**，headSha `3b8c71d`（`S10: 选项断言改读命令参数，避免终端宽度截断`）。
+- 后台状态：`/health` = `1.0.0-rc.5`，进程连续运行 1 小时 3 分，`ai_daily_cycle` 持续按 180 秒判定 `flat_signal`。
+- 质量门禁：全量 `pytest -q -m "not practice"` → 3694 passed / 13 deselected；`ruff check .`、`mypy` 524 文件、`secret_scan` 全部通过。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
