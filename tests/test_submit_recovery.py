@@ -11,6 +11,7 @@ persistence:
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -489,17 +490,34 @@ def test_already_consumed_unresolved_raises(tmp_path: Path) -> None:
 
 
 def test_crash_hook_kills_process_and_restart_recovers(tmp_path: Path) -> None:
-    """Crash hook triggers SIGKILL, then second run resolves safely."""
-    # Write runner script that runs a cycle with shared sqlite/duckdb file
+    """Real cross-process kill -9: one broker order, recovered by restart.
+
+    The child process submits to a file-backed fake broker, then dies by
+    SIGKILL at the ``after_submit`` boundary (broker accepted, durable
+    result not recorded). A second, fresh process on the same data
+    directory must settle the in-flight ledger reservation by query and
+    finish the cycle without creating a second broker order.
+    """
     script_path = tmp_path / "run_crash_test.py"
     db_file = tmp_path / "crash_test.db"
+    broker_file = tmp_path / "broker.json"
     script_content = f"""
+import json
 import sys
 from datetime import UTC, datetime
 from decimal import Decimal
-from alphabrief_core import RiskDecision
-from alphabrief_execution.broker.risk_context import (
-    BrokerRiskContextBuilder,
+from pathlib import Path
+
+from alphabrief_execution.broker.port import (
+    BrokerAdapter,
+    BrokerHealth,
+    BrokerOrderStatus,
+    SubmitRequest,
+    SubmitResult,
+)
+from alphabrief_execution.broker.risk_context import BrokerRiskContextBuilder
+from alphabrief_execution.broker.oanda.unknown_outcome import (
+    SubmitResolutionResult,
 )
 from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_risk.decision_binding import DecisionBindingService
@@ -511,14 +529,87 @@ from alphabrief_trader.execution_backend import ExternalPaperExecutionBackend
 from alphabrief_trader.rules import DisciplineConfig
 from alphabrief_trader.schemas import MarketSnapshot
 from committee_provider import GroundedProvider
-from test_submit_recovery import FreshSources, MockBrokerAdapter, MockResolver, NOW
+from test_submit_recovery import FreshSources, NOW
 
-store = AiTradingStore(db_path="{db_file}")
-risk_store = RiskDecisionStore(db_path="{db_file}")
+BROKER_FILE = Path(r"{broker_file}")
+
+
+class FileBroker(BrokerAdapter):
+    \"\"\"A broker whose accepted orders survive the process.\"\"\"
+
+    def _load(self) -> dict:
+        if not BROKER_FILE.exists():
+            return {{}}
+        return json.loads(BROKER_FILE.read_text())
+
+    async def health(self) -> BrokerHealth:
+        return BrokerHealth(healthy=True, detail="ok", checked_at=NOW)
+
+    async def submit(
+        self, request: SubmitRequest, *, client_order_id: str
+    ) -> SubmitResult:
+        data = self._load()
+        if client_order_id not in data:
+            data[client_order_id] = {{
+                "broker_order_id": f"broker-{{len(data) + 1}}",
+                "state": "FILLED",
+                "units": str(request.quantity),
+                "price": "1.10400",
+            }}
+            BROKER_FILE.write_text(json.dumps(data, sort_keys=True))
+        row = data[client_order_id]
+        return SubmitResult(
+            broker_order_id=row["broker_order_id"],
+            client_order_id=client_order_id,
+            status=BrokerOrderStatus.FILLED,
+            accepted_at=NOW,
+            broker_state=row["state"],
+            filled_units=Decimal(row["units"]),
+            fill_price=Decimal(row["price"]),
+        )
+
+    async def cancel(self, broker_order_id: str) -> object:
+        raise NotImplementedError
+
+    async def get_order(self, broker_order_id: str) -> object:
+        raise NotImplementedError
+
+    async def list_orders(self, status: object = None) -> list:
+        return []
+
+    async def list_fills(self, since: object = None) -> list:
+        return []
+
+    async def get_positions(self) -> list:
+        return []
+
+    async def get_account(self) -> object:
+        raise NotImplementedError
+
+
+class FileResolver:
+    \"\"\"Resolve by querying the same durable fake broker file.\"\"\"
+
+    def resolve(self, client_order_id: str, **_: object) -> SubmitResolutionResult:
+        data = json.loads(BROKER_FILE.read_text()) if BROKER_FILE.exists() else {{}}
+        row = data.get(client_order_id)
+        if row is None:
+            return SubmitResolutionResult(
+                resolution="RESOLVED_NOT_SUBMITTED", detail="not at the broker"
+            )
+        return SubmitResolutionResult(
+            resolution="RESOLVED_ACCEPTED",
+            broker_order_id=row["broker_order_id"],
+            state=row["state"],
+            filled_units=Decimal(row["units"]),
+            detail="order accepted by the broker",
+        )
+
+
+store = AiTradingStore(db_path=r"{db_file}")
+risk_store = RiskDecisionStore(db_path=r"{db_file}")
 binding = DecisionBindingService(risk_store)
-adapter = MockBrokerAdapter()
-# Prepopulate shared orders or use persistent store
-resolver = MockResolver(adapter)
+adapter = FileBroker()
 sources = FreshSources()
 builder = BrokerRiskContextBuilder(sources, clock=lambda: NOW)
 
@@ -526,8 +617,9 @@ backend = ExternalPaperExecutionBackend(
     adapter,
     risk_context_builder=builder,
     decision_binding=binding,
-    unknown_outcome_resolver=resolver,
+    unknown_outcome_resolver=FileResolver(),
     policy_hash="test-policy-hash",
+    durable_submit=True,
 )
 
 payload = {{
@@ -577,18 +669,62 @@ print("SUCCESS:" + record.outcome)
 """
     script_path.write_text(script_content)
 
-    env_crash = dict(os.environ)
-    env_crash["PYTHONPATH"] = (
+    base_env = dict(os.environ)
+    base_env["PYTHONPATH"] = (
         f"{Path(__file__).parent}:{os.environ.get('PYTHONPATH', '')}"
     )
+    base_env["ALPHABRIEF_DATA_DIR"] = str(tmp_path)
+
+    env_crash = dict(base_env)
+    env_crash["ALPHABRIEF_TEST_CRASH_ENABLED"] = "1"
     env_crash["ALPHABRIEF_TEST_CRASH_AT"] = "after_submit"
 
-    # Step 1: run with crash hook -> should be killed by SIGKILL
-    proc = subprocess.run(
+    # Phase 1: the broker accepts the order, then the process is killed.
+    crashed = subprocess.run(
         [sys.executable, str(script_path)],
         env=env_crash,
         capture_output=True,
         text=True,
     )
-    # On Unix, killed by signal 9 gives returncode -9 or 137
-    assert proc.returncode in (-signal.SIGKILL, 137, -9)
+    assert crashed.returncode in (-signal.SIGKILL, 137, -9), crashed.stderr
+    accepted = json.loads(broker_file.read_text())
+    assert len(accepted) == 1
+    client_order_id = next(iter(accepted))
+
+    from alphabrief_execution.broker.oanda.order_ledger import OrderLedger
+
+    ledger_path = tmp_path / "alphabrief.duckdb"
+    ledger = OrderLedger(db_path=ledger_path)
+    try:
+        in_flight = ledger.in_flight_reservations()
+        assert len(in_flight) == 1
+        submit_id = str(in_flight[0]["submit_id"])
+        assert ledger.status(submit_id) == "SUBMITTED"
+    finally:
+        ledger.close()
+
+    # Phase 2: a fresh process recovers by query and never re-sends.
+    recovered = subprocess.run(
+        [sys.executable, str(script_path)],
+        env=base_env,
+        capture_output=True,
+        text=True,
+    )
+    assert recovered.returncode == 0, recovered.stderr
+    assert "SUCCESS:executed" in recovered.stdout
+
+    after = json.loads(broker_file.read_text())
+    assert after == accepted  # exactly one broker order, unchanged
+    assert client_order_id in after
+
+    ledger = OrderLedger(db_path=ledger_path)
+    try:
+        assert ledger.reservation_count() == 1
+        assert ledger.status(submit_id) == "COMPLETED"
+        chain = [event["kind"] for event in ledger.events(submit_id)]
+        assert chain == ["RESERVED", "BIND", "SUBMIT_ATTEMPT", "BROKER_RESULT"]
+        assert ledger.completed_mappings() == {
+            client_order_id: after[client_order_id]["broker_order_id"]
+        }
+    finally:
+        ledger.close()

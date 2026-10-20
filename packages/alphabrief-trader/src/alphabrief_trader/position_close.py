@@ -99,9 +99,20 @@ def record_attempt(
     now: datetime,
     error_message: str | None = None,
 ) -> OrderAttempt:
+    # A replay under a re-evaluated decision executes under the decision
+    # the order was originally bound to; the attempt records that one so
+    # the audit trail matches the persisted broker-side order.
+    executed_decision_id = (
+        execution_result.risk_decision_id
+        if execution_result is not None
+        and execution_result.risk_decision_id is not None
+        else decision.decision_id
+    )
+    risk_decision_json = decision.model_dump(mode="json")
+    risk_decision_json["decision_id"] = executed_decision_id
     return OrderAttempt(
         intent_id=intent.intent_id,
-        risk_decision_id=decision.decision_id,
+        risk_decision_id=executed_decision_id,
         approved=decision.approved,
         reason=(
             error_message if error_message is not None else decision.reason or outcome
@@ -131,7 +142,7 @@ def record_attempt(
         ),
         outcome=outcome,
         order_intent_json=intent.model_dump(mode="json"),
-        risk_decision_json=decision.model_dump(mode="json"),
+        risk_decision_json=risk_decision_json,
         fill_json=(
             execution_result.fill_json if execution_result is not None else None
         ),

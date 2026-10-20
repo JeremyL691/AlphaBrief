@@ -36,11 +36,9 @@ from alphabrief_execution.broker.oanda.freeze_policy import (
 )
 from alphabrief_execution.broker.oanda.instruments import InstrumentMetadata
 from alphabrief_execution.broker.oanda.order_ledger import (
-    LedgerTransitionError,
     OrderLedger,
 )
 from alphabrief_execution.broker.oanda.order_ops import (
-    OrderCreateResult,
     OrderOpsClient,
 )
 from alphabrief_execution.broker.oanda.orders import OandaOrderRequest
@@ -55,6 +53,7 @@ from alphabrief_execution.broker.oanda.submit_recovery import (
     FaultPoint,
     InjectedCrash,
     StartupSyncService,
+    SubmitOutcome,
     SubmitWorkflow,
     SubmitWorkflowResult,
 )
@@ -125,7 +124,13 @@ class _FakeSubmitBroker:
             return json.dumps(
                 {
                     "orderCreateTransaction": {"id": order_id},
-                    "orderFillTransaction": {"id": self._tx()},
+                    "orderFillTransaction": {
+                        "id": self._tx(),
+                        "orderID": order_id,
+                        "instrument": order.get("instrument", ""),
+                        "units": order.get("units", "0"),
+                        "price": "1.10000",
+                    },
                 }
             ).encode("utf-8")
         if method == "GET" and path == f"{BASE}/orders":
@@ -180,9 +185,11 @@ def _instrument() -> InstrumentMetadata:
 
 def _submit_fn(
     orders: OrderOpsClient, submit_id: str
-) -> Callable[[], OrderCreateResult]:
-    return lambda: orders.create_order(
-        _request(), _instrument(), client_order_id=submit_id
+) -> Callable[[], SubmitOutcome]:
+    return lambda: SubmitOutcome.from_order_create(
+        orders.create_order(
+            _request(), _instrument(), client_order_id=submit_id
+        )
     )
 
 
@@ -499,31 +506,46 @@ def test_blocking_reconciliation_difference_freezes_exposure(
         _close(handles)
 
 
-def test_workflow_rejects_identity_collision(tmp_path: Path) -> None:
+def test_workflow_resolves_sent_identity_under_a_reevaluated_decision(
+    tmp_path: Path,
+) -> None:
+    """A sent identity is resolved, never rebound or re-sent.
+
+    After a restart the risk gate re-evaluates the same intent under a
+    fresh decision id. The order already executed, so the workflow must
+    return the original terminal result (and the original bound
+    decision) instead of raising or creating a second order.
+    """
     broker = _FakeSubmitBroker()
     handles = _new_handles(tmp_path, broker)
     try:
         result = _run(handles)
         assert result.state == "COMPLETED"
+        assert result.decision_id == DECISION
         assert broker.post_count == 1
+        broker_order_id = result.broker_order_id
     finally:
         _close(handles)
 
-    # A replay with a different approved decision is an identity collision
-    # and freezes instead of overwriting or creating a second order.
     handles = _new_handles(tmp_path, broker)
     try:
-        with pytest.raises(LedgerTransitionError) as excinfo:
-            handles["workflow"].run(
-                cycle_id=CYCLE,
-                intent_id=INTENT,
-                decision_id="risk-2",
-                payload_hash=PAYLOAD,
-                submit=_submit_fn(handles["orders"], f"{CYCLE}:{INTENT}"),
-            )
-        assert excinfo.value.kind == "identity_collision"
+        replay = handles["workflow"].run(
+            cycle_id=CYCLE,
+            intent_id=INTENT,
+            decision_id="risk-2",
+            payload_hash=PAYLOAD,
+            submit=_submit_fn(handles["orders"], f"{CYCLE}:{INTENT}"),
+        )
+        assert replay.state == "COMPLETED"
+        assert replay.reused is True
+        assert replay.broker_order_id == broker_order_id
+        # The executed decision stays the one the order was bound to.
+        assert replay.decision_id == DECISION
         assert broker.post_count == 1
         assert handles["ledger"].status(f"{CYCLE}:{INTENT}") == "COMPLETED"
+        reservation = handles["ledger"].reservation(f"{CYCLE}:{INTENT}")
+        assert reservation is not None
+        assert reservation["decision_id"] == DECISION
     finally:
         _close(handles)
 

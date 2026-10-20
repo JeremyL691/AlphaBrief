@@ -54,6 +54,7 @@ from alphabrief_risk import RiskGate, RiskLimitConfig
 from alphabrief_risk.decision_binding import DecisionBindingService
 from alphabrief_trader import (
     DailyTradingCycle,
+    ExecutionBackend,
     ExternalPaperExecutionBackend,
     MarketSnapshot,
     SnapshotLoader,
@@ -838,6 +839,38 @@ def _execution_backend(
     )
 
 
+def _startup_sync_or_exit(backend: ExternalPaperExecutionBackend) -> None:
+    """Settle in-flight orders from a previous process before any new one.
+
+    The durable order ledger may hold a submit the broker accepted but
+    the previous process never recorded. Recovery queries the broker by
+    the persisted client identity and freezes new exposure when the
+    outcome cannot be explained (PROJECT_GUIDE 5.8). Failing the run
+    closed here is the only safe response to an unavailable broker.
+    """
+    try:
+        result = backend.startup_sync()
+    except Exception as exc:
+        _exit_error(f"startup order recovery failed: {exc}")
+        return
+    if result is None:
+        return
+    if result.in_flight_found:
+        _LOGGER.info(
+            "startup order recovery: in_flight=%d completed=%d frozen=%d "
+            "mappings_restored=%d",
+            result.in_flight_found,
+            len(result.completed),
+            len(result.frozen),
+            result.mappings_restored,
+        )
+    if result.frozen_exposure:
+        _exit_error(
+            "startup order recovery could not explain "
+            f"{len(result.frozen)} in-flight order(s); new exposure is frozen"
+        )
+
+
 @contextmanager
 def _open_trading_cycle(
     *,
@@ -870,7 +903,9 @@ def _open_trading_cycle(
         resources.callback(news_health.close)
         if len(news_health.successful_source_family_times(now=datetime.now(UTC))) < 2:
             try:
-                from alphabrief_cli.scheduler_commands import _run_ai_pre_cycle_ingestion
+                from alphabrief_cli.scheduler_commands import (
+                    _run_ai_pre_cycle_ingestion,
+                )
 
                 _run_ai_pre_cycle_ingestion(news_store=news, symbols=symbols)
             except Exception as exc:
@@ -926,20 +961,24 @@ def _open_trading_cycle(
             daily_budget=model_budget,
             validation_sink=calls.save_validation,
         )
+        backend: ExecutionBackend
+        if trading == "on":
+            backend = _execution_backend(
+                symbols=symbols,
+                sources=sources,
+                decision_binding=DecisionBindingService(decisions),
+            )
+            if isinstance(backend, ExternalPaperExecutionBackend):
+                resources.callback(backend.close)
+                _startup_sync_or_exit(backend)
+        else:
+            backend = _DisabledBackend()
         yield DailyTradingCycle(
             committee=committee,
             risk_gate=_risk_gate(
                 symbols, nav=nav, require_nav=quantity_override is None
             ),
-            execution_backend=(
-                _execution_backend(
-                    symbols=symbols,
-                    sources=sources,
-                    decision_binding=DecisionBindingService(decisions),
-                )
-                if trading == "on"
-                else _DisabledBackend()
-            ),
+            execution_backend=backend,
             store=store,
             snapshot_loader=_snapshot_loader(
                 market, news, news_health, _signal_observation(market), refresh_errors
@@ -1152,6 +1191,9 @@ def _close_through_the_cycle(
             if trading == "on"
             else _DisabledBackend()
         )
+        if isinstance(backend, ExternalPaperExecutionBackend):
+            resources.callback(backend.close)
+            _startup_sync_or_exit(backend)
         attempt = close_position(
             symbol=instrument,
             position_units=position_units,

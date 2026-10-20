@@ -9,12 +9,17 @@ of asking the user.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from alphabrief_execution.broker.errors import BrokerAdapterError
-from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
+from alphabrief_execution.broker.oanda.order_ops import (
+    MAX_ORDER_PAGE_SIZE,
+    OrderOperationError,
+    OrderOpsClient,
+)
 
 SubmitResolution = Literal[
     "RESOLVED_ACCEPTED",
@@ -38,6 +43,8 @@ class SubmitResolutionResult(BaseModel):
     resolution: SubmitResolution
     broker_order_id: str | None = None
     state: str | None = None
+    #: Units the broker actually filled; zero unless the order is FILLED.
+    filled_units: Decimal = Decimal("0")
     detail: str
 
 
@@ -56,7 +63,7 @@ class UnknownOutcomeResolver:
         self,
         orders: OrderOpsClient,
         *,
-        page_size: int = 50,
+        page_size: int = MAX_ORDER_PAGE_SIZE,
         max_pages: int = MAX_SEARCH_PAGES,
     ) -> None:
         self._orders = orders
@@ -69,11 +76,19 @@ class UnknownOutcomeResolver:
         *,
         request_id: str | None = None,
     ) -> SubmitResolutionResult:
-        """Query the broker for the client identity and return a verdict."""
+        """Query the broker for the client identity and return a verdict.
+
+        OANDA returns orders newest first and pages backwards with
+        ``beforeID``. The search therefore walks back through the
+        broker's real pages until the identity is found or the broker
+        reports no older page; it never assumes one fixed page holds
+        every historical order.
+        """
         if not client_order_id.strip():
             raise ValueError("client_order_id must not be empty")
         try:
             page = 1
+            before_id: str | None = None
             while True:
                 if page > self._max_pages:
                     return SubmitResolutionResult(
@@ -86,6 +101,7 @@ class UnknownOutcomeResolver:
                 listing = self._orders.list_orders(
                     page=page,
                     page_size=self._page_size,
+                    before_id=before_id,
                     request_id=request_id or f"resolve-{client_order_id}",
                 )
                 for order in listing.orders:
@@ -94,9 +110,10 @@ class UnknownOutcomeResolver:
                             resolution="RESOLVED_ACCEPTED",
                             broker_order_id=order.broker_order_id,
                             state=order.state,
+                            filled_units=order.filled_units,
                             detail="order accepted by the broker",
                         )
-                if not listing.has_more:
+                if not listing.has_more or not listing.orders:
                     return SubmitResolutionResult(
                         resolution="RESOLVED_NOT_SUBMITTED",
                         detail=(
@@ -104,12 +121,32 @@ class UnknownOutcomeResolver:
                             "exists at the broker"
                         ),
                     )
+                oldest = min(
+                    (order.broker_order_id for order in listing.orders),
+                    key=_order_id_key,
+                )
+                if before_id is not None and oldest >= before_id:
+                    # No progress means the broker's paging did not move;
+                    # an incomplete search must never read as "not found".
+                    return SubmitResolutionResult(
+                        resolution="UNRESOLVED",
+                        detail="order pagination did not advance",
+                    )
+                before_id = oldest
                 page += 1
-        except BrokerAdapterError as exc:
+        except (BrokerAdapterError, OrderOperationError) as exc:
             return SubmitResolutionResult(
                 resolution="UNRESOLVED",
                 detail=f"resolution query failed: {exc}",
             )
+
+
+def _order_id_key(order_id: str) -> int:
+    """Sort broker order IDs numerically; non-numeric IDs sort lowest."""
+    try:
+        return int(order_id)
+    except ValueError:
+        return -1
 
 
 class SubmissionGate:

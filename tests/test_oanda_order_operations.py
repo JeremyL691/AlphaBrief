@@ -17,6 +17,7 @@ from decimal import Decimal
 from email.message import Message
 from typing import Any
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request
 
 import pytest
@@ -113,11 +114,17 @@ def _send_factory(broker: _FakeBroker, captured: list[dict[str, Any]]) -> Any:
                 raise HTTPError(url, 404, "not found", Message(), None)
             return json.dumps({"order": found}).encode("utf-8")
         if method == "GET" and path.startswith("/orders"):
+            # Mimic OANDA: newest first, bounded by count, paged backwards
+            # with beforeID (the highest ID on this page is excluded).
+            params = parse_qs(urlsplit(url).query)
+            count = int(params.get("count", ["50"])[0])
+            before = params.get("beforeID", [None])[0]
             ordered: list[dict[str, Any]] = [
                 broker.orders[oid]
-                for oid in sorted(broker.orders, key=lambda o: int(o))
+                for oid in sorted(broker.orders, key=int, reverse=True)
+                if before is None or int(oid) < int(before)
             ]
-            return json.dumps({"orders": ordered}).encode("utf-8")
+            return json.dumps({"orders": ordered[:count]}).encode("utf-8")
         if method == "PUT" and path.endswith("/cancel"):
             order_id = path.split("/orders/", 1)[1].split("/", 1)[0]
             found = broker.orders.get(order_id)
@@ -202,6 +209,72 @@ def test_replace_creates_new_order_state() -> None:
     )
     assert replaced.state == "PENDING"
     assert replaced.broker_order_id == "2"
+
+
+# ---------------------------------------------------------------------------
+# Real broker pagination (beforeID), never a local slice of one page
+# ---------------------------------------------------------------------------
+
+
+def test_list_orders_pages_backwards_with_before_id() -> None:
+    broker = _FakeBroker()
+    captured: list[dict[str, Any]] = []
+    ops = _client(broker, captured)
+    for index in range(7):
+        ops.create_order(
+            _order_request(), _instrument(), client_order_id=f"c{index}"
+        )
+
+    first = ops.list_orders(page=1, page_size=3)
+    assert [order.broker_order_id for order in first.orders] == ["7", "6", "5"]
+    assert first.has_more is True
+
+    second = ops.list_orders(page=2, page_size=3, before_id="5")
+    assert [order.broker_order_id for order in second.orders] == ["4", "3", "2"]
+    assert second.has_more is True
+
+    third = ops.list_orders(page=3, page_size=3, before_id="2")
+    assert [order.broker_order_id for order in third.orders] == ["1"]
+    assert third.has_more is False
+
+    # The broker received the real beforeID cursor, not a repeated page.
+    assert captured[-1]["url"].endswith("beforeID=2")
+    assert any(
+        entry["url"].endswith("beforeID=5") for entry in captured
+    )
+
+
+def test_list_orders_rejects_invalid_page_inputs() -> None:
+    ops = _client(_FakeBroker(), [])
+    with pytest.raises(OrderOperationError) as excinfo:
+        ops.list_orders(page=0)
+    assert excinfo.value.kind == "invalid_page"
+    with pytest.raises(OrderOperationError) as excinfo:
+        ops.list_orders(page_size=0)
+    assert excinfo.value.kind == "invalid_page_size"
+    with pytest.raises(OrderOperationError) as excinfo:
+        ops.list_orders(before_id="not-an-id")
+    assert excinfo.value.kind == "invalid_request_id"
+
+
+def test_filled_order_reports_broker_fill_facts_only() -> None:
+    broker = _FakeBroker()
+    ops = _client(broker, [])
+    created = ops.create_order(
+        _order_request(), _instrument(), client_order_id="fill-1"
+    )
+    assert created.filled_units == Decimal("0")
+    assert created.fill_price is None
+
+    # A FILLED order's units are its filled units; a PENDING partial
+    # fill (fillingTransactionID present) still reports zero.
+    broker.orders[created.broker_order_id]["state"] = "FILLED"
+    listed = ops.list_orders().orders[0]
+    assert listed.filled_units == Decimal("1000")
+    broker.orders[created.broker_order_id]["state"] = "PENDING"
+    broker.orders[created.broker_order_id]["fillingTransactionID"] = "9"
+    listed = ops.list_orders().orders[0]
+    assert listed.filled_units == Decimal("0")
 
 
 # ---------------------------------------------------------------------------

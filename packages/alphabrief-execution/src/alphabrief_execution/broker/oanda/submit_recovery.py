@@ -26,9 +26,10 @@ re-submits or re-consumes facts.
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from alphabrief_execution.broker.oanda.freeze_policy import (
     ExposureFreezeStore,
@@ -43,6 +44,7 @@ from alphabrief_execution.broker.oanda.transaction_cursor import (
     TransactionCursorStore,
 )
 from alphabrief_execution.broker.oanda.unknown_outcome import (
+    SubmitResolutionResult,
     UnknownOutcomeResolver,
 )
 
@@ -83,6 +85,42 @@ class SubmitRecoveryError(RuntimeError):
         super().__init__(f"submit recovery failed ({kind}): {detail}")
 
 
+class SubmitOutcome(BaseModel):
+    """The broker's own verdict for one sent order.
+
+    ``state`` is the venue state (OANDA: ``PENDING``, ``FILLED``, ...).
+    ``filled_units`` and ``fill_price`` are broker facts; an adapter that
+    does not know them leaves them zero / ``None`` rather than echoing
+    the requested quantity.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    broker_order_id: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+    filled_units: Decimal = Decimal("0")
+    fill_price: Decimal | None = None
+    transaction_id: str | None = None
+
+    @field_validator("filled_units", "fill_price")
+    @classmethod
+    def _no_float(cls, value: Decimal | None) -> Decimal | None:
+        if isinstance(value, float):
+            raise ValueError("submit facts must not be floats")
+        return value
+
+    @classmethod
+    def from_order_create(cls, created: OrderCreateResult) -> SubmitOutcome:
+        """Map an OANDA create response onto the broker-neutral verdict."""
+        return cls(
+            broker_order_id=created.broker_order_id,
+            state=created.state,
+            filled_units=created.filled_units,
+            fill_price=created.fill_price,
+            transaction_id=created.fill_transaction_id,
+        )
+
+
 class SubmitWorkflowResult(BaseModel):
     """One deterministic terminal verdict for a durable submit."""
 
@@ -93,6 +131,20 @@ class SubmitWorkflowResult(BaseModel):
     reused: bool
     broker_order_id: str | None = None
     detail: str = ""
+    #: Units the broker actually filled; zero unless the resolved order
+    #: is FILLED. Never the requested quantity.
+    filled_units: Decimal = Decimal("0")
+    #: The broker's average fill price when it reported one.
+    fill_price: Decimal | None = None
+    #: Broker order state at the moment of the result (FILLED, PENDING,
+    #: CANCELLED, ...); ``None`` when no broker state is known.
+    broker_state: str | None = None
+    #: The client identity persisted before the request (``cycle:intent``).
+    client_order_id: str | None = None
+    #: The approved decision actually bound to this submit identity. A
+    #: replay with a re-evaluated decision returns the original binding,
+    #: so the caller records the decision the order really executed under.
+    decision_id: str | None = None
 
 
 class SubmitWorkflow:
@@ -129,17 +181,26 @@ class SubmitWorkflow:
         intent_id: str,
         decision_id: str,
         payload_hash: str,
-        submit: Callable[[], OrderCreateResult],
+        submit: Callable[[], SubmitOutcome],
+        client_order_id: str | None = None,
         commit_facts: Callable[[], AdvanceResult] | None = None,
         reconcile: Callable[[], ReconciliationReport] | None = None,
     ) -> SubmitWorkflowResult:
         """Run the durable submit; idempotent across crashes and restarts.
 
         ``submit`` performs the actual external send and must be bound to
-        the persisted client identity (``cycle:intent``). ``commit_facts``
-        and ``reconcile`` are the optional post-completion steps; both
-        are idempotent (the cursor store deduplicates facts and
-        reconciliation is read-only), so replays re-run them safely.
+        the persisted client identity (``client_order_id``, defaulting to
+        ``cycle:intent``). It returns the broker's own verdict
+        (:class:`SubmitOutcome`), never a locally assumed fill.
+        ``commit_facts`` and ``reconcile`` are the optional
+        post-completion steps; both are idempotent (the cursor store
+        deduplicates facts and reconciliation is read-only), so replays
+        re-run them safely.
+
+        ``allow_rebind`` semantics: the caller may re-evaluate the risk
+        decision for the same intent between attempts. A prior unsent
+        reservation is rebound to the fresh decision; a sent identity is
+        resolved by query and never rebound or re-sent.
         """
         self._fault("before_reserve")
         outcome = self._ledger.reserve(
@@ -148,26 +209,42 @@ class SubmitWorkflow:
             decision_id=decision_id,
             payload_hash=payload_hash,
             owner=self._owner,
+            client_order_id=client_order_id,
+            allow_rebind=True,
         )
         submit_id = outcome.submit_id
+        persisted_client_id = self._ledger.reservation(submit_id)
+        client_identity = (
+            str(persisted_client_id["client_order_id"])
+            if persisted_client_id is not None
+            and persisted_client_id["client_order_id"] is not None
+            else submit_id
+        )
         if outcome.status == "FROZEN":
             return SubmitWorkflowResult(
                 submit_id=submit_id,
                 state="FROZEN",
                 reused=True,
                 detail="reservation frozen by a prior run",
+                client_order_id=client_identity,
             )
 
         broker_order_id: str | None = None
+        broker_state: str | None = None
+        filled_units = Decimal("0")
+        fill_price: Decimal | None = None
+        bound_decision_id = decision_id
         if outcome.status != "COMPLETED":
             self._fault("after_reserve")
             if outcome.status in ("RESERVED", "BOUND"):
                 # Idempotent: a BOUND replay returns without a new event.
+                # A re-evaluated decision rebinds the still-unsent identity.
                 self._ledger.bind_decision(
                     submit_id,
                     decision_id=decision_id,
                     payload_hash=payload_hash,
                     owner=self._owner,
+                    rebind=outcome.needs_rebind,
                 )
             self._fault("before_send")
             current = self._ledger.status(submit_id)
@@ -178,6 +255,7 @@ class SubmitWorkflow:
                     self._ledger,
                     self._resolve,
                     submit_id,
+                    client_identity=client_identity,
                     owner=self._owner,
                     account_id=self._account_id,
                     freeze_store=self._freeze_store,
@@ -189,8 +267,11 @@ class SubmitWorkflow:
                         state="FROZEN",
                         reused=True,
                         detail="in-flight submit outcome unresolved; frozen",
+                        client_order_id=client_identity,
                     )
-                broker_order_id = resolved
+                broker_order_id = resolved.broker_order_id
+                broker_state = resolved.state
+                filled_units = resolved.filled_units
             elif current in ("RESERVED", "BOUND"):
                 self._ledger.record_submit_attempt(
                     submit_id, payload_hash=payload_hash, owner=self._owner
@@ -204,6 +285,7 @@ class SubmitWorkflow:
                         self._ledger,
                         self._resolve,
                         submit_id,
+                        client_identity=client_identity,
                         owner=self._owner,
                         account_id=self._account_id,
                         freeze_store=self._freeze_store,
@@ -215,24 +297,32 @@ class SubmitWorkflow:
                             state="FROZEN",
                             reused=True,
                             detail="submit outcome unresolved; frozen",
+                            client_order_id=client_identity,
                         )
-                    broker_order_id = resolved
+                    broker_order_id = resolved.broker_order_id
+                    broker_state = resolved.state
+                    filled_units = resolved.filled_units
                 else:
                     self._fault("after_send")
                     self._ledger.record_broker_result(
                         submit_id,
                         broker_order_id=result.broker_order_id,
                         state=result.state,
-                        transaction_id=None,
+                        transaction_id=result.transaction_id,
                         owner=self._owner,
+                        filled_units=result.filled_units,
                     )
                     broker_order_id = result.broker_order_id
+                    broker_state = result.state
+                    filled_units = result.filled_units
+                    fill_price = result.fill_price
             elif current == "FROZEN":
                 return SubmitWorkflowResult(
                     submit_id=submit_id,
                     state="FROZEN",
                     reused=True,
                     detail="reservation frozen by a prior run",
+                    client_order_id=client_identity,
                 )
             else:
                 raise SubmitRecoveryError(
@@ -244,6 +334,20 @@ class SubmitWorkflow:
             broker_order_id = (
                 reservation["broker_order_id"] if reservation else None
             )
+            broker_state = (
+                reservation["state"] if reservation else None
+            )
+            filled_units = (
+                reservation["filled_units"]
+                if reservation is not None
+                else Decimal("0")
+            )
+
+        # The identity already reached the broker under the decision the
+        # ledger holds; a re-evaluated decision never replaces it.
+        reservation = self._ledger.reservation(submit_id)
+        if reservation is not None:
+            bound_decision_id = str(reservation["decision_id"])
 
         self._fault("after_response")
         if commit_facts is not None:
@@ -262,13 +366,22 @@ class SubmitWorkflow:
                     f"differences: {blocking}"
                 )
                 return self._freeze_exposure(
-                    submit_id, broker_order_id=broker_order_id, detail=detail
+                    submit_id,
+                    broker_order_id=broker_order_id,
+                    broker_state=broker_state,
+                    filled_units=filled_units,
+                    detail=detail,
                 )
         return SubmitWorkflowResult(
             submit_id=submit_id,
             state="COMPLETED",
             reused=outcome.reused,
             broker_order_id=broker_order_id,
+            broker_state=broker_state,
+            filled_units=filled_units,
+            fill_price=fill_price,
+            client_order_id=client_identity,
+            decision_id=bound_decision_id,
             detail="external submit completed",
         )
 
@@ -277,6 +390,8 @@ class SubmitWorkflow:
         submit_id: str,
         *,
         broker_order_id: str | None,
+        broker_state: str | None = None,
+        filled_units: Decimal = Decimal("0"),
         detail: str,
     ) -> SubmitWorkflowResult:
         """Freeze new exposure only; the completed submit stays immutable."""
@@ -292,6 +407,8 @@ class SubmitWorkflow:
             state="FROZEN",
             reused=True,
             broker_order_id=broker_order_id,
+            broker_state=broker_state,
+            filled_units=filled_units,
             detail=detail,
         )
 
@@ -301,19 +418,25 @@ def resolve_in_flight(
     resolver: UnknownOutcomeResolver | None,
     submit_id: str,
     *,
+    client_identity: str | None = None,
     owner: str,
     account_id: str,
     freeze_store: ExposureFreezeStore | None,
     reason: str,
-) -> str | None:
+) -> SubmitResolutionResult | None:
     """Resolve one in-flight submit by query; freeze when it cannot settle.
 
-    Returns the ``broker_order_id`` when the broker accepted the order
+    ``submit_id`` names the ledger reservation to complete or freeze;
+    ``client_identity`` is the broker-facing ``clientExtensions.id`` that
+    was persisted before the request (defaults to ``submit_id``). The
+    resolution is always a query for that persisted identity — never a
+    re-submit and never a guess.
+
+    Returns the broker resolution when the broker accepted the order
     (the ledger is completed), or ``None`` after freezing both the
-    ledger reservation and new exposure with an immutable reason. The
-    resolution is always a query for the persisted client identity —
-    never a re-submit and never a guess.
+    ledger reservation and new exposure with an immutable reason.
     """
+    query_id = client_identity or submit_id
     if resolver is None:
         _freeze_submit(
             ledger,
@@ -326,7 +449,7 @@ def resolve_in_flight(
         )
         return None
     try:
-        resolution = resolver.resolve(submit_id)
+        resolution = resolver.resolve(query_id)
     except Exception as exc:  # noqa: BLE001 — fail closed on any query failure
         _freeze_submit(
             ledger,
@@ -345,8 +468,9 @@ def resolve_in_flight(
             state=resolution.state or "PENDING",
             transaction_id=None,
             owner=owner,
+            filled_units=resolution.filled_units,
         )
-        return resolution.broker_order_id
+        return resolution
     _freeze_submit(
         ledger,
         submit_id,
@@ -425,7 +549,12 @@ class StartupSyncService:
         *,
         restore_mapping: Callable[[dict[str, str]], None] | None = None,
     ) -> StartupSyncResult:
-        """Run one restart recovery pass over the durable authority."""
+        """Run one restart recovery pass over the durable authority.
+
+        Every in-flight submit is settled by query before this returns;
+        a failed settlement freezes the reservation and new exposure, so
+        the caller can safely refuse all further submits afterwards.
+        """
         in_flight = self._ledger.in_flight_reservations()
         completed: list[str] = []
         frozen: list[str] = []
@@ -435,10 +564,14 @@ class StartupSyncService:
             # the reservation: the sync is the recovery of that same
             # logical runner, never a takeover by a different owner.
             owner = str(reservation["owner"])
+            client_identity = str(
+                reservation.get("client_order_id") or submit_id
+            )
             resolved = resolve_in_flight(
                 self._ledger,
                 self._resolve,
                 submit_id,
+                client_identity=client_identity,
                 owner=owner,
                 account_id=self._account_id,
                 freeze_store=self._freeze_store,
@@ -471,6 +604,7 @@ __all__ = [
     "InjectedCrash",
     "StartupSyncResult",
     "StartupSyncService",
+    "SubmitOutcome",
     "SubmitRecoveryError",
     "SubmitWorkflow",
     "SubmitWorkflowResult",

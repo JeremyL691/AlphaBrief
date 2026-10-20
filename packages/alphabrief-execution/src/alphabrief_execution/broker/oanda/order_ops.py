@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alphabrief_execution.broker.errors import BrokerNotFoundError
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -29,6 +29,9 @@ OrderStateValue = Literal[
 
 #: States in which an order may still be replaced or cancelled.
 _MUTABLE_STATES = frozenset({"PENDING"})
+
+#: OANDA's maximum page size for order queries.
+MAX_ORDER_PAGE_SIZE = 500
 
 
 class OrderOperationError(RuntimeError):
@@ -56,6 +59,10 @@ class OrderStateResult(BaseModel):
     #: Zero for dependent orders: they close the parent trade instead of
     #: carrying units of their own.
     units: Decimal = Decimal("0")
+    #: Units the broker actually filled. Zero unless the order is FILLED;
+    #: a partial fill leaves the order PENDING with a fillingTransactionID
+    #: and is never reported as a complete fill here.
+    filled_units: Decimal = Decimal("0")
     #: The trade a dependent order belongs to, when the broker reports one.
     trade_id: str | None = None
     reduce_only: bool = False
@@ -65,15 +72,42 @@ class OrderStateResult(BaseModel):
 
 
 class OrderCreateResult(BaseModel):
-    """One typed create result with its correlation."""
+    """One typed create result with its correlation.
+
+    ``filled_units`` and ``fill_price`` are facts from the broker's
+    ``orderFillTransaction``; they are only set when the broker filled
+    the order in the create response. A pending order carries zero
+    filled units, never the requested quantity.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     broker_order_id: str = Field(min_length=1)
     client_order_id: str = Field(min_length=1)
     state: OrderStateValue
+    filled_units: Decimal = Decimal("0")
+    fill_price: Decimal | None = None
+    fill_transaction_id: str | None = None
     request_id: str = Field(min_length=1)
     reused: bool = False
+
+    @field_validator("filled_units", "fill_price")
+    @classmethod
+    def _no_float(cls, value: Decimal | None) -> Decimal | None:
+        if isinstance(value, float):
+            raise ValueError("order fill facts must not be floats")
+        return value
+
+    @model_validator(mode="after")
+    def _fill_facts_are_consistent(self) -> OrderCreateResult:
+        if self.state == "FILLED":
+            if self.filled_units <= 0:
+                raise ValueError("a FILLED order must report positive filled units")
+            if self.fill_price is None or self.fill_price <= 0:
+                raise ValueError("a FILLED order must report a positive fill price")
+        elif self.filled_units != 0 or self.fill_price is not None:
+            raise ValueError("a non-FILLED order must not report fill facts")
+        return self
 
 
 class OrderListResult(BaseModel):
@@ -161,11 +195,25 @@ class OrderOpsClient:
                 "protocol_error", "create response missing transaction"
             )
         broker_order_id = str(create_tx["id"])
-        state: OrderStateValue = "FILLED" if isinstance(fill_tx, dict) else "PENDING"
+        if isinstance(fill_tx, dict):
+            # The broker's fill transaction is the only fill authority:
+            # its units and price are the facts, never the requested size.
+            filled_units = _positive_decimal(fill_tx.get("units"), "filled units")
+            fill_price = _positive_decimal(fill_tx.get("price"), "fill price")
+            state: OrderStateValue = "FILLED"
+            fill_transaction_id = _optional_id(fill_tx.get("id"))
+        else:
+            filled_units = Decimal("0")
+            fill_price = None
+            fill_transaction_id = None
+            state = "PENDING"
         result = OrderCreateResult(
             broker_order_id=broker_order_id,
             client_order_id=client_order_id,
             state=state,
+            filled_units=filled_units,
+            fill_price=fill_price,
+            fill_transaction_id=fill_transaction_id,
             request_id=correlation,
         )
         self._created[client_order_id] = result
@@ -293,10 +341,31 @@ class OrderOpsClient:
         status: OrderStateValue | None = None,
         page: int = 1,
         page_size: int = 50,
+        before_id: str | None = None,
         request_id: str | None = None,
     ) -> OrderListResult:
-        """List orders with deterministic bounded pagination."""
+        """List one real broker page, newest orders first.
+
+        OANDA returns at most ``count`` orders, newest first, and pages
+        backwards with ``beforeID`` (the lowest ID already seen). A local
+        slice of a single fixed page would silently truncate history, so
+        this method passes ``beforeID`` through and reports ``has_more``
+        from the broker's own ``Link`` header.
+        """
+        if page < 1:
+            raise OrderOperationError("invalid_page", "page must be >= 1")
+        if not 1 <= page_size <= MAX_ORDER_PAGE_SIZE:
+            raise OrderOperationError(
+                "invalid_page_size",
+                f"page_size must be between 1 and {MAX_ORDER_PAGE_SIZE}",
+            )
+        if before_id is not None and not before_id.strip().isdigit():
+            raise OrderOperationError(
+                "invalid_request_id", "before_id must be a numeric order ID"
+            )
         params: dict[str, Any] = {"state": "ALL", "count": page_size}
+        if before_id is not None:
+            params["beforeID"] = before_id
         response = self._client.request(
             "GET", self._client.account_path("/orders"), params=params
         )
@@ -310,12 +379,12 @@ class OrderOpsClient:
         ]
         if status is not None:
             orders = [order for order in orders if order.state == status]
-        start = (page - 1) * page_size
-        page_orders = orders[start : start + page_size]
         return OrderListResult(
-            orders=tuple(page_orders),
+            orders=tuple(orders),
             page=page,
-            has_more=(start + page_size) < len(orders),
+            # A full page means the broker may hold older orders beyond
+            # this one; the caller continues with the lowest ID it saw.
+            has_more=len(body["orders"]) >= page_size,
             request_id=request_id or f"list-{page}",
         )
 
@@ -384,13 +453,20 @@ class OrderOpsClient:
 
     def _order_state_from_row(self, row: dict[str, Any]) -> OrderStateResult:
         try:
+            units = Decimal(str(row.get("units") or "0"))
+            state = _parse_state(str(row.get("state", "")))
             return OrderStateResult(
                 broker_order_id=str(row.get("id", "")).strip(),
                 client_order_id=_client_extensions_id(row),
                 client_tag=_client_extensions_tag(row),
                 symbol=str(row.get("instrument") or "").strip() or None,
-                state=_parse_state(str(row.get("state", ""))),
-                units=Decimal(str(row.get("units") or "0")),
+                state=state,
+                units=units,
+                # Only a FILLED order reports filled units; OANDA does not
+                # expose a filledUnits field on the order object, and a
+                # fillingTransactionID on a PENDING order is a partial
+                # fill, which must never read as complete.
+                filled_units=abs(units) if state == "FILLED" else Decimal("0"),
                 trade_id=str(row.get("tradeID") or "").strip() or None,
                 reduce_only=row.get("positionFill") == "REDUCE_ONLY",
                 price=(
@@ -438,6 +514,25 @@ def _client_extensions_id(order: dict[str, Any]) -> str | None:
     return None
 
 
+def _positive_decimal(value: Any, field: str) -> Decimal:
+    """Parse one broker fill fact; missing, non-numeric, or non-positive fails."""
+    if value is None or isinstance(value, (float, bool)):
+        raise OrderOperationError("protocol_error", f"{field} missing or invalid")
+    try:
+        parsed = Decimal(str(value))
+    except ArithmeticError as exc:
+        raise OrderOperationError("protocol_error", f"invalid {field}") from exc
+    if not parsed.is_finite() or parsed <= 0:
+        raise OrderOperationError("protocol_error", f"invalid {field}")
+    return parsed
+
+
+def _optional_id(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
 def _parse_time(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
@@ -459,6 +554,7 @@ def _path(value: str) -> str:
 
 
 __all__ = [
+    "MAX_ORDER_PAGE_SIZE",
     "OrderCancelResult",
     "OrderCreateResult",
     "OrderListResult",

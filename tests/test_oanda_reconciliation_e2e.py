@@ -51,7 +51,6 @@ from alphabrief_execution.broker.oanda.freeze_policy import (
 from alphabrief_execution.broker.oanda.instruments import InstrumentMetadata
 from alphabrief_execution.broker.oanda.order_ledger import OrderLedger
 from alphabrief_execution.broker.oanda.order_ops import (
-    OrderCreateResult,
     OrderOpsClient,
 )
 from alphabrief_execution.broker.oanda.orders import OandaOrderRequest
@@ -71,6 +70,7 @@ from alphabrief_execution.broker.oanda.reconcile import (
 from alphabrief_execution.broker.oanda.submit_recovery import (
     FaultPoint,
     InjectedCrash,
+    SubmitOutcome,
     SubmitWorkflow,
 )
 from alphabrief_execution.broker.oanda.transaction_cursor import (
@@ -138,7 +138,13 @@ class _FakeSubmitBroker:
             return json.dumps(
                 {
                     "orderCreateTransaction": {"id": order_id},
-                    "orderFillTransaction": {"id": self._tx()},
+                    "orderFillTransaction": {
+                        "id": self._tx(),
+                        "orderID": order_id,
+                        "instrument": order.get("instrument", ""),
+                        "units": order.get("units", "0"),
+                        "price": "1.10000",
+                    },
                 }
             ).encode("utf-8")
         if method == "GET" and path == f"{BASE}/orders":
@@ -193,9 +199,11 @@ def _instrument() -> InstrumentMetadata:
 
 def _submit_fn(
     orders: OrderOpsClient, submit_id: str
-) -> Callable[[], OrderCreateResult]:
-    return lambda: orders.create_order(
-        _request(), _instrument(), client_order_id=submit_id
+) -> Callable[[], SubmitOutcome]:
+    return lambda: SubmitOutcome.from_order_create(
+        orders.create_order(
+            _request(), _instrument(), client_order_id=submit_id
+        )
     )
 
 

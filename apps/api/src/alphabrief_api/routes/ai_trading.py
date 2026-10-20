@@ -262,6 +262,38 @@ def _build_execution_backend() -> ExecutionBackend:
     return ExternalPaperExecutionBackend(get_broker_runtime().adapter)
 
 
+def _startup_sync(backend: ExecutionBackend) -> None:
+    """Settle in-flight submits before the first new order (GUIDE 5.8).
+
+    An unresolved outcome raises ``HTTPException`` and the request stops
+    before any new exposure can be created.
+    """
+    if not isinstance(backend, ExternalPaperExecutionBackend):
+        return
+    try:
+        result = backend.startup_sync()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"startup order recovery failed: {exc}",
+        ) from exc
+    if result is not None and result.frozen_exposure:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "startup order recovery could not explain "
+                f"{len(result.frozen)} in-flight order(s); "
+                "new exposure is frozen"
+            ),
+        )
+
+
+def _close_backend(backend: ExecutionBackend) -> None:
+    close_backend = getattr(backend, "close", None)
+    if callable(close_backend):
+        close_backend()
+
+
 def _trading_mode() -> str:
     raw = os.environ.get("ALPHABRIEF_TRADING_MODE", "").strip().lower()
     return "on" if raw == "on" else "off"
@@ -271,12 +303,13 @@ def _build_cycle(
     *,
     snapshot_loader: SnapshotLoader,
     symbols: list[str],
+    execution_backend: ExecutionBackend | None = None,
 ) -> DailyTradingCycle:
     """Build a fully wired daily cycle from the supplied universe."""
     return DailyTradingCycle(
         committee=_build_default_committee(),
         risk_gate=_build_risk_gate(symbols),
-        execution_backend=_build_execution_backend(),
+        execution_backend=execution_backend or _build_execution_backend(),
         store=_get_store(),
         snapshot_loader=snapshot_loader,
         enabled=is_ai_trading_enabled(),
@@ -332,11 +365,14 @@ def run_cycle(body: AiRunRequest) -> dict[str, object]:
         symbols=symbols,
         reference_prices=reference_prices,
     )
+    backend = _build_execution_backend()
     try:
         try:
+            _startup_sync(backend)
             cycle = _build_cycle(
                 snapshot_loader=snapshot_loader,
                 symbols=symbols,
+                execution_backend=backend,
             )
         except ModelProviderUnavailableError as exc:
             record = _blocked_record_without_provider(
@@ -349,6 +385,7 @@ def run_cycle(body: AiRunRequest) -> dict[str, object]:
             cycle_key=_api_cycle_key(symbols),
         )
     finally:
+        _close_backend(backend)
         close_snapshot_loader()
     return _cycle_payload(record)
 

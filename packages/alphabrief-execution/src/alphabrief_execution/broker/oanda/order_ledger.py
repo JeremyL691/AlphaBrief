@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -54,6 +55,14 @@ CREATE INDEX IF NOT EXISTS order_ledger_events_submit ON
     order_ledger_events (submit_id);
 """
 
+#: Columns added after the first release; applied to existing databases.
+_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE order_ledger_reservations ADD COLUMN IF NOT EXISTS "
+    "client_order_id TEXT",
+    "ALTER TABLE order_ledger_reservations ADD COLUMN IF NOT EXISTS "
+    "filled_units TEXT",
+)
+
 
 class ReservationOutcome(BaseModel):
     """One deterministic reservation verdict."""
@@ -63,6 +72,11 @@ class ReservationOutcome(BaseModel):
     submit_id: str = Field(min_length=1)
     status: LedgerState
     reused: bool = False
+    #: True when a prior reservation exists in a not-yet-sent state
+    #: (``RESERVED``/``BOUND``) under a different decision or payload.
+    #: Nothing reached the broker, so the caller may rebind the fresh
+    #: decision before sending; it must never treat this as a new submit.
+    needs_rebind: bool = False
 
 
 class LedgerTransitionError(RuntimeError):
@@ -83,6 +97,8 @@ class OrderLedger:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = duckdb.connect(str(self._db_path))
         self._conn.execute(_CREATE_TABLES)
+        for statement in _MIGRATIONS:
+            self._conn.execute(statement)
 
     # ------------------------------------------------------------------
     # Reservation
@@ -96,18 +112,36 @@ class OrderLedger:
         decision_id: str,
         payload_hash: str,
         owner: str,
+        client_order_id: str | None = None,
+        allow_rebind: bool = False,
     ) -> ReservationOutcome:
         """Reserve the one deterministic submit identity.
 
         The submit identity is derived from ``(cycle_id, intent_id)``, so
         any replay of the same cycle and intent returns the same
-        identity. A replay with a different decision or payload is an
-        identity collision and freezes instead of overwriting.
+        identity. ``client_order_id`` is the broker-facing identity
+        persisted before the request; it defaults to the submit ID and
+        must stay stable for that identity.
+
+        A replay with a different decision or payload is an identity
+        collision and freezes. With ``allow_rebind`` the caller states
+        that it re-evaluated the decision for this same intent: when the
+        prior reservation is still unsent (``RESERVED``/``BOUND``), the
+        verdict asks it to rebind the fresh decision — nothing reached
+        the broker, so no external order can be duplicated. A sent or
+        terminal identity never rebinds.
         """
         submit_id = _submit_id(cycle_id, intent_id)
+        broker_client_id = client_order_id or submit_id
         existing = self._reservation_row(submit_id)
         if existing is not None:
-            return self._replay_verdict(existing, decision_id, payload_hash, owner)
+            return self._replay_verdict(
+                existing,
+                decision_id,
+                payload_hash,
+                owner,
+                allow_rebind=allow_rebind,
+            )
         now = datetime.now(UTC)
         try:
             self._conn.execute("BEGIN")
@@ -115,8 +149,9 @@ class OrderLedger:
                 """
                 INSERT INTO order_ledger_reservations (
                     submit_id, cycle_id, intent_id, decision_id,
-                    payload_hash, owner, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'RESERVED', ?, ?)
+                    payload_hash, owner, status, client_order_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?)
                 """,
                 [
                     submit_id,
@@ -125,6 +160,7 @@ class OrderLedger:
                     decision_id,
                     payload_hash,
                     owner,
+                    broker_client_id,
                     now,
                     now,
                 ],
@@ -153,23 +189,38 @@ class OrderLedger:
         decision_id: str,
         payload_hash: str,
         owner: str,
+        rebind: bool = False,
     ) -> None:
-        """Bind the approved decision; CAS from RESERVED to BOUND."""
+        """Bind the approved decision; CAS from RESERVED to BOUND.
+
+        ``rebind`` allows replacing a not-yet-sent reservation's decision
+        and payload. That is safe because ``RESERVED``/``BOUND`` means the
+        broker never received the order; a rebind records the replacement
+        as an immutable event and never touches a ``SUBMITTED`` identity.
+        """
         reservation = self._require_reservation(submit_id)
         self._check_owner(reservation, owner)
-        if reservation["decision_id"] != decision_id:
-            raise LedgerTransitionError(
-                "identity_collision",
-                f"decision {decision_id!r} conflicts with reserved "
-                f"{reservation['decision_id']!r}",
-            )
-        if reservation["payload_hash"] != payload_hash:
-            raise LedgerTransitionError(
-                "payload_mismatch",
-                "payload hash differs from the reserved hash",
-            )
         if reservation["status"] == "BOUND":
-            return  # idempotent replay of the same bind
+            if (
+                reservation["decision_id"] == decision_id
+                and reservation["payload_hash"] == payload_hash
+            ):
+                return  # idempotent replay of the same bind
+            if not rebind:
+                if reservation["decision_id"] != decision_id:
+                    raise LedgerTransitionError(
+                        "identity_collision",
+                        f"decision {decision_id!r} conflicts with bound "
+                        f"{reservation['decision_id']!r}",
+                    )
+                raise LedgerTransitionError(
+                    "payload_mismatch",
+                    "payload hash differs from the bound decision",
+                )
+            self._rebind(
+                submit_id, decision_id=decision_id, payload_hash=payload_hash
+            )
+            return
         if reservation["status"] in _TERMINAL_STATES:
             raise LedgerTransitionError(
                 "state_conflict",
@@ -180,6 +231,22 @@ class OrderLedger:
                 "in_flight_ambiguous",
                 "submit already attempted; resolve the outcome before binding",
             )
+        if (
+            reservation["decision_id"] != decision_id
+            or reservation["payload_hash"] != payload_hash
+        ):
+            if not rebind:
+                if reservation["decision_id"] != decision_id:
+                    raise LedgerTransitionError(
+                        "identity_collision",
+                        f"decision {decision_id!r} conflicts with reserved "
+                        f"{reservation['decision_id']!r}",
+                    )
+                raise LedgerTransitionError(
+                    "payload_mismatch",
+                    "payload hash differs from the reserved hash",
+                )
+            self._rebind(submit_id, decision_id=decision_id, payload_hash=payload_hash)
         self._cas_status(
             submit_id,
             expected="RESERVED",
@@ -187,6 +254,46 @@ class OrderLedger:
             kind="BIND",
             detail=f"decision={decision_id}",
         )
+
+    def _rebind(
+        self,
+        submit_id: str,
+        *,
+        decision_id: str,
+        payload_hash: str,
+    ) -> None:
+        """Replace an unsent reservation's decision/payload atomically."""
+        now = datetime.now(UTC)
+        self._conn.execute("BEGIN")
+        try:
+            updated = self._conn.execute(
+                """
+                UPDATE order_ledger_reservations
+                SET decision_id = ?, payload_hash = ?, updated_at = ?
+                WHERE submit_id = ? AND status IN ('RESERVED', 'BOUND')
+                """,
+                [decision_id, payload_hash, now, submit_id],
+            ).fetchone()
+            if updated is None or updated[0] == 0:
+                self._conn.execute("ROLLBACK")
+                raise LedgerTransitionError(
+                    "state_conflict",
+                    f"submit {submit_id} is no longer unsent; cannot rebind",
+                )
+            self._append_event(
+                submit_id,
+                "REBIND",
+                json.dumps(
+                    {"decision_id": decision_id, "payload_hash": payload_hash},
+                    sort_keys=True,
+                ),
+            )
+            self._conn.execute("COMMIT")
+        except LedgerTransitionError:
+            raise
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
 
     def record_submit_attempt(
         self,
@@ -197,16 +304,17 @@ class OrderLedger:
     ) -> None:
         """Record one submit attempt; CAS from BOUND to SUBMITTED.
 
-        A missing approved decision, a mismatched payload, or an
-        ambiguous in-flight state freezes submission instead of
-        overwriting.
+        A missing approved decision or an ambiguous in-flight state
+        freezes submission instead of overwriting. The payload must match
+        the decision that is currently bound (it may have been rebound to
+        a fresh decision while unsent).
         """
         reservation = self._require_reservation(submit_id)
         self._check_owner(reservation, owner)
         if reservation["payload_hash"] != payload_hash:
             raise LedgerTransitionError(
                 "payload_mismatch",
-                "payload hash differs from the reserved hash",
+                "payload hash differs from the bound decision's payload",
             )
         if reservation["status"] == "SUBMITTED":
             raise LedgerTransitionError(
@@ -239,8 +347,14 @@ class OrderLedger:
         state: str,
         transaction_id: str | None,
         owner: str,
+        filled_units: Decimal = Decimal("0"),
     ) -> None:
-        """Record the broker result; CAS from SUBMITTED to COMPLETED."""
+        """Record the broker result; CAS from SUBMITTED to COMPLETED.
+
+        ``filled_units`` is the broker's own fill fact at result time;
+        it stays zero for a pending order and is never the requested
+        quantity.
+        """
         reservation = self._require_reservation(submit_id)
         self._check_owner(reservation, owner)
         if (
@@ -254,7 +368,11 @@ class OrderLedger:
                 f"cannot record result in terminal state {reservation['status']}",
             )
         detail = json.dumps(
-            {"broker_order_id": broker_order_id, "state": state},
+            {
+                "broker_order_id": broker_order_id,
+                "state": state,
+                "filled_units": str(filled_units),
+            },
             sort_keys=True,
         )
         now = datetime.now(UTC)
@@ -267,10 +385,18 @@ class OrderLedger:
                     broker_order_id = ?,
                     state = ?,
                     transaction_id = ?,
+                    filled_units = ?,
                     updated_at = ?
                 WHERE submit_id = ? AND status = 'SUBMITTED'
                 """,
-                [broker_order_id, state, transaction_id, now, submit_id],
+                [
+                    broker_order_id,
+                    state,
+                    transaction_id,
+                    str(filled_units),
+                    now,
+                    submit_id,
+                ],
             ).fetchone()
             if updated is None or updated[0] == 0:
                 self._conn.execute("ROLLBACK")
@@ -372,7 +498,7 @@ class OrderLedger:
         """
         rows = self._conn.execute(
             """SELECT submit_id, cycle_id, intent_id, decision_id,
-                      payload_hash, owner
+                      payload_hash, owner, client_order_id
                FROM order_ledger_reservations WHERE status = 'SUBMITTED'
                ORDER BY submit_id"""
         ).fetchall()
@@ -384,18 +510,24 @@ class OrderLedger:
                 "decision_id": str(row[3]),
                 "payload_hash": str(row[4]),
                 "owner": str(row[5]),
+                "client_order_id": (
+                    str(row[6]) if row[6] is not None else str(row[0])
+                ),
             }
             for row in rows
         ]
 
     def completed_mappings(self) -> dict[str, str]:
-        """The durable submit_id -> broker_order_id mapping.
+        """The durable broker-facing client identity -> broker order mapping.
 
         Restored into the process adapter at startup so a replay of any
-        completed cycle can never double-submit.
+        completed cycle can never double-submit. The key is the identity
+        the broker actually saw (``clientExtensions.id``), not the local
+        submit identity.
         """
         rows = self._conn.execute(
-            """SELECT submit_id, broker_order_id FROM order_ledger_reservations
+            """SELECT COALESCE(client_order_id, submit_id), broker_order_id
+               FROM order_ledger_reservations
                WHERE status = 'COMPLETED' AND broker_order_id IS NOT NULL
                ORDER BY submit_id"""
         ).fetchall()
@@ -415,7 +547,7 @@ class OrderLedger:
         row = self._conn.execute(
             """SELECT submit_id, cycle_id, intent_id, decision_id,
                       payload_hash, owner, status, broker_order_id, state,
-                      transaction_id
+                      transaction_id, client_order_id, filled_units
                FROM order_ledger_reservations WHERE submit_id = ?""",
             [submit_id],
         ).fetchone()
@@ -432,6 +564,10 @@ class OrderLedger:
             "broker_order_id": str(row[7]) if row[7] is not None else None,
             "state": str(row[8]) if row[8] is not None else None,
             "transaction_id": str(row[9]) if row[9] is not None else None,
+            "client_order_id": str(row[10]) if row[10] is not None else str(row[0]),
+            "filled_units": (
+                Decimal(str(row[11])) if row[11] is not None else Decimal("0")
+            ),
         }
 
     def _replay_verdict(
@@ -440,22 +576,43 @@ class OrderLedger:
         decision_id: str,
         payload_hash: str,
         owner: str,
+        *,
+        allow_rebind: bool = False,
     ) -> ReservationOutcome:
-        if reservation["decision_id"] != decision_id:
-            raise LedgerTransitionError(
-                "identity_collision",
-                f"decision {decision_id!r} conflicts with reserved "
-                f"{reservation['decision_id']!r}",
-            )
-        if reservation["payload_hash"] != payload_hash:
-            raise LedgerTransitionError(
-                "payload_mismatch",
-                "payload hash differs from the reserved hash",
-            )
         if reservation["owner"] != owner:
             raise LedgerTransitionError(
                 "stale_owner",
                 f"owner {owner!r} does not own submit {reservation['submit_id']!r}",
+            )
+        if (
+            reservation["decision_id"] != decision_id
+            or reservation["payload_hash"] != payload_hash
+        ):
+            if reservation["status"] in _TERMINAL_STATES or (
+                reservation["status"] == "SUBMITTED"
+            ):
+                # The external identity is already in flight or terminal.
+                # A re-evaluated decision cannot rebind it and must never
+                # re-send it; the durable state is returned so the caller
+                # resolves the existing outcome instead.
+                return ReservationOutcome(
+                    submit_id=reservation["submit_id"],
+                    status=reservation["status"],
+                    reused=True,
+                )
+            if allow_rebind:
+                # Nothing reached the broker: the caller may rebind the
+                # fresh decision instead of freezing on the old one.
+                return ReservationOutcome(
+                    submit_id=reservation["submit_id"],
+                    status=reservation["status"],
+                    reused=True,
+                    needs_rebind=True,
+                )
+            raise LedgerTransitionError(
+                "identity_collision",
+                f"decision {decision_id!r} conflicts with reserved "
+                f"{reservation['decision_id']!r}",
             )
         return ReservationOutcome(
             submit_id=reservation["submit_id"],
