@@ -48,6 +48,18 @@ class OpportunitySettings(BaseModel):
     escalation_min_confidence: Decimal = Field(
         default=Decimal("0.60"), ge=Decimal(0), le=Decimal(1)
     )
+    #: Escalate a flat scan too, so the committee still decides. Off by
+    #: default; an operator turns it on to guarantee a number of daily
+    #: decisions instead of depending on a directional signal appearing.
+    escalate_on_flat: bool = False
+
+    @field_validator("escalate_on_flat", mode="before")
+    @classmethod
+    def require_real_boolean(cls, value: Any) -> Any:
+        """Reject strings: ``"false"`` is truthy and would invert the flag."""
+        if isinstance(value, bool):
+            return value
+        raise ValueError("escalate_on_flat must be true or false, not a string")
 
     @field_validator("escalation_min_confidence", mode="before")
     @classmethod
@@ -64,6 +76,58 @@ class OpportunitySettings(BaseModel):
         return value
 
 
+class DisciplineSettings(BaseModel):
+    """The ``trading.discipline:`` section: reviewed committee thresholds.
+
+    These are the GUIDE 5.4 numbers the committee applies after the models
+    answer. They live in the reviewed configuration so a change is a reviewable
+    diff instead of an edit buried in code. The defaults are the guide values;
+    an operator lowering them accepts that more marginal decisions turn into
+    real orders.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    #: Below this confidence the plan is forced to no-trade.
+    no_trade_below_confidence: Decimal = Field(
+        default=Decimal("0.55"), ge=Decimal(0), le=Decimal(1)
+    )
+    #: How many analysts must support the manager's direction to open.
+    min_analysts_supporting_direction: int = Field(default=2, ge=0, le=8)
+    #: Required consensus quality: unanimous | majority | split | no_consensus.
+    require_min_consensus: str = "split"
+    #: The risk role's veto is a hard block.
+    honour_risk_role_veto: bool = True
+    #: Cap on any single symbol's target position fraction.
+    max_position_pct: Decimal = Field(
+        default=Decimal("0.25"), gt=Decimal(0), le=Decimal(1)
+    )
+
+    @field_validator(
+        "no_trade_below_confidence",
+        "max_position_pct",
+        mode="before",
+    )
+    @classmethod
+    def parse_decimal(cls, value: Any) -> Any:
+        """Require a decimal string so a threshold is never a float."""
+        if isinstance(value, bool):
+            raise ValueError("must be a decimal string such as '0.55'")
+        if isinstance(value, (int, float)):
+            raise ValueError("must be a decimal string such as '0.55'")
+        if isinstance(value, str):
+            return Decimal(value)
+        return value
+
+    @field_validator("require_min_consensus")
+    @classmethod
+    def require_valid_consensus(cls, value: str) -> str:
+        allowed = {"unanimous", "majority", "split", "no_consensus"}
+        if value not in allowed:
+            raise ValueError(f"require_min_consensus must be one of {sorted(allowed)}")
+        return value
+
+
 class TradingSettings(BaseModel):
     """The ``trading:`` section: mode switch plus opportunity guardrails."""
 
@@ -71,6 +135,7 @@ class TradingSettings(BaseModel):
 
     trading_mode: str = "off"
     opportunity: OpportunitySettings = Field(default_factory=OpportunitySettings)
+    discipline: DisciplineSettings = Field(default_factory=DisciplineSettings)
 
     @field_validator("trading_mode", mode="before")
     @classmethod
@@ -200,12 +265,21 @@ def load_opportunity_settings(
     return load_runtime_settings(path).opportunity
 
 
+def load_discipline_settings(
+    path: Path | str | None = None,
+) -> DisciplineSettings:
+    """Convenience accessor for the reviewed committee thresholds."""
+    return load_runtime_settings(path).settings.trading.discipline
+
+
 __all__ = [
+    "DisciplineSettings",
     "LoadedRuntimeSettings",
     "OpportunitySettings",
     "RUNTIME_CONFIG_PATH",
     "RuntimeSettings",
     "TradingSettings",
+    "load_discipline_settings",
     "load_opportunity_settings",
     "load_runtime_settings",
 ]

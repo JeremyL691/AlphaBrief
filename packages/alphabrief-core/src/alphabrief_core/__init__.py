@@ -84,9 +84,11 @@ from alphabrief_core.read_contracts import (
     unknown_filter_error,
 )
 from alphabrief_core.runtime_config import (
+    DisciplineSettings,
     LoadedRuntimeSettings,
     OpportunitySettings,
     RuntimeSettings,
+    load_discipline_settings,
     load_opportunity_settings,
     load_runtime_settings,
 )
@@ -178,8 +180,10 @@ __all__ = [
     "DEFAULT_CATCH_UP_MINUTES",
     "DEFAULT_SCHEDULE",
     "LoadedRuntimeSettings",
+    "DisciplineSettings",
     "OpportunitySettings",
     "RuntimeSettings",
+    "load_discipline_settings",
     "load_opportunity_settings",
     "load_runtime_settings",
     "DueEvent",

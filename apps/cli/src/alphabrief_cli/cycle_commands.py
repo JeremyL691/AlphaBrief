@@ -222,6 +222,13 @@ def _compute_enabled_strategy_signals(
                 continue
             try:
                 spec_obj = StrategySpec.model_validate(full["spec"])
+                # A spec declares the symbols it covers. Running it outside
+                # that universe raises "signal symbol must be in StrategySpec
+                # universe", which is a scoping decision, not a failure: skip
+                # it here so the log stays free of a warning repeated on every
+                # scan for every uncovered symbol.
+                if symbol not in set(spec_obj.universe.symbols):
+                    continue
                 runner = resolve_builtin_runner(strat_id)
                 if runner is None:
                     _LOGGER.warning(
@@ -239,7 +246,10 @@ def _compute_enabled_strategy_signals(
                     signals[strat_id] = {
                         "signal_id": last_sig.signal_id,
                         "direction": last_sig.direction,
-                        "confidence": last_sig.confidence,
+                        # Signal.confidence is a float; store the shortest
+                        # exact decimal string so the scan reads it without
+                        # relying on the float fallback.
+                        "confidence": str(last_sig.confidence),
                         "horizon": last_sig.horizon,
                         "rationale": last_sig.rationale,
                         "timestamp": last_sig.timestamp.isoformat(),
@@ -779,6 +789,28 @@ def _call_recorder(store: Any) -> Any:
     return _record
 
 
+def _reviewed_discipline() -> Any:
+    """The reviewed committee thresholds from ``config/alphabrief.yaml``.
+
+    One place decides the GUIDE 5.4 numbers so the unattended runtime and the
+    CLI cannot disagree, and a change is a reviewable config diff instead of
+    an edit to a default buried in the factory.
+    """
+    from alphabrief_core import load_discipline_settings
+    from alphabrief_trader.rules import DisciplineConfig
+
+    reviewed = load_discipline_settings()
+    return DisciplineConfig(
+        no_trade_below_confidence=float(reviewed.no_trade_below_confidence),
+        min_analysts_supporting_direction=(
+            reviewed.min_analysts_supporting_direction
+        ),
+        require_min_consensus=reviewed.require_min_consensus,  # type: ignore[arg-type]
+        honour_risk_role_veto=reviewed.honour_risk_role_veto,
+        max_position_pct=reviewed.max_position_pct,
+    )
+
+
 def _model_budget(store: Any) -> Any:
     """The durable daily model budget for one cycle (PROJECT_GUIDE 5.13).
 
@@ -960,6 +992,7 @@ def _open_trading_cycle(
             record_sink=_call_recorder(calls),
             daily_budget=model_budget,
             validation_sink=calls.save_validation,
+            discipline=_reviewed_discipline(),
         )
         backend: ExecutionBackend
         if trading == "on":

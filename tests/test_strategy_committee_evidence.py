@@ -220,3 +220,104 @@ def test_snapshot_loader_survives_multi_granularity_bars(
         mstore2.close()
         nstore.close()
         nhealth.close()
+
+
+# ---------------------------------------------------------------------------
+# A signal is only computed for a symbol the strategy actually covers
+# ---------------------------------------------------------------------------
+
+
+def _save_momentum_spec(db_file: Path, universe: list[str]) -> None:
+    spec_store = StrategySpecStore(db_path=db_file)
+    try:
+        spec_store.save_spec(
+            {
+                "strategy_id": "momentum",
+                "name": "Momentum",
+                "version": "1.0.0",
+                "universe": {"symbols": universe},
+                "timeframe": "H1",
+                "entry": {"condition": "close > open"},
+                "exit": {"condition": "close < open"},
+                "risk": {"max_position_pct": "0.3"},
+                "costs": {"fee_bps": "2", "slippage_bps": "2"},
+                "evaluation": {
+                    "train_period": {"start": "2024-01-01", "end": "2024-06-30"},
+                    "test_period": {"start": "2024-07-01", "end": "2024-12-31"},
+                },
+            },
+            enabled=True,
+        )
+    finally:
+        spec_store.close()
+
+
+def test_symbol_outside_the_strategy_universe_is_skipped_silently(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A spec scoped to EUR_USD must not be run for GBP_USD and logged as a failure.
+
+    The scheduler universe is EUR_USD/GBP_USD/USD_JPY while the enabled
+    momentum spec covers only EUR_USD. Running it outside its universe raised
+    ``signal symbol must be in StrategySpec universe`` on every scan, filling
+    the log with a failure that was really a scoping decision. The loader now
+    checks the universe first and produces no signal, no warning.
+    """
+    db_file = tmp_path / "alphabrief_test.duckdb"
+    mstore = MarketDataStore(db_path=db_file)
+    try:
+        _seed_bars(mstore, "GBP_USD")
+    finally:
+        mstore.close()
+    _save_momentum_spec(db_file, ["EUR_USD"])
+
+    nstore = NewsStore(db_path=db_file)
+    nhealth = NewsIngestionStore(db_path=db_file)
+    mstore2 = MarketDataStore(db_path=db_file)
+    try:
+        caplog.set_level("WARNING", logger="alphabrief_cli.cycle_commands")
+        loader = _snapshot_loader(mstore2, nstore, nhealth)
+        snapshot = loader("GBP_USD")
+        assert snapshot is not None
+        assert snapshot.strategy_signals == {}
+        failures = [
+            record
+            for record in caplog.records
+            if "must be in StrategySpec universe" in record.getMessage()
+        ]
+        assert failures == [], "a scoping decision is not a strategy failure"
+    finally:
+        mstore2.close()
+        nstore.close()
+        nhealth.close()
+
+
+def test_confidence_is_serialised_as_a_decimal_string(tmp_path: Path) -> None:
+    """The scan reads Decimals; the stored payload must not rely on float.
+
+    ``Signal.confidence`` is a float, and ``opportunity._decimal`` converts a
+    float through ``str()``. Emitting the string here keeps the stored record
+    exact and independent of that fallback.
+    """
+    db_file = tmp_path / "alphabrief_test.duckdb"
+    mstore = MarketDataStore(db_path=db_file)
+    try:
+        _seed_bars(mstore, "EUR_USD")
+    finally:
+        mstore.close()
+    _save_momentum_spec(db_file, ["EUR_USD"])
+
+    nstore = NewsStore(db_path=db_file)
+    nhealth = NewsIngestionStore(db_path=db_file)
+    mstore2 = MarketDataStore(db_path=db_file)
+    try:
+        loader = _snapshot_loader(mstore2, nstore, nhealth)
+        snapshot = loader("EUR_USD")
+        assert snapshot is not None
+        confidence = snapshot.strategy_signals["momentum"]["confidence"]
+        assert isinstance(confidence, str), confidence
+        assert Decimal(confidence) == Decimal("1.0")
+    finally:
+        mstore2.close()
+        nstore.close()
+        nhealth.close()

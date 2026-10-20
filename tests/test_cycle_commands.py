@@ -300,3 +300,28 @@ class TestExposureCapRegime:
 
         assert gate.limits.max_order_value == policy.max_order_notional
         assert gate.limits.max_total_exposure == policy.max_total_exposure
+
+
+def test_reviewed_discipline_reads_the_single_config_source() -> None:
+    """The cycle builder applies the reviewed thresholds, not code constants.
+
+    ``config/alphabrief.yaml`` is the one place an operator changes the GUIDE
+    5.4 numbers. Both the unattended runtime and the CLI go through this
+    helper, so they cannot disagree and a change is a reviewable config diff.
+    """
+    from alphabrief_cli.cycle_commands import _reviewed_discipline
+    from alphabrief_core import load_discipline_settings
+
+    reviewed = load_discipline_settings()
+    applied = _reviewed_discipline()
+
+    assert applied.no_trade_below_confidence == float(
+        reviewed.no_trade_below_confidence
+    )
+    assert (
+        applied.min_analysts_supporting_direction
+        == reviewed.min_analysts_supporting_direction
+    )
+    assert applied.require_min_consensus == reviewed.require_min_consensus
+    assert applied.honour_risk_role_veto == reviewed.honour_risk_role_veto
+    assert applied.max_position_pct == reviewed.max_position_pct

@@ -599,6 +599,7 @@ class Runtime:
             max_rounds_per_day=settings.max_rounds_per_day,
             min_spacing_seconds=settings.min_spacing_seconds,
             escalation_min_confidence=settings.escalation_min_confidence,
+            escalate_on_flat=settings.escalate_on_flat,
         )
 
     def _opportunity_inputs(self) -> tuple[list[Any], bool]:

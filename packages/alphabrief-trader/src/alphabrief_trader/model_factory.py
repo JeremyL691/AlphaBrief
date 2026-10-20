@@ -103,12 +103,18 @@ def build_ai_trading_committee(
     budget: ModelCallBudget | None = None,
     daily_budget: ModelBudgetGuard | None = None,
     validation_sink: Callable[[ModelValidationRecord], None] | None = None,
+    discipline: DisciplineConfig | None = None,
 ) -> TradingCommittee:
     """Build the AI Trading Committee on the configured channels.
 
     ``record_sink`` and ``budget`` are forwarded to the ModelGateway so
     production callers persist every terminal call record and bound
     per-request/cycle/daily model usage.
+
+    ``discipline`` overrides the reviewed :class:`DisciplineConfig`. The
+    default keeps GUIDE 5.4; a caller passes an explicit config when the
+    operator has changed the reviewed thresholds (it is never inferred from
+    the environment, so a typo cannot silently loosen a safety gate).
     """
     channels = build_ai_trading_channels(
         record_sink=record_sink, budget=budget, daily_budget=daily_budget
@@ -116,7 +122,7 @@ def build_ai_trading_committee(
     channels.gateway.set_validation_sink(validation_sink)
     return TradingCommittee(
         gateway=channels.gateway,
-        discipline=DisciplineConfig(),
+        discipline=discipline or DisciplineConfig(),
         max_turns=5,
         challenge_rounds=0,
         repair_attempts=2,

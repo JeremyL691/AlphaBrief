@@ -152,3 +152,40 @@ def test_production_factory_uses_five_calls_and_manager_sees_analysts(
     for role in committee.roles[:-1]:
         assert f'"role": "{role}"' in manager_input
     assert manager_input.count("Observed trend from this snapshot") == 4
+
+
+def test_committee_accepts_a_reviewed_discipline_override() -> None:
+    """An operator-supplied DisciplineConfig reaches the committee unchanged.
+
+    The reviewed thresholds live in ``config/alphabrief.yaml``; the runtime
+    passes them explicitly so a change is a reviewable diff rather than an
+    edit to a default buried in the factory.
+    """
+    from decimal import Decimal
+
+    from alphabrief_trader.rules import DisciplineConfig
+
+    discipline = DisciplineConfig(
+        no_trade_below_confidence=0.0,
+        min_analysts_supporting_direction=0,
+        honour_risk_role_veto=False,
+        max_position_pct=Decimal("1"),
+    )
+
+    committee = build_ai_trading_committee(discipline=discipline)
+
+    config = committee._discipline.config
+    assert config.no_trade_below_confidence == 0.0
+    assert config.min_analysts_supporting_direction == 0
+    assert config.honour_risk_role_veto is False
+    assert config.max_position_pct == Decimal("1")
+
+
+def test_committee_defaults_to_the_guide_discipline() -> None:
+    """Omitting the override keeps GUIDE 5.4 untouched."""
+    committee = build_ai_trading_committee()
+
+    config = committee._discipline.config
+    assert config.no_trade_below_confidence == 0.55
+    assert config.min_analysts_supporting_direction == 2
+    assert config.honour_risk_role_veto is True

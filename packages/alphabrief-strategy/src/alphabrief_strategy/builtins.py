@@ -57,7 +57,15 @@ class MovingAverageTrendStrategy:
 
 @dataclass(frozen=True)
 class MomentumStrategy:
-    """Long when trailing window-bar return is positive, flat otherwise."""
+    """Two-sided trailing momentum.
+
+    Long when the close is above the close ``window`` bars ago, short when it
+    is below, flat when the two are equal or the window is not yet filled.
+    The short branch mirrors :func:`alphabrief_trader.shadow.momentum_side`
+    so the executable strategy and the shadow benchmark agree on direction in
+    a falling market; a long-only reading made every down move look like "no
+    view" and left the opportunity scan with nothing to act on.
+    """
 
     window: int = 20
     confidence: float = 1.0
@@ -78,9 +86,12 @@ class MomentumStrategy:
                 if bar.close > prev_close:
                     direction = "long"
                     rationale = f"positive {self.window}-bar momentum"
+                elif bar.close < prev_close:
+                    direction = "short"
+                    rationale = f"negative {self.window}-bar momentum"
                 else:
                     direction = "flat"
-                    rationale = f"non-positive {self.window}-bar momentum"
+                    rationale = f"zero {self.window}-bar momentum"
 
             signals.append(
                 Signal(

@@ -143,7 +143,9 @@ def test_config_is_found_from_an_unrelated_working_directory(
         "started in the data directory silently used dataclass defaults"
     )
     assert loaded.path.name == Path(RUNTIME_CONFIG_PATH).name
-    assert loaded.opportunity.max_rounds_per_day == 15
+    # The file's reviewed value, which differs from the dataclass default:
+    # this proves the file was loaded rather than the defaults applied.
+    assert loaded.opportunity.max_rounds_per_day == 20
 
 
 def test_relative_path_resolves_against_the_repository_root(
@@ -165,3 +167,83 @@ def test_absolute_missing_path_is_still_the_documented_default(
 
     assert loaded.path is None
     assert loaded.opportunity.max_rounds_per_day == 15
+
+
+def test_escalate_on_flat_is_configurable_and_defaults_off(tmp_path: Path) -> None:
+    """The operator can require committee rounds even on a flat scan.
+
+    The reviewed default stays False: a flat scan normally spends nothing.
+    Turning it on is an explicit operator decision to guarantee daily
+    decisions instead of waiting for a directional signal.
+    """
+    absent = load_runtime_settings(tmp_path / "absent.yaml")
+    assert absent.opportunity.escalate_on_flat is False
+
+    path = _write(
+        tmp_path,
+        "schema_version: 1\ntrading:\n  opportunity:\n    escalate_on_flat: true\n",
+    )
+    assert load_opportunity_settings(path).escalate_on_flat is True
+
+
+def test_escalate_on_flat_rejects_a_non_boolean(tmp_path: Path) -> None:
+    """A string is a typo, not a policy: fail closed at load time."""
+    path = _write(
+        tmp_path,
+        'schema_version: 1\ntrading:\n  opportunity:\n    escalate_on_flat: "yes"\n',
+    )
+    with pytest.raises(ValueError):
+        load_opportunity_settings(path)
+
+
+def test_discipline_section_defaults_to_the_guide_values(tmp_path: Path) -> None:
+    """Absent config keeps GUIDE 5.4 exactly."""
+    absent = load_runtime_settings(tmp_path / "absent.yaml")
+    discipline = absent.settings.trading.discipline
+
+    assert discipline.no_trade_below_confidence == Decimal("0.55")
+    assert discipline.min_analysts_supporting_direction == 2
+    assert discipline.require_min_consensus == "split"
+    assert discipline.honour_risk_role_veto is True
+    assert discipline.max_position_pct == Decimal("0.25")
+
+
+def test_discipline_section_accepts_reviewed_overrides(tmp_path: Path) -> None:
+    """An operator can lower the reviewed thresholds through config."""
+    path = _write(
+        tmp_path,
+        "schema_version: 1\ntrading:\n  discipline:\n"
+        "    no_trade_below_confidence: '0'\n"
+        "    min_analysts_supporting_direction: 0\n"
+        "    require_min_consensus: no_consensus\n"
+        "    honour_risk_role_veto: false\n"
+        "    max_position_pct: '1'\n",
+    )
+    discipline = load_runtime_settings(path).settings.trading.discipline
+
+    assert discipline.no_trade_below_confidence == Decimal("0")
+    assert discipline.min_analysts_supporting_direction == 0
+    assert discipline.require_min_consensus == "no_consensus"
+    assert discipline.honour_risk_role_veto is False
+    assert discipline.max_position_pct == Decimal("1")
+
+
+def test_discipline_rejects_a_float_threshold(tmp_path: Path) -> None:
+    """A float threshold is inexact; require a decimal string."""
+    path = _write(
+        tmp_path,
+        "schema_version: 1\ntrading:\n  discipline:\n"
+        "    no_trade_below_confidence: 0.3\n",
+    )
+    with pytest.raises(ValueError):
+        load_runtime_settings(path)
+
+
+def test_discipline_rejects_an_unknown_consensus_level(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "schema_version: 1\ntrading:\n  discipline:\n"
+        "    require_min_consensus: whatever\n",
+    )
+    with pytest.raises(ValueError):
+        load_runtime_settings(path)

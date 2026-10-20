@@ -313,3 +313,134 @@ def test_round_cap_matches_the_documented_call_budget() -> None:
 
     assert LIMITS.max_rounds_per_day == 15
     assert LIMITS.max_rounds_per_day * 39 <= DEFAULT_OPENROUTER_FREE_DAILY_CALLS
+
+
+# ---------------------------------------------------------------------------
+# Production payload types (regression: the scan read every real signal as flat)
+# ---------------------------------------------------------------------------
+
+
+def test_decimal_accepts_the_float_confidence_production_emits() -> None:
+    """``Signal.confidence`` is a float; the scan must not discard it.
+
+    ``alphabrief_core.domain.Signal`` declares ``confidence: float``, so the
+    snapshot payload carries a float however the producer serialises it.
+    Refusing floats made every directional signal read as ``flat``, which
+    silently disabled escalation: 57 recorded rounds, zero of them an
+    ``opportunity:`` round, and no unattended decision ever ran. The
+    conversion goes through ``str()`` so a binary expansion never enters the
+    Decimal.
+    """
+    from alphabrief_trader.opportunity import _decimal
+
+    assert _decimal(1.0) == Decimal("1.0")
+    assert _decimal(0.6) == Decimal("0.6")
+    assert _decimal(0.1) == Decimal("0.1"), "str() keeps the shortest decimal"
+    # Non-finite and boolean values stay rejected.
+    assert _decimal(float("inf")) is None
+    assert _decimal(float("-inf")) is None
+    assert _decimal(float("nan")) is None
+    assert _decimal(True) is None
+
+
+def test_scan_escalates_on_the_exact_signal_payload_production_stores() -> None:
+    """The dict serialised from a real ``Signal`` must escalate.
+
+    This is the end-to-end guard for the float bug: it builds the payload
+    from the real domain model instead of a hand-written fixture string, so a
+    future type change in either direction shows up here.
+    """
+    from alphabrief_core.domain import Signal
+
+    signal = Signal(
+        signal_id="momentum:2026-10-20T11:00:00+00:00",
+        strategy_id="momentum",
+        symbol="EUR_USD",
+        timestamp=NOW,
+        direction="long",
+        confidence=1.0,
+        horizon="24h",
+        rationale="positive 20-bar momentum",
+    )
+    payload = signal.model_dump()
+    assert isinstance(payload["confidence"], float), "the bug's precondition"
+
+    scan = scan_opportunities(
+        [_snapshot(signals={"momentum": payload})],
+        session_open=True,
+        limits=LIMITS,
+        now=NOW,
+    )
+
+    assert scan.escalate is True
+    assert scan.reason == "signal_above_threshold"
+    assert scan.symbols[0].escalate is True
+
+
+# ---------------------------------------------------------------------------
+# Flat escalation (operator directive: guarantee daily committee rounds)
+# ---------------------------------------------------------------------------
+
+
+def test_flat_signal_escalates_when_the_operator_asks_for_it() -> None:
+    """``escalate_on_flat`` turns a flat scan into a real committee round.
+
+    The runtime exists to decide, and a flat scan is still evidence the
+    committee can act on (it may close or hold an existing position). The
+    default stays False so the reviewed behaviour is unchanged; the flag is
+    what lets an operator guarantee a minimum number of daily rounds instead
+    of depending on the market producing a directional signal.
+    """
+    limits = OpportunityLimits(escalate_on_flat=True)
+    scan = scan_opportunities(
+        [_snapshot(signals={"momentum": _signal("flat")})],
+        session_open=True,
+        limits=limits,
+        now=NOW,
+    )
+
+    assert scan.escalate is True
+    assert scan.reason == "flat_signal"
+    assert scan.symbols[0].escalate is True
+
+
+def test_flat_escalation_still_obeys_the_daily_cap_and_spacing() -> None:
+    """Escalating on flat must not become an unbounded model spend."""
+    limits = OpportunityLimits(
+        escalate_on_flat=True, max_rounds_per_day=5, min_spacing_seconds=600
+    )
+    flat = [_snapshot(signals={"momentum": _signal("flat")})]
+
+    capped = scan_opportunities(
+        flat, session_open=True, limits=limits, now=NOW, rounds_today=5
+    )
+    assert capped.escalate is False
+    assert capped.reason == "daily_round_cap_reached"
+
+    too_soon = scan_opportunities(
+        flat,
+        session_open=True,
+        limits=limits,
+        now=NOW,
+        last_round_at=NOW - timedelta(seconds=120),
+    )
+    assert too_soon.escalate is False
+    assert too_soon.reason == "round_too_soon"
+
+
+def test_flat_escalation_never_overrides_a_closed_session() -> None:
+    """Outside the FX week there is nothing to check, flat or not."""
+    limits = OpportunityLimits(escalate_on_flat=True)
+    scan = scan_opportunities(
+        [_snapshot(signals={"momentum": _signal("flat")})],
+        session_open=False,
+        limits=limits,
+        now=NOW,
+    )
+    assert scan.escalate is False
+    assert scan.reason == "market_closed"
+
+
+def test_flat_escalation_is_off_by_default() -> None:
+    """The reviewed default must not spend a round on a flat scan."""
+    assert OpportunityLimits().escalate_on_flat is False
