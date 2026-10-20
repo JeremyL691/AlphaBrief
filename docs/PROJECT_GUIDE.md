@@ -774,7 +774,7 @@ electron/       桌面外壳与打包配置
 
 **退出标准**：
 - Playwright 冒烟全绿；
-- 生成 `docs/images/` 下的截图：每个主要页面亮色、暗色各一张，用于 README；
+- 生成 `docs/images/` 下的截图：每个主要页面亮色、暗色各一张，用于 README。截图默认写到系统临时目录，只有显式设置 `ALPHABRIEF_UPDATE_SCREENSHOTS=1` 时才改写仓库里的发布素材，保证普通测试运行不弄脏工作区；
 - 看板总览显示的 NAV 与 OANDA 账户摘要一致（practice 测试比对）；
 - `grep -rn "Simulated sample\|100000" apps/api/src/alphabrief_api/static` 无输出。
 
