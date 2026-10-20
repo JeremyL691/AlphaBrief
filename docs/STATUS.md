@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行（0 / 14 合格日，需部署新代码后重新起算）** |
+| 当前阶段 | **S10 14 天试运行（0 / 14 合格日，待部署 rc.3 后从 Day 0 起算）** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 按 2026-10-20 复验结论修四个真实缺口：机会检查轮（`run run` 未注册 `ai_daily_cycle` = 0 合格日根因）、评估器按外汇会话判期望轮次、plist 凭证与 0600、前端路径与硬编码；另加信号品种 K 线刷新与截图测试隔离。随后构建 rc.3 部署并从 Day 0 起算 |
-| 最近更新 | 2026-10-20 UTC 复验。执行安全已提交（`f70b958`）。交接快照中 7 项缺口实测结果：`scheduler_task_runs` **已由现网后台写入**（102 行、5 任务全 ok）、`soak status` **已可用**（连续 3 次 exit 0 且输出一致，`snapshot_db_if_locked` 复制副本后 `OrderLedger` 打开的是副本）；机会检查轮、plist 凭证、前端 404、文档契约四项属实。新增发现：`market_sync` 不刷新信号品种导致 `BCO_USD` H1 陈旧触发假 `skipped_data_stale`；`soak_evaluator` 只按 `weekday>=5` 判周末，与 CURRENCY 会话（周一 21:00 → 周五 21:00 UTC）不符，即使跑起机会轮也会天天 extension；Playwright 截图测试直写 `docs/images/`，跑一次全量测试就脏 22 个 tracked 文件。 |
+| 下一项任务 | 构建 1.0.0-rc.3 的 dmg 并冒烟；`service install` 部署（plist 无凭证、0600）；验证 `ai_daily_cycle` 写入、`/api/v1/soak/status` 与 `/api/v1/models` 返回 200、出站只到 practice 与配置源；然后 `soak reset` + `soak start` 从 Day 0 起算 |
+| 最近更新 | 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -752,6 +752,22 @@
 - `soak start` 拒绝回填：`SoakStore` 新增 `MAX_START_BACKDATE`（10 分钟，仅吸收时钟偏差）与未来时间拒绝；测试通过注入 `now_fn` 模拟过去启动，生产路径无法伪造 Day 0。
 - 验证：`pytest tests/test_soak_evaluator.py tests/test_soak_store.py tests/test_soak_cli.py tests/test_report_soak.py tests/test_ai_trader_scheduler.py tests/test_cycle_sizing_and_close.py -q` → 93 passed；`ruff check` 与 `mypy`（6 个改动模块）通过。
 
+#### S10 机会检查轮与运行态缺口修复（2026-10-20 UTC，本提交）
+
+- 交接快照复核结论（推翻两项、确认四项）：
+  - `scheduler_task_runs` 并非为空：现网后台（2026-10-19 18:05 启动）已写入 102 行，reconcile / position_monitor / quote_poll / market_sync / shadow_score 全部 ok。
+  - `alphabrief soak status` 并非会崩：连续 3 次 exit 0、输出 8042 字节逐字一致。`snapshot_db_if_locked` 先把库复制到临时目录，`OrderLedger` 打开的是副本，CLI 路径本身没问题；真正会崩的是"进程内已自持写连接再开只读连接"的形态（DuckDB 抛 `ConnectionException`），已按最小改动补齐异常类型。
+  - 属实并已修：机会检查轮缺失、plist 明文凭证（0644）、前端 6 个路径 404 与页面硬编码上限、文档契约测试被改弱。
+- 0 合格日的真正根因：`alphabrief run run` 用 `on_ai_cycle=None` 构建调度器，`ai_daily_cycle` 这个任务根本不存在；评估器按该任务名统计机会轮，于是每天 0 轮。现已把机会检查做成常驻任务（`9680cf7`）。
+- 机会检查轮（`9680cf7`）：新增纯函数 `scan_opportunities`，只读已入库 K 线、策略信号与券商报价/持仓事实，不调模型/不下单/不写库；升级护栏为当日 `opportunity:` 轮次上限 15、最小间隔 600 秒、模型网关当日预算判定。一轮约 39 次调用，15 × 39 = 585 留在 1000 次/日内。新增 `runtime_config` 严格解析 `config/alphabrief.yaml` 的 `trading.opportunity`（间隔限制 60–300 秒，裸 `on` 布尔直接拒绝）。
+- 信号品种刷新（`9680cf7`）：`market_sync` 覆盖交易品种 ∪ 信号品种。实测 18:31 UTC 那轮 `skipped_data_stale` 的成因是 `BCO_USD` H1 已陈旧 4.6 小时，属漏刷新而非行情问题。
+- 期望轮次按会话计算（`40b581a`）：新增 `expected_round_instants`，用与运行时相同的 `session_verdict("CURRENCY", ...)` 逐桶判定。对现网库副本复算：周一期望 36 轮而非 288 轮。若不修，即便机会轮跑起来也会天天 extension。
+- LaunchAgent 凭证（`62d6307`）：`service install` 不再复制任何凭证环境变量（后台本就支持从 `secrets/oanda.json` 读取，实测清空环境后仍 configured=True 且能建 client）；plist 写入后 chmod 0600；输出 `credentials_in_plist: false`；新增 `_audit_plist` 并接进 `service status`，对旧版本遗留的不安全 plist 报告 mode / world_readable / credential_keys（只列键名，绝不回显值）。
+- 前端契约（`92b25e4` + `5ac5b12`）：`api.js` 改用 `/api/v1/ai/*` 与 `/api/v1/risk/dashboard`；新增只读端点 `GET /api/v1/soak/status` 与 `GET /api/v1/models`；`RiskConfigResponse` 增补两个 NAV 百分比；风控页三个卡片与 i18n 文案去掉写死的 `50% / 150% / 5 笔/日`；总览页过期的 `00:30 / 07:30 / 13:00` 卡片换成试运行进度。顺带修掉被 404 掩盖的无障碍缺陷（`#cycle-select` 无可访问名称），axe 重新 0 critical/serious。
+- 截图隔离（`c604f8c`）：Playwright 截图默认写临时目录，只有 `ALPHABRIEF_UPDATE_SCREENSHOTS=1` 才改写 `docs/images/`；重跑 e2e 后 `git status docs/images` 为 0。
+- `soak reset`（`e74654b`）：新增命令，非空原因、后台在线拒绝直写、沿用回填保护；旧 run 保留为 reset 历史，新 run 用 `run_index + 1`。
+- 质量门禁：全量 `pytest -q -m "not practice"` → **3668 passed / 13 deselected**（含 e2e）；`ruff check .` 通过；`mypy` 521 文件通过；`scripts/secret_scan.py` 退出码 0。每个行为都先写失败测试再实现（红→绿记录在各提交正文里），并补了两处变异测试确认断言有效。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -778,6 +794,8 @@
 
 ## 决策记录
 
+- 2026-10-20 UTC / 机会检查的升级参数取值 / 扫描 180 秒、当日最多 15 轮委员会、两轮最少间隔 600 秒、升级置信度 0.60 / GUIDE 5.1 只给"每 1–5 分钟"与"满足策略和风控才发单"，没有给次数上限；按"一轮约 39 次调用、免费通道 1000 次/日"反推，15 轮最坏 585 次仍留出修复、影子基准与其他任务的余量。置信度 0.60 高于委员会自带的 0.55 底线，让便宜扫描比昂贵委员会更保守。四个值都写进 config 并受严格加载器校验，可在不改代码的情况下收紧。
+- 2026-10-20 UTC / 固定决策轮的去留 / 从 `DEFAULT_SCHEDULE` 删除 `decision_round_tokyo/london/newyork`，只保留周五平仓、日报、备份 / GUIDE 5.1 已把"三个固定轮次"改为"开市期间每 1–5 分钟机会检查"，两套并存会让 planner 与常驻任务各自下单。删除后 planner 只负责每日锚点，交易机会完全由 `ai_daily_cycle` 驱动。
 - 2026-10-20 UTC / Agent 流程文档是否继续随仓库发布 / 继续跟踪 `AGENTS.md`、`docs/STATUS.md`、`docs/AGENT_PROMPT.md`，并把被改弱的 `tests/test_project_scaffold.py` 与 `tests/test_secret_scan_tool.py` 还原回 HEAD 版本 / 交接快照给了两条互斥选项，实测 HEAD 版的严格契约在当前工作区仍 20 passed，没有必须放宽的理由；三份文档已存在于 `origin/main`，`git rm --cached` 会让公开历史断裂且失去可追溯的规格来源。按"不为让检查变绿而放宽断言"保留严格契约。
 - 2026-10-20 UTC / 交接快照中"`soak status` 被写锁打崩"的判断 / 不再改 `OrderLedger` 的打开方式，只把 `snapshot_db_if_locked` 的兜底异常从 `duckdb.IOException` 扩到 `ConnectionException` 与 `InvalidInputException` / 实测 `soak status` 连续 3 次 exit 0 且输出 8042 字节完全一致：该函数已先把库复制到临时目录，`OrderLedger` 打开的是副本，生产 CLI 路径并未崩。真正会崩的是"同进程内先自持写连接、再开只读连接"的场景（DuckDB 抛 `ConnectionException`），这正是新增 `/api/v1/soak/status` 在 dashboard 进程里的形态，因此按最小改动只补异常类型并加回归测试。
 - 2026-10-14 UTC / 交易运行策略与模型预算规格更新 / 确定外汇开市期间全天无人值守，每 1–5 分钟检查交易机会，仅在满足策略条件与硬性风控门禁时真实提交 OANDA practice 模拟订单；绝不开实盘，不为凑次数强制交易（`no_trade` 始终合法健康）；OpenRouter 免费通道软件预算上限设定为 1000 次/日（严格零价格校验、零回退、零费用保护）；明确历史单日分段回放为功能验收，真实连续 14 自然日试运行诚信标准不变 / 响应用户最新指令，统一项目规格，确保全天常态化检查机会与严格风控、免费模型高频调用配额安全对齐。

@@ -66,24 +66,36 @@ export class ApiClient {
 
   // AI Trading Cycles
   async getAiStatus() {
-    return this._fetch("/api/v1/ai-trading/status");
+    return this._fetch("/api/v1/ai/status");
   }
 
   async getAiHistory(limit = 20) {
-    return this._fetch(`/api/v1/ai-trading/history?limit=${limit}`);
+    return this._fetch(`/api/v1/ai/history?limit=${limit}`);
   }
 
   async getAiCycle(cycleId) {
-    return this._fetch(`/api/v1/ai-trading/cycles/${cycleId}`);
+    return this._fetch(`/api/v1/ai/cycles/${cycleId}`);
   }
 
   async getAiAttempts(limit = 50) {
-    return this._fetch(`/api/v1/ai-trading/attempts?limit=${limit}`);
+    return this._fetch(`/api/v1/ai/attempts?limit=${limit}`);
+  }
+
+  // Operational status (soak qualification and model channel budget).
+  async getSoakStatus() {
+    return this._fetch("/api/v1/soak/status");
+  }
+
+  async getModelStatus() {
+    return this._fetch("/api/v1/models");
   }
 
   // Risk Gate & Kill Switch
   async getRiskStatus() {
-    return this._fetch("/api/v1/risk/status");
+    // The risk router exposes kill-switch, context and dashboard only; a
+    // bare risk status path does not exist. The dashboard carries the live
+    // switch state and the reviewed limits the Risk page renders.
+    return this._fetch("/api/v1/risk/dashboard");
   }
 
   async getRiskContext() {

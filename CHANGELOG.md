@@ -4,6 +4,24 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.3] - 2026-10-20
+
+### Added
+- Continuous opportunity checks: during the FX session the runtime scans stored candles, strategy signals and broker facts every 1-5 minutes and only runs the full five-role committee when a signal clears every deterministic guard (confidence floor, daily round cap of 15, ten-minute spacing, model budget). This is the cadence PROJECT_GUIDE 5.1 specifies, and it replaces the three fixed decision rounds.
+- `GET /api/v1/soak/status` and `GET /api/v1/models` read-only endpoints so the dashboard shows soak progress and model-channel budget from real facts.
+- `alphabrief soak reset --reason` to supersede a failed soak run and open a new Day 0 while keeping the old run in the reset history.
+
+### Fixed
+- The resident runtime never registered the `ai_daily_cycle` task, so the soak evaluator counted zero opportunity rounds and could never qualify a day.
+- The soak evaluator expected a round every five minutes on any weekday, contradicting the CURRENCY session (Monday 21:00 to Friday 21:00 UTC) and turning every healthy Monday into an extension.
+- `market_sync` refreshed only the traded universe, letting the gold/S&P/oil signal series age past the two-hour quality limit and failing every symbol with `NO_TRADE_DATA_STALE`.
+- `service install` wrote the OANDA token and account id into the LaunchAgent plist and left it world-readable (0644). The plist now carries no credential, is `0600`, and `service status` audits an existing one.
+- The dashboard requested `/api/v1/ai-trading/*` and `/api/v1/risk/status`, none of which exist; the risk page also rendered hardcoded `50% / 150% / 5 per day` limits that had already drifted from the configuration.
+- The committee page's cycle selector had no accessible name; axe now reports zero critical or serious violations again.
+
+### Changed
+- `pytest` no longer rewrites the committed screenshots under `docs/images/`; only `ALPHABRIEF_UPDATE_SCREENSHOTS=1` does.
+
 ## [1.0.0-rc.2] - 2026-10-14
 
 ### Changed

@@ -1,10 +1,13 @@
 """Repository scaffold contract for the v1.0 documentation set.
 
-The single source of truth is ``AGENTS.md`` plus the three documents it
-names: ``docs/PROJECT_GUIDE.md`` (spec), ``docs/STATUS.md`` (mutable
-state) and ``docs/AGENT_PROMPT.md`` (startup prompt). Old process
-documents, milestone plans and development logs were deleted; this test
-keeps them deleted and keeps local markdown links resolvable.
+The product spec is ``docs/PROJECT_GUIDE.md``; ``docs/STATUS.md``
+carries the mutable project state and ships with it. ``AGENTS.md`` and
+``docs/AGENT_PROMPT.md`` are local-only: the environment's global git
+hook refuses to push files named ``AGENTS.md`` or ``AGENT_PROMPT*.md``,
+so they stay on the development machine and out of the published tree.
+
+Old process documents, milestone plans and development logs were deleted;
+this test keeps them deleted and keeps local markdown links resolvable.
 """
 
 from __future__ import annotations
@@ -12,13 +15,18 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 #: Documents that must exist and stay authoritative.
-REQUIRED_DOCS = (
+REQUIRED_DOCS = ("docs/PROJECT_GUIDE.md",)
+
+#: Local-only agent process documents. They must exist on the development
+#: machine, must never be tracked, and are excluded from the link check
+#: because the published repository does not carry them.
+LOCAL_ONLY_DOCS = (
     "AGENTS.md",
-    "docs/PROJECT_GUIDE.md",
-    "docs/STATUS.md",
     "docs/AGENT_PROMPT.md",
 )
 
@@ -70,17 +78,12 @@ STAGE_VALUES = frozenset(f"S{n}" for n in range(12))
 
 
 def _markdown_files() -> list[Path]:
-    files = [ROOT / "README.md", ROOT / "AGENTS.md"]
-    files.extend(
-        ROOT / "docs" / name
-        for name in ("PROJECT_GUIDE.md", "STATUS.md", "AGENT_PROMPT.md")
-    )
+    files = [ROOT / "README.md", ROOT / "docs" / "PROJECT_GUIDE.md"]
     return [path for path in files if path.is_file()]
 
 
 def test_required_root_files_exist() -> None:
     required_files = [
-        "AGENTS.md",
         "README.md",
         "LICENSE",
         "pyproject.toml",
@@ -90,6 +93,35 @@ def test_required_root_files_exist() -> None:
     missing = [path for path in required_files if not (ROOT / path).is_file()]
 
     assert missing == []
+
+
+def test_local_only_agent_documents_exist_on_this_machine() -> None:
+    """The agent workflow needs them even though git does not carry them."""
+    missing = [
+        path for path in LOCAL_ONLY_DOCS if not (ROOT / path).is_file()
+    ]
+
+    assert missing == [], f"missing local agent documents: {missing}"
+
+
+def test_local_only_agent_documents_are_never_tracked() -> None:
+    """The global hook blocks pushing them; tracking one would stall a push."""
+    import subprocess
+
+    if not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", *LOCAL_ONLY_DOCS],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert tracked == [], (
+        "these agent files must stay local-only or a push will be refused: "
+        f"{tracked}"
+    )
 
 
 def test_required_directories_exist() -> None:

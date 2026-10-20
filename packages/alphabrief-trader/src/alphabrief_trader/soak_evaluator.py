@@ -40,6 +40,7 @@ from alphabrief_api.db.paper import PaperStore
 from alphabrief_core import paths as _paths
 from alphabrief_core.policy_version import project_root
 from alphabrief_execution.broker.oanda.order_ledger import OrderLedger
+from alphabrief_execution.broker.oanda.sessions import session_verdict
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 from alphabrief_execution.operations.scheduler import HeartbeatStore
 from alphabrief_risk.decision_store import RiskDecisionStore
@@ -65,7 +66,20 @@ MAX_MISSED_ROUNDS_PER_DAY = 3
 
 @contextmanager
 def snapshot_db_if_locked(db_path: Path | str | None) -> Iterator[Path]:
-    """Provide a readable database path, snapshotting if DuckDB is locked."""
+    """Provide a readable database path, snapshotting if DuckDB is locked.
+
+    Two different failures mean "somebody else owns this file":
+
+    * ``IOException`` - another *process* holds the lock (the resident
+      backend, when this CLI runs beside it);
+    * ``ConnectionException`` - this *same* process already holds the
+      write lock and DuckDB refuses a second connection with a different
+      configuration. That is the shape the resident API serves the
+      dashboard with.
+
+    Both fall back to a byte-for-byte snapshot, so a read-only endpoint
+    works whether it runs beside the writer or inside it.
+    """
     target = Path(db_path) if db_path else _paths.db_path()
     if not target.exists():
         yield target
@@ -75,8 +89,9 @@ def snapshot_db_if_locked(db_path: Path | str | None) -> Iterator[Path]:
         conn.close()
         yield target
         return
-    except duckdb.IOException:
-        # Lock held by running backend daemon; create temporary snapshot copy
+    except (duckdb.IOException, duckdb.ConnectionException):
+        # Lock held by the running backend (or by this process); read a
+        # consistent copy instead of fighting for the writer.
         with tempfile.TemporaryDirectory(prefix="alphabrief_soak_snap_") as td:
             snap_db = Path(td) / target.name
             shutil.copy2(target, snap_db)
@@ -199,15 +214,46 @@ def _parse_ts(val: Any) -> datetime | None:
         return None
 
 
+def expected_round_instants(
+    day_start: datetime,
+    day_end: datetime,
+    *,
+    interval_seconds: float,
+) -> list[datetime]:
+    """The instants at which an opportunity round should have run.
+
+    The expectation follows the same FX session verdict the runtime uses
+    to decide whether to check at all: the CURRENCY week runs Monday
+    21:00 UTC to Friday 21:00 UTC, so a correct backend records nothing
+    outside it. Expecting a round every five minutes on a calendar
+    weekday would report hundreds of phantom misses each week and make a
+    qualified day unreachable.
+
+    Buckets are aligned to ``day_start`` so the count is deterministic for
+    a given day, cadence and session.
+    """
+    if interval_seconds <= 0:
+        return []
+    instants: list[datetime] = []
+    cursor = day_start
+    while cursor < day_end:
+        if session_verdict("CURRENCY", cursor).open:
+            instants.append(cursor)
+        cursor += timedelta(seconds=interval_seconds)
+    return instants
+
+
 def _expected_rounds(
     day_start: datetime,
     day_end: datetime,
     interval_seconds: float,
 ) -> int:
     """How many opportunity rounds should have run in the window."""
-    if interval_seconds <= 0:
-        return 0
-    return max(0, int((day_end - day_start).total_seconds() // interval_seconds))
+    return len(
+        expected_round_instants(
+            day_start, day_end, interval_seconds=interval_seconds
+        )
+    )
 
 
 def _calculate_day_downtime_hours(

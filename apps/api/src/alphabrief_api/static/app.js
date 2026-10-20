@@ -218,17 +218,19 @@ class App {
 
   async _renderOverview(container) {
     try {
-      const [accData, posData, histData, doctorData] = await Promise.allSettled([
+      const [accData, posData, histData, doctorData, soakData] = await Promise.allSettled([
         api.getAccount(),
         api.getPositions(),
         api.getAiHistory(10),
         api.getDoctor(),
+        api.getSoakStatus(),
       ]);
 
       const acc = accData.status === "fulfilled" ? accData.value?.account : null;
       const positions = posData.status === "fulfilled" ? posData.value?.positions || [] : [];
       const cycles = histData.status === "fulfilled" ? histData.value?.cycles || [] : [];
       const doctor = doctorData.status === "fulfilled" ? doctorData.value : null;
+      const soak = soakData.status === "fulfilled" ? soakData.value : null;
 
       container.innerHTML = `
         <div class="page-container">
@@ -249,9 +251,9 @@ class App {
               <div class="card-meta">${i18n.t("overview.marginAvailable")}: ${acc ? Number(acc.buying_power || 0).toFixed(2) : "---"}</div>
             </div>
             <div class="card">
-              <div class="card-label">${i18n.t("overview.nextRound")}</div>
-              <div class="card-value" style="font-size: var(--font-size-lg);">00:30 / 07:30 / 13:00</div>
-              <div class="card-meta">${i18n.t("overview.nextRoundSchedule")}</div>
+              <div class="card-label">${i18n.t("overview.soakProgress")}</div>
+              <div class="card-value" id="overview-soak-val">${soak ? `${soak.qualified_days} / ${soak.target_days}` : "---"}</div>
+              <div class="card-meta">${soak ? `${soak.state} - run ${soak.run_index === null ? "n/a" : soak.run_index}` : i18n.t("status.stale")}</div>
             </div>
             <div class="card">
               <div class="card-label">${i18n.t("overview.healthTitle")}</div>
@@ -356,8 +358,8 @@ class App {
 
           <div class="section" style="margin-bottom: var(--space-4);">
             <div style="display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;">
-              <label class="form-label" style="margin-bottom: 0;">${i18n.t("committee.roundSelector")}:</label>
-              <select id="cycle-select" class="form-input" style="width: auto; min-width: 280px;">
+              <label class="form-label" style="margin-bottom: 0;" for="cycle-select">${i18n.t("committee.roundSelector")}:</label>
+              <select id="cycle-select" class="form-input" style="width: auto; min-width: 280px;" aria-label="${i18n.t("committee.roundSelector")}">
                 ${cycles.length === 0 ? `<option value="">${i18n.t("status.empty")}</option>` : cycles.map(c => `
                   <option value="${c.cycle_id}" ${c.cycle_id === currentCycleId ? 'selected' : ''}>
                     ${c.cycle_id} (${c.started_at ? c.started_at.slice(0, 16).replace("T", " ") : ""} - ${c.outcome})
@@ -675,18 +677,18 @@ class App {
           <div class="grid-cards">
             <div class="card">
               <div class="card-label">${i18n.t("risk.navCapSingle")}</div>
-              <div class="card-value">50%</div>
+              <div class="card-value">${this._pct(risk && risk.config ? risk.config.max_order_value_pct : null)}</div>
               <div class="card-meta">Per instrument nominal cap</div>
             </div>
             <div class="card">
               <div class="card-label">${i18n.t("risk.navCapTotal")}</div>
-              <div class="card-value">150%</div>
+              <div class="card-value">${this._pct(risk && risk.config ? risk.config.max_total_exposure_pct : null)}</div>
               <div class="card-meta">Gross nominal exposure cap</div>
             </div>
             <div class="card">
               <div class="card-label">${i18n.t("risk.dailyOpenCap")}</div>
-              <div class="card-value">5 / day</div>
-              <div class="card-meta">Strict daily opens limit</div>
+              <div class="card-value">${this._limit(risk && risk.config ? risk.config.max_order_value : null, risk && risk.config ? risk.config.max_total_exposure : null)}</div>
+              <div class="card-meta">Reviewed absolute notional cap</div>
             </div>
           </div>
 
@@ -804,6 +806,35 @@ class App {
     } catch (err) {
       this._renderError(container, err, () => this._renderEvaluation(container));
     }
+  }
+
+  /**
+   * Render a NAV fraction the API reports as a decimal string ("0.50").
+   * A missing value is shown as unavailable, never defaulted: the page
+   * must not imply a limit the backend did not report.
+   */
+  _pct(value) {
+    if (value === null || value === undefined || value === "") return "n/a";
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "n/a";
+    return `${(numeric * 100).toFixed(0)}%`;
+  }
+
+  /**
+   * Render the reviewed absolute notional caps. The risk-sized path sets
+   * NAV percentages instead, so both may be absent at once.
+   */
+  _limit(perOrder, total) {
+    const fmt = (v) => {
+      if (v === null || v === undefined || v === "") return null;
+      const numeric = Number(v);
+      return Number.isFinite(numeric) ? numeric.toLocaleString() : null;
+    };
+    const a = fmt(perOrder);
+    const b = fmt(total);
+    if (a === null && b === null) return "n/a";
+    if (a !== null && b !== null) return `${a} / ${b}`;
+    return a !== null ? a : b;
   }
 
   _renderScoreboardTable(statsList) {

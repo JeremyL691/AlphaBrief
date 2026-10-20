@@ -419,19 +419,24 @@ def test_evaluator_missing_backend_history_is_downtime_reset(tmp_path: Path) -> 
 
 
 def test_evaluator_missed_rounds_cause_extension(tmp_path: Path) -> None:
-    """Opportunity rounds with no record are incomplete coverage."""
+    """Opportunity rounds with no record are incomplete coverage.
+
+    The day is a mid-week Wednesday, which lies entirely inside the FX
+    session, so every five-minute bucket is a round the backend owed. A
+    Monday would only owe rounds from 21:00 UTC and could not express
+    this contract.
+    """
     db = tmp_path / "test.duckdb"
-    soak = SoakStore(
-        db_path=db, now_fn=lambda: datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
-    )
-    soak.start_soak(started_at=datetime(2026, 10, 5, 0, 0, tzinfo=UTC))
+    day_start = datetime(2026, 10, 21, tzinfo=UTC)
+    soak = SoakStore(db_path=db, now_fn=lambda: day_start)
+    soak.start_soak(started_at=day_start)
     soak.close()
 
     # Backend up all day, but the opportunity task only ran 100 times.
-    _record_backend_uptime(db, day=datetime(2026, 10, 5, tzinfo=UTC))
+    _record_backend_uptime(db, day=day_start)
     store = HeartbeatStore(db_path=db)
     try:
-        cursor = datetime(2026, 10, 5, tzinfo=UTC)
+        cursor = day_start
         for _ in range(100):
             store.record_run(
                 task_name="ai_daily_cycle",
@@ -448,7 +453,7 @@ def test_evaluator_missed_rounds_cause_extension(tmp_path: Path) -> None:
     _insert_recon_snapshot(
         recon_store,
         snapshot_id="rec_1",
-        captured_at="2026-10-05T00:05:00+00:00",
+        captured_at="2026-10-21T00:05:00+00:00",
         all_match=True,
     )
     recon_store.close()
@@ -457,7 +462,7 @@ def test_evaluator_missed_rounds_cause_extension(tmp_path: Path) -> None:
         "alphabrief_trader.soak_evaluator._daily_report_exists", return_value=True
     ):
         status = evaluate_soak_status(
-            db_path=db, as_of=datetime(2026, 10, 6, 1, 0, tzinfo=UTC)
+            db_path=db, as_of=day_start + timedelta(days=1, hours=1)
         )
 
     day = status.days[0]

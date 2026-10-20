@@ -103,6 +103,8 @@ class TestRepositoryState:
 
         assert tracked
         names = {path.name for path in tracked}
-        assert "AGENTS.md" in names
+        # A sentinel that must always be published: the agent process
+        # documents are local-only, so they cannot serve as that proof.
+        assert "README.md" in names
         assert "pyproject.toml" in names
         assert all("_reference_sources" not in path.parts for path in tracked)

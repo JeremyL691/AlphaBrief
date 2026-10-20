@@ -18,6 +18,9 @@ from alphabrief_api.routes.health import router as health_router
 from alphabrief_api.routes.macro import router as macro_router
 from alphabrief_api.routes.news import router as news_router
 from alphabrief_api.routes.operational import router as operational_router
+from alphabrief_api.routes.operational_status import (
+    router as operational_status_router,
+)
 from alphabrief_api.routes.review import router as review_router
 from alphabrief_api.routes.risk import router as risk_router
 from alphabrief_api.routes.scheduler import router as scheduler_router
@@ -62,6 +65,7 @@ def create_app() -> FastAPI:
     api_app.include_router(doctor_router)
     api_app.include_router(evaluation_router)
     api_app.include_router(settings_router)
+    api_app.include_router(operational_status_router)
 
     # Legacy dashboard route redirects
     @api_app.get("/dashboard", include_in_schema=False)

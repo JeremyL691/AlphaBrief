@@ -122,6 +122,12 @@ class RiskConfigResponse(BaseModel):
     max_order_quantity: str | None
     max_order_value: str | None
     max_total_exposure: str | None
+    #: Per-order and total exposure caps as fractions of NAV (GUIDE 5.6).
+    #: The risk-sized production path sets these instead of absolute
+    #: amounts, so the dashboard needs them to render the reviewable limit
+    #: rather than a number somebody typed into the page.
+    max_order_value_pct: str | None
+    max_total_exposure_pct: str | None
     require_data_quality_passed: bool
     require_human_review: bool
     # Account-level rules (all tighten-only / fail-closed).
@@ -292,6 +298,16 @@ def get_risk_config() -> RiskConfigResponse:
         ),
         max_order_value=(
             str(limits.max_order_value) if limits.max_order_value is not None else None
+        ),
+        max_order_value_pct=(
+            str(limits.max_order_value_pct)
+            if limits.max_order_value_pct is not None
+            else None
+        ),
+        max_total_exposure_pct=(
+            str(limits.max_total_exposure_pct)
+            if limits.max_total_exposure_pct is not None
+            else None
         ),
         max_total_exposure=(
             str(limits.max_total_exposure)
