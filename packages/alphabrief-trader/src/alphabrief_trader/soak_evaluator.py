@@ -66,7 +66,20 @@ MAX_MISSED_ROUNDS_PER_DAY = 3
 
 @contextmanager
 def snapshot_db_if_locked(db_path: Path | str | None) -> Iterator[Path]:
-    """Provide a readable database path, snapshotting if DuckDB is locked."""
+    """Provide a readable database path, snapshotting if DuckDB is locked.
+
+    Two different failures mean "somebody else owns this file":
+
+    * ``IOException`` - another *process* holds the lock (the resident
+      backend, when this CLI runs beside it);
+    * ``ConnectionException`` - this *same* process already holds the
+      write lock and DuckDB refuses a second connection with a different
+      configuration. That is the shape the resident API serves the
+      dashboard with.
+
+    Both fall back to a byte-for-byte snapshot, so a read-only endpoint
+    works whether it runs beside the writer or inside it.
+    """
     target = Path(db_path) if db_path else _paths.db_path()
     if not target.exists():
         yield target
@@ -76,8 +89,9 @@ def snapshot_db_if_locked(db_path: Path | str | None) -> Iterator[Path]:
         conn.close()
         yield target
         return
-    except duckdb.IOException:
-        # Lock held by running backend daemon; create temporary snapshot copy
+    except (duckdb.IOException, duckdb.ConnectionException):
+        # Lock held by the running backend (or by this process); read a
+        # consistent copy instead of fighting for the writer.
         with tempfile.TemporaryDirectory(prefix="alphabrief_soak_snap_") as td:
             snap_db = Path(td) / target.name
             shutil.copy2(target, snap_db)

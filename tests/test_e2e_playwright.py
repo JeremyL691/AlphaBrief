@@ -346,3 +346,54 @@ def test_no_simulated_sample_data_in_dom(
             )
     finally:
         page.close()
+
+
+def test_risk_view_shows_no_hardcoded_limits(
+    browser: Browser,
+    live_server_url: str,
+) -> None:
+    """The risk page must render what the API reports, not typed-in values.
+
+    The page used to print `50%`, `150%` and `5 / day` as literals, which
+    drifted from the real configuration (the daily open cap had already
+    changed to 20). A hardcoded limit on a risk screen is exactly the kind
+    of fabricated data PROJECT_GUIDE 3.3 forbids.
+    """
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+
+    try:
+        page.goto(f"{live_server_url}/#risk", wait_until="networkidle")
+        _wait_for_view_render(page)
+
+        body_text = page.inner_text("body")
+        for literal in ("5 / day", "150%"):
+            assert literal not in body_text, (
+                f"the risk page renders a hardcoded {literal!r} instead of "
+                "the value the API reports"
+            )
+    finally:
+        page.close()
+
+
+def test_overview_reports_soak_progress_from_the_api(
+    browser: Browser,
+    live_server_url: str,
+) -> None:
+    """The overview must surface the live soak counter, not a fixed schedule.
+
+    The old card printed `00:30 / 07:30 / 13:00`, the schedule that GUIDE
+    5.1 replaced with a 1-5 minute opportunity check. A stale schedule on
+    the main screen is misinformation about what the system does.
+    """
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+
+    try:
+        page.goto(f"{live_server_url}/#overview", wait_until="networkidle")
+        _wait_for_view_render(page)
+
+        body_text = page.inner_text("body")
+        assert "00:30" not in body_text, (
+            "the overview still shows the retired fixed decision schedule"
+        )
+    finally:
+        page.close()
