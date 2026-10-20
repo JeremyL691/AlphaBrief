@@ -165,12 +165,25 @@ def status_cmd(
 
 
 def _iso(value: object) -> str | None:
-    """Render a datetime as ISO-8601 for JSON output."""
+    """Render a datetime as a UTC ISO-8601 string for JSON output.
+
+    PROJECT_GUIDE requires every instant to be stored and reported in
+    UTC. DuckDB hands datetimes back in the connection's local zone, so
+    converting here keeps the CLI, the API and the persisted row from
+    disagreeing about the same instant.
+    """
     if value is None:
         return None
-    if hasattr(value, "isoformat"):
-        return str(value.isoformat())
-    return str(value)
+    if isinstance(value, datetime):
+        moment = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+        return moment.isoformat()
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    moment = parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return moment.isoformat()
 
 
 def _read_runtime_truth() -> dict[str, object] | None:

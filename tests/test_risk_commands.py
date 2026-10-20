@@ -105,8 +105,16 @@ def _intent_payload(tmp_path: Path) -> Path:
 def test_risk_check_help_lists_account_rule_flags() -> None:
     """The flags must be present on ``risk check --help``
     so operators discover them."""
-    result = runner.invoke(risk_app, ["check", "--help"])
-    assert result.exit_code == 0
+    # Read the declared options rather than the rendered help: Click
+    # wraps text at the detected terminal width, so a wide local TTY and
+    # a narrow CI log disagree about where a long flag breaks.
+    import click
+    import typer.main
+
+    root = typer.main.get_command(risk_app)
+    assert isinstance(root, click.Group)
+    command = root.commands["check"]
+    accepted = {option for param in command.params for option in param.opts}
     for flag in (
         "--equity",
         "--reference-mark-prices",
@@ -114,7 +122,7 @@ def test_risk_check_help_lists_account_rule_flags() -> None:
         "--day-start-equity",
         "--day-realized-pnl",
     ):
-        assert flag in result.output, f"missing flag {flag} in risk check --help"
+        assert flag in accepted, f"missing flag {flag} in risk check"
 
 
 def test_risk_check_accepts_equity_flag(tmp_path: Path) -> None:

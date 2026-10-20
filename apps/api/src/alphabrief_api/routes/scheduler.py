@@ -26,6 +26,7 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -190,18 +191,43 @@ def scheduler_status() -> dict[str, Any]:
             ),
             "running_phase": runtime.get("running_phase") if runtime else None,
             "phase_started_at": (
-                runtime.get("phase_started_at") if runtime else None
+                _utc_iso(runtime.get("phase_started_at")) if runtime else None
             ),
-            "heartbeat_at": runtime.get("heartbeat_at") if runtime else None,
+            "heartbeat_at": (
+                _utc_iso(runtime.get("heartbeat_at")) if runtime else None
+            ),
             "last_outcome": runtime.get("last_outcome") if runtime else None,
             "failure_classification": (
                 runtime.get("failure_classification") if runtime else None
             ),
-            "next_due_at": runtime.get("next_due_at") if runtime else None,
+            "next_due_at": (
+                _utc_iso(runtime.get("next_due_at")) if runtime else None
+            ),
         }
     finally:
         heartbeats.close()
         recon.close()
+
+
+def _utc_iso(value: object) -> str | None:
+    """Render an instant as a UTC ISO-8601 string (PROJECT_GUIDE 4.3).
+
+    DuckDB returns datetimes in the connection's local zone. Every stored
+    and reported instant is UTC, so the API renders the UTC form rather
+    than forwarding a local-offset value that disagrees with the CLI.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        moment = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+        return moment.isoformat()
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    moment = parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return moment.isoformat()
 
 
 def _runtime_truth() -> dict[str, Any] | None:
