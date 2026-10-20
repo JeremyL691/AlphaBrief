@@ -132,9 +132,25 @@ def live_server_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 
 @pytest.fixture(scope="module")
 def browser() -> Iterator[Browser]:
-    """Launch headless Chromium browser."""
+    """Launch headless Chromium browser.
+
+    A machine without the Playwright browser bundle cannot run these
+    tests. That is an environment gap, not a code defect, so it skips
+    with an explicit reason instead of failing every CI run - but the
+    default `pytest -q -m "not practice"` on the operator's machine runs
+    them for real, and CI installs the browser so it does too.
+    """
     with sync_playwright() as p:
-        b = p.chromium.launch(headless=True)
+        try:
+            b = p.chromium.launch(headless=True)
+        except Exception as exc:  # noqa: BLE001 - missing browser, not code
+            message = str(exc)
+            if "Executable doesn't exist" in message or "playwright install" in message:
+                pytest.skip(
+                    "Playwright browser is not installed on this machine; "
+                    "run `python -m playwright install chromium`"
+                )
+            raise
         yield b
         b.close()
 
