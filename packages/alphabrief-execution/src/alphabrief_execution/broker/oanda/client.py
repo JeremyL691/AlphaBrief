@@ -67,6 +67,34 @@ def _looks_like_ssl_error(message: str) -> bool:
     return any(marker in lowered for marker in _SSL_ERROR_MARKERS)
 
 
+def mask_account_id(account_id: str) -> str:
+    """Return the loggable form of an account id (PROJECT_GUIDE 9, rule 8).
+
+    OANDA practice ids look like ``NNN-NNN-NNNNNNN-NNN``; they are shown
+    as ``NNN-***-***-NNN`` so a log line can still be correlated with an
+    account without disclosing it. Any other shape is reduced to its first
+    and last three characters, which is enough to tell logs apart and not
+    enough to identify the account.
+    """
+    if not account_id:
+        return "(empty)"
+    parts = account_id.split("-")
+    if len(parts) == 4 and all(part.isdigit() for part in parts):
+        return f"{parts[0]}-***-***-{parts[3]}"
+    if len(account_id) <= 6:
+        return "*" * len(account_id)
+    return f"{account_id[:3]}***{account_id[-3:]}"
+
+
+def _loggable_path(path: str, account_id: str) -> str:
+    """Replace the account segment of a request path before logging it."""
+    if not account_id:
+        return path
+    return path.replace(
+        _encode_path_segment(account_id), mask_account_id(account_id)
+    )
+
+
 def looks_like_ssl_error(message: str) -> bool:
     """Public alias for :func:`_looks_like_ssl_error` for callers and tests."""
     return _looks_like_ssl_error(message)
@@ -137,7 +165,7 @@ class OandaHttpClient:
                         "oanda transient error on %s %s attempt=%d/%d "
                         "after retries, giving up: %s",
                         method,
-                        path,
+                        _loggable_path(path, self.account_id),
                         attempt + 1,
                         attempts,
                         exc,
@@ -155,7 +183,7 @@ class OandaHttpClient:
                         "(check Python certifi bundle, SSL_CERT_FILE, "
                         "or macOS /Applications/Python certificate)",
                         method,
-                        path,
+                        _loggable_path(path, self.account_id),
                         attempt + 1,
                         backoff,
                         exc,
@@ -165,7 +193,7 @@ class OandaHttpClient:
                         "oanda transient error on %s %s attempt=%d "
                         "backoff=%.3fs: %s",
                         method,
-                        path,
+                        _loggable_path(path, self.account_id),
                         attempt + 1,
                         backoff,
                         exc,

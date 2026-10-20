@@ -8,9 +8,9 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行（0 / 14 合格日，待部署 rc.3 后从 Day 0 起算）** |
+| 当前阶段 | **S10 14 天试运行（0 / 14 合格日，待部署 rc.5 后从 Day 0 起算）** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 构建 1.0.0-rc.3 的 dmg 并冒烟；`service install` 部署（plist 无凭证、0600）；验证 `ai_daily_cycle` 写入、`/api/v1/soak/status` 与 `/api/v1/models` 返回 200、出站只到 practice 与配置源；然后 `soak reset` + `soak start` 从 Day 0 起算 |
+| 下一项任务 | 构建并冒烟 1.0.0-rc.5（含日志脱敏），`service install` 部署后确认 `/api/v1/models` 报告 openrouter_free / 1000、`ai_daily_cycle` 按 180 秒写入、出站只到 practice 与配置源；然后 `soak reset` + `soak start` 从 Day 0 起算 |
 | 最近更新 | 2026-10-20 UTC 部署 rc.3 时发现并修复配置解析缺陷（后台在数据目录启动，模型通道与日预算回落到默认值），已升 rc.4 重新部署。此前 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
@@ -778,6 +778,15 @@
 - 部署中发现的缺陷：`/api/v1/models` 报告主通道 `chatgpt_plan`、日上限 150，与 `config/alphabrief.yaml` 的 `openrouter_free` / 1000 不符。根因是 LaunchAgent 的 `WorkingDirectory` 为数据目录，而 `load_model_settings` 只在 cwd 找配置，找不到就静默返回 `ModelSettings()` 默认值——实际运行的通道与预算都不是被评审过的那一套。`runtime_config` 同样只搜 cwd，只是默认值恰好一致才没暴露。
 - 修复（`24e3057`）：两个加载器统一解析顺序（显式绝对路径 → 相对路径按仓库根锚定 → cwd → 仓库根含 bundle → 包位置上溯），"真的哪儿都没有"才用默认值。在数据目录实测：模型通道 `openrouter_free` / `nemotron-3-super-120b-a12b:free` / 1000 次 / 0 USD，运行时配置找到真实文件并返回 180s / 15 轮 / 600s / 0.60。
 - 质量门禁：全量 `pytest -q -m "not practice"` → 3676 passed / 13 deselected；`ruff check .`、`mypy` 522 文件、`secret_scan` 全部通过。
+
+#### S10 日志账户 ID 泄露修复与 rc.5（2026-10-20 UTC，本提交）
+
+- 安全缺陷：核实出站主机时读到 `backend.err.log`，发现 `OandaHttpClient` 的重试与放弃日志直接打印请求 path，而 path 含完整账户 ID。当晚一次 TLS 握手超时就写下 **3107 次**完整 ID，违反不变量 8。
+- 修复（`212c988`）：新增 `mask_account_id`（标准形态显示为 `NNN-***-***-NNN`，其他形态只留首尾 3 字符，短串整串打码）与 `_loggable_path`，在 SSL 分类、transient 退避、放弃三条日志统一替换账户段；端点形状与失败分类保留，运维仍可定位。
+- 清理：已把运行日志中 3107 处完整 ID 就地替换为掩码形式，替换后剩余 0 处；未脱敏的临时备份已 `shred -u` 销毁，未入库。
+- 版本升 1.0.0-rc.5（`CHANGELOG` 记入 Security 段），与修复后的代码一致后再起算试运行，避免试运行中途因安全修复触发重置。
+- 出站边界复核：OANDA 基址为常量 `https://api-fxpractice.oanda.com`，模型通道为 `https://openrouter.ai/api/v1`，`production_safety_violations()` 返回 none；结构扫描确认没有 live 主机或第二券商。
+- 质量门禁：全量 `pytest -q -m "not practice" --ignore=tests/test_e2e_playwright.py` → 3679 passed / 13 deselected；`ruff check .`、`mypy` 523 文件通过。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
