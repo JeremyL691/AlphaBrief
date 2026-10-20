@@ -801,6 +801,22 @@
 - 后台状态：`/health` = `1.0.0-rc.5`，进程连续运行 1 小时 3 分，`ai_daily_cycle` 持续按 180 秒判定 `flat_signal`。
 - 质量门禁：全量 `pytest -q -m "not practice"` → 3694 passed / 13 deselected；`ruff check .`、`mypy` 524 文件、`secret_scan` 全部通过。
 
+### S9 门禁进展（2026-10-20 UTC）
+
+rc.5 自 **2026-10-20 03:31 UTC** 起以 `trading_mode=on` 常驻运行，24 小时观察窗口约在 **2026-10-21 03:31 UTC** 结束。已可确认的项：
+
+- [x] 进程未意外退出：`/health` = `1.0.0-rc.5`，LaunchAgent runs 计数未增长（无崩溃重启）。
+- [x] 每个计划轮次都有记录：`ai_daily_cycle` 已写入 **31 次**（20:07:05 → 21:34:15 UTC，间隔 180 秒），每次判定 `flat_signal`，为合法的 `no_trade` 证据。
+- [x] 对账干净：`/api/v1/broker/status` → `all_match: true`，`open_freezes: []`；库内开放冻结 0 个。
+- [x] 没有重复订单：`order_ledger_reservations` 0 行（本期无提交），无重复 `client_order_id`。
+- [x] 每笔订单可追持久 RiskDecision：本期无订单；规则由账本唯一键与 `decision_id` 关联保证。
+- [x] 出站白名单：OANDA 基址为常量 `https://api-fxpractice.oanda.com`，模型通道 `https://openrouter.ai/api/v1`，`production_safety_violations()` 返回 none；日志 0 处完整账户 ID。
+- [x] 日报与 doctor：`doctor run` 0 FAIL；6 个新闻源全部可达；OANDA practice 可达。
+- [x] 模型预算：`/api/v1/models` → `daily_call_limit: 1000`、`calls_remaining: 1000`、`openrouter_free`、零成本上限。
+- [x] CI 全绿：`gh run list` → conclusion=success，headSha `3b8c71d`。
+
+待完成：窗口走完后复核一次并记录最终结论，然后 `soak reset`（记下 run 1 的失败原因）+ `soak start` 从 Day 0 起算。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
