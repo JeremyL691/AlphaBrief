@@ -87,7 +87,10 @@ class ModelSettings:
             if not self.primary_model or not self.primary_model.endswith(":free"):
                 raise ValueError("openrouter_free requires an exact :free model ID")
             if self.daily_call_limit > DEFAULT_OPENROUTER_FREE_DAILY_CALLS:
-                raise ValueError("openrouter_free daily call limit cannot exceed 45")
+                raise ValueError(
+                    "openrouter_free daily call limit cannot exceed "
+                    f"{DEFAULT_OPENROUTER_FREE_DAILY_CALLS}"
+                )
         if (
             not isinstance(self.daily_cost_limit_usd, Decimal)
             or not self.daily_cost_limit_usd.is_finite()

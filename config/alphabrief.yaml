@@ -12,8 +12,9 @@ model:
   # no upstream shared-pool rate limit. Reasoning models emit reasoning
   # before content, so the output budget must cover both.
   primary_model: "nvidia/nemotron-3-super-120b-a12b:free"
-  # Lowest free tier currently allows 50/day; leave five calls of headroom.
-  daily_call_limit: 45
+  # Software cap for the OpenRouter free channel (PROJECT_GUIDE 5.13):
+  # 1000 calls per UTC day, enforced independently of the provider quota.
+  daily_call_limit: 1000
   daily_cost_limit_usd: "0"
   # Paid channel admission requires both configured prices. Unknown prices
   # fail closed, even when fallback is enabled. Values are USD per million.

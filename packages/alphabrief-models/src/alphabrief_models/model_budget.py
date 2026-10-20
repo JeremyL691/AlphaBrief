@@ -30,7 +30,9 @@ from typing import Literal, Protocol, cast
 CHATGPT_PLAN_CHANNEL = "chatgpt_plan"
 OPENAI_COMPATIBLE_CHANNEL = "openai_compatible"
 OPENROUTER_FREE_CHANNEL = "openrouter_free"
-DEFAULT_OPENROUTER_FREE_DAILY_CALLS = 45
+#: PROJECT_GUIDE 5.13: the OpenRouter free channel is software-capped at
+#: 1000 calls per UTC day, independent of the provider's own quota.
+DEFAULT_OPENROUTER_FREE_DAILY_CALLS = 1000
 
 #: Reason codes the runtime records when a round cannot call a model.
 NO_TRADE_MODEL_BUDGET = "NO_TRADE_MODEL_BUDGET"
