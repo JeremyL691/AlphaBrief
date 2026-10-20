@@ -34,7 +34,7 @@ def settings(**kwargs: Any) -> ModelSettings:
     return ModelSettings(
         primary_channel=CHANNEL,
         primary_model=MODEL,
-        daily_call_limit=45,
+        daily_call_limit=1000,
         daily_cost_limit_usd=Decimal(0),
         **kwargs,
     )
@@ -275,7 +275,7 @@ def test_app_secret_and_env_overrides_cannot_change_route(
         {"primary_model": "paid"},
         {"primary_model": "openrouter/free"},
         {"primary_model": "google/gemma-4-31b-it"},
-        {"daily_call_limit": 46},
+        {"daily_call_limit": 1001},
         {"primary_channel": "unknown"},
     ],
 )
@@ -283,7 +283,7 @@ def test_invalid_primary_settings_rejected(kwargs: dict[str, Any]) -> None:
     data = {
         "primary_channel": CHANNEL,
         "primary_model": MODEL,
-        "daily_call_limit": 45,
+        "daily_call_limit": 1000,
         "daily_cost_limit_usd": Decimal(0),
         **kwargs,
     }
@@ -318,7 +318,7 @@ def test_zero_usd_budget_only_free_primary(tmp_path: Path) -> None:
         f"model:\n  primary_channel: {CHANNEL}\n  primary_model: {MODEL}\n"
         '  daily_cost_limit_usd: "0"\n'
     )
-    assert load_model_settings(path).daily_call_limit == 45
+    assert load_model_settings(path).daily_call_limit == 1000
     assert load_model_settings(path).daily_cost_limit_usd == 0
     path.write_text('model:\n  daily_cost_limit_usd: "0"\n')
     with pytest.raises(ValueError):
@@ -335,11 +335,13 @@ def test_restart_concurrent_daily_cap_includes_unknown_repair_shadow(
 ) -> None:
     database = tmp_path / "calls.duckdb"
     store = ModelCallStore(database)
-    budget = ModelBudgetGuard(
-        store, policy=settings().budget_policy(), clock=lambda: NOW
-    )
+    policy = settings().budget_policy()
+    budget = ModelBudgetGuard(store, policy=policy, clock=lambda: NOW)
+    cap = budget.call_limit(CHANNEL)
+    assert cap is not None
     kinds: tuple[ModelCallKind, ...] = ("shadow", "repair")
-    for i in range(44):
+    # Fill the day up to one slot short of the channel's cap.
+    for i in range(cap - 1):
         assert budget.reserve(
             CHANNEL,
             f"prior-{i}",
@@ -363,7 +365,7 @@ def test_restart_concurrent_daily_cap_includes_unknown_repair_shadow(
         transport = Transport()
         assert build(stores[0], transport).invoke(request()).response is None
         assert transport.calls == []
-        assert stores[0].daily_usage(NOW.replace(hour=0))[CHANNEL].calls == 45
+        assert stores[0].daily_usage(NOW.replace(hour=0))[CHANNEL].calls == cap
         tomorrow = ModelBudgetGuard(
             stores[0],
             policy=settings().budget_policy(),
@@ -559,7 +561,7 @@ def test_shipped_config_selects_the_pinned_free_primary() -> None:
     assert shipped.primary_model is not None
     assert shipped.primary_model.endswith(":free")
     assert shipped.daily_cost_limit_usd == 0
-    assert 0 < shipped.daily_call_limit <= 45
+    assert 0 < shipped.daily_call_limit <= 1000
     # Reasoning models spend output tokens on reasoning before content.
     assert shipped.max_output_tokens >= 2048
 

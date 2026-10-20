@@ -440,7 +440,11 @@ def test_build_default_tasks_ai_cycle_timeout_covers_committee_runtime() -> None
     assert "ai_daily_cycle" in by_name
     ai = by_name["ai_daily_cycle"]
     assert ai.enabled is False
-    assert ai.interval_seconds == 86_400.0
+    # GUIDE 5.1: an opportunity check every 1-5 minutes, not once a day.
+    assert 60 <= ai.interval_seconds <= 300
+    # A scan is cheap, an escalated round is not: the next tick is minutes
+    # away, so a retry would only duplicate model spend.
+    assert ai.max_retries == 0
     # Must comfortably exceed pre-cycle ingestion plus one committee run
     # per symbol (4 role calls, up to 30s model timeout each); a too-short
     # timeout would auto-freeze the scheduler on a slow provider.

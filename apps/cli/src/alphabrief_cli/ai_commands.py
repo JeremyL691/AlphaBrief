@@ -113,6 +113,24 @@ def _build_execution_backend() -> ExecutionBackend:
     return ExternalPaperExecutionBackend(get_broker_runtime().adapter)
 
 
+def _startup_sync_or_exit(backend: ExecutionBackend) -> None:
+    """Settle any in-flight submit before the first new order (GUIDE 5.8)."""
+    from alphabrief_trader import ExternalPaperExecutionBackend
+
+    if not isinstance(backend, ExternalPaperExecutionBackend):
+        return
+    try:
+        result = backend.startup_sync()
+    except Exception as exc:
+        _exit_error(f"startup order recovery failed: {exc}")
+        return
+    if result is not None and result.frozen_exposure:
+        _exit_error(
+            "startup order recovery could not explain "
+            f"{len(result.frozen)} in-flight order(s); new exposure is frozen"
+        )
+
+
 def _build_risk_gate(symbols: list[str]) -> RiskGate:
     return RiskGate(
         limits=RiskLimitConfig(
@@ -261,17 +279,22 @@ def run_cmd(
             )
 
     store = _open_store()
+    backend = _build_execution_backend()
     try:
+        _startup_sync_or_exit(backend)
         cycle = DailyTradingCycle(
             committee=_build_committee(),
             risk_gate=_build_risk_gate(parsed_symbols),
-            execution_backend=_build_execution_backend(),
+            execution_backend=backend,
             store=store,
             snapshot_loader=_build_loader(parsed_symbols, parsed_prices),
             enabled=True,
         )
         record = cycle.run(parsed_symbols)
     finally:
+        close_backend = getattr(backend, "close", None)
+        if callable(close_backend):
+            close_backend()
         store.close()
 
     _dump(

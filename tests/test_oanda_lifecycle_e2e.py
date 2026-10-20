@@ -77,7 +77,13 @@ class _FakePracticeBroker:
             return json.dumps(
                 {
                     "orderCreateTransaction": {"id": order_id},
-                    "orderFillTransaction": {"id": trade_id},
+                    "orderFillTransaction": {
+                        "id": trade_id,
+                        "orderID": order_id,
+                        "instrument": order.get("instrument", ""),
+                        "units": order.get("units", "0"),
+                        "price": "1.10500",
+                    },
                 }
             ).encode("utf-8")
         if method == "GET" and path == f"{BASE}/orders":

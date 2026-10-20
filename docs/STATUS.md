@@ -8,65 +8,68 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 收尾完成，准备 S11 发布** |
-| 状态 | `READY` |
-| 下一项任务 | 构建最终 Release 发布包，生成 DMG 与 CHANGELOG，完成 S11 收尾 |
-| 最近更新 | 2026-10-14 UTC：完成 OANDA 模拟盘真实下单→对账→平仓→归零全闭环（order 12 成交 filled=True，reconcile clean，平仓 order 16 归零 clean）；完成历史数据一天内分段回放验收（96 根 M15 切为 14 时段，Day 1..14 全部合格，通过 RiskGate 确定性风控与零差异对账，产出 reports/historical-segment-replay-report.md）；修复证据 ID 前缀规范化、strategy 哈希校验兼容、CLI 对账及新闻按需刷新。 |
+| 当前阶段 | **S10 14 天试运行（0 / 14 合格日，需部署新代码后重新起算）** |
+| 状态 | `IN_PROGRESS` |
+| 下一项任务 | 按 2026-10-20 复验结论修四个真实缺口：机会检查轮（`run run` 未注册 `ai_daily_cycle` = 0 合格日根因）、评估器按外汇会话判期望轮次、plist 凭证与 0600、前端路径与硬编码；另加信号品种 K 线刷新与截图测试隔离。随后构建 rc.3 部署并从 Day 0 起算 |
+| 最近更新 | 2026-10-20 UTC 复验。执行安全已提交（`f70b958`）。交接快照中 7 项缺口实测结果：`scheduler_task_runs` **已由现网后台写入**（102 行、5 任务全 ok）、`soak status` **已可用**（连续 3 次 exit 0 且输出一致，`snapshot_db_if_locked` 复制副本后 `OrderLedger` 打开的是副本）；机会检查轮、plist 凭证、前端 404、文档契约四项属实。新增发现：`market_sync` 不刷新信号品种导致 `BCO_USD` H1 陈旧触发假 `skipped_data_stale`；`soak_evaluator` 只按 `weekday>=5` 判周末，与 CURRENCY 会话（周一 21:00 → 周五 21:00 UTC）不符，即使跑起机会轮也会天天 extension；Playwright 截图测试直写 `docs/images/`，跑一次全量测试就脏 22 个 tracked 文件。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
-## 交接快照（2026-10-03 UTC）
+## 交接快照（2026-10-18 UTC）
 
-用户本次明确要求：先停止开发，把当前进度写入项目文档，再交给另一位 AI Agent。此要求覆盖旧启动提示词中的持续执行安排。本 Agent 只整理这次交接，不继续实现影子基准、不启动后台、不调用模型或下单、不设置唤醒。接任者由用户使用 [启动提示词](AGENT_PROMPT.md) 授权开始；交接本身不会自动启动另一位 Agent。
+用户明确要求先停止开发、更新文档与交接，再换一位 Agent 继续。本 Agent 只做只读核对与文档整理，不继续实现、不部署、不提交、不调用模型或下单。接任者由用户使用 [启动提示词](AGENT_PROMPT.md) 授权开始。
 
 ### 接手基线与证据
 
-- 仓库：`/Users/jeremyliu/Desktop/Projects/AlphaBrief`，分支 `main`。文档整理前 `git status --short` 无输出，最后一个实现提交为 `8800303 S4: 接入持久紧急停止及后台全平`。本次交接只修改 STATUS 和 AGENT_PROMPT，另作一次本地文档提交；接任者以实际 HEAD 核对该提交，不能把文档提交当作新的功能实现。
-- 当前阶段 S4，S3 指定退出测试仍缺项；保留已有 S5 实现，不算阶段完成。S6–S11 未完成；试运行尚未开始，合格日 `0 / 14`。没有生成本轮 RC、DMG 或 GitHub Release，没有推送本轮提交。
-- 最后一次实现版本完整回归：`.venv/bin/pytest -q -m "not practice"` → exit 0，**3469 passed / 6 deselected / 8 warnings，268.49 秒**。Ruff 全仓通过；Mypy 479 文件和 CLI strict 21 文件通过；scaffold 10 通过；暂存 tracked 密钥扫描与 diff 检查通过。这些是 `8800303` 的既有证据，本次文档整理没有重新跑完整实现回归。
-- 最后一次真实 practice 验证：`tests/test_live_reconciliation_practice.py::test_real_open_holding_snapshot_is_complete_and_read_only` → **1 passed，2.60 秒**，只读、零订单。它证明完整持仓读路径和流水水位检查可用，不能证明真实紧急全平、崩溃恢复、五品种完整委员会或试运行完成。
-- 本机临时证据：`/private/tmp/alphabrief-emergency-full-production-final.log`、`/private/tmp/alphabrief-emergency-production-final.log`、`/private/tmp/alphabrief-emergency-practice-summary.json`。本次已核对完整回归日志尾行与脱敏 practice 摘要；临时文件不属于 Git 交付，丢失时需重跑，不能依赖它们替代验收。
-- 本次没有后台任务或测试工具句柄需要接任者续等；没有启动新的服务。操作系统中已有服务、账户当前持仓、模型额度、凭证有效期与网络状态应在接手时实际复核，本次未作实时外部检查，不宣称这些状态一直有效。
+- 仓库 `/Users/jeremyliu/Desktop/Projects/AlphaBrief`，分支 `main`。HEAD = `c804d84 S10: 试运行证据改为真实事实并加发布门禁`；本地领先 `origin/main` 4 个提交，尚未推送（S9 起允许推送）。
+- 工作区有 **49 个已修改 + 1 个未跟踪**（`tests/test_startup_sync_entrypoints.py`），全部属于上一轮未提交的工作（见下节）。这不是用户改动，也不是外部改动，接任者可以在审查后按任务拆分提交；不要丢弃、不要 `git clean`。`.opencode/` 已在本次交接中写入 `.git/info/exclude`，不再出现在 `git status`。
+- 本轮只读复验（针对当前工作区，非 HEAD）：`.venv/bin/pytest -q -m "not practice"` → **exit 0，3600 passed / 13 deselected / 7 warnings，207.95 秒**；`ruff check .` → All checks passed；`mypy --no-incremental` → Success，508 文件；`scripts/secret_scan.py` → exit 0。`git diff --check` 原先报 `AGENTS.md:176 new blank line at EOF`，本次交接已修掉，现在 exit 0。
+- 运行中的后台：LaunchAgent `ai.alphabrief.backend`，PID 79883，2026-10-16 11:55 启动，命令为仓库 `.venv/bin/alphabrief run run --host 127.0.0.1 --port 8000 --trading-mode on --catch-up-minutes 90`。`/health` 返回 `{"status":"healthy","version":"1.0.0-rc.2"}`。**这是旧代码**：它没有本次的 `scheduler_task_runs` 写入，也没有持久提交/启动恢复。
 
-### 已完成的实现范围
+### 未提交的工作（按提交单位拆分）
 
-详细命令和局限见本页 S4 证据及阶段检查表。当前默认后台/单轮 CLI 已接入：
+1. **执行安全（主体）**：`order_ledger.py`（`client_order_id`/`filled_units` 迁移、`needs_rebind`、`reserve(allow_rebind)`/`bind(rebind)`）、`execution_backend.py`（`OandaPaperAdapter` 默认走 `OrderLedger` + `SubmitWorkflow` + `ExposureFreezeStore`，新增 `startup_sync()`/`close()`/`_restore_mappings`）、`port.py`（`SubmitResult` 增加 `broker_state`/`filled_units`/`fill_price`）、`adapter.py`/`order_ops.py`/`submit_recovery.py`/`unknown_outcome.py`、`position_close.py`（记录真实 `risk_decision_id`）、`schemas.py`；入口 `cycle_commands.py`/`ai_commands.py`/`ai_trading.py` 都加了 `_startup_sync_or_exit` 失败即停；新测试 `tests/test_startup_sync_entrypoints.py`（7 passed）及 6 个既有测试文件的扩展。
+2. **规格与预算**：`config/alphabrief.yaml` 的 `daily_call_limit: 45 → 1000`（本次交接已把旁边过时的 50/45 注释改成 1000 软件上限说明）；`model_budget.py` 的 `DEFAULT_OPENROUTER_FREE_DAILY_CALLS = 1000`；`channels.py` 报错文案。
+3. **文档**：`AGENTS.md`（工作循环与第 8 节从 GUIDE 移入，安全不变量 7/10 更新）、`docs/PROJECT_GUIDE.md`（删除 0.1/第 8 节、5.1 改为 1–5 分钟机会检查、模型通道段落）、`README.md`、`CHANGELOG.md`（1.0.0-rc.2）、`docs/STATUS.md`（S10 小节与决策记录）。
+4. **文档契约测试**：`tests/test_project_scaffold.py` 把 `AGENTS.md`/`STATUS.md`/`AGENT_PROMPT.md` 当作本地专用（只强制 `docs/PROJECT_GUIDE.md`），并删掉"STATUS 只有一个阶段"的断言；`tests/test_secret_scan_tool.py` 相应调整。
+5. **未跟踪**：`tests/test_startup_sync_entrypoints.py`（应提交）；`.opencode/`（44K 本地工具状态，已在本次交接中写入 `.git/info/exclude`，不提交）。
 
-- 原生外汇行情刷新、跨市场信号及相关性、新闻来源和输入质量证据；持仓/挂单本币 gross 敞口、每次 gate 当前 NAV 比例限额、保证金、UTC 日内净盈亏禁开仓、连续亏损持久冻结。
-- 逐次模型出站持久预算预留；每品种 5 次正常 / 2 次总修复、每轮 35 次上限；严格五角色协议、原始响应、引用正文/哈希及解析判决；经理 action/保护单倍数、同向 hold / 反向 close。
-- 完整最终决策在执行前持久关联实际模型调用；UTC 当日开仓历史；48 小时 / 周末持仓退出及实际尝试审计。
-- 最新紧急停止：kill switch 禁新开仓、允许显式 reduce-only；gate 和实际开仓提交前刷新持久停止状态，读取失败拒绝；5% NAV 回撤持久自动停机、重启仍保持；默认 monitor 退出已确认持仓；CLI 通过后台 HTTP 激活/解除，离线只读。坏回撤历史不会在开仓上下文构建时提前阻断已授权退出。
+### 试运行真实状态（只读数据库副本评估，2026-10-18）
 
-以上是已实现且局部/本地验证的范围，不表示所有旧入口已统一或 S4/S5 退出通过。尤其 `soak_halted` 的正式试运行身份、初始化和重置仍需按 S9/S10 定义完成。
+- `soak_runs`：run_index 1，2026-10-05 启动，`status=active`。评估结果 **0 个合格日、0 次顺延**；2026-10-05 至 10-17 每天都是 `reset`，原因全部是 `downtime 24.0h exceeded 12-hour limit`。
+- 根因：`scheduler_task_runs` 表 **0 行**。运行中的旧后台只写 heartbeat 的最后一次运行，评估器（HEAD 的 `soak_evaluator.py`）按真实任务执行窗口计算停机，没有执行记录的一天就是 24 小时停机。这不是"真的停了一天"，而是**部署的二进制早于运行历史代码**；但它同样意味着这 14 天不能作为合格证据。
+- 其他事实：`order_ledger_reservations` 0 行（旧后台不写账本，也没有真实订单）；开放冻结 0 个；最新对账快照 `orders/fills/cash/positions` 全部 match（每 60 秒一次）；心跳 `reconcile`/`position_monitor`/`quote_poll`/`market_sync`/`shadow_score` 均为 ok；最近模型调用停在 2026-10-16（当天 29 次 `chatgpt_plan`），10-18 无调用；最近轮次多为 `skipped_model_budget`/`skipped_no_intent`/`skipped_data_stale`。
+- `alphabrief soak status` 直接跑会崩：`OrderLedger` 以读写方式打开数据库，被后台的 DuckDB 写锁拒绝（`Conflicting lock is held ... PID 79883`）。`soak_evaluator.snapshot_db_if_locked` 只处理只读 IOException，不覆盖写尝试被锁的情况。本轮评估是把 `alphabrief.duckdb` + `.wal` 复制到 `/tmp` 后直接调用 `evaluate_soak_status(db_path=...)` 完成的。
 
-### 停下时做到哪一步
+### 已知缺口（按建议顺序）
 
-**单次影子基准尚未修改代码，也没有新增测试或消耗真实模型预算。** 本轮只读了 GUIDE 5.11/5.13、当前 STATUS，以及 CodeGraph 返回的现行生产代码，定位到：
+1. **`soak status` 在后台运行时不可用**（上面的锁问题）。巡检依赖它，必须先修：评估器只读打开，或复用快照复制路径，并加回归测试。
+2. **LaunchAgent plist 明文存 OANDA 凭证**：`~/Library/LaunchAgents/ai.alphabrief.backend.plist` 权限 `0644`，`EnvironmentVariables` 里有 `ALPHABRIEF_OANDA_TOKEN` 与账户 ID。这违反"密钥只来自 `secrets/` 或环境变量、不写日志/不提交"。`service_commands.py` 在安装时把环境变量写进 plist。修复方向：安装时不写凭证，让后台从 `secrets/oanda.json` 读取（`oanda_is_configured` 已支持），并把已存在的 plist 收紧到 `0600` 或移除凭证字段。
+3. **1–5 分钟机会检查只有文档、没有实现**：`build_default_tasks` 里 `ai_daily_cycle` 仍是 `interval_seconds=86_400.0`，`DEFAULT_SCHEDULE` 仍是东京/伦敦/纽约三个固定轮次。GUIDE 5.1、AGENTS、README、CHANGELOG 都已改成 1–5 分钟。实现时必须同时满足：1000 次/日免费预算（一次完整委员会约 25 次调用，288 轮/天必然超支），所以设计应是"确定性扫描每 1–5 分钟跑一次、只有满足策略阈值才升级到完整委员会"；轮次记录名要保持 `ai_daily_cycle`，否则 `soak_evaluator.CYCLE_TASK_NAME` 统计不到；周末与会话外不跑机会轮。
+4. **前端路径 404**：`apps/api/src/alphabrief_api/static/api.js` 仍请求 `/api/v1/ai-trading/*` 与 `/api/v1/risk/status`，而路由前缀是 `/api/v1/ai`（status/history/cycles/attempts 都存在）和 `/api/v1/risk/kill-switch|context|dashboard`。`/api/v1/soak/status`、`/api/v1/models` 也没有对应端点。已实测：这些路径返回 404，其余 17 个前端端点返回 200。
+5. **文档契约与 Git 状态矛盾**：`tests/test_project_scaffold.py` 已把 `AGENTS.md`、`docs/STATUS.md`、`docs/AGENT_PROMPT.md` 当作本地专用，但三者仍是 Git 跟踪文件，`.git/info/exclude` 也没有排除它们。需要接任者决定并一次做对：要么按"Agent 流程文件只放本地"把它们 `git rm --cached` 并加入 `.git/info/exclude`（同时确认 GUIDE 不再链接它们），要么保留跟踪并回退 scaffold 测试。不要两边各留一半。
+6. **发布门禁未满足**：S11 全部未勾选；没有 `reports/soak-report-v1.0.0.md`，`report soak --final` 会在 14 个合格日不足时以退出码 1 拒绝；本地 4 个提交未推送。
 
-- `packages/alphabrief-trader/src/alphabrief_trader/daily_cycle.py`：`DailyTradingCycle._record_shadow` 当前仍传 `single_call=None`，单次基准恒定记录跳过；`run` 中委员会之后可能再次刷新 snapshot，需要冻结并使用与委员会相同的模型前输入，不能把新行情当作同输入对照。
-- `packages/alphabrief-trader/src/alphabrief_trader/shadow.py`：`build_shadow_decisions` 已能接收单次方向/详情，并区分 `source=model` 与 `source=skipped`；实际模型调用未接上。
-- `packages/alphabrief-trader/src/alphabrief_trader/committee.py`：已有严格经理 schema、证据引用检查、Gateway 调用和 validation 留证，可复用；不要复制另一套经理协议或把委员会四份分析意见泄漏给单次对照。
-- `packages/alphabrief-models/src/alphabrief_models/model_budget.py` 与 `apps/api/src/alphabrief_api/db/model_call.py`：持久 reservation 当前仅区分 normal / repair。单次基准若被当作第 6 次 normal，会碰到每品种 5 次正常上限；预算分类与接线尚未设计或实现。影子调用仍必须受当轮剩余额度、UTC 日额度及费用预留约束，不能增加 35/150 等限额来绕过问题。
-- `packages/alphabrief-models/src/alphabrief_models/gateway.py`：应继续作为唯一出站入口，保留实际调用身份、原始响应、判决和脱敏审计。预算不足、模型不可用或输出无效必须明确记录跳过/失败，不能记作模型真实选择 no_trade；影子决策永远不执行订单。
+### 接任者顺序
 
-这是定位结果，不是已经验证的设计。接任者先读相关符号及现有测试，再决定最小完整实现；不要按聊天记忆直接写代码。
+1. 读 `AGENTS.md` → `docs/PROJECT_GUIDE.md` → 本文件；跑 `git status`、`git log -5 --oneline`、`git rev-list --left-right --count origin/main...main`，确认与本节一致。
+2. 复核后台：`launchctl list | grep alphabrief`、`curl -s 127.0.0.1:8000/health`、`ps -p <pid> -o lstart=,command=`。确认只有一个 `trading_mode=on` 后台；不要为了接手清空数据库、冻结或预算记录。
+3. 审查未提交的执行安全改动（重点是 `execution_backend.py` 的启动恢复与账本绑定、`order_ledger.py` 的迁移与 `needs_rebind`），按第 1–4 项拆成 2–3 个提交。
+4. 按"已知缺口"1→2→3→4 修复，每项一个提交、带测试。
+5. 构建新 RC → `alphabrief service install` 部署 → 确认 `scheduler_task_runs` 开始写入、`soak status` 可用 → **从 Day 0 重新开始 14 天**（`soak start` 有 10 分钟回填保护，不能补造旧日期）。旧的 run_index 1 保留为失败历史，不要删除。
+6. 试运行期间做发布材料；满足 GUIDE S11 门禁后才 tag / `gh release create`。不得伪造、回填或加速任何一天。
 
-### 接任者的后续顺序与未解决风险
+### 本次交接本身改了什么
 
-1. 先核对 Git、数据路径、持久停止/冻结和实际服务状态，确保旧 Agent 不再写同一工作区、同一账户只有一个 `trading_mode=on` 后台；不得为了接手清空数据库、停止状态、预算或重试记录。
-2. 完成单次影子基准及测试：同输入、一次 manager、持久预算、严格解析/引用、调用与判决可追溯；覆盖预算不足、错误输出、真实生产工厂接线及零订单。同时按 GUIDE 5.11 核对其余基准与 4h/24h 评分、点差、样本数和 bootstrap，不能只修一个参数就勾选 S4-4。
-3. 补 S3 规定的 `pytest -m practice -k vertical_slice` 用例；旧真实下单/平仓证据保留，之前规定选择器收集 0 项不能算通过。在合法市场时段实际验证，禁止用测试时钟绕过真实周末/UTC 开仓约束。
-4. 完成 S4 的真实 `alphabrief cycle run --once --trading off` 五品种决策、实际风控事实与日报验收；off 仍可能消耗真实模型预算，但不得下单。真实紧急退出验收也仍待补，不能用只读快照替代。
-5. S5 优先关闭真实提交后、cycle 保存前的崩溃重复窗口。当前默认普通 `DailyTradingCycle` 与旧 `DurableDailyCycle` 未统一；最终决策留证不能替代提交前阶段身份、意图预留、SUBMIT_UNKNOWN 查询恢复、跨入口停止/提交互斥及真实 kill-9 防重复验收。其他 API/CLI 写路径尚未全改成后台 HTTP，离线直写仍需整改。
-6. 按 GUIDE 顺序完成 S5 常驻任务/服务/通知/备份恢复、S6 真数据界面与可访问性、S7 保留模块、S8 独立 DMG、S9 RC 门禁、S10 真实 14 天、S11 开源发布。所有阶段退出证据完整后才推进，不把已有局部实现当作整阶段完成。
-
-### 本次文档交接验证
-
-- 仅修改 docs/STATUS.md 与 docs/AGENT_PROMPT.md；未修改运行时代码、配置或测试。`.venv/bin/pytest -q tests/test_project_scaffold.py` → **10 passed，exit 0**；`git diff --check` 通过。提交前文档契约再次 10 passed，暂存 tracked 密钥扫描和 cached diff 检查均 exit 0；完整实现回归沿用上列 8800303 的结果，不声称本次重新运行。
+- `docs/STATUS.md`：用本节替换 2026-10-03 的旧交接快照（旧快照描述的是 S4 阶段，已完全过时）；"当前"表改为 S10 `IN_PROGRESS`。
+- `docs/AGENT_PROMPT.md`：重写启动提示词，去掉 2026-10-03 快照、基线 `8800303`、"GUIDE 8.3/8.4"、"第 7 节"等失效锚点，改为指向 AGENTS.md 第 8 节，并把上面 7 步接手顺序写进正文。
+- `AGENTS.md`：只删掉文件末尾多余的空行（`git diff --check` 之前报 `AGENTS.md:176 new blank line at EOF`）。
+- `config/alphabrief.yaml`：只改注释。`daily_call_limit: 1000` 旁仍写着"free tier allows 50/day; leave five calls of headroom"，与 1000 的上限矛盾，已改为说明 1000 是软件上限、每次请求仍要复核零价。
+- 未改任何运行时代码、测试、凭证或服务；未提交、未推送、未部署、未调用模型、未下单。
 
 ### 当前是否需要用户操作
 
-本次只需用户把更新后的启动提示词交给接任 Agent；不要求重复登录或重新提供凭证。S2 授权已有历史真实证据，但模型通道现在是否可用需接任者复核。下方旧登录要求与旧额度/维护故障都是历史条目，不能直接视作当前阻塞；只有实际失效/缺失才提出明确请求。试运行期间需要 Mac 接电、不休眠及稳定网络，不能伪造或加速天数。
+不需要重复登录或重新提供凭证（`secrets/oanda.json`、`chatgpt_oauth.json`、`openrouter.json` 均在，权限 0600）。唯一需要用户的是：试运行期间保持 Mac 接电、不休眠、网络稳定。另建议用户在交接后自行决定是否撤销聊天中曾暴露的旧 OpenRouter key（见"需要用户做的事"2026-10-13 条目）。
 
 ## 基线（2026-09-30 实测，文档重建后）
 
@@ -735,6 +738,20 @@
   - 在 `config/alphabrief.yaml` 中将 `max_output_tokens` 提升至 8192，容纳 Nemotron 思考（reasoning）及长 JSON 输出。
   - 质量门禁：`ruff check apps/ packages/ scripts/` All checks passed；`mypy apps/ packages/ scripts/` Success 0 issues；核心组件测试全绿。
 
+#### S10 试运行证据改为真实事实（2026-10-18 UTC，本提交）
+
+- 调度器持久运行历史：`HeartbeatStore.record_run` 现在每次任务执行都追加一行到 `scheduler_task_runs`（与 API schema migration 5 的形状一致：`task_name, started_at, finished_at, status, error`），`OperationsScheduler._run_task` 传入真实开始/结束时间；新增 `list_task_runs()` 供评估器读取。此前只有 heartbeat 的最后一次运行，无法计算停机与轮次完整性。
+- `soak_evaluator.py` 重写为只读数据库事实：
+  - 停机时间 = 一天内没有任何任务执行覆盖的秒数；执行窗口的并集是“在线”，任务间隔内的正常休眠按一个轮次间隔宽限。完全没有执行记录的一天按 24 小时停机计（此前 `samples < 10` 时返回 0.0，会把没运行的一天算成零停机）。
+  - 轮次完整性：从调度器自身历史推断轮次间隔，统计应跑与实际记录的轮次；周末不要求机会轮次，但仍要求后端在线。
+  - 订单事实改读 `order_ledger_reservations`（运行时唯一会写的持久提交记录），不再依赖运行时从不写入的 paper 审计表；每个提交必须能追到当天持久化的 RiskDecision。
+  - 重复订单以持久账本的 `(cycle_id, intent_id)` 唯一键与 broker 侧 `client_order_id` 唯一性判定。
+  - 评估已完成的 run，并把超过 3 次顺延记入重置历史。
+- `soak_report.py` 去掉硬编码：起始/结束 NAV 取 `account_equity_snapshots`，已实现盈亏与胜率取 `transaction_facts`，订单/冻结/SUBMIT_UNKNOWN 取账本与事件，安全不变量表逐项由账本、决策库和结构扫描 `production_safety_violations` 计算；无事实时显示 `n/a` 或 `UNKNOWN`，不再打印 `100000.00`、`0.00%`、`PASSED`。
+- `--final` 增加发布门禁：未达到 14 个合格日、run 未 completed、存在开放冻结、或任一安全不变量失败时拒绝写 `reports/soak-report-v*.md` 并以退出码 1 报错；普通报告不受影响。
+- `soak start` 拒绝回填：`SoakStore` 新增 `MAX_START_BACKDATE`（10 分钟，仅吸收时钟偏差）与未来时间拒绝；测试通过注入 `now_fn` 模拟过去启动，生产路径无法伪造 Day 0。
+- 验证：`pytest tests/test_soak_evaluator.py tests/test_soak_store.py tests/test_soak_cli.py tests/test_report_soak.py tests/test_ai_trader_scheduler.py tests/test_cycle_sizing_and_close.py -q` → 93 passed；`ruff check` 与 `mypy`（6 个改动模块）通过。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -745,6 +762,8 @@
 - [ ] S11-7 状态 → `RELEASED`，附 Release 链接
 
 ## 需要用户做的事
+
+- 2026-10-18 UTC 交接：只需用户把 [启动提示词](AGENT_PROMPT.md) 的正文交给接任 Agent，不需要重复登录或重新提供凭证（`secrets/` 下三份凭证齐全且权限 0600）。试运行重新开始后需要保持 Mac 接电、不休眠、网络稳定。下方 2026-10-03 与 2026-10-01 条目都是历史说明；"现在需要，只此一次"的登录请求已被 S2 完成证据满足，不得据此重复索取授权。
 
 - 2026-10-13 UTC：用户已提供 OpenRouter 测试凭证并授权使用，已通过现有 `write_secret` 原子写入本机 `secrets/openrouter.json`，权限 0600，过程不回显密钥。官方 `/api/v1/key` 只读返回 HTTP 200；实际月限额为 USD 0.01、已用 0，并不是用户所述的严格零；免费日请求额度为 1000、已用 3。软件仍独立强制零价模型和零价 provider，不能依赖 key 限额。建议撤销聊天中暴露的旧 key，再通过本机 `secrets/` 配置新 key。
 
@@ -759,6 +778,9 @@
 
 ## 决策记录
 
+- 2026-10-20 UTC / Agent 流程文档是否继续随仓库发布 / 继续跟踪 `AGENTS.md`、`docs/STATUS.md`、`docs/AGENT_PROMPT.md`，并把被改弱的 `tests/test_project_scaffold.py` 与 `tests/test_secret_scan_tool.py` 还原回 HEAD 版本 / 交接快照给了两条互斥选项，实测 HEAD 版的严格契约在当前工作区仍 20 passed，没有必须放宽的理由；三份文档已存在于 `origin/main`，`git rm --cached` 会让公开历史断裂且失去可追溯的规格来源。按"不为让检查变绿而放宽断言"保留严格契约。
+- 2026-10-20 UTC / 交接快照中"`soak status` 被写锁打崩"的判断 / 不再改 `OrderLedger` 的打开方式，只把 `snapshot_db_if_locked` 的兜底异常从 `duckdb.IOException` 扩到 `ConnectionException` 与 `InvalidInputException` / 实测 `soak status` 连续 3 次 exit 0 且输出 8042 字节完全一致：该函数已先把库复制到临时目录，`OrderLedger` 打开的是副本，生产 CLI 路径并未崩。真正会崩的是"同进程内先自持写连接、再开只读连接"的场景（DuckDB 抛 `ConnectionException`），这正是新增 `/api/v1/soak/status` 在 dashboard 进程里的形态，因此按最小改动只补异常类型并加回归测试。
+- 2026-10-14 UTC / 交易运行策略与模型预算规格更新 / 确定外汇开市期间全天无人值守，每 1–5 分钟检查交易机会，仅在满足策略条件与硬性风控门禁时真实提交 OANDA practice 模拟订单；绝不开实盘，不为凑次数强制交易（`no_trade` 始终合法健康）；OpenRouter 免费通道软件预算上限设定为 1000 次/日（严格零价格校验、零回退、零费用保护）；明确历史单日分段回放为功能验收，真实连续 14 自然日试运行诚信标准不变 / 响应用户最新指令，统一项目规格，确保全天常态化检查机会与严格风控、免费模型高频调用配额安全对齐。
 - 2026-10-13 UTC / OANDA 适配器子订单兼容 / 扩充 `BrokerOrderType`（增加 stop_loss, take_profit 等）并令 `adapter.list_orders()` 过滤无标的子订单 / OANDA 历史订单包含挂靠在 trade 上的 STOP_LOSS 和 TAKE_PROFIT 子订单（无 instrument 且 units=0），原代码因类型未包含及空 symbol 校验失败导致 `list_orders` 抛出 `BrokerProtocolError`；修复后干净解析出真实母单。
 - 2026-10-13 UTC / 结构化输出 Markdown 代码块净化 / `parse_structured_output` 默认解码前剥离 ` ```json ... ``` ` 代码块 / 部分大模型（如 Nemotron）在 structured_output 或 text 模式下偶发包覆 markdown 代码块，剥离后确保 JSON 解析顺利完成。
 - 2026-10-13 UTC / 发布版本递增至 1.0.0-rc.2 / pyproject.toml、core/version.py、electron/package.json 一致递增并重新打包 DMG / 修复调度器与通道后重新构建发布包供部署与冒烟测试。

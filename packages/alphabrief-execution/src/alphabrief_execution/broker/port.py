@@ -93,7 +93,13 @@ class SubmitRequest(BaseModel):
 
 
 class SubmitResult(BaseModel):
-    """Result returned from a single ``submit`` call."""
+    """Result returned from a single ``submit`` call.
+
+    ``broker_state``, ``filled_units`` and ``fill_price`` are the broker's
+    own facts. They are only present when the adapter has them: a
+    ``FILLED`` status without fill facts is a protocol defect the
+    execution backend refuses rather than inventing a fill.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -101,6 +107,13 @@ class SubmitResult(BaseModel):
     client_order_id: str = Field(min_length=1)
     status: BrokerOrderStatus
     accepted_at: datetime
+    #: The venue's own order state (OANDA: PENDING, FILLED, ...), when
+    #: the adapter exposes one.
+    broker_state: str | None = None
+    #: Units the broker actually filled; zero unless the order filled.
+    filled_units: Decimal | None = Field(default=None, ge=0)
+    #: The broker's average fill price, when it reports one.
+    fill_price: Decimal | None = Field(default=None, gt=0)
 
 
 class CancelResult(BaseModel):

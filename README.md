@@ -2,7 +2,7 @@
 
 AlphaBrief is a local-first, unattended AI foreign exchange (forex) paper-trading workbench running on **OANDA v20 practice**.
 
-It combines real-time multi-source market and news feeds, a five-role structured AI Trading Committee, deterministic risk controls, idempotent trade submission with protective stop-loss/take-profit orders, continuous broker reconciliation, and automated daily reporting.
+Operating continuously during active forex market hours, it evaluates trading opportunities every 1–5 minutes. It combines real-time multi-source market and news feeds, a five-role structured AI Trading Committee (with OpenRouter free tier up to 1,000 calls/day, ChatGPT, or OpenAI-compatible models), deterministic risk controls, idempotent trade submission with protective stop-loss/take-profit orders, continuous broker reconciliation, and automated daily reporting. Live trading is strictly unreachable, and no trades are forced—`no_trade` is always a completely healthy and valid outcome.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
@@ -34,14 +34,14 @@ flowchart LR
 
 ## Key Features
 
-1. **Unattended Daemon Operation**
-   Runs as a persistent macOS LaunchAgent service (`ai.alphabrief.backend`) with health monitoring, automatic recovery, and exclusive process locks (`runtime.lock`).
+1. **Unattended Daemon Operation (1–5m Opportunity Checks)**
+   Runs as a persistent macOS LaunchAgent service (`ai.alphabrief.backend`) with health monitoring, automatic recovery, and exclusive process locks (`runtime.lock`). Evaluates market setups every 1–5 minutes throughout forex market hours.
 
-2. **Five-Role AI Committee**
-   A structured decision pipeline comprising Macro Analyst, Fundamental Analyst, Quantitative Technical Analyst, Risk Officer, and Portfolio Manager. Outputs follow strict JSON schemas with evidence validation and automatic structured repair loops.
+2. **Five-Role AI Committee & Model Gateway (1,000 Free Calls/Day)**
+   A structured decision pipeline comprising Macro Analyst, Fundamental Analyst, Quantitative Technical Analyst, Risk Officer, and Portfolio Manager. Outputs follow strict JSON schemas with evidence validation and automatic repair loops. Powered by OpenRouter free models (enforcing zero-cost catalog guarantees and a 1,000 calls/day software limit), ChatGPT subscription, or OpenAI-compatible keys.
 
-3. **Deterministic Risk Controls**
-   Strict pre-trade validation enforcing NAV leverage caps (50% max single-trade notional, 150% total exposure), daily drawdown limits, volatility ceilings, and 24-hour consecutive loss circuit breakers.
+3. **Deterministic Risk Controls & No Forced Trading**
+   Strict pre-trade validation enforcing NAV leverage caps (50% max single-trade notional, 150% total exposure), daily drawdown limits, volatility ceilings, and 24-hour consecutive loss circuit breakers. `no_trade` is a first-class result; orders are only sent to OANDA practice when high-confidence strategy rules and deterministic gates align. Live trading is strictly unreachable.
 
 4. **Emergency Protections & Kill Switch**
    Automatic liquidation latch (`soak_halted`) triggered if portfolio NAV drawdown reaches 5%. Persistent kill switch refuses all new risk exposure while allowing reduce-only order exits.

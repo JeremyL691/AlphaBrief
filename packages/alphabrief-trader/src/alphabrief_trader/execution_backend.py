@@ -22,9 +22,28 @@ from typing import Any, Literal, Protocol
 from alphabrief_core import OrderIntent, RiskDecision
 from alphabrief_core import paths as _paths
 from alphabrief_core.policy_version import PolicyVersionError, policy_version_hash
-from alphabrief_execution.broker.errors import BrokerAdapterError
+from alphabrief_execution.broker.errors import (
+    BrokerAdapterError,
+)
 from alphabrief_execution.broker.oanda.faults import UnknownOutcomeFailure
-from alphabrief_execution.broker.oanda.unknown_outcome import UnknownOutcomeResolver
+from alphabrief_execution.broker.oanda.freeze_policy import (
+    ExposureFreezeStore,
+    FreezeActiveError,
+)
+from alphabrief_execution.broker.oanda.order_ledger import (
+    LedgerTransitionError,
+    OrderLedger,
+)
+from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
+from alphabrief_execution.broker.oanda.submit_recovery import (
+    StartupSyncResult,
+    StartupSyncService,
+    SubmitOutcome,
+    SubmitWorkflow,
+)
+from alphabrief_execution.broker.oanda.unknown_outcome import (
+    UnknownOutcomeResolver,
+)
 from alphabrief_execution.broker.port import (
     BrokerAdapter,
     BrokerOrderSide,
@@ -32,6 +51,7 @@ from alphabrief_execution.broker.port import (
     BrokerOrderType,
     BrokerTimeInForce,
     SubmitRequest,
+    SubmitResult,
 )
 from alphabrief_execution.broker.risk_context import (
     BrokerRiskContextBuilder,
@@ -85,6 +105,9 @@ class ExecutionBackendResult:
     broker_status: str | None = None
     broker_result_json: dict[str, object] | None = None
     risk_context_version: str | None = None
+    #: The approved decision the executed order was actually bound to.
+    #: A replay under a re-evaluated decision returns the original one.
+    risk_decision_id: str | None = None
 
 
 class ExecutionBackend(Protocol):
@@ -134,6 +157,10 @@ no synthesized defaults, no fallback account, no review bypass.
         unknown_outcome_resolver: UnknownOutcomeResolver | None = None,
         policy_hash: str | None = None,
         kill_switch_provider: Callable[[], KillSwitch] | None = None,
+        order_ledger: OrderLedger | None = None,
+        freeze_store: ExposureFreezeStore | None = None,
+        durable_submit: bool | None = None,
+        owner: str = "daily-cycle",
     ) -> None:
         self._adapter = adapter
         from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
@@ -167,6 +194,85 @@ no synthesized defaults, no fallback account, no review bypass.
                 RiskDecisionStore(db_path=_paths.db_path())
             )
         )
+        # Every external submit goes through the durable order ledger so
+        # a crash between the broker accepting the order and the caller
+        # persisting the result resumes from the ledger instead of
+        # re-evaluating a fresh decision and double-submitting
+        # (PROJECT_GUIDE 5.8). The durable path is on by default for the
+        # real OANDA practice adapter; other adapters opt in explicitly.
+        if durable_submit is None:
+            durable_submit = isinstance(adapter, OandaPaperAdapter)
+        self._durable_submit = durable_submit
+        self._owner = owner
+        self._order_ledger = order_ledger
+        self._freeze_store = freeze_store
+        self._owns_ledger = order_ledger is None
+        self._owns_freeze_store = freeze_store is None
+        self._submit_workflow: SubmitWorkflow | None = None
+        self._startup_synced = False
+        if durable_submit:
+            self._order_ledger = order_ledger or OrderLedger(db_path=_paths.db_path())
+            self._freeze_store = freeze_store or ExposureFreezeStore(
+                db_path=_paths.db_path()
+            )
+            self._submit_workflow = SubmitWorkflow(
+                ledger=self._order_ledger,
+                account_id=_durable_account_id(adapter),
+                owner=owner,
+                resolve=self._resolver(),
+                freeze_store=self._freeze_store,
+                fault=_test_fault_hook(),
+            )
+
+    def _resolver(self) -> UnknownOutcomeResolver | None:
+        """The query-only resolver for the configured adapter, if any."""
+        if self._unknown_outcome_resolver is not None:
+            return self._unknown_outcome_resolver
+        return _resolver_for(self._adapter)
+
+    def startup_sync(self) -> StartupSyncResult | None:
+        """Settle every in-flight submit before any new submission.
+
+        Returns ``None`` for a backend without the durable path. For the
+        durable path, every ``SUBMITTED`` reservation is resolved by
+        querying the persisted client identity; an unresolved outcome
+        freezes new exposure. Completed mappings are restored into the
+        process adapter so a replay can never double-submit.
+        """
+        if self._submit_workflow is None or self._order_ledger is None:
+            return None
+        resolver = self._resolver()
+        if resolver is None:
+            raise ExecutionBackendError(
+                "durable submit is enabled but no broker resolver is available"
+            )
+        service = StartupSyncService(
+            ledger=self._order_ledger,
+            account_id=_durable_account_id(self._adapter),
+            resolve=resolver,
+            freeze_store=self._freeze_store,
+        )
+        return service.sync(restore_mapping=self._restore_mappings)
+
+    def _restore_mappings(self, mappings: dict[str, str]) -> None:
+        from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+
+        if isinstance(self._adapter, OandaPaperAdapter):
+            for client_order_id, broker_order_id in mappings.items():
+                self._adapter.register_known_mapping(
+                    client_order_id=client_order_id,
+                    broker_order_id=broker_order_id,
+                )
+
+    def close(self) -> None:
+        """Release the stores this backend owns."""
+        if self._owns_ledger and self._order_ledger is not None:
+            self._order_ledger.close()
+            self._order_ledger = None
+            self._submit_workflow = None
+        if self._owns_freeze_store and self._freeze_store is not None:
+            self._freeze_store.close()
+            self._freeze_store = None
 
     @staticmethod
     def _compute_policy_hash() -> str | None:
@@ -375,22 +481,39 @@ no synthesized defaults, no fallback account, no review bypass.
         )
         if not validation.valid:
             if validation.kind in ("already_consumed", "consumed"):
-                resolver = self._unknown_outcome_resolver
-                if resolver is None:
-                    resolver = _resolver_for(self._adapter)
-                if resolver is not None:
+                if self._submit_workflow is None:
+                    resolver = self._resolver()
+                    if resolver is None:
+                        # Nothing can settle the identity: without the
+                        # durable ledger or a broker query the only safe
+                        # answer is to refuse, never to send again.
+                        raise ExecutionBackendError(
+                            f"RiskDecision not executable: {validation.kind}: "
+                            f"{validation.detail}"
+                        )
                     resolution = resolver.resolve(intent.intent_id)
                     if resolution.resolution == "RESOLVED_ACCEPTED":
+                        filled = (resolution.state or "").upper() == "FILLED"
                         return ExecutionBackendResult(
                             execution_backend="external_paper",
-                            order_id=resolution.broker_order_id or intent.intent_id,
+                            order_id=(
+                                resolution.broker_order_id or intent.intent_id
+                            ),
                             client_order_id=intent.intent_id,
                             broker_order_id=resolution.broker_order_id,
                             broker_status=str(resolution.state or "UNKNOWN"),
-                            broker_result_json=resolution.model_dump(mode="json"),
-                            filled=True,
+                            broker_result_json=resolution.model_dump(
+                                mode="json"
+                            ),
+                            filled=filled,
+                            # The broker's own facts, never the requested
+                            # quantity; an unknown fill size stays None.
                             fill_price=None,
-                            fill_quantity=quantity,
+                            fill_quantity=(
+                                resolution.filled_units
+                                if filled and resolution.filled_units > 0
+                                else None
+                            ),
                             fill_json=None,
                             risk_context_version=context.context_version,
                         )
@@ -401,10 +524,14 @@ no synthesized defaults, no fallback account, no review bypass.
                     raise ExecutionBackendError(
                         f"SUBMIT_UNKNOWN: {resolution.detail}"
                     )
-            raise ExecutionBackendError(
-                f"RiskDecision not executable: {validation.kind}: "
-                f"{validation.detail}"
-            )
+                # The durable ledger is authoritative for this intent:
+                # fall through so the workflow resolves the existing
+                # identity instead of re-sending it.
+            else:
+                raise ExecutionBackendError(
+                    f"RiskDecision not executable: {validation.kind}: "
+                    f"{validation.detail}"
+                )
 
         if not request.reduce_only and self._kill_switch_provider is not None:
             try:
@@ -413,6 +540,15 @@ no synthesized defaults, no fallback account, no review bypass.
                 raise ExecutionBackendError("KILL_SWITCH_UNAVAILABLE") from exc
             if switch.active:
                 raise ExecutionBackendError("KILL_SWITCH: new exposure is blocked")
+
+        if self._submit_workflow is not None:
+            return self._submit_durable(
+                intent=intent,
+                decision=decision,
+                request=request,
+                account_id=context.account.account_id,
+                context_version=context.context_version,
+            )
 
         try:
             result = _run_blocking(
@@ -429,11 +565,7 @@ no synthesized defaults, no fallback account, no review bypass.
         except (BrokerAdapterError, NotImplementedError) as exc:
             raise ExecutionBackendError(str(exc)) from exc
 
-        # S5 crash injection hook for restart recovery test (GUIDE S5 criteria)
-        if os.environ.get("ALPHABRIEF_TEST_CRASH_AT") == "after_submit":
-            import signal
-
-            os.kill(os.getpid(), signal.SIGKILL)
+        _crash_if_configured("after_submit")
         filled = result.status == BrokerOrderStatus.FILLED
         return ExecutionBackendResult(
             execution_backend="external_paper",
@@ -443,21 +575,168 @@ no synthesized defaults, no fallback account, no review bypass.
             broker_status=str(result.status),
             broker_result_json=result.model_dump(mode="json"),
             filled=filled,
-            fill_price=None,
-            fill_quantity=quantity if filled else None,
+            # Only the broker's own facts: an adapter that reports FILLED
+            # without fill facts yields an unknown fill size, never the
+            # requested quantity.
+            fill_price=result.fill_price if filled else None,
+            fill_quantity=(
+                result.filled_units
+                if filled and result.filled_units is not None
+                and result.filled_units > 0
+                else None
+            ),
             fill_json=None,
             risk_context_version=context.context_version,
         )
+
+    def _submit_durable(
+        self,
+        *,
+        intent: OrderIntent,
+        decision: RiskDecision,
+        request: SubmitRequest,
+        account_id: str,
+        context_version: str,
+    ) -> ExecutionBackendResult:
+        """Send through the durable workflow: reserve, bind, send, settle.
+
+        A crash at any point leaves a deterministic ledger boundary; the
+        next process settles the in-flight identity by query and never
+        re-sends it. New exposure is refused while any freeze is active.
+        """
+        workflow = self._submit_workflow
+        assert workflow is not None  # guarded by the caller
+        self._ensure_startup_sync()
+        if not request.reduce_only and self._freeze_store is not None:
+            try:
+                self._freeze_store.ensure_new_exposure_allowed(account_id)
+            except FreezeActiveError as exc:
+                raise ExecutionBackendError(f"EXPOSURE_FROZEN: {exc}") from exc
+
+        def _send() -> SubmitOutcome:
+            result = _run_blocking(
+                self._adapter.submit(request, client_order_id=intent.intent_id)
+            )
+            return _outcome_from_submit(result)
+
+        try:
+            outcome = workflow.run(
+                cycle_id=intent.cycle_id or intent.intent_id,
+                intent_id=intent.intent_id,
+                decision_id=decision.decision_id,
+                payload_hash=_payload_hash(request),
+                submit=_send,
+                client_order_id=intent.intent_id,
+            )
+        except LedgerTransitionError as exc:
+            raise ExecutionBackendError(
+                f"ORDER_LEDGER {exc.kind}: {exc}"
+            ) from exc
+        if outcome.state == "FROZEN":
+            raise ExecutionBackendError(f"SUBMIT_UNKNOWN: {outcome.detail}")
+        filled = (outcome.broker_state or "").upper() == "FILLED"
+        return ExecutionBackendResult(
+            execution_backend="external_paper",
+            order_id=outcome.broker_order_id or intent.intent_id,
+            client_order_id=outcome.client_order_id or intent.intent_id,
+            broker_order_id=outcome.broker_order_id,
+            broker_status=outcome.broker_state,
+            broker_result_json=outcome.model_dump(mode="json"),
+            filled=filled,
+            fill_price=outcome.fill_price if filled else None,
+            fill_quantity=(
+                outcome.filled_units if filled and outcome.filled_units > 0 else None
+            ),
+            fill_json=None,
+            risk_context_version=context_version,
+            # The decision the order actually executed under, which a
+            # replay returns unchanged even when the gate re-evaluated.
+            risk_decision_id=outcome.decision_id or decision.decision_id,
+        )
+
+    def _ensure_startup_sync(self) -> None:
+        """Settle in-flight submits once per backend before the first send."""
+        if self._startup_synced:
+            return
+        self.startup_sync()
+        self._startup_synced = True
 
 
 def _resolver_for(adapter: BrokerAdapter) -> UnknownOutcomeResolver | None:
     """Build the resolver for an OANDA practice adapter, if it is one."""
     from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
-    from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
 
     if isinstance(adapter, OandaPaperAdapter):
         return UnknownOutcomeResolver(OrderOpsClient(adapter.client))
     return None
+
+
+def _durable_account_id(adapter: BrokerAdapter) -> str:
+    """The broker account the durable ledger records freezes against."""
+    from alphabrief_execution.broker.oanda.adapter import OandaPaperAdapter
+
+    if isinstance(adapter, OandaPaperAdapter):
+        return str(adapter.client.account_id)
+    return "external-paper"
+
+
+def _payload_hash(request: SubmitRequest) -> str:
+    """Hash the exact executable request bound to one submit identity.
+
+    The workflow refuses to send when the current request no longer
+    matches the bound decision's payload, so a re-evaluated decision that
+    changed any executable field cannot silently replace the original.
+    """
+    payload = request.model_dump(mode="json", exclude_none=True)
+    return sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _outcome_from_submit(result: SubmitResult) -> SubmitOutcome:
+    """Map one broker-neutral submit result onto the broker's own facts."""
+    return SubmitOutcome(
+        broker_order_id=result.broker_order_id,
+        state=result.broker_state or str(result.status),
+        filled_units=(
+            result.filled_units
+            if result.filled_units is not None
+            else Decimal("0")
+        ),
+        fill_price=result.fill_price,
+    )
+
+
+def _crash_if_configured(point: str) -> None:
+    """Test-only crash hook: SIGKILL the process at a named point.
+
+    Honoured only when ``ALPHABRIEF_TEST_CRASH_AT`` names this point and
+    the test marker is active (``ALPHABRIEF_TEST_CRASH_ENABLED=1``), so a
+    stray environment variable can never kill a production run.
+    """
+    if os.environ.get("ALPHABRIEF_TEST_CRASH_ENABLED") != "1":
+        return
+    if os.environ.get("ALPHABRIEF_TEST_CRASH_AT") != point:
+        return
+    import signal
+
+    os.kill(os.getpid(), signal.SIGKILL)
+
+
+def _test_fault_hook() -> Callable[[str], None]:
+    """Workflow fault hook that honours the same test-only crash switch.
+
+    ``ALPHABRIEF_TEST_CRASH_AT=after_submit`` names the same boundary as
+    the workflow's ``after_send`` fault point: the broker accepted the
+    order but the durable result was not recorded yet.
+    """
+
+    def _fault(point: str) -> None:
+        if point == "after_send":
+            _crash_if_configured("after_submit")
+        _crash_if_configured(point)
+
+    return _fault
 
 
 def _default_risk_sources(

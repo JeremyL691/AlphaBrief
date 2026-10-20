@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import socket
+import tempfile
 import threading
 import time
 from collections.abc import Iterator
@@ -28,7 +29,25 @@ from axe_playwright_python.sync_playwright import Axe
 from playwright.sync_api import Browser, Page, sync_playwright
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-IMAGES_DIR = REPO_ROOT / "docs" / "images"
+RELEASE_IMAGES_DIR = REPO_ROOT / "docs" / "images"
+
+#: Opt-in switch that points the capture test at the tracked release
+#: screenshots. Without it a test run must not modify the repository.
+SCREENSHOT_SWITCH = "ALPHABRIEF_UPDATE_SCREENSHOTS"
+
+
+def resolve_capture_dir() -> Path:
+    """Where the screenshot test writes its PNGs.
+
+    ``docs/images/`` holds committed release material. Writing it on every
+    test run would leave the working tree dirty after a plain
+    ``pytest``, so the default is a directory under the system temp dir.
+    Only the explicit switch ``ALPHABRIEF_UPDATE_SCREENSHOTS=1`` targets the
+    repository copy.
+    """
+    if os.environ.get(SCREENSHOT_SWITCH, "").strip() == "1":
+        return RELEASE_IMAGES_DIR
+    return Path(tempfile.gettempdir()) / "alphabrief-e2e" / "images"
 
 ALL_VIEWS = [
     "overview",
@@ -182,7 +201,8 @@ def test_playwright_themes_and_screenshots(
     live_server_url: str,
 ) -> None:
     """Capture screenshots for Light and Dark themes for all main views."""
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    images_dir = resolve_capture_dir()
+    images_dir.mkdir(parents=True, exist_ok=True)
     page = browser.new_page(viewport={"width": 1440, "height": 900})
 
     try:
@@ -195,7 +215,7 @@ def test_playwright_themes_and_screenshots(
                 "() => document.documentElement.setAttribute('data-theme', 'light')"
             )
             page.wait_for_timeout(100)
-            light_path = IMAGES_DIR / f"{view}_light.png"
+            light_path = images_dir / f"{view}_light.png"
             page.screenshot(path=str(light_path), full_page=False)
             assert light_path.exists() and light_path.stat().st_size > 0
 
@@ -204,7 +224,7 @@ def test_playwright_themes_and_screenshots(
                 "() => document.documentElement.setAttribute('data-theme', 'dark')"
             )
             page.wait_for_timeout(100)
-            dark_path = IMAGES_DIR / f"{view}_dark.png"
+            dark_path = images_dir / f"{view}_dark.png"
             page.screenshot(path=str(dark_path), full_page=False)
             assert dark_path.exists() and dark_path.stat().st_size > 0
 

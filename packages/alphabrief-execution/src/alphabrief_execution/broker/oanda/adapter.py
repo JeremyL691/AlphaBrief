@@ -198,6 +198,7 @@ class OandaPaperAdapter(BrokerAdapter):
                 client_order_id=client_order_id,
                 status=current.status,
                 accepted_at=current.submitted_at,
+                filled_units=current.filled_quantity,
             )
 
         instrument = self.instrument_metadata(request.symbol)
@@ -245,6 +246,11 @@ class OandaPaperAdapter(BrokerAdapter):
                 else BrokerOrderStatus.NEW
             ),
             accepted_at=self._clock.now(UTC),
+            # The create response's fill transaction is the only fill
+            # authority; a pending order reports no fill facts.
+            broker_state=created.state,
+            filled_units=created.filled_units,
+            fill_price=created.fill_price,
         )
 
     # ------------------------------------------------------------------
