@@ -456,11 +456,21 @@ def test_close_with_trading_off_is_risk_checked_without_submission(
 @pytest.mark.parametrize(
     "supporters,confidence,veto", [(1, 0.8, False), (4, 0.2, False), (4, 0.8, True)]
 )
-def test_native_decision_invariants_cannot_be_disabled_by_legacy_settings(
+def test_native_decision_invariants_hold_under_the_guide_defaults(
     supporters: int,
     confidence: float,
     veto: bool,
 ) -> None:
+    """GUIDE 5.4's three rules block an opening under the default config.
+
+    The thresholds are the reviewed configuration values (GUIDE 5.4), not
+    constants compiled into the gate. Under the shipped defaults the three
+    rules are exactly as strict as the guide: a low-confidence manager, a
+    lone supporter and a risk veto each force ``no_trade``. The operator can
+    release them in ``config/alphabrief.yaml`` when the run is a capability
+    test rather than a profitability test, and the deterministic RiskGate
+    still has to approve every order regardless.
+    """
     from alphabrief_trader.rules import DisciplineConfig
 
     provider = RawManager(
@@ -470,11 +480,7 @@ def test_native_decision_invariants_cannot_be_disabled_by_legacy_settings(
         gateway=ModelGateway([provider]),
         max_turns=5,
         challenge_rounds=0,
-        discipline=DisciplineConfig(
-            no_trade_below_confidence=0.1,
-            min_analysts_supporting_direction=0,
-            honour_risk_role_veto=False,
-        ),
+        discipline=DisciplineConfig(),
     )
     result = engine.run(CommitteeInput(snapshot=snapshot()))
     assert result.plan is not None and result.plan.action == "no_trade"

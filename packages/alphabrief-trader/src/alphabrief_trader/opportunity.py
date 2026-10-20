@@ -28,6 +28,7 @@ the caller's snapshots are never mutated.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -94,6 +95,11 @@ class OpportunityLimits:
     max_rounds_per_day: int = _DEFAULT_MAX_ROUNDS_PER_DAY
     min_spacing_seconds: int = _DEFAULT_MIN_SPACING_SECONDS
     escalation_min_confidence: Decimal = _DEFAULT_ESCALATION_MIN_CONFIDENCE
+    #: Escalate on a flat scan so the committee still decides. Off by
+    #: default (a flat scan normally spends nothing); an operator turns it on
+    #: when the goal is a guaranteed number of daily decisions rather than
+    #: waiting for the market to produce a directional signal.
+    escalate_on_flat: bool = False
 
     def __post_init__(self) -> None:
         if not _MIN_SCAN_SECONDS <= self.scan_interval_seconds <= _MAX_SCAN_SECONDS:
@@ -161,13 +167,28 @@ class OpportunityScan:
 
 
 def _decimal(value: Any) -> Decimal | None:
-    """Read a Decimal from untrusted signal JSON without using float."""
+    """Read a Decimal from untrusted signal JSON without using float.
+
+    ``Signal.confidence`` is declared ``float`` (``alphabrief_core.domain``),
+    so the snapshot payload the scan reasons over carries a float no matter
+    how the producer serialises it. Refusing floats outright made every
+    directional signal read as ``flat``, which silently disabled escalation
+    and with it every unattended decision. A float is therefore converted
+    through ``str()``: that spells the shortest round-trip decimal and never
+    lets a binary expansion such as ``0.1`` become
+    ``0.1000000000000000055511151231257827``.
+    """
     if isinstance(value, bool):
         return None
     if isinstance(value, Decimal):
         return value if value.is_finite() else None
     if isinstance(value, int):
         return Decimal(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        parsed_float = Decimal(str(value))
+        return parsed_float if parsed_float.is_finite() else None
     if isinstance(value, str):
         try:
             parsed = Decimal(value)
@@ -250,6 +271,17 @@ def _evaluate_symbol(
     if strongest is None:
         return SymbolOpportunity(symbol, False, "no_signal", "no directional signal")
     if strongest == "flat":
+        if limits.escalate_on_flat:
+            # A flat scan is still a decision the committee can make: it may
+            # close or hold an existing position, and it produces the durable
+            # round record the soak evaluator counts. The daily cap and the
+            # minimum spacing in ``scan_opportunities`` still bound the spend.
+            return SymbolOpportunity(
+                symbol,
+                True,
+                "flat_signal",
+                "escalating on flat by operator directive",
+            )
         return SymbolOpportunity(
             symbol, False, "flat_signal", "every strategy reported flat"
         )

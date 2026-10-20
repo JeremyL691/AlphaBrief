@@ -10,8 +10,8 @@
 |---|---|
 | 当前阶段 | **S10 14 天试运行（0 / 14 合格日，待部署 rc.5 后从 Day 0 起算）** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 构建并冒烟 1.0.0-rc.5（含日志脱敏），`service install` 部署后确认 `/api/v1/models` 报告 openrouter_free / 1000、`ai_daily_cycle` 按 180 秒写入、出站只到 practice 与配置源；然后 `soak reset` + `soak start` 从 Day 0 起算 |
-| 最近更新 | 2026-10-20 UTC 部署 rc.3 时发现并修复配置解析缺陷（后台在数据目录启动，模型通道与日预算回落到默认值），已升 rc.4 重新部署。此前 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
+| 下一项任务 | S9 门禁：rc.5 连续运行 24 小时（至少覆盖 2 个机会轮），逐项核对 GUIDE S9 清单（进程不退出、每轮有记录、对账干净、无重复订单、每单可追 RiskDecision、出站白名单、日报与 doctor、模型预算、CI 绿）；通过后 `soak reset` + `soak start` 从 Day 0 起算 |
+| 最近更新 | 2026-10-20 06:45 UTC 修复「机会扫描永不升级」缺陷并放宽委员会门槛（operator 授权），全量离线门禁 3719 passed / 1 flaky（Playwright 端口竞态，单跑通过）。发现并修复三个缺陷：① `opportunity._decimal()` 拒收 float，而 `Signal.confidence` 声明为 float，导致每个真实信号都读成 `flat`，`opportunity:` 轮次历史 0 次，自主决策从未运行；② `MomentumStrategy` 只做多，下跌行情恒为 flat；③ `rules.py` 三处 `max(..., 硬编码)` 让配置形同虚设（confidence 0.55 / 分析师 2 位 / risk veto 在生产路径强制生效）。同时把 momentum universe 不匹配导致的每轮刷屏警告改为静默跳过。此前 2026-10-20 03:35 UTC 确认 1.0.0-rc.5 稳定部署（PID 153，plist 0600 无凭证，`/api/v1/models` 报告 openrouter_free / nemotron-3-super-120b-a12b:free / 1000 次 / 0 USD，`ai_daily_cycle` 每 180 秒写入且判定 flat_signal，日志 0 处账户 ID 泄露），开始 S9 24 小时门禁观察。此前 2026-10-20 UTC 部署 rc.3 时发现并修复配置解析缺陷（后台在数据目录启动，模型通道与日预算回落到默认值），已升 rc.4 重新部署。此前 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -788,6 +788,42 @@
 - 出站边界复核：OANDA 基址为常量 `https://api-fxpractice.oanda.com`，模型通道为 `https://openrouter.ai/api/v1`，`production_safety_violations()` 返回 none；结构扫描确认没有 live 主机或第二券商。
 - 质量门禁：全量 `pytest -q -m "not practice" --ignore=tests/test_e2e_playwright.py` → 3679 passed / 13 deselected；`ruff check .`、`mypy` 523 文件通过。
 
+#### S10 CI 转绿与 surfaces 一致性（2026-10-20 UTC，本提交）
+
+本轮推送首次真正跑起 CI（`gh api .../actions/permissions` 此前为 `enabled: false`，已在仓库设置侧恢复；随后 `gh workflow run` 与推送都能触发）。CI 暴露四类问题，逐一处理：
+
+1. **CI 未安装 Playwright 浏览器**：8 个 e2e 用例全部 `Executable doesn't exist`。`ci.yml` 增加 `python -m playwright install --with-deps chromium`，让真实浏览器断言继续被覆盖而不是跳过；`browser` fixture 在缺浏览器时 `pytest.skip` 并给出修复命令（环境缺口不等于代码缺陷）。
+2. **帮助文本断言受终端宽度影响**：三处测试断言渲染后的 `--help`。本机宽 TTY 显示 `--risk-context`，CI 窄日志会**截断**成 `--risk-c…`。改为读取命令对象声明的 `param.opts`，与宽度无关；实测在 `COLUMNS=40/80/200` 下均通过。
+3. **本地文档契约在 CI 不成立**：`AGENTS.md` / `docs/AGENT_PROMPT.md` 正是推送 hook 禁止发布的文件，干净 clone 里没有它们。改为非开发检出或无本地文档时明确 skip，只有"部分存在"的歧义状态才失败。
+4. **真实契约缺陷**：`alphabrief scheduler status` 与 `GET /api/v1/scheduler/status` 描述同一份持久状态，但 CLI 用 `_iso` 渲染、API 直接透传 DuckDB 返回的 datetime，且 CLI 输出带 `-07:00` 本地偏移。两端统一为 UTC ISO-8601（符合"时间一律以 UTC 存储"），新增 `tests/test_scheduler_surface_parity.py` 逐字段比对两个表面的输出。
+
+- CI 结果：`gh run list` → **conclusion=success**，headSha `3b8c71d`（`S10: 选项断言改读命令参数，避免终端宽度截断`）。
+- 后台状态：`/health` = `1.0.0-rc.5`，进程连续运行 1 小时 3 分，`ai_daily_cycle` 持续按 180 秒判定 `flat_signal`。
+- 质量门禁：全量 `pytest -q -m "not practice"` → 3694 passed / 13 deselected；`ruff check .`、`mypy` 524 文件、`secret_scan` 全部通过。
+
+### S9 门禁进展（2026-10-20 UTC）
+
+rc.5 自 **2026-10-20 03:31 UTC** 起以 `trading_mode=on` 常驻运行，24 小时观察窗口约在 **2026-10-21 03:31 UTC** 结束。已可确认的项：
+
+- [x] 进程未意外退出：`/health` = `1.0.0-rc.5`，LaunchAgent runs 计数未增长（无崩溃重启）。
+- [x] 每个计划轮次都有记录：`ai_daily_cycle` 已写入 **31 次**（20:07:05 → 21:34:15 UTC，间隔 180 秒），每次判定 `flat_signal`，为合法的 `no_trade` 证据。
+- [x] 对账干净：`/api/v1/broker/status` → `all_match: true`，`open_freezes: []`；库内开放冻结 0 个。
+- [x] 没有重复订单：`order_ledger_reservations` 0 行（本期无提交），无重复 `client_order_id`。
+- [x] 每笔订单可追持久 RiskDecision：本期无订单；规则由账本唯一键与 `decision_id` 关联保证。
+- [x] 出站白名单：OANDA 基址为常量 `https://api-fxpractice.oanda.com`，模型通道 `https://openrouter.ai/api/v1`，`production_safety_violations()` 返回 none；日志 0 处完整账户 ID。
+- [x] 日报与 doctor：`doctor run` 0 FAIL；6 个新闻源全部可达；OANDA practice 可达。
+- [x] 模型预算：`/api/v1/models` → `daily_call_limit: 1000`、`calls_remaining: 1000`、`openrouter_free`、零成本上限。
+- [x] CI 全绿：`gh run list` → conclusion=success，headSha `3b8c71d`。
+
+**2026-10-20 04:40 UTC 复核（HEAD `bf6c693`）**：
+
+- 质量门禁在 HEAD 上重跑确认：`pytest -q -m "not practice"` → **3694 passed / 13 deselected，exit 0**（242 秒）；`ruff check .` All checks passed；`mypy` 524 文件 Success；`scripts/secret_scan.py` 退出码 0；`git diff --check` 退出码 0。
+- 后台连续运行 **1 小时 9 分**（20:31:09 local 起），LaunchAgent `runs = 1`（无崩溃重启），`/health` = `1.0.0-rc.5`。
+- `ai_daily_cycle` 累计 32 次运行、0 错误。其中 3 处短间隔（142.6s / 126.8s / 94.0s）逐一对应部署重启时刻（20:18 部署 rc.4、20:29 与 20:31 部署 rc.5），属重启后任务立即执行，不是漏轮。**rc.5 最终部署后 23 次运行间隔全部为 180.2–180.3 秒，无一处异常或缺口。**
+- 安全事实：开放冻结 0 个；`order_ledger_reservations` 0 行；"有订单但无持久 RiskDecision" 计数 0。
+
+待完成：窗口走完（约 2026-10-21 03:31 UTC）后再复核一次并记录最终结论，然后 `soak reset`（记下 run 1 的失败原因）+ `soak start` 从 Day 0 起算。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -814,6 +850,11 @@
 
 ## 决策记录
 
+- 2026-10-20 UTC / 机会扫描永不升级的根因与修复 / 让 `opportunity._decimal()` 接受 float（经 `str()` 转 Decimal），并把策略信号的 confidence 序列化为十进制字符串 / `Signal.confidence` 在 `alphabrief_core.domain` 声明为 `float`，而 `_decimal()` 明确拒收 float，于是每个真实方向信号都被读成 "flat"。后果是升级路径从未成功：57 个轮次里 0 个 `opportunity:` 轮次，自主决策一次都没跑过，历史 3 笔成交全部来自 CLI `--force-direction` 强制覆盖。既有测试用字符串写 confidence（`"0.80"`），所以从未覆盖生产实际载荷。修复后补了用真实 `Signal.model_dump()` 构造的端到端回归测试，并做了回退验证（2 failed → 19 passed）。
+- 2026-10-20 UTC / momentum 策略增加空头 / `close < close[-20]` 时输出 `short`，与 `alphabrief_trader.shadow.momentum_side` 的方向语义对齐 / 原实现只输出 `long` 或 `flat`，下跌行情恒为无意见，即使强制跑轮也拿不到可交易信号。GUIDE 6.4 的策略只产生证据、不产生订单，因此增加空头不改变任何下单权限。
+- 2026-10-20 UTC / 委员会三条门槛改为可配置（operator 授权放宽） / 新增 `trading.discipline` 配置段承载 GUIDE 5.4 的三条规则，默认值仍为置信度 0.55、至少 2 位分析师、risk veto 生效；当前部署放开为 `"0"` / `0` / `no_consensus` / `false` / `max_position_pct: "0.95"` / 用户明确指示：试运行阶段验证的是"能否真实成交"而非盈利性，且授权覆盖 `AGENTS.md` 中"风控数值只能收紧不能放宽"的约束。原先代码里三处 `max(..., 硬编码)`（confidence 0.55、分析师 2 位、risk veto 无条件生效）会让配置形同虚设，是"读起来像已评审、实际被忽略"的缺陷，已一并删除。**安全边界不变**：RiskGate 的 14 条确定性规则、止损止盈保护单、`trading_mode` 开关、实盘不可达、practice 主机硬锁全部照旧，每笔订单仍须单独通过风控。**恢复计划**：试运行结束或转回盈利性验证时，把 `trading.discipline` 恢复为 GUIDE 默认值即可，不需要改代码。
+- 2026-10-20 UTC / 机会检查频率上调 / 扫描 180→120 秒、当日上限 15→20 轮、两轮最小间隔 600→900 秒、开启 `escalate_on_flat` / 用户要求"每天至少 5 轮决策，越多越好，无信号也强制跑"。预算按实测校准：单轮 21–31 次调用，20 轮约 620 次，仍在免费通道 1000 次/日硬顶内；`max_rounds_per_day` 与 `min_spacing_seconds` 双重限流防止 flat 升级变成无限刷轮。取得预算失败的轮次记录 `skipped_model_budget`，不伪造决策。
+- 2026-10-20 UTC / 策略 universe 不匹配的处理 / 在某品种不满足 `StrategySpec.universe` 时直接跳过该策略，不再运行后抛异常 / 运行时 universe 是 EUR_USD/GBP_USD/USD_JPY，而启用的 momentum spec 只覆盖 EUR_USD，于是每次扫描都为另两个品种刷一条 `signal symbol must be in StrategySpec universe` 警告。这是作用域决策而非失败，静默跳过并保持 `strategy_signals == {}`。
 - 2026-10-20 UTC / 配置解析失败时的兜底语义 / 找不到配置文件仍返回评审默认值，但查找范围扩到仓库根与包位置上溯，且相对路径按仓库根锚定 / 原实现把"后台在数据目录启动"误判成"没有配置文件"，静默换上另一套模型通道与日预算。放宽查找范围既保留"缺文件可用默认值"的部署弹性，又消除"运行了未经评审的配置"这一安全隐患。
 - 2026-10-20 UTC / 机会检查的升级参数取值 / 扫描 180 秒、当日最多 15 轮委员会、两轮最少间隔 600 秒、升级置信度 0.60 / GUIDE 5.1 只给"每 1–5 分钟"与"满足策略和风控才发单"，没有给次数上限；按"一轮约 39 次调用、免费通道 1000 次/日"反推，15 轮最坏 585 次仍留出修复、影子基准与其他任务的余量。置信度 0.60 高于委员会自带的 0.55 底线，让便宜扫描比昂贵委员会更保守。四个值都写进 config 并受严格加载器校验，可在不改代码的情况下收紧。
 - 2026-10-20 UTC / 固定决策轮的去留 / 从 `DEFAULT_SCHEDULE` 删除 `decision_round_tokyo/london/newyork`，只保留周五平仓、日报、备份 / GUIDE 5.1 已把"三个固定轮次"改为"开市期间每 1–5 分钟机会检查"，两套并存会让 planner 与常驻任务各自下单。删除后 planner 只负责每日锚点，交易机会完全由 `ai_daily_cycle` 驱动。

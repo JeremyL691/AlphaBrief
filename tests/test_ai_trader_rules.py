@@ -354,3 +354,88 @@ class TestDirectionAgreement:
 
         assert plan.target_position_pct == Decimal("0")
         assert "below no_trade_below_confidence" in plan.rationale
+
+
+class TestReviewedDisciplineOverrides:
+    """The configured thresholds must actually take effect.
+
+    Two hard floors used to override the reviewed config whenever the manager
+    emitted a native action (which production always does): the confidence
+    floor became ``max(config, 0.55)`` and the risk veto was honoured even with
+    ``honour_risk_role_veto=False``. A config that cannot take effect is worse
+    than no config: it reads as reviewed while the code silently ignores it.
+    The safety net for a low-confidence plan is now the RiskGate, not a
+    constant that overrides the operator's reviewed decision.
+    """
+
+    def test_zero_floor_lets_a_low_confidence_plan_through(self) -> None:
+        """Production always carries a native manager action, so the floor
+        must be tested with one: that is the branch where ``max(config, 0.55)``
+        used to override the reviewed value."""
+        gate = DisciplineGate(
+            config=DisciplineConfig(
+                no_trade_below_confidence=0.0,
+                min_analysts_supporting_direction=0,
+                require_min_consensus="no_consensus",
+            )
+        )
+        plan = gate.synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.10, manager_action="open_long"),
+            analyst_votes=[
+                _vote(role="technical", view="bullish", confidence=0.2),
+            ],
+        )
+
+        assert plan.target_position_pct > 0
+        assert plan.confidence == 0.10
+
+    def test_risk_veto_is_releasable_by_config(self) -> None:
+        gate = DisciplineGate(
+            config=DisciplineConfig(
+                honour_risk_role_veto=False,
+                min_analysts_supporting_direction=0,
+                require_min_consensus="no_consensus",
+            )
+        )
+        plan = gate.synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.8, manager_action="open_long"),
+            analyst_votes=[
+                _vote(role="technical", view="bullish", confidence=0.8),
+                _vote(role="risk", view="uncertain", confidence=0.9, veto=True),
+            ],
+        )
+
+        assert plan.target_position_pct > 0
+        assert "risk role vetoed" not in plan.rationale
+
+    def test_risk_veto_still_blocks_by_default(self) -> None:
+        """The guide default is unchanged: a veto blocks new exposure."""
+        plan = DisciplineGate().synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.8, manager_action="open_long"),
+            analyst_votes=[
+                _vote(role="technical", view="bullish", confidence=0.8),
+                _vote(role="risk", view="uncertain", confidence=0.9, veto=True),
+            ],
+        )
+
+        assert plan.target_position_pct == Decimal("0")
+        assert "risk role vetoed" in plan.rationale
+
+    def test_default_floor_still_blocks_low_confidence_with_native_action(
+        self,
+    ) -> None:
+        """With the guide default, a native-action plan below 0.55 stays flat."""
+        plan = DisciplineGate().synthesize(
+            symbol="EUR_USD",
+            manager_vote=_vote(confidence=0.20, manager_action="open_long"),
+            analyst_votes=[
+                _vote(role="technical", view="bullish", confidence=0.8),
+                _vote(role="intermarket", view="bullish", confidence=0.7),
+            ],
+        )
+
+        assert plan.target_position_pct == Decimal("0")
+        assert "below no_trade_below_confidence" in plan.rationale

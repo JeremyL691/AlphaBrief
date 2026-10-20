@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -134,7 +135,6 @@ def test_service_install_units_and_executable_plist_args(
     import plistlib
 
     from alphabrief_cli.run_commands import run_cmd as _run_cmd  # noqa: F401
-    from typer.testing import CliRunner as _CliRunner
 
     mock_launchctl = MagicMock(
         return_value=subprocess.CompletedProcess(
@@ -177,11 +177,23 @@ def test_service_install_units_and_executable_plist_args(
         assert args.index("on") == args.index("--trading-mode") + 1
         assert args.index("1000") == args.index("--units") + 1
 
-        # Every option and value pair in the plist must be accepted by
-        # `alphabrief run run --help`.
-        helptext = _CliRunner().invoke(app, ["run", "run", "--help"]).output
-        iterator = iter(range(len(args)))
-        for i in iterator:
-            token = args[i]
+        # Every option in the plist must be accepted by `run run`.
+        # Compare against the command's declared parameters rather than
+        # the rendered help: Click wraps help text at the detected
+        # terminal width, so a wide local TTY and a narrow CI log break
+        # a naive substring match in different places.
+        # Read the options the command declares, not the rendered help:
+        # Click wraps and truncates long options at the detected terminal
+        # width, so a narrow CI log shows "--risk-c..." while a wide local
+        # TTY shows the full name.
+        import typer.main
+
+        root: Any = typer.main.get_command(app)
+        command: Any = root.commands["run"].commands["run"]
+        accepted = {
+            option for param in command.params for option in param.opts
+        }
+        assert accepted, "run run declares no options"
+        for token in args:
             if token.startswith("--"):
-                assert f"{token}" in helptext, f"{token} not accepted by run run"
+                assert token in accepted, f"{token} not accepted by run run"

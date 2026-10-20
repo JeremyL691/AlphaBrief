@@ -428,9 +428,12 @@ electron/       桌面外壳与打包配置
    "rationale": "...", "evidence_ids": ["..."]}
   ```
 - **决策规则**（确定性）：
-  - `confidence < 0.55` → `no_trade`；
-  - `risk` 角色 `veto=true` → `no_trade`；
-  - 开仓方向至少要有 2 个分析角色支持；
+  - 默认值（`config/alphabrief.yaml` 的 `trading.discipline`）：
+    - `confidence < 0.55` → `no_trade`；
+    - `risk` 角色 `veto=true` → `no_trade`；
+    - 开仓方向至少要有 2 个分析角色支持。
+  - 这三个门槛取自评审配置 `trading.discipline`，不是编译期常量。默认值即上面三条；试运行若要验证的是"能否真实成交"而不是盈利性，operator 可以在该段显式放开（`no_trade_below_confidence: "0"`、`min_analysts_supporting_direction: 0`、`honour_risk_role_veto: false`），并在 STATUS 决策记录写明理由与恢复计划。
+  - 无论门槛如何配置，`RiskGate` 的 14 条确定性风控规则、止损止盈保护单要求和 `trading_mode` 开关都仍然生效，每笔订单必须单独通过。
   - 已有同向持仓时 `open_*` 视为 `hold`；
   - 已有反向持仓时 `open_*` 先平仓，下一轮再考虑新开仓（不在同一轮反手）。
 - **证据约束**：`evidence_ids` 必须引用本轮实际提供的输入 ID。引用不存在的 ID 时，该份意见作废。

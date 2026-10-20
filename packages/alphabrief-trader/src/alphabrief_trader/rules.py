@@ -198,9 +198,13 @@ class DisciplineGate:
             )
 
         # Confidence gate — below floor → hold with zero target.
+        #
+        # The floor is the reviewed configuration value. It used to become
+        # ``max(config, 0.55)`` whenever the manager emitted a native action,
+        # which silently overrode the reviewed number on every production
+        # round. The operator's threshold is the contract; the deterministic
+        # RiskGate remains the safety net that must still approve the order.
         confidence_floor = self.config.no_trade_below_confidence
-        if manager_vote.manager_action is not None:
-            confidence_floor = max(confidence_floor, 0.55)
         if manager_vote.confidence < confidence_floor:
             return TradePlan(
                 **native_fields,
@@ -254,8 +258,10 @@ class DisciplineGate:
             )
 
         # Risk-role veto (PROJECT_GUIDE 5.4): the risk analyst can block
-        # new exposure outright, not merely request human review.
-        if manager_vote.manager_action is not None or self.config.honour_risk_role_veto:
+        # new exposure outright, not merely request human review. The reviewed
+        # config decides whether that veto binds; a native manager action must
+        # not re-enable a veto the operator has released.
+        if self.config.honour_risk_role_veto:
             risk_veto = next(
                 (vote for vote in analyst_list if vote.role == "risk" and vote.veto),
                 None,
@@ -286,11 +292,13 @@ class DisciplineGate:
         # least ``min_analysts_supporting_direction`` analysts whose view
         # supports the manager's direction. A lone bullish manager against
         # uncertain analysts is not a mandate to open exposure.
+        #
+        # The quorum is the reviewed configuration value. It used to be
+        # clamped to 2 whenever the manager emitted a native action, which
+        # overrode an operator who deliberately released the quorum.
         opening = manager_vote.suggested_action in {"buy", "sell"}
         if opening:
             required = self.config.min_analysts_supporting_direction
-            if manager_vote.manager_action is not None:
-                required = max(required, 2)
             supporters = [
                 vote
                 for vote in analyst_list

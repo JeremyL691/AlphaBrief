@@ -396,3 +396,80 @@ def test_resolve_builtin_runner_maps_registered_ids() -> None:
     )
     assert resolve_builtin_runner("") is None
     assert resolve_builtin_runner("   ") is None
+
+
+# ---------------------------------------------------------------------------
+# MomentumStrategy direction coverage
+# ---------------------------------------------------------------------------
+
+
+def _momentum_input(closes: Sequence[str]) -> StrategyInput:
+    """A minimal momentum input; the runner reads closes only."""
+    bars = _bars(closes)
+    return StrategyInput(
+        spec=_spec().model_copy(update={"strategy_id": "momentum"}),
+        bars=bars,
+        features=[
+            FeatureRow(
+                symbol=bar.symbol,
+                timestamp=bar.timestamp,
+                source=bar.source,
+                data_version=bar.data_version,
+                values={},
+            )
+            for bar in bars
+        ],
+    )
+
+
+def test_momentum_emits_short_when_price_falls_below_the_window() -> None:
+    """A falling market must produce a short opinion, not a flat one.
+
+    ``MomentumStrategy`` used to emit only ``long`` or ``flat``, so every
+    down move read as "no view". The opportunity scan then never had a
+    directional signal in a falling market and the unattended runtime could
+    only ever no-trade. Short coverage is what makes the scan fire in both
+    directions.
+    """
+    from alphabrief_strategy.builtins import MomentumStrategy
+
+    window = 5
+    # Flat for the window, then a sharp drop on the last bar.
+    closes = ["1.10"] * window + ["1.05"]
+    output = run_strategy(
+        MomentumStrategy(window=window), _momentum_input(closes)
+    )
+
+    last = output.signals[-1]
+    assert last.direction == "short"
+    assert "momentum" in last.rationale
+
+
+def test_momentum_keeps_long_and_flat_semantics() -> None:
+    """Rising stays long, an unchanged close stays flat."""
+    from alphabrief_strategy.builtins import MomentumStrategy
+
+    window = 5
+    rising = run_strategy(
+        MomentumStrategy(window=window),
+        _momentum_input(["1.05"] * window + ["1.10"]),
+    )
+    assert rising.signals[-1].direction == "long"
+
+    unchanged = run_strategy(
+        MomentumStrategy(window=window),
+        _momentum_input(["1.10"] * (window + 1)),
+    )
+    assert unchanged.signals[-1].direction == "flat"
+
+
+def test_momentum_short_output_survives_the_strategy_validator() -> None:
+    """The interface validator must accept a short from the builtin runner."""
+    from alphabrief_strategy.builtins import MomentumStrategy
+
+    window = 5
+    output = run_strategy(
+        MomentumStrategy(window=window),
+        _momentum_input(["1.10"] * window + ["1.05"]),
+    )
+    assert output.signals[-1].direction in {"long", "short", "flat"}

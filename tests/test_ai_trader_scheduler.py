@@ -195,8 +195,41 @@ class _RiskSources:
         return Decimal("1")
 
 
+def _fixed_provider_committee(provider: Any) -> Any:
+    """A committee factory bound to one deterministic provider.
+
+    Mirrors ``build_ai_trading_committee``'s keyword contract, including the
+    ``discipline`` override the production cycle now passes explicitly.
+    """
+
+    def _factory(
+        *,
+        record_sink: Any = None,
+        daily_budget: Any = None,
+        validation_sink: Any = None,
+        discipline: Any = None,
+    ) -> TradingCommittee:
+        return TradingCommittee(
+            gateway=ModelGateway(
+                providers=[provider],
+                record_sink=record_sink,
+                daily_budget=daily_budget,
+                validation_sink=validation_sink,
+            ),
+            discipline=discipline or DisciplineConfig(),
+            max_turns=5,
+            challenge_rounds=0,
+        )
+
+    return _factory
+
+
 def _fake_committee(
-    *, record_sink: Any = None, daily_budget: Any = None, validation_sink: Any = None
+    *,
+    record_sink: Any = None,
+    daily_budget: Any = None,
+    validation_sink: Any = None,
+    discipline: Any = None,
 ) -> TradingCommittee:
     provider = GroundedProvider(
         provider_name="fake",
@@ -796,19 +829,7 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setattr(
             cycle_commands,
             "build_ai_trading_committee",
-            lambda record_sink=None, daily_budget=None, validation_sink=None: (
-                TradingCommittee(
-                    gateway=ModelGateway(
-                        providers=[provider],
-                        record_sink=record_sink,
-                        daily_budget=daily_budget,
-                        validation_sink=validation_sink,
-                    ),
-                    discipline=DisciplineConfig(),
-                    max_turns=5,
-                    challenge_rounds=0,
-                )
-            ),
+            _fixed_provider_committee(provider),
         )
 
         _seed_risk_sized_inputs(isolated_data_dir, seed_spreads=condition != "spread")
@@ -1124,19 +1145,7 @@ class TestSchedulerRunsAiTask:
         monkeypatch.setattr(
             cycle_commands,
             "build_ai_trading_committee",
-            lambda record_sink=None, daily_budget=None, validation_sink=None: (
-                TradingCommittee(
-                    gateway=ModelGateway(
-                        providers=[provider],
-                        record_sink=record_sink,
-                        daily_budget=daily_budget,
-                        validation_sink=validation_sink,
-                    ),
-                    discipline=DisciplineConfig(),
-                    max_turns=5,
-                    challenge_rounds=0,
-                )
-            ),
+            _fixed_provider_committee(provider),
         )
         _seed_risk_sized_inputs(isolated_data_dir)
 

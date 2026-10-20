@@ -32,6 +32,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev]'
 
+      # The dashboard assertions are real browser tests. Installing the
+      # browser keeps them covered in CI instead of skipping them, which
+      # is what happened while this step was missing.
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+
       - name: Ruff
         run: python -m ruff check .
 
