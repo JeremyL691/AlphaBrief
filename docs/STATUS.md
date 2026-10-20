@@ -11,7 +11,7 @@
 | 当前阶段 | **S10 14 天试运行（0 / 14 合格日，待部署 rc.3 后从 Day 0 起算）** |
 | 状态 | `IN_PROGRESS` |
 | 下一项任务 | 构建 1.0.0-rc.3 的 dmg 并冒烟；`service install` 部署（plist 无凭证、0600）；验证 `ai_daily_cycle` 写入、`/api/v1/soak/status` 与 `/api/v1/models` 返回 200、出站只到 practice 与配置源；然后 `soak reset` + `soak start` 从 Day 0 起算 |
-| 最近更新 | 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
+| 最近更新 | 2026-10-20 UTC 部署 rc.3 时发现并修复配置解析缺陷（后台在数据目录启动，模型通道与日预算回落到默认值），已升 rc.4 重新部署。此前 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -768,6 +768,17 @@
 - `soak reset`（`e74654b`）：新增命令，非空原因、后台在线拒绝直写、沿用回填保护；旧 run 保留为 reset 历史，新 run 用 `run_index + 1`。
 - 质量门禁：全量 `pytest -q -m "not practice"` → **3668 passed / 13 deselected**（含 e2e）；`ruff check .` 通过；`mypy` 521 文件通过；`scripts/secret_scan.py` 退出码 0。每个行为都先写失败测试再实现（红→绿记录在各提交正文里），并补了两处变异测试确认断言有效。
 
+#### S10 部署 rc.3 与配置解析缺陷（2026-10-20 UTC，本提交）
+
+- rc.3 部署与验证（已完成的正面证据）：
+  - `scripts/build_release.sh` → `dist/AlphaBrief-1.0.0-rc.3-arm64.dmg`（138,814,821 字节）+ SHA256SUMS；`scripts/smoke_test_dmg.sh` → ALL CHECKS PASSED。
+  - `service install --trading-mode on` 后 plist 权限 **0600**、`EnvironmentVariables` 不含任何凭证键、`plist_audit` 为 `credential_keys: [] / world_readable: False`；审计同时确认**旧 plist 确实是 0644 且含 `ALPHABRIEF_OANDA_TOKEN`**（已先备份到 `/tmp`）。
+  - `/health` 返回 `1.0.0-rc.3`；`/api/v1/soak/status`、`/api/v1/models`、`/api/v1/risk/dashboard`、`/api/v1/ai/status` 全部 200。
+  - **`ai_daily_cycle` 首次写入运行历史**：20:07:05 与 20:10:05 两次，间隔正好 180 秒，status=ok；日志判定为 `no round (flat_signal)`，即扫描按设计工作（不浪费模型调用、留下可审计原因）。这直接证明 0 合格日的根因已解除。
+- 部署中发现的缺陷：`/api/v1/models` 报告主通道 `chatgpt_plan`、日上限 150，与 `config/alphabrief.yaml` 的 `openrouter_free` / 1000 不符。根因是 LaunchAgent 的 `WorkingDirectory` 为数据目录，而 `load_model_settings` 只在 cwd 找配置，找不到就静默返回 `ModelSettings()` 默认值——实际运行的通道与预算都不是被评审过的那一套。`runtime_config` 同样只搜 cwd，只是默认值恰好一致才没暴露。
+- 修复（`24e3057`）：两个加载器统一解析顺序（显式绝对路径 → 相对路径按仓库根锚定 → cwd → 仓库根含 bundle → 包位置上溯），"真的哪儿都没有"才用默认值。在数据目录实测：模型通道 `openrouter_free` / `nemotron-3-super-120b-a12b:free` / 1000 次 / 0 USD，运行时配置找到真实文件并返回 180s / 15 轮 / 600s / 0.60。
+- 质量门禁：全量 `pytest -q -m "not practice"` → 3676 passed / 13 deselected；`ruff check .`、`mypy` 522 文件、`secret_scan` 全部通过。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -794,6 +805,7 @@
 
 ## 决策记录
 
+- 2026-10-20 UTC / 配置解析失败时的兜底语义 / 找不到配置文件仍返回评审默认值，但查找范围扩到仓库根与包位置上溯，且相对路径按仓库根锚定 / 原实现把"后台在数据目录启动"误判成"没有配置文件"，静默换上另一套模型通道与日预算。放宽查找范围既保留"缺文件可用默认值"的部署弹性，又消除"运行了未经评审的配置"这一安全隐患。
 - 2026-10-20 UTC / 机会检查的升级参数取值 / 扫描 180 秒、当日最多 15 轮委员会、两轮最少间隔 600 秒、升级置信度 0.60 / GUIDE 5.1 只给"每 1–5 分钟"与"满足策略和风控才发单"，没有给次数上限；按"一轮约 39 次调用、免费通道 1000 次/日"反推，15 轮最坏 585 次仍留出修复、影子基准与其他任务的余量。置信度 0.60 高于委员会自带的 0.55 底线，让便宜扫描比昂贵委员会更保守。四个值都写进 config 并受严格加载器校验，可在不改代码的情况下收紧。
 - 2026-10-20 UTC / 固定决策轮的去留 / 从 `DEFAULT_SCHEDULE` 删除 `decision_round_tokyo/london/newyork`，只保留周五平仓、日报、备份 / GUIDE 5.1 已把"三个固定轮次"改为"开市期间每 1–5 分钟机会检查"，两套并存会让 planner 与常驻任务各自下单。删除后 planner 只负责每日锚点，交易机会完全由 `ai_daily_cycle` 驱动。
 - 2026-10-20 UTC / Agent 流程文档是否继续随仓库发布 / 继续跟踪 `AGENTS.md`、`docs/STATUS.md`、`docs/AGENT_PROMPT.md`，并把被改弱的 `tests/test_project_scaffold.py` 与 `tests/test_secret_scan_tool.py` 还原回 HEAD 版本 / 交接快照给了两条互斥选项，实测 HEAD 版的严格契约在当前工作区仍 20 passed，没有必须放宽的理由；三份文档已存在于 `origin/main`，`git rm --cached` 会让公开历史断裂且失去可追溯的规格来源。按"不为让检查变绿而放宽断言"保留严格契约。

@@ -114,6 +114,58 @@ class ModelSettings:
         )
 
 
+def _resolve_config_path(path: Path | None) -> Path | None:
+    """Find the reviewed configuration file, or ``None`` when absent.
+
+    An explicit path wins. Otherwise the repository copy is located from
+    the package location as well as the working directory: the
+    LaunchAgent starts the backend with ``WorkingDirectory`` set to the
+    data directory, so a cwd-only search silently missed the file and the
+    process ran on ``ModelSettings()`` defaults - a different primary
+    channel and a different daily call budget than the reviewed ones.
+
+    Failing to find it is still a documented default, but it must be a
+    real "no file anywhere", never "the daemon happens to run elsewhere".
+    """
+    if path is not None:
+        if path.is_file():
+            return path
+        # A relative path (the documented ``config/alphabrief.yaml``)
+        # resolves against the repository root, not only the cwd.
+        if not path.is_absolute():
+            anchored = _repository_root() / path
+            if anchored.is_file():
+                return anchored
+        return None
+
+    if CONFIG_PATH.is_file():
+        return CONFIG_PATH
+
+    candidate = _repository_root() / CONFIG_PATH
+    return candidate if candidate.is_file() else None
+
+
+def _repository_root() -> Path:
+    """The checkout (or bundle) holding the reviewed configuration.
+
+    ``project_root`` already knows about the PyInstaller bundle; the
+    package walk is the fallback for an editable install whose cwd is
+    somewhere else entirely (the LaunchAgent's data directory).
+    """
+    try:
+        from alphabrief_core.policy_version import project_root
+
+        return project_root()
+    except Exception:  # noqa: BLE001 - fall back to the package location
+        pass
+    for ancestor in Path(__file__).resolve().parents:
+        if (ancestor / "pyproject.toml").is_file():
+            return ancestor
+        if (ancestor / CONFIG_PATH).is_file():
+            return ancestor
+    return Path.cwd()
+
+
 def load_model_settings(path: Path | None = None) -> ModelSettings:
     """Read the ``model:`` section of ``config/alphabrief.yaml``.
 
@@ -121,17 +173,8 @@ def load_model_settings(path: Path | None = None) -> ModelSettings:
     section raises so a typo cannot silently disable the subscription
     channel.
     """
-    config_path = path or CONFIG_PATH
-    if not config_path.is_file():
-        try:
-            from alphabrief_core.policy_version import project_root
-
-            candidate = project_root() / CONFIG_PATH
-            if candidate.is_file():
-                config_path = candidate
-        except Exception:
-            pass
-    if not config_path.is_file():
+    config_path = _resolve_config_path(path)
+    if config_path is None:
         return ModelSettings()
     document = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if document is None:

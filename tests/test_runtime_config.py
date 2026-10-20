@@ -128,3 +128,40 @@ def test_model_section_is_left_to_the_model_loader(tmp_path: Path) -> None:
 
     assert loaded.settings.trading.trading_mode == "off"
     assert loaded.settings.schema_version == 1
+
+
+def test_config_is_found_from_an_unrelated_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The LaunchAgent starts the backend in the data directory."""
+    monkeypatch.chdir(tmp_path)
+
+    loaded = load_runtime_settings()
+
+    assert loaded.path is not None, (
+        "the loader searched only the working directory, so a daemon "
+        "started in the data directory silently used dataclass defaults"
+    )
+    assert loaded.path.name == Path(RUNTIME_CONFIG_PATH).name
+    assert loaded.opportunity.max_rounds_per_day == 15
+
+
+def test_relative_path_resolves_against_the_repository_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    loaded = load_runtime_settings(RUNTIME_CONFIG_PATH)
+
+    assert loaded.path is not None
+    assert loaded.path.is_absolute()
+
+
+def test_absolute_missing_path_is_still_the_documented_default(
+    tmp_path: Path,
+) -> None:
+    """An explicit absent path must not silently search elsewhere."""
+    loaded = load_runtime_settings(tmp_path / "nope.yaml")
+
+    assert loaded.path is None
+    assert loaded.opportunity.max_rounds_per_day == 15

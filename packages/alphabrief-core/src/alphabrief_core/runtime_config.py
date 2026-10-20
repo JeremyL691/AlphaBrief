@@ -119,6 +119,50 @@ class LoadedRuntimeSettings:
         return self.settings.trading.opportunity
 
 
+def _repository_root() -> Path:
+    """The checkout (or bundle) holding the reviewed configuration.
+
+    ``project_root`` already understands the PyInstaller bundle. The
+    package walk covers an editable install whose working directory is
+    somewhere else entirely - which is exactly how the LaunchAgent starts
+    the backend.
+    """
+    try:
+        return project_root()
+    except Exception:  # noqa: BLE001 - fall back to the package location
+        pass
+    for ancestor in Path(__file__).resolve().parents:
+        if (ancestor / "pyproject.toml").is_file():
+            return ancestor
+        if (ancestor / RUNTIME_CONFIG_PATH).is_file():
+            return ancestor
+    return Path.cwd()
+
+
+def _resolve_config_path(path: Path | str | None) -> Path | None:
+    """Find the reviewed configuration, or ``None`` when it is absent.
+
+    An explicit path wins. A relative one resolves against the repository
+    root rather than only the cwd, so a daemon started in the data
+    directory still reads the reviewed values instead of silently
+    accepting the dataclass defaults.
+    """
+    if path is not None:
+        candidate = Path(path)
+        if candidate.is_file():
+            return candidate
+        if not candidate.is_absolute():
+            anchored = _repository_root() / candidate
+            return anchored if anchored.is_file() else None
+        return None
+
+    candidate = Path(RUNTIME_CONFIG_PATH)
+    if candidate.is_file():
+        return candidate
+    anchored = _repository_root() / RUNTIME_CONFIG_PATH
+    return anchored if anchored.is_file() else None
+
+
 def load_runtime_settings(path: Path | str | None = None) -> LoadedRuntimeSettings:
     """Read the reviewed runtime configuration.
 
@@ -126,16 +170,7 @@ def load_runtime_settings(path: Path | str | None = None) -> LoadedRuntimeSettin
     out-of-range section raises so a typo cannot quietly change the
     cadence or the escalation guards.
     """
-    resolved: Path | None = None
-    if path is not None:
-        candidate = Path(path)
-        resolved = candidate if candidate.is_file() else None
-    else:
-        try:
-            candidate = project_root() / RUNTIME_CONFIG_PATH
-        except Exception:
-            candidate = RUNTIME_CONFIG_PATH
-        resolved = candidate if candidate.is_file() else None
+    resolved = _resolve_config_path(path)
 
     if resolved is None:
         return LoadedRuntimeSettings(settings=RuntimeSettings(), path=None)

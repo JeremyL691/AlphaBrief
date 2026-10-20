@@ -4,6 +4,11 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.4] - 2026-10-20
+
+### Fixed
+- The configuration loaders searched only the working directory, and the LaunchAgent starts the backend in the data directory. The process therefore ran on `ModelSettings()` defaults: primary channel `chatgpt_plan` instead of the reviewed `openrouter_free`, and a 150-call daily budget instead of the reviewed 1000. Both loaders now resolve the reviewed file from the repository root (or the packaged bundle) as well, and a relative path is anchored the same way.
+
 ## [1.0.0-rc.3] - 2026-10-20
 
 ### Added
