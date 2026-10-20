@@ -24,6 +24,10 @@ service_app = typer.Typer(
 
 SERVICE_LABEL = "ai.alphabrief.backend"
 
+#: The LaunchAgent plist carries no credential, but it still describes
+#: how the trading backend runs; only the account owner may read it.
+SERVICE_PLIST_MODE = 0o600
+
 
 def _launch_agents_dir() -> Path:
     return Path.home() / "Library" / "LaunchAgents"
@@ -31,6 +35,43 @@ def _launch_agents_dir() -> Path:
 
 def _plist_path() -> Path:
     return _launch_agents_dir() / f"{SERVICE_LABEL}.plist"
+
+
+def _audit_plist(plist_file: Path) -> dict[str, Any]:
+    """Report what an installed plist actually exposes.
+
+    A plist written by an older release may still carry credentials and a
+    world-readable mode. ``service status`` surfaces that instead of
+    silently inheriting it, so an operator can reinstall and fix it.
+    """
+    audit: dict[str, Any] = {
+        "mode": None,
+        "world_readable": None,
+        "credential_keys": [],
+    }
+    if not plist_file.is_file():
+        return audit
+    try:
+        import stat as _stat
+
+        mode = _stat.S_IMODE(plist_file.stat().st_mode)
+        audit["mode"] = oct(mode)
+        audit["world_readable"] = bool(mode & 0o077)
+        data = plistlib.loads(plist_file.read_bytes())
+    except (OSError, plistlib.InvalidFileException) as exc:
+        audit["error"] = type(exc).__name__
+        return audit
+    env = data.get("EnvironmentVariables") or {}
+    if isinstance(env, dict):
+        audit["credential_keys"] = sorted(
+            key
+            for key in env
+            if any(
+                marker in key.upper()
+                for marker in ("TOKEN", "API_KEY", "SECRET", "PASSWORD")
+            )
+        )
+    return audit
 
 
 def _dump(payload: Any, *, pretty: bool) -> None:
@@ -154,6 +195,11 @@ def install_cmd(
     if units.strip():
         program_args += ["--units", units.strip()]
 
+    # PROJECT_GUIDE 9 invariant 8: secrets come only from secrets/ or the
+    # environment and are never persisted. The backend resolves OANDA
+    # credentials from <data_dir>/secrets/oanda.json when the environment
+    # is empty, so the LaunchAgent needs no credential at all. Copying one
+    # here used to leave a plaintext token in a world-readable plist.
     env_vars = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"),
         "HOME": os.environ.get("HOME", str(Path.home())),
@@ -161,12 +207,6 @@ def install_cmd(
         "ALPHABRIEF_API_URL": f"http://{host}:{port}",
         "ALPHABRIEF_AI_TRADING_ENABLED": "true",
     }
-    if "ALPHABRIEF_OANDA_TOKEN" in os.environ:
-        env_vars["ALPHABRIEF_OANDA_TOKEN"] = os.environ["ALPHABRIEF_OANDA_TOKEN"]
-    if "ALPHABRIEF_OANDA_ACCOUNT_ID" in os.environ:
-        env_vars["ALPHABRIEF_OANDA_ACCOUNT_ID"] = os.environ[
-            "ALPHABRIEF_OANDA_ACCOUNT_ID"
-        ]
 
     plist_data: dict[str, Any] = {
         "Label": SERVICE_LABEL,
@@ -190,6 +230,9 @@ def install_cmd(
 
     with plist_file.open("wb") as fp:
         plistlib.dump(plist_data, fp)
+    # The plist holds no credential today, but it must not be readable by
+    # every local process in case an operator later adds one by hand.
+    plist_file.chmod(SERVICE_PLIST_MODE)
 
     # Load via launchctl
     proc = _launchctl("load", "-w", str(plist_file))
@@ -211,6 +254,9 @@ def install_cmd(
             "pid": pid,
             "trading_mode": trading_mode,
             "port": port,
+            # Stated explicitly so an operator auditing a deployment
+            # never has to open the file to check this.
+            "credentials_in_plist": False,
         },
         pretty=pretty,
     )
@@ -268,6 +314,9 @@ def status_cmd(
         "pid": pid,
         "api_online": api_online,
         "lock": current_lock,
+        # An audit of the installed file: a plist from an older release
+        # may still carry credentials or be group/world readable.
+        "plist_audit": _audit_plist(plist_file) if installed else None,
     }
     _dump(result, pretty=pretty)
 
