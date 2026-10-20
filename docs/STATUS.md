@@ -815,7 +815,14 @@ rc.5 自 **2026-10-20 03:31 UTC** 起以 `trading_mode=on` 常驻运行，24 小
 - [x] 模型预算：`/api/v1/models` → `daily_call_limit: 1000`、`calls_remaining: 1000`、`openrouter_free`、零成本上限。
 - [x] CI 全绿：`gh run list` → conclusion=success，headSha `3b8c71d`。
 
-待完成：窗口走完后复核一次并记录最终结论，然后 `soak reset`（记下 run 1 的失败原因）+ `soak start` 从 Day 0 起算。
+**2026-10-20 04:40 UTC 复核（HEAD `bf6c693`）**：
+
+- 质量门禁在 HEAD 上重跑确认：`pytest -q -m "not practice"` → **3694 passed / 13 deselected，exit 0**（242 秒）；`ruff check .` All checks passed；`mypy` 524 文件 Success；`scripts/secret_scan.py` 退出码 0；`git diff --check` 退出码 0。
+- 后台连续运行 **1 小时 9 分**（20:31:09 local 起），LaunchAgent `runs = 1`（无崩溃重启），`/health` = `1.0.0-rc.5`。
+- `ai_daily_cycle` 累计 32 次运行、0 错误。其中 3 处短间隔（142.6s / 126.8s / 94.0s）逐一对应部署重启时刻（20:18 部署 rc.4、20:29 与 20:31 部署 rc.5），属重启后任务立即执行，不是漏轮。**rc.5 最终部署后 23 次运行间隔全部为 180.2–180.3 秒，无一处异常或缺口。**
+- 安全事实：开放冻结 0 个；`order_ledger_reservations` 0 行；"有订单但无持久 RiskDecision" 计数 0。
+
+待完成：窗口走完（约 2026-10-21 03:31 UTC）后再复核一次并记录最终结论，然后 `soak reset`（记下 run 1 的失败原因）+ `soak start` 从 Day 0 起算。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
