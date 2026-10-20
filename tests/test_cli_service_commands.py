@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -181,17 +182,18 @@ def test_service_install_units_and_executable_plist_args(
         # the rendered help: Click wraps help text at the detected
         # terminal width, so a wide local TTY and a narrow CI log break
         # a naive substring match in different places.
-        import click
+        # Read the options the command declares, not the rendered help:
+        # Click wraps and truncates long options at the detected terminal
+        # width, so a narrow CI log shows "--risk-c..." while a wide local
+        # TTY shows the full name.
         import typer.main
 
-        root = typer.main.get_command(app)
-        assert isinstance(root, click.Group)
-        run_group = root.commands["run"]
-        assert isinstance(run_group, click.Group)
-        command = run_group.commands["run"]
+        root: Any = typer.main.get_command(app)
+        command: Any = root.commands["run"].commands["run"]
         accepted = {
             option for param in command.params for option in param.opts
         }
+        assert accepted, "run run declares no options"
         for token in args:
             if token.startswith("--"):
                 assert token in accepted, f"{token} not accepted by run run"

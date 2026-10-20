@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alphabrief_cli.risk_commands import risk_app
@@ -105,16 +106,16 @@ def _intent_payload(tmp_path: Path) -> Path:
 def test_risk_check_help_lists_account_rule_flags() -> None:
     """The flags must be present on ``risk check --help``
     so operators discover them."""
-    # Read the declared options rather than the rendered help: Click
-    # wraps text at the detected terminal width, so a wide local TTY and
-    # a narrow CI log disagree about where a long flag breaks.
-    import click
+    # Read the options the command declares, not the rendered help: Click
+    # wraps AND truncates long options at the detected terminal width, so
+    # a narrow CI log shows "--risk-c..." while a wide local TTY shows the
+    # full name. The command object carries the real names either way.
     import typer.main
 
-    root = typer.main.get_command(risk_app)
-    assert isinstance(root, click.Group)
-    command = root.commands["check"]
+    root: Any = typer.main.get_command(risk_app)
+    command: Any = root.commands["check"]
     accepted = {option for param in command.params for option in param.opts}
+    assert accepted, "risk check declares no options"
     for flag in (
         "--equity",
         "--reference-mark-prices",
