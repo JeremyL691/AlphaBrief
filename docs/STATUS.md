@@ -10,8 +10,8 @@
 |---|---|
 | 当前阶段 | **S10 14 天试运行（0 / 14 合格日，待部署 rc.5 后从 Day 0 起算）** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 构建并冒烟 1.0.0-rc.5（含日志脱敏），`service install` 部署后确认 `/api/v1/models` 报告 openrouter_free / 1000、`ai_daily_cycle` 按 180 秒写入、出站只到 practice 与配置源；然后 `soak reset` + `soak start` 从 Day 0 起算 |
-| 最近更新 | 2026-10-20 UTC 部署 rc.3 时发现并修复配置解析缺陷（后台在数据目录启动，模型通道与日预算回落到默认值），已升 rc.4 重新部署。此前 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
+| 下一项任务 | S9 门禁：rc.5 连续运行 24 小时（至少覆盖 2 个机会轮），逐项核对 GUIDE S9 清单（进程不退出、每轮有记录、对账干净、无重复订单、每单可追 RiskDecision、出站白名单、日报与 doctor、模型预算、CI 绿）；通过后 `soak reset` + `soak start` 从 Day 0 起算 |
+| 最近更新 | 2026-10-20 03:35 UTC 确认 1.0.0-rc.5 稳定部署（PID 153，plist 0600 无凭证，`/api/v1/models` 报告 openrouter_free / nemotron-3-super-120b-a12b:free / 1000 次 / 0 USD，`ai_daily_cycle` 每 180 秒写入且判定 flat_signal，日志 0 处账户 ID 泄露），开始 S9 24 小时门禁观察。此前 2026-10-20 UTC 部署 rc.3 时发现并修复配置解析缺陷（后台在数据目录启动，模型通道与日预算回落到默认值），已升 rc.4 重新部署。此前 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
