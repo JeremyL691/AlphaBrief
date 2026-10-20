@@ -4,6 +4,11 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.5] - 2026-10-20
+
+### Security
+- The OANDA HTTP client logged the full account id on every retry and give-up line, because the request path carries it: one evening of TLS handshake timeouts wrote 3107 occurrences into `backend.err.log`. The path is now logged with the account segment masked (`NNN-***-***-NNN`), keeping the endpoint and failure class identifiable.
+
 ## [1.0.0-rc.4] - 2026-10-20
 
 ### Fixed
