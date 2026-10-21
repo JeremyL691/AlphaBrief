@@ -517,33 +517,19 @@ class Runtime:
         """Today's recorded committee rounds and the newest one's instant.
 
         Read from the durable cycle history, so a restart cannot hand the
-        runtime a fresh allowance (PROJECT_GUIDE 5.13).
+        runtime a fresh allowance (PROJECT_GUIDE 5.13). The store filters on
+        the persisted ``cycle_key``: reading it off the summary object used
+        to yield nothing, which silently disabled both the daily round cap
+        and the minimum spacing.
         """
         from alphabrief_api.db import AiTradingStore
 
         day = self._clock().astimezone(UTC).date().isoformat()
         store = AiTradingStore(db_path=_paths.db_path())
         try:
-            cycles = store.list_cycles_for_day(day)
+            return store.opportunity_round_facts(day)
         finally:
             store.close()
-        rounds = 0
-        last: datetime | None = None
-        for cycle in cycles:
-            key = getattr(cycle, "cycle_key", None) or ""
-            created = getattr(cycle, "created_at", None)
-            if isinstance(key, str) and not key.startswith("opportunity:"):
-                continue
-            rounds += 1
-            if isinstance(created, datetime):
-                instant = (
-                    created.astimezone(UTC)
-                    if created.tzinfo
-                    else created.replace(tzinfo=UTC)
-                )
-                if last is None or instant > last:
-                    last = instant
-        return rounds, last
 
     async def _run_opportunity_check(self) -> None:
         """One cheap check; a full committee round only when justified."""

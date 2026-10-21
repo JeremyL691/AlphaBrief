@@ -433,6 +433,49 @@ class AiTradingStore:
             )
         return results
 
+    def opportunity_round_facts(self, day: str) -> tuple[int, datetime | None]:
+        """Today's opportunity rounds and the newest one's start instant.
+
+        The runtime bounds its model spend with this: ``max_rounds_per_day``
+        and ``min_spacing_seconds`` are only as good as these two numbers.
+        The filter runs in SQL over the persisted ``cycle_key`` because
+        :class:`DailyCycleSummary` deliberately does not carry that field -
+        reading it off the summary silently yielded zero rounds and let the
+        daily cap be exceeded by an order of magnitude.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT cycle_json, created_at
+            FROM ai_daily_cycles
+            WHERE trading_day = ?
+              AND json_extract_string(cycle_json, '$.cycle_key')
+                  LIKE 'opportunity:%'
+            ORDER BY created_at ASC
+            """,
+            [day],
+        ).fetchall()
+        counted = 0
+        newest: datetime | None = None
+        for cycle_json, created_at in rows:
+            data = json.loads(cycle_json) if isinstance(cycle_json, str) else cycle_json
+            key = str((data or {}).get("cycle_key") or "")
+            if not key.startswith("opportunity:"):
+                continue
+            counted += 1
+            instant = created_at
+            if isinstance(instant, str):
+                instant = datetime.fromisoformat(instant)
+            if not isinstance(instant, datetime):
+                continue
+            moment = (
+                instant.astimezone(UTC)
+                if instant.tzinfo
+                else instant.replace(tzinfo=UTC)
+            )
+            if newest is None or moment > newest:
+                newest = moment
+        return counted, newest
+
     def list_cycles_for_day(self, day: str) -> list[DailyCycleSummary]:
         """Return cycles whose ``trading_day`` matches ``YYYY-MM-DD``."""
         rows = self._conn.execute(
