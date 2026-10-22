@@ -444,3 +444,53 @@ def test_flat_escalation_never_overrides_a_closed_session() -> None:
 def test_flat_escalation_is_off_by_default() -> None:
     """The reviewed default must not spend a round on a flat scan."""
     assert OpportunityLimits().escalate_on_flat is False
+
+
+def test_flat_escalation_still_respects_the_exhausted_budget() -> None:
+    """A flat scan must not spend model calls the day does not have.
+
+    ``escalate_on_flat`` exists so an operator can get a guaranteed number
+    of daily decisions. It must never override the channel's daily ceiling:
+    once the budget is spent, a round can only produce a failed call and a
+    ``provider_error`` record, which is worse than a clean no-round.
+    """
+    scan = scan_opportunities(
+        [_snapshot(signals={"momentum": _signal("flat")})],
+        session_open=True,
+        limits=OpportunityLimits(escalate_on_flat=True),
+        now=NOW,
+        budget_available=False,
+    )
+
+    assert scan.escalate is False
+    assert scan.reason == "model_budget_unavailable"
+
+
+def test_flat_escalation_still_respects_the_daily_round_cap() -> None:
+    """The round cap bounds a flat-escalating day exactly as any other."""
+    limits = OpportunityLimits(escalate_on_flat=True)
+    scan = scan_opportunities(
+        [_snapshot(signals={"momentum": _signal("flat")})],
+        session_open=True,
+        limits=limits,
+        now=NOW,
+        rounds_today=limits.max_rounds_per_day,
+    )
+
+    assert scan.escalate is False
+    assert scan.reason == "daily_round_cap_reached"
+
+
+def test_flat_escalation_respects_the_minimum_spacing() -> None:
+    """Spacing applies to flat escalations too."""
+    scan = scan_opportunities(
+        [_snapshot(signals={"momentum": _signal("flat")})],
+        session_open=True,
+        limits=OpportunityLimits(escalate_on_flat=True, min_spacing_seconds=600),
+        now=NOW,
+        last_round_at=NOW - timedelta(minutes=1),
+        rounds_today=1,
+    )
+
+    assert scan.escalate is False
+    assert scan.reason == "round_too_soon"
