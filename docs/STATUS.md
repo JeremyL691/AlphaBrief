@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行（0 / 14 合格日，待部署 rc.5 后从 Day 0 起算）** |
+| 当前阶段 | **S10 14 天试运行（0 / 14 合格日；S9 门禁未通过，待用户决定后重置）** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | S9 门禁：rc.5 连续运行 24 小时（至少覆盖 2 个机会轮），逐项核对 GUIDE S9 清单（进程不退出、每轮有记录、对账干净、无重复订单、每单可追 RiskDecision、出站白名单、日报与 doctor、模型预算、CI 绿）；通过后 `soak reset` + `soak start` 从 Day 0 起算 |
-| 最近更新 | 2026-10-20 08:20 UTC 自主交易已恢复并验证真实成交。修复 4 个缺陷后，`opportunity:` 轮次从历史 0 次变为 5 次，OANDA practice 账户产生 3 笔 AI 自主决策的真实成交（order 20 / 24 / 28，均带止损止盈，每单可追 RiskDecision），并完成一次反向平仓（GBP_USD −7.12）。UTC 日 10-20 已跑 4 轮委员会（3 轮 executed、1 轮 skipped_model_budget），距每日 5 轮目标仅差 1 轮，尚有 20 小时可用。此前 2026-10-20 06:45 UTC 修复「机会扫描永不升级」缺陷并放宽委员会门槛（operator 授权），全量离线门禁 3719 passed / 1 flaky（Playwright 端口竞态，单跑通过）。发现并修复三个缺陷：① `opportunity._decimal()` 拒收 float，而 `Signal.confidence` 声明为 float，导致每个真实信号都读成 `flat`，`opportunity:` 轮次历史 0 次，自主决策从未运行；② `MomentumStrategy` 只做多，下跌行情恒为 flat；③ `rules.py` 三处 `max(..., 硬编码)` 让配置形同虚设（confidence 0.55 / 分析师 2 位 / risk veto 在生产路径强制生效）。同时把 momentum universe 不匹配导致的每轮刷屏警告改为静默跳过。此前 2026-10-20 03:35 UTC 确认 1.0.0-rc.5 稳定部署（PID 153，plist 0600 无凭证，`/api/v1/models` 报告 openrouter_free / nemotron-3-super-120b-a12b:free / 1000 次 / 0 USD，`ai_daily_cycle` 每 180 秒写入且判定 flat_signal，日志 0 处账户 ID 泄露），开始 S9 24 小时门禁观察。此前 2026-10-20 UTC 部署 rc.3 时发现并修复配置解析缺陷（后台在数据目录启动，模型通道与日预算回落到默认值），已升 rc.4 重新部署。此前 2026-10-20 UTC 开发收尾。交接快照的 7 项缺口已全部处理完毕，其中两项与事实不符（`scheduler_task_runs` 早由现网后台写入、`soak status` 已可用），其余四项修复并提交；另发现并修掉三个交接未记录的问题：`run run` 根本没注册 `ai_daily_cycle`（这才是 0 合格日的根因）、`market_sync` 不刷新信号品种导致假 `NO_TRADE_DATA_STALE`、评估器按工作日而非外汇会话判期望轮次（会让每个周一天天顺延）。版本升至 1.0.0-rc.3，全量离线门禁 3666 passed / 13 deselected。 |
+| 下一项任务 | 等用户就"398bdc0 放宽委员会门槛是否有 operator 授权"给出决定：若未授权则恢复门槛并关闭 `escalate_on_flat`；若已授权则记入决策记录。随后构建含预算护栏修复（`219ef51`）的新 RC，部署并 `soak reset` 从新 Day 0 起算 |
+| 最近更新 | 2026-10-22 04:35 UTC S9 门禁巡检结论：**不通过**。已满足 7 项（进程 45 小时未退出、24 小时窗口 695 次机会轮 0 错误、对账 0 冻结、出站白名单、无重复订单、3 笔成交均可追 RiskDecision、CI 绿）；未满足 4 项：① 不变量 7 被突破（10-20 模型调用 2015 次、10-21 1010 次，超 1000/日上限）；② 机会轮预算护栏曾完全失效（`DailyCycleSummary` 无 `cycle_key` 字段导致计数恒 0，已修 `219ef51`）；③ 模型通道连续故障约 1000 次未熔断，耗尽当日额度后才停；④ `398bdc0` 在试运行期间放开委员会门槛（0.55→0、分析师 2→0、risk veto 关、`max_position_pct`→0.95、开 `escalate_on_flat`），违反"风控只能收紧"。后台已 `service stop` 避免继续空转。试运行仍为 run_index 1（2026-10-05 起，已判失败）。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -801,28 +801,29 @@
 - 后台状态：`/health` = `1.0.0-rc.5`，进程连续运行 1 小时 3 分，`ai_daily_cycle` 持续按 180 秒判定 `flat_signal`。
 - 质量门禁：全量 `pytest -q -m "not practice"` → 3694 passed / 13 deselected；`ruff check .`、`mypy` 524 文件、`secret_scan` 全部通过。
 
-### S9 门禁进展（2026-10-20 UTC）
+### S9 门禁结论（2026-10-22 04:35 UTC）：**不通过**
 
-rc.5 自 **2026-10-20 03:31 UTC** 起以 `trading_mode=on` 常驻运行，24 小时观察窗口约在 **2026-10-21 03:31 UTC** 结束。已可确认的项：
+rc.5 连续运行超过 45 小时，但逐项核对后 **S9 门禁未通过**，原因是不变量 7（模型调用 ≤1000 次/日）与不变量 12 相关语义被突破，且试运行期间的安全语义被改动。
 
-- [x] 进程未意外退出：`/health` = `1.0.0-rc.5`，LaunchAgent runs 计数未增长（无崩溃重启）。
-- [x] 每个计划轮次都有记录：`ai_daily_cycle` 已写入 **31 次**（20:07:05 → 21:34:15 UTC，间隔 180 秒），每次判定 `flat_signal`，为合法的 `no_trade` 证据。
-- [x] 对账干净：`/api/v1/broker/status` → `all_match: true`，`open_freezes: []`；库内开放冻结 0 个。
-- [x] 没有重复订单：`order_ledger_reservations` 0 行（本期无提交），无重复 `client_order_id`。
-- [x] 每笔订单可追持久 RiskDecision：本期无订单；规则由账本唯一键与 `decision_id` 关联保证。
-- [x] 出站白名单：OANDA 基址为常量 `https://api-fxpractice.oanda.com`，模型通道 `https://openrouter.ai/api/v1`，`production_safety_violations()` 返回 none；日志 0 处完整账户 ID。
-- [x] 日报与 doctor：`doctor run` 0 FAIL；6 个新闻源全部可达；OANDA practice 可达。
-- [x] 模型预算：`/api/v1/models` → `daily_call_limit: 1000`、`calls_remaining: 1000`、`openrouter_free`、零成本上限。
-- [x] CI 全绿：`gh run list` → conclusion=success，headSha `3b8c71d`。
+**已满足的项**：
 
-**2026-10-20 04:40 UTC 复核（HEAD `bf6c693`）**：
+- [x] 进程未意外退出：连续运行 45 小时 21 分（PID 54071，2026-10-20 00:14 起），LaunchAgent 未因崩溃重启。
+- [x] 每个计划轮次都有记录：24 小时窗口内 `ai_daily_cycle` 运行 **695 次、0 错误**。
+- [x] 对账干净：开放冻结 0 个。
+- [x] 出站白名单：OANDA 基址为常量 practice 主机，模型通道为 OpenRouter，`production_safety_violations()` 返回 none。
+- [x] 无重复订单：账本 3 条 `COMPLETED` 记录，`(cycle_id, intent_id)` 唯一。
+- [x] 每笔订单可追持久 RiskDecision：3 笔均绑定 `risk_*` 决策 ID。
+- [x] CI 全绿：`gh run list` conclusion=success。
 
-- 质量门禁在 HEAD 上重跑确认：`pytest -q -m "not practice"` → **3694 passed / 13 deselected，exit 0**（242 秒）；`ruff check .` All checks passed；`mypy` 524 文件 Success；`scripts/secret_scan.py` 退出码 0；`git diff --check` 退出码 0。
-- 后台连续运行 **1 小时 9 分**（20:31:09 local 起），LaunchAgent `runs = 1`（无崩溃重启），`/health` = `1.0.0-rc.5`。
-- `ai_daily_cycle` 累计 32 次运行、0 错误。其中 3 处短间隔（142.6s / 126.8s / 94.0s）逐一对应部署重启时刻（20:18 部署 rc.4、20:29 与 20:31 部署 rc.5），属重启后任务立即执行，不是漏轮。**rc.5 最终部署后 23 次运行间隔全部为 180.2–180.3 秒，无一处异常或缺口。**
-- 安全事实：开放冻结 0 个；`order_ledger_reservations` 0 行；"有订单但无持久 RiskDecision" 计数 0。
+**未满足的项（门禁失败原因）**：
 
-待完成：窗口走完（约 2026-10-21 03:31 UTC）后再复核一次并记录最终结论，然后 `soak reset`（记下 run 1 的失败原因）+ `soak start` 从 Day 0 起算。
+- [ ] **不变量 7 被突破**：2026-10-20 模型调用 **2015 次**、10-21 **1010 次**，均超过 1000 次/日软件上限。直接原因见下条。
+- [ ] **机会轮预算护栏曾完全失效**（已修，`219ef51`）：`_opportunity_facts` 从 `DailyCycleSummary` 读不存在的 `cycle_key` 字段，导致 `rounds` 恒为 0、`last_round_at` 恒为 None，`max_rounds_per_day` 与 `min_spacing_seconds` 两道护栏从未生效。实测 10-20/21/22 分别记录 67/95/94 个机会轮（配置上限 20）。
+- [ ] **模型通道故障未被熔断**：10-21 18:00–20:59 UTC 三小时内约 1000 次 `provider_error`（`ModelProviderError`），持续重试直到把当日额度耗尽，之后才转为 `skipped_model_budget`。系统没有在连续失败时停止升级。
+- [ ] **试运行期间安全/执行语义被改动**：`398bdc0` 把委员会门槛全部放开（`no_trade_below_confidence` 0.55→0、`min_analysts_supporting_direction` 2→0、`honour_risk_role_veto` true→false、`max_position_pct`→0.95）并开启 `escalate_on_flat`。按 GUIDE S10 与 AGENTS 8.6，"风控数值只能收紧不能放宽"，这属于重置事件。该提交声称 operator 授权，但本 Agent 未收到该授权，已向用户求证。
+- [ ] **试运行仍是 run_index 1**（2026-10-05 起，早已判为失败）：本轮 3 笔真实成交（10-20，order 20/24/28，NAV 100000 → 99943.69）记在这个失败 run 下，不能作为合格日证据。
+
+**当前处置**：已 `service stop` 停止后台，避免继续消耗额度与产生 `provider_error` 空转。等用户就"是否授权放宽风控"给出决定后，再按重置规则处理并部署包含预算护栏修复的新 RC。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
