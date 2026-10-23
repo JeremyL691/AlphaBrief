@@ -732,7 +732,17 @@ def _run_practice_restart_scenario(
         freeze2.close()
 
 
+@pytest.mark.practice
 def test_controlled_practice_restart_scenario(tmp_path: Path) -> None:
+    """Submit a real minimum-risk order on the practice account (T7).
+
+    Marked ``practice`` because it reaches the broker: any process that has
+    loaded ``.env`` carries ``ALPHABRIEF_OANDA_TOKEN``, so without the marker
+    the default ``-m "not practice"`` gate would place a real order on every
+    run. That is what happened - a one-unit fill landed on the soak account and
+    showed up as an unexplainable reconciliation diff. PROJECT_GUIDE requires
+    network and broker tests to carry this marker.
+    """
     token = os.environ.get("ALPHABRIEF_OANDA_TOKEN", "").strip()
     account_id = os.environ.get("ALPHABRIEF_OANDA_ACCOUNT_ID", "").strip()
     if not token or not account_id:

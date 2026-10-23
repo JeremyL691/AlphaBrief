@@ -4,6 +4,12 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.9] - 2026-10-23
+
+### Fixed
+- Reconciliation compared two opposite sign conventions for position units. OANDA reports a short side as a negative unit count, while the local projection stores each side as a magnitude, so an open short position subtracted as `44582 - (-44582)` and every cycle reported a CRITICAL `quantity_diff` and raised a freeze. The broker boundary now normalises both sides to magnitudes. This surfaced the first time a position stayed open across a reconciliation.
+- `GET /api/v1/broker/account` returned the full account id, and the dashboard reads that endpoint. It now returns the masked form, as invariant 8 requires.
+
 ## [1.0.0-rc.8] - 2026-10-23
 
 ### Fixed
