@@ -426,6 +426,9 @@ class Runtime:
         self._server: Any | None = None
         self._scheduler: Any | None = None
         self._planner_log: list[dict[str, Any]] = []
+        #: The in-flight committee round, so a slow round never stalls the
+        #: check cadence and two rounds never overlap.
+        self._round_task: asyncio.Task[Any] | None = None
 
     # -- handlers ---------------------------------------------------------
 
@@ -597,6 +600,17 @@ class Runtime:
             _LOGGER.info("runtime: %s", scan.summary())
             return
 
+        # A committee round spends 21-31 model calls and can take many
+        # minutes; awaiting it here stalled the 180s check cadence, which is
+        # the liveness evidence the soak evaluator requires. The round runs as
+        # its own task so the check itself always returns promptly.
+        if self._round_task is not None and not self._round_task.done():
+            _LOGGER.info(
+                "runtime: %s -> round already in flight, not starting another",
+                scan.summary(),
+            )
+            return
+
         # One round per minute bucket: a replay of the same bucket returns
         # the stored cycle instead of evaluating a second time.
         bucket = now.strftime("%Y%m%dT%H%M")
@@ -606,7 +620,11 @@ class Runtime:
         )
         result = self._decision_round(cycle_key)
         if asyncio.iscoroutine(result):
-            await result
+            self._round_task = asyncio.create_task(
+                result, name=f"committee-round-{cycle_key}"
+            )
+        else:
+            _LOGGER.info("runtime: committee round %s completed inline", cycle_key)
 
     def _opportunity_limits(self) -> Any:
         """The reviewed opportunity guards from the configuration file."""

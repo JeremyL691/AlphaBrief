@@ -8,10 +8,17 @@ model:
   # Free availability and pricing are rechecked per call, not guaranteed.
   primary_channel: openrouter_free
   fallback_enabled: false
-  # Verified live 2026-10-13: exact model ID echoed, zero catalog pricing,
-  # no upstream shared-pool rate limit. Reasoning models emit reasoning
-  # before content, so the output budget must cover both.
-  primary_model: "nvidia/nemotron-3-super-120b-a12b:free"
+  # Verified live 2026-10-22 with a real completion: exact model ID echoed,
+  # zero catalog pricing (`cost: 0`), ~1.5s latency, valid JSON output.
+  #
+  # The previous model, nvidia/nemotron-3-super-120b-a12b:free, is still listed
+  # in the catalog but every call returns HTTP 404 from the upstream provider
+  # ("Function 'ac74...' Not found for account"), so no committee round could
+  # succeed. Availability is rechecked per call and never assumed.
+  #
+  # Reasoning models emit reasoning before content, so the output budget must
+  # cover both.
+  primary_model: "recursive/flint-v1.0:free"
   # Software cap for the OpenRouter free channel (PROJECT_GUIDE 5.13):
   # 1000 calls per UTC day, enforced independently of the provider quota.
   daily_call_limit: 1000
