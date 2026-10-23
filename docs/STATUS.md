@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行（0 / 14 合格日；S9 门禁未通过，待用户决定后重置）** |
+| 当前阶段 | **S10 14 天试运行（0 / 14 合格日；rc.6 待部署后从新 Day 0 起算）** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 等用户就"398bdc0 放宽委员会门槛是否有 operator 授权"给出决定：若未授权则恢复门槛并关闭 `escalate_on_flat`；若已授权则记入决策记录。随后构建含预算护栏修复（`219ef51`）的新 RC，部署并 `soak reset` 从新 Day 0 起算 |
-| 最近更新 | 2026-10-22 04:35 UTC S9 门禁巡检结论：**不通过**。已满足 7 项（进程 45 小时未退出、24 小时窗口 695 次机会轮 0 错误、对账 0 冻结、出站白名单、无重复订单、3 笔成交均可追 RiskDecision、CI 绿）；未满足 4 项：① 不变量 7 被突破（10-20 模型调用 2015 次、10-21 1010 次，超 1000/日上限）；② 机会轮预算护栏曾完全失效（`DailyCycleSummary` 无 `cycle_key` 字段导致计数恒 0，已修 `219ef51`）；③ 模型通道连续故障约 1000 次未熔断，耗尽当日额度后才停；④ `398bdc0` 在试运行期间放开委员会门槛（0.55→0、分析师 2→0、risk veto 关、`max_position_pct`→0.95、开 `escalate_on_flat`），违反"风控只能收紧"。后台已 `service stop` 避免继续空转。试运行仍为 run_index 1（2026-10-05 起，已判失败）。 |
+| 下一项任务 | 构建并冒烟 1.0.0-rc.6（含风控恢复、预算护栏与通道熔断），`service install` 部署，确认 `/api/v1/models` 为 openrouter_free / 1000、机会轮按 180s 且首日轮次 ≤15，然后 `soak reset` + `soak start` 从 Day 0 起算 |
+| 最近更新 | 2026-10-22 05:45 UTC S9 门禁结论为**不通过**（不变量 7 被突破：10-20 调用 2015 次、10-21 1010 次超 1000/日上限；机会轮预算护栏曾完全失效；模型通道连续故障约 1000 次未熔断；试运行期间委员会门槛被放开）。已停止空转后台、恢复评审门槛并把"只能收紧不能放宽"实现为加载期校验、关闭 `escalate_on_flat`、新增通道熔断（`5a662a6`），全量 3744 passed。下一步部署 rc.6 并按 S10 重置规则从新 Day 0 起算。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -823,7 +823,14 @@ rc.5 连续运行超过 45 小时，但逐项核对后 **S9 门禁未通过**，
 - [ ] **试运行期间安全/执行语义被改动**：`398bdc0` 把委员会门槛全部放开（`no_trade_below_confidence` 0.55→0、`min_analysts_supporting_direction` 2→0、`honour_risk_role_veto` true→false、`max_position_pct`→0.95）并开启 `escalate_on_flat`。按 GUIDE S10 与 AGENTS 8.6，"风控数值只能收紧不能放宽"，这属于重置事件。该提交声称 operator 授权，但本 Agent 未收到该授权，已向用户求证。
 - [ ] **试运行仍是 run_index 1**（2026-10-05 起，早已判为失败）：本轮 3 笔真实成交（10-20，order 20/24/28，NAV 100000 → 99943.69）记在这个失败 run 下，不能作为合格日证据。
 
-**当前处置**：已 `service stop` 停止后台，避免继续消耗额度与产生 `provider_error` 空转。等用户就"是否授权放宽风控"给出决定后，再按重置规则处理并部署包含预算护栏修复的新 RC。
+**处置（2026-10-22 已执行）**：
+
+1. `service stop` 停止空转的后台，避免继续消耗额度。
+2. 恢复评审风控门槛，并把"只能收紧不能放宽"实现为加载期校验（`5a662a6`）。
+3. 关闭 `escalate_on_flat`，恢复 180s / 15 轮 / 600s。
+4. 修复模型通道无熔断：连续 3 轮 `provider_error` 后停止升级（`5a662a6`）。
+5. 按 S10 重置规则 `soak reset`，部署 rc.6 后从新 Day 0 起算（见下）。
+6. AGENTS 8.2 规定不向用户提问，未覆盖情况取更安全方案并记入决策记录，故未等待用户答复即按"恢复评审值"处理；若 operator 确认曾授权，需要重新提出并留下书面依据。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
@@ -850,6 +857,10 @@ rc.5 连续运行超过 45 小时，但逐项核对后 **S9 门禁未通过**，
 - （可选）申请免费的 `FRED_API_KEY` 以启用宏观日历；没有也能运行（会用新闻冲击过滤代替）。
 
 ## 决策记录
+
+- 2026-10-22 UTC / 委员会门槛被放开且无授权证据 / 按 AGENTS 8.6"只能收紧不能放宽"恢复评审值（0.55 / 2 位 / risk veto 生效 / 仓位上限 0.25 / split），并把该约束实现为 `DisciplineSettings` 的加载期校验：低于评审值的配置直接加载失败，收紧仍允许 / AGENTS 8.2 规定不向用户提问、未覆盖情况选更安全方案（不交易、失败即停）；风控数值只能收紧是硬约束，本轮没有任何 operator 授权证据，放宽状态下产生的成交不能作为合格证据。
+- 2026-10-22 UTC / 模型通道连续失败没有熔断 / 连续 3 轮 `provider_error` 后停止升级，出现一轮成功即恢复 / 实测 2026-10-21 18:00-20:59 UTC 三小时约 1000 次 `provider_error` 把当日额度耗尽才停；不调用已故障的通道属于"失败即停"，且 `no_trade` 是健康结果。
+- 2026-10-22 UTC / 试运行 run_index 1 早已判失败 / 按 S10 重置规则执行 `soak reset` 并部署 rc.6 后从新 Day 0 起算 / run 1 自 2026-10-05 起、0 合格日，且期间经历门槛放开、超预算与两次部署重启，不能作为连续 14 天的证据。
 
 - 2026-10-20 UTC / 部署后首次自主决策全部被判 error 的根因 / `project_root()` 在 cwd 找不到 `pyproject.toml` 时回退到包位置 / 修复升级路径后首次真实委员会跑出 3 个 plan、风控全部 approved、数量已算出（EUR_USD 44532 / GBP_USD 37510 / USD_JPY 49974 units），但三次尝试全部 error，原因串是 "the reviewed configuration files cannot be read, so the decision cannot be bound to a real policy version"。根因是 LaunchAgent 以数据目录为工作目录启动后台，`policy_version.project_root()` 只走 cwd 祖先，找不到 `pyproject.toml` 就让 `policy_version_hash()` 抛错，`_policy_hash` 变成 None，执行后端按失败即停拒绝下单。这是部署路径缺陷而非真实策略变更；`runtime_config._repository_root()` 早已用包位置兜底处理过同类问题，本次把同样的兜底补到 `policy_version.project_root()`。验证：数据目录下 `policy_version_hash()` 从抛错变为返回哈希，新增回归测试覆盖"cwd 不在仓库内"。
 - 2026-10-20 UTC / 机会扫描永不升级的根因与修复 / 让 `opportunity._decimal()` 接受 float（经 `str()` 转 Decimal），并把策略信号的 confidence 序列化为十进制字符串 / `Signal.confidence` 在 `alphabrief_core.domain` 声明为 `float`，而 `_decimal()` 明确拒收 float，于是每个真实方向信号都被读成 "flat"。后果是升级路径从未成功：57 个轮次里 0 个 `opportunity:` 轮次，自主决策一次都没跑过，历史 3 笔成交全部来自 CLI `--force-direction` 强制覆盖。既有测试用字符串写 confidence（`"0.80"`），所以从未覆盖生产实际载荷。修复后补了用真实 `Signal.model_dump()` 构造的端到端回归测试，并做了回退验证（2 failed → 19 passed）。
