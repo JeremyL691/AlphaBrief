@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行（0 / 14 合格日；rc.8 待部署后从新 Day 0 起算）** |
-| 状态 | `IN_PROGRESS` |
-| 下一项任务 | 构建并冒烟 1.0.0-rc.8，`service install` 部署，确认一轮委员会能成功产出 decision、`ai_daily_cycle` 保持 180 秒节拍、模型调用全部 succeeded 且成本 0；然后 `soak reset` + `soak start` 从 Day 0 起算 |
-| 最近更新 | 2026-10-23 05:50 UTC rc.7 的 Day 0 首个委员会轮失败，根因是换用的免费模型在完整尺寸提示词上撑不住结构化契约：schema 校验失败反复触发修复，把整轮共享的修复额度耗尽（`repair_exhausted` / `symbol_repair_limit`），最终记成 `skipped_model_budget` 且没有产出决策。用真实契约做探针重选模型，选定 `poolside/laguna-s-2.1:free`（六字段 JSON 齐全、证据 id 为给定集合的合法子集、单次约 5 秒、成本 0），另外三个免费模型被同一组探针否决。已升 rc.8，全量 3746 passed。下一步部署后从新 Day 0 起算。 |
+| 当前阶段 | **S10 14 天试运行（run 4，2026-10-23T05:53:07Z 起算，0 / 14 合格日）** |
+| 状态 | `SOAKING` |
+| 下一项任务 | 每日巡检：`soak status` + `doctor` + 当天日报，写一行摘要进试运行日志；（通道已按 GUIDE 5.13 当日停用）次日 UTC 0 点后复核通道恢复与首个完整委员会轮 |
+| 最近更新 | 2026-10-23 06:15 UTC rc.8 已部署且工作区干净、HEAD 正指向 `v1.0.0-rc.8`。run 4 起算后首个委员会轮成功调用 7 次后遇到上游 429，按 GUIDE 5.13「收到 429 或额度错误 → 当天停用该通道」关闭 `openrouter_free` 至下一个 UTC 零点，后续调用记为 `NO_TRADE_MODEL_UNAVAILABLE`（不交易，属规格内的安全结果）。已确认评估器把「轮次失败」记为延长而非重置、存活证据来自周期任务运行记录，因此当天仍可合格。期间曾尝试把 429 改为不退避当日、被现有契约测试与 GUIDE 第 580 行否决，已完整回退，未放宽任何安全控制。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -847,6 +847,22 @@ rc.6 部署后连续暴露两个"会让每天都被判失败、但与交易正�
 - 日志出现 `round already in flight, not starting another`，在飞保护按设计工作。
 - Day 0 起算后模型调用全部 `succeeded`（9 次），无 `provider_error`。
 - `soak status` 显示 run 3 `active`、`qualified_days 0 / 14`。
+
+### S10 试运行 run 4（rc.8，2026-10-23 起）
+
+**Day 0 起始：2026-10-23T05:53:07Z，run_index 4。代码即 `v1.0.0-rc.8`（`git diff v1.0.0-rc.8 --stat` 为空，`/health` 报 1.0.0-rc.8）。**
+
+rc.7 的 Day 0 首个委员会轮以 `skipped_model_budget` 结束，逐层排查后确认根因不是预算：
+
+1. 预算判定实际为 `allowed: True`（69/1000），排除额度耗尽。
+2. 该轮摘要显示 `repair_exhausted` 与 `model_budget:symbol_repair_limit`：换用的 `recursive/flint-v1.0:free` 在完整尺寸提示词上撑不住结构化契约，schema 校验反复失败，把整轮共享的修复额度耗尽，最终没有任何决策产出。
+3. 改用真实契约做选型探针（要求六字段 JSON 齐全，且 `evidence_ids` 必须是给定集合的合法子集），选定 `poolside/laguna-s-2.1:free`：单次约 5 秒、成本 0、两个探针均通过。同一组探针否决 `nemotron-3.5-lightning`（返回空内容）、`inkling`（403，需 agentic harness）、`flint`（只能应付简单提示词）。
+
+**run 4 首个委员会轮**成功调用 7 次后，第 8 次返回 429（`classification=rate_limit`）。按 GUIDE 5.13 与第 580 行，收到 429 即当天停用该通道，因此 `openrouter_free` 被关闭至下一个 UTC 零点，后续调用记为 `NO_TRADE_MODEL_UNAVAILABLE`。
+
+期间曾把「任意 rate_limit 即关闭一整天」改成「仅显式配额度才关闭」，理由是免费通道按分钟限流会锁死 18 小时。该改动被既有契约测试 `test_provider_errors_no_post_retry_or_fallback[429-rate_limit]` 与 GUIDE 第 580 行否决——**规格要求 429 当天停用**，属安全侧保守行为，按 AGENTS 8.6 不得放宽。已完整回退（`git diff v1.0.0-rc.8` 为空即证），未留下任何放宽安全控制的改动。
+
+**当天是否仍能合格**：评估器只把「漏轮」与「轮次失败」记为延长（`extension_reasons`），重置条件是停机超时、订单无决策、对账不干净等；而存活证据来自周期任务 `ai_daily_cycle` 的运行记录，通道关闭不影响它继续按 180 秒写入。因此通道当日停用的结果是"当天没有委员会决策"，不是"当天不合格"。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
