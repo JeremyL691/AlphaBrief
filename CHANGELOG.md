@@ -4,6 +4,12 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.7] - 2026-10-23
+
+### Fixed
+- A committee round ran inside the opportunity check and awaited the whole thing. With a reasoning model one round took over seventeen minutes, and while it ran the periodic check task recorded nothing: four runs in half an hour against a 180-second cadence. Since the soak evaluator counts those task runs as liveness, a slow round would have failed every day for a reason unrelated to correctness. The round now runs as its own task, and an in-flight round blocks a second one.
+- The configured free model (`nvidia/nemotron-3-super-120b-a12b:free`) is still listed in the OpenRouter catalog but every completion returns HTTP 404 from the upstream provider, so no round could succeed while each attempt still consumed call allowance. Switched to `recursive/flint-v1.0:free`, verified with a real completion: zero cost, valid JSON, about 1.5s on a small prompt.
+
 ## [1.0.0-rc.6] - 2026-10-22
 
 ### Fixed
