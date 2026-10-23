@@ -4,6 +4,11 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.8] - 2026-10-23
+
+### Fixed
+- The replacement free model parsed simple JSON but could not hold the committee's structured contract on a full-sized prompt, so every round exhausted its repair budget and ended as `skipped_model_budget` with no decision. Switched to `poolside/laguna-s-2.1:free`, selected by probes that had to satisfy the real contract: all required keys present, and evidence ids returned as a legal subset of the supplied ones. Three other free models were rejected by the same probes.
+
 ## [1.0.0-rc.7] - 2026-10-23
 
 ### Fixed

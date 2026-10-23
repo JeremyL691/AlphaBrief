@@ -8,17 +8,23 @@ model:
   # Free availability and pricing are rechecked per call, not guaranteed.
   primary_channel: openrouter_free
   fallback_enabled: false
-  # Verified live 2026-10-22 with a real completion: exact model ID echoed,
-  # zero catalog pricing (`cost: 0`), ~1.5s latency, valid JSON output.
+  # Verified live 2026-10-23 with real completions that had to satisfy the
+  # committee's structured contract, not just return text:
+  #   - exact model ID echoed, catalog pricing 0, `cost: 0` on every call;
+  #   - a six-field JSON object parsed with all required keys (~5s);
+  #   - a grounding prompt returned a legal subset of the supplied evidence
+  #     ids, which is what the committee validates before it trusts a vote.
   #
-  # The previous model, nvidia/nemotron-3-super-120b-a12b:free, is still listed
-  # in the catalog but every call returns HTTP 404 from the upstream provider
-  # ("Function 'ac74...' Not found for account"), so no committee round could
-  # succeed. Availability is rechecked per call and never assumed.
+  # Two other free models were rejected by the same probes: the previous
+  # nvidia/nemotron-3-super-120b-a12b:free is still listed but every call now
+  # returns HTTP 404 from its upstream, and nvidia/nemotron-3.5-lightning:free
+  # returned empty content. recursive/flint-v1.0:free parsed but could not
+  # hold the schema on a committee-sized prompt, exhausting the round's repair
+  # budget. Availability is rechecked per call and never assumed.
   #
   # Reasoning models emit reasoning before content, so the output budget must
   # cover both.
-  primary_model: "recursive/flint-v1.0:free"
+  primary_model: "poolside/laguna-s-2.1:free"
   # Software cap for the OpenRouter free channel (PROJECT_GUIDE 5.13):
   # 1000 calls per UTC day, enforced independently of the provider quota.
   daily_call_limit: 1000

@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行（0 / 14 合格日；rc.7 待部署后从新 Day 0 起算）** |
+| 当前阶段 | **S10 14 天试运行（0 / 14 合格日；rc.8 待部署后从新 Day 0 起算）** |
 | 状态 | `IN_PROGRESS` |
-| 下一项任务 | 构建并冒烟 1.0.0-rc.7，`service install` 部署，确认 `ai_daily_cycle` 在委员会长轮进行时仍按 180 秒写入、委员会轮能成功完成、`/api/v1/models` 为 openrouter_free / 1000；然后 `soak reset` + `soak start` 从 Day 0 起算 |
-| 最近更新 | 2026-10-23 05:20 UTC 部署 rc.6 后逐层排查首个委员会轮失败：密钥有效、端点可达，但配置的免费模型在上游已下线（每次补全都 HTTP 404 却照样消耗额度），换为实测可用的 `recursive/flint-v1.0:free`（成本 0、输出合法 JSON）。换模型后又发现一轮耗时 17 分钟以上，期间 180 秒机会检查节拍完全停摆（半小时仅 4 条记录，评估器阈值 3），慢轮会让每天都被判漏轮，已把委员会轮改为独立 Task 并在飞保护。全量 3746 passed。下一步部署 rc.7 后按 S10 重置从新 Day 0 起算。 |
+| 下一项任务 | 构建并冒烟 1.0.0-rc.8，`service install` 部署，确认一轮委员会能成功产出 decision、`ai_daily_cycle` 保持 180 秒节拍、模型调用全部 succeeded 且成本 0；然后 `soak reset` + `soak start` 从 Day 0 起算 |
+| 最近更新 | 2026-10-23 05:50 UTC rc.7 的 Day 0 首个委员会轮失败，根因是换用的免费模型在完整尺寸提示词上撑不住结构化契约：schema 校验失败反复触发修复，把整轮共享的修复额度耗尽（`repair_exhausted` / `symbol_repair_limit`），最终记成 `skipped_model_budget` 且没有产出决策。用真实契约做探针重选模型，选定 `poolside/laguna-s-2.1:free`（六字段 JSON 齐全、证据 id 为给定集合的合法子集、单次约 5 秒、成本 0），另外三个免费模型被同一组探针否决。已升 rc.8，全量 3746 passed。下一步部署后从新 Day 0 起算。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -831,6 +831,22 @@ rc.5 连续运行超过 45 小时，但逐项核对后 **S9 门禁未通过**，
 4. 修复模型通道无熔断：连续 3 轮 `provider_error` 后停止升级（`5a662a6`）。
 5. 按 S10 重置规则 `soak reset`，部署 rc.6 后从新 Day 0 起算（见下）。
 6. AGENTS 8.2 规定不向用户提问，未覆盖情况取更安全方案并记入决策记录，故未等待用户答复即按"恢复评审值"处理；若 operator 确认曾授权，需要重新提出并留下书面依据。
+
+### S10 试运行 Day 0（rc.7，2026-10-23 UTC）
+
+**Day 0 起始：2026-10-23T05:21:24Z，run_index 3，target 14 天。**
+
+rc.6 部署后连续暴露两个"会让每天都被判失败、但与交易正确性无关"的缺陷，均已修复并随 rc.7 部署：
+
+- **配置的免费模型在上游已下线**：`nvidia/nemotron-3-super-120b-a12b:free` 仍列在 OpenRouter 目录里且标注零价，但每次补全都返回 HTTP 404（提供商原因为 `Function 'ac74...' Not found for account`），而失败的调用照样消耗当日额度。逐层核实过程：密钥有效（`/api/v1/key` 200）、端点可达（curl 200）、目录条目存在，只有真实补全失败。改用 `recursive/flint-v1.0:free`，实测成本 0、`finish_reason=stop`、输出合法 JSON。
+- **委员会长轮阻塞机会检查节拍**：换模型后单轮耗时 17 分钟以上（单次调用 55-69 秒 × 21-31 次），而 `_run_opportunity_check` 直接 await 整轮，期间 `ai_daily_cycle` 完全没有记录（半小时仅 4 条，评估器阈值 3），慢轮会让每天都被判漏轮。改为独立 Task + 在飞保护。
+
+**部署后实测（2026-10-23 05:21-05:30 UTC）**：
+
+- `ai_daily_cycle` 节拍恢复稳定 180 秒（22:24:35、22:27:35 连续两轮间隔 180s），部署前那次 1323 秒缺口正是旧实现被长轮阻塞的证据。
+- 日志出现 `round already in flight, not starting another`，在飞保护按设计工作。
+- Day 0 起算后模型调用全部 `succeeded`（9 次），无 `provider_error`。
+- `soak status` 显示 run 3 `active`、`qualified_days 0 / 14`。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
