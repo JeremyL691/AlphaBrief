@@ -236,6 +236,23 @@ def rebuild_projection(
     )
 
 
+def normalize_position_units(
+    long_units: Decimal, short_units: Decimal
+) -> tuple[Decimal, Decimal]:
+    """Return both position sides as magnitudes.
+
+    OANDA reports a short side as a negative unit count while a long side is
+    positive. The local projection stores each side as a magnitude, because the
+    field name already says which side it is. Comparing the two conventions
+    directly made every open short position look like a CRITICAL mismatch
+    (``44582 - (-44582)``), which raised a freeze on every cycle.
+
+    Normalising at the broker boundary keeps a single convention from the
+    remote view inward.
+    """
+    return abs(long_units), abs(short_units)
+
+
 class LiveReconciler:
     """Reconcile the local projection against the live practice account."""
 
@@ -304,8 +321,12 @@ class LiveReconciler:
                 positions=tuple(
                     RemotePosition(
                         instrument=position.instrument,
-                        long_units=position.long_units,
-                        short_units=position.short_units,
+                        long_units=normalize_position_units(
+                            position.long_units, position.short_units
+                        )[0],
+                        short_units=normalize_position_units(
+                            position.long_units, position.short_units
+                        )[1],
                     )
                     for position in positions.positions
                 ),
