@@ -494,3 +494,22 @@ def test_flat_escalation_respects_the_minimum_spacing() -> None:
 
     assert scan.escalate is False
     assert scan.reason == "round_too_soon"
+
+
+def test_a_failing_model_provider_stops_escalation() -> None:
+    """A broken channel must not keep spending the day's call allowance.
+
+    One evening of provider errors consumed 1000 real calls in three hours
+    because every scan retried the failing channel. Once the breaker is open
+    the scan reports the reason and spends nothing.
+    """
+    scan = scan_opportunities(
+        [_snapshot(signals={"momentum": _signal("long")})],
+        session_open=True,
+        limits=OpportunityLimits(),
+        now=NOW,
+        provider_available=False,
+    )
+
+    assert scan.escalate is False
+    assert scan.reason == "model_provider_unavailable"

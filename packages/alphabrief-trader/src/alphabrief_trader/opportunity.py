@@ -52,6 +52,7 @@ ScanReason = Literal[
     "daily_round_cap_reached",
     "round_too_soon",
     "model_budget_unavailable",
+    "model_provider_unavailable",
 ]
 
 #: Guide bounds for the check cadence (PROJECT_GUIDE 5.1: every 1-5 min).
@@ -327,6 +328,7 @@ def scan_opportunities(
     rounds_today: int = 0,
     last_round_at: datetime | None = None,
     budget_available: bool = True,
+    provider_available: bool = True,
 ) -> OpportunityScan:
     """Decide whether one opportunity check should become a committee round.
 
@@ -334,6 +336,9 @@ def scan_opportunities(
     ``rounds_today`` and ``last_round_at`` come from the durable cycle
     history so a restart cannot hand the runtime a fresh allowance.
     ``budget_available`` is the model gateway's own daily verdict.
+    ``provider_available`` is the channel circuit breaker: after repeated
+    failed calls the runtime stops escalating instead of spending the rest of
+    the day's allowance on a channel that is already failing.
     """
     symbol_verdicts = [
         _evaluate_symbol(snapshot, limits=limits, session_open=session_open)
@@ -362,6 +367,8 @@ def scan_opportunities(
 
     if not budget_available:
         return _result("model_budget_unavailable")
+    if not provider_available:
+        return _result("model_provider_unavailable")
     if rounds_today >= limits.max_rounds_per_day:
         return _result("daily_round_cap_reached")
     if last_round_at is not None:

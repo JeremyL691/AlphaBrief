@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alphabrief_api.db import AiTradingStore
@@ -173,3 +174,94 @@ def test_previous_days_rounds_do_not_count_today(
 
     assert rounds == 0
     assert last is None
+
+
+def _record_outcome(
+    store: AiTradingStore,
+    *,
+    cycle_id: str,
+    day: str,
+    created_at: datetime,
+    outcome: Any,
+) -> None:
+    store.save_cycle(
+        DailyCycleRecord(
+            cycle_id=cycle_id,
+            trading_day=day,
+            symbols=["EUR_USD"],
+            plans=[],
+            votes=[],
+            attempts=[],
+            outcome=outcome,
+            enabled=True,
+            live_trading_enabled=False,
+            summary="fixture",
+            cycle_key=f"opportunity:{cycle_id}",
+            created_at=created_at,
+        )
+    )
+
+
+def test_a_run_of_provider_errors_opens_the_breaker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three consecutive failed rounds mean the channel is down, not busy."""
+    from alphabrief_cli.run_commands import PROVIDER_FAILURE_BREAKER_STREAK
+
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+    runtime = _runtime(tmp_path, monkeypatch, now)
+    store = AiTradingStore(db_path=tmp_path / "alphabrief.duckdb")
+    try:
+        for index in range(PROVIDER_FAILURE_BREAKER_STREAK):
+            _record_outcome(
+                store,
+                cycle_id=f"cyc_fail_{index}",
+                day=now.date().isoformat(),
+                created_at=now - timedelta(minutes=10 - index),
+                outcome="provider_error",
+            )
+        available = runtime._provider_available()
+    finally:
+        store.close()
+
+    assert available is False
+
+
+def test_a_successful_round_closes_the_breaker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The newest round decides: a recovery re-enables escalation."""
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+    runtime = _runtime(tmp_path, monkeypatch, now)
+    store = AiTradingStore(db_path=tmp_path / "alphabrief.duckdb")
+    try:
+        _record_outcome(
+            store,
+            cycle_id="cyc_ok",
+            day=now.date().isoformat(),
+            created_at=now - timedelta(minutes=1),
+            outcome="executed",
+        )
+        for index in range(5):
+            _record_outcome(
+                store,
+                cycle_id=f"cyc_old_fail_{index}",
+                day=now.date().isoformat(),
+                created_at=now - timedelta(minutes=30 + index),
+                outcome="provider_error",
+            )
+        available = runtime._provider_available()
+    finally:
+        store.close()
+
+    assert available is True
+
+
+def test_the_breaker_allows_a_first_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no history the channel must be usable."""
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+    runtime = _runtime(tmp_path, monkeypatch, now)
+
+    assert runtime._provider_available() is True

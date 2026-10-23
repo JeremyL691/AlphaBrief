@@ -373,6 +373,12 @@ def position_monitor_once(
 # ---------------------------------------------------------------------------
 
 
+#: Consecutive failed opportunity rounds that trip the model-channel breaker.
+PROVIDER_FAILURE_BREAKER_STREAK = 3
+#: Round outcomes that mean the model channel itself failed.
+PROVIDER_FAILURE_OUTCOMES = frozenset({"provider_error"})
+
+
 class Runtime:
     """The composed single-process runtime."""
 
@@ -531,6 +537,32 @@ class Runtime:
         finally:
             store.close()
 
+    def _provider_available(self) -> bool:
+        """Whether the model channel is healthy enough to spend a round.
+
+        A failing channel used to be retried on every scan until the day's
+        whole call allowance was gone: one evening of provider errors consumed
+        1000 real calls in three hours. After a short run of failed rounds the
+        runtime stops escalating until a round succeeds again. `no_trade` is a
+        healthy outcome, and not calling a broken channel is part of that.
+        """
+        from alphabrief_api.db import AiTradingStore
+
+        day = self._clock().astimezone(UTC).date().isoformat()
+        store = AiTradingStore(db_path=_paths.db_path())
+        try:
+            outcomes = store.opportunity_round_outcomes(
+                day, limit=PROVIDER_FAILURE_BREAKER_STREAK
+            )
+        finally:
+            store.close()
+        if len(outcomes) < PROVIDER_FAILURE_BREAKER_STREAK:
+            return True
+        failures = sum(
+            1 for outcome in outcomes if outcome in PROVIDER_FAILURE_OUTCOMES
+        )
+        return failures < PROVIDER_FAILURE_BREAKER_STREAK
+
     async def _run_opportunity_check(self) -> None:
         """One cheap check; a full committee round only when justified."""
         from alphabrief_execution.broker.oanda.sessions import session_verdict
@@ -550,6 +582,7 @@ class Runtime:
             self._opportunity_inputs
         )
         rounds_today, last_round_at = await asyncio.to_thread(self._opportunity_facts)
+        provider_available = await asyncio.to_thread(self._provider_available)
         scan = scan_opportunities(
             snapshots,
             session_open=True,
@@ -558,6 +591,7 @@ class Runtime:
             rounds_today=rounds_today,
             last_round_at=last_round_at,
             budget_available=budget_available,
+            provider_available=provider_available,
         )
         if not scan.escalate:
             _LOGGER.info("runtime: %s", scan.summary())
