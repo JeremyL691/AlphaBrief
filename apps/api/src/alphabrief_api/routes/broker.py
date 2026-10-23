@@ -30,6 +30,7 @@ from typing import Any
 
 from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.errors import BrokerAdapterError
+from alphabrief_execution.broker.oanda.client import mask_account_id
 from alphabrief_execution.broker.oanda.live_reconciliation import (
     ALLOWED_SCOPES,
     LiveReconciler,
@@ -306,8 +307,11 @@ def broker_account() -> dict[str, Any]:
     """
     adapter = get_broker_adapter()
     account = _run_live_read(adapter.get_account())
+    # Invariant 8: the account id is only ever shown in masked form, and this
+    # route is reachable from the dashboard. The full id is not needed by any
+    # client; the masked form is enough to tell two accounts apart.
     response = BrokerAccountResponse(
-        account_id=account.account_id,
+        account_id=mask_account_id(account.account_id),
         cash=str(account.cash),
         equity=str(account.equity),
         buying_power=str(account.buying_power),
