@@ -35,37 +35,35 @@ trading:
   # every `scan_interval_seconds` and only spends a full committee round
   # when a signal clears every guard below.
   #
-  # Operator directive (2026-10-20): guarantee at least five committee
-  # rounds per session day, more when the guards allow. The budget ceiling
-  # does the real bounding: the free channel is hard-capped at 1000 calls
-  # per UTC day and a measured round costs 21-31 calls, so 20 rounds is
-  # about 620 calls and still leaves headroom for repair and shadow calls.
-  # A round that cannot get budget records `skipped_model_budget` and never
-  # fabricates a decision.
+  # A measured round costs 21-31 calls and the free channel is hard-capped
+  # at 1000 calls per UTC day, so 15 rounds is at most ~465 calls and leaves
+  # headroom for repair and shadow calls. A round that cannot get budget
+  # records `skipped_model_budget` and never fabricates a decision. Both the
+  # round cap and the spacing are read from durable history, so a restart
+  # cannot hand the runtime a fresh allowance.
   opportunity:
-    scan_interval_seconds: 120
-    max_rounds_per_day: 20
-    min_spacing_seconds: 900
+    scan_interval_seconds: 180
+    max_rounds_per_day: 15
+    min_spacing_seconds: 600
     escalation_min_confidence: "0.60"
-    # A flat scan still escalates: the committee decides (it may close or
-    # hold), and the round record is durable evidence the runtime was alive.
-    # `max_rounds_per_day` and `min_spacing_seconds` still bound the spend.
-    escalate_on_flat: true
+    # A flat scan spends nothing: the committee only runs when a strategy
+    # produced a directional signal that cleared every strategy threshold.
+    # Escalating on flat was briefly enabled and, combined with a broken
+    # round counter, produced 2015 model calls in one UTC day against a
+    # 1000-call ceiling. The guards above bound the spend; this keeps a day
+    # with no signal at zero.
+    escalate_on_flat: false
   # Reviewed committee thresholds (GUIDE 5.4). These are the numbers applied
   # after the models answer, and they are the reason a plan becomes no_trade.
   #
-  # Operator directive (2026-10-20): the soak run is a capability test, not a
-  # profitability test, and the goal is real fills on the practice account.
-  # The floor, the analyst quorum and the risk veto are therefore released so
-  # the committee's opinion reaches the RiskGate instead of being zeroed here.
-  # The RiskGate itself (14 deterministic rules: exposure, margin, daily loss,
-  # drawdown, spread, protective orders) is unchanged and still has to approve
-  # every order. `max_position_pct` is raised to 0.95 so a plan's target is
-  # not clamped here; the per-order notional and total exposure caps in the
-  # RiskGate remain the binding limits.
+  # AGENTS 8.6: these values may only be tightened. The loader rejects any
+  # attempt to release them, so this section can raise a floor or require a
+  # stronger consensus but can never widen what reaches the RiskGate. They are
+  # stated explicitly here so the running configuration is readable, not
+  # inherited silently from a code default.
   discipline:
-    no_trade_below_confidence: "0"
-    min_analysts_supporting_direction: 0
-    require_min_consensus: no_consensus
-    honour_risk_role_veto: false
-    max_position_pct: "0.95"
+    no_trade_below_confidence: "0.55"
+    min_analysts_supporting_direction: 2
+    require_min_consensus: split
+    honour_risk_role_veto: true
+    max_position_pct: "0.25"

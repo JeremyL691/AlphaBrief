@@ -1,6 +1,6 @@
 {
   "name": "alphabrief-desktop",
-  "version": "1.0.0-rc.5",
+  "version": "1.0.0-rc.6",
   "private": true,
   "description": "Native macOS wrapper for the AlphaBrief dashboard (spawns the bundled FastAPI backend).",
   "main": "main.js",

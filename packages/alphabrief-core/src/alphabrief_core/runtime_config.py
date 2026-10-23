@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alphabrief_core.policy_version import project_root
 
@@ -76,14 +76,29 @@ class OpportunitySettings(BaseModel):
         return value
 
 
+#: Reviewed GUIDE 5.4 committee thresholds. Configuration may tighten these
+#: (raise the floor, raise the quorum, strengthen consensus, lower the cap) but
+#: never release them (AGENTS 8.6).
+GUIDE_MIN_CONFIDENCE = Decimal("0.55")
+GUIDE_MIN_ANALYSTS = 2
+GUIDE_MIN_CONSENSUS = "split"
+GUIDE_MAX_POSITION_PCT = Decimal("0.25")
+#: Weakest to strongest; an index comparison enforces "only tighten".
+CONSENSUS_ORDER = ("no_consensus", "split", "majority", "unanimous")
+
+
 class DisciplineSettings(BaseModel):
     """The ``trading.discipline:`` section: reviewed committee thresholds.
 
     These are the GUIDE 5.4 numbers the committee applies after the models
     answer. They live in the reviewed configuration so a change is a reviewable
-    diff instead of an edit buried in code. The defaults are the guide values;
-    an operator lowering them accepts that more marginal decisions turn into
-    real orders.
+    diff instead of an edit buried in code.
+
+    AGENTS 8.6 allows these numbers to be *tightened* and never released: the
+    configuration may raise the confidence floor, raise the analyst quorum,
+    require stronger consensus and lower the position cap, but attempting to
+    relax any of them fails loading. The earlier release of all four values is
+    why this class validates instead of merely documenting the rule.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -102,6 +117,48 @@ class DisciplineSettings(BaseModel):
     max_position_pct: Decimal = Field(
         default=Decimal("0.25"), gt=Decimal(0), le=Decimal(1)
     )
+
+    @model_validator(mode="after")
+    def reject_relaxed_thresholds(self) -> DisciplineSettings:
+        """Refuse any value looser than the reviewed GUIDE 5.4 number.
+
+        AGENTS 8.6 states that section 5.7 risk values may only be tightened.
+        Asserting that in the schema means a relaxed committee threshold is a
+        configuration error that stops the run, not a silent widening of what
+        reaches the RiskGate.
+        """
+        if self.no_trade_below_confidence < GUIDE_MIN_CONFIDENCE:
+            raise ValueError(
+                "no_trade_below_confidence may only be tightened: "
+                f"{self.no_trade_below_confidence} is below the reviewed "
+                f"{GUIDE_MIN_CONFIDENCE}"
+            )
+        if self.min_analysts_supporting_direction < GUIDE_MIN_ANALYSTS:
+            raise ValueError(
+                "min_analysts_supporting_direction may only be tightened: "
+                f"{self.min_analysts_supporting_direction} is below the "
+                f"reviewed {GUIDE_MIN_ANALYSTS}"
+            )
+        if not self.honour_risk_role_veto:
+            raise ValueError(
+                "honour_risk_role_veto may not be released: GUIDE 5.4 makes "
+                "the risk role's veto a hard block"
+            )
+        if self.max_position_pct > GUIDE_MAX_POSITION_PCT:
+            raise ValueError(
+                "max_position_pct may only be tightened: "
+                f"{self.max_position_pct} is above the reviewed "
+                f"{GUIDE_MAX_POSITION_PCT}"
+            )
+        if CONSENSUS_ORDER.index(self.require_min_consensus) < (
+            CONSENSUS_ORDER.index(GUIDE_MIN_CONSENSUS)
+        ):
+            raise ValueError(
+                "require_min_consensus may only be tightened: "
+                f"{self.require_min_consensus} is weaker than the reviewed "
+                f"{GUIDE_MIN_CONSENSUS}"
+            )
+        return self
 
     @field_validator(
         "no_trade_below_confidence",

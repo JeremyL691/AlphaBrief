@@ -433,6 +433,29 @@ class AiTradingStore:
             )
         return results
 
+    def opportunity_round_outcomes(self, day: str, *, limit: int = 20) -> list[str]:
+        """The newest ``limit`` opportunity-round outcomes for ``day``.
+
+        The runtime uses this as a channel circuit breaker: a run of
+        ``provider_error`` outcomes means the model channel is failing, and
+        continuing to escalate would spend the day's whole call allowance on
+        calls that cannot succeed. Reading durable history keeps the verdict
+        across a restart.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT json_extract_string(cycle_json, '$.outcome')
+            FROM ai_daily_cycles
+            WHERE trading_day = ?
+              AND json_extract_string(cycle_json, '$.cycle_key')
+                  LIKE 'opportunity:%'
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [day, limit],
+        ).fetchall()
+        return [str(row[0]) if row[0] is not None else "" for row in rows]
+
     def opportunity_round_facts(self, day: str) -> tuple[int, datetime | None]:
         """Today's opportunity rounds and the newest one's start instant.
 

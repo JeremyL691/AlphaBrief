@@ -4,6 +4,16 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.6] - 2026-10-22
+
+### Fixed
+- The opportunity-round guards never bound anything: the runtime read `cycle_key` off a summary object that does not expose it, so the daily round cap and the minimum spacing always saw zero. One day recorded 95 rounds against a cap of 20, and a single UTC day reached 2015 model calls against the free channel's 1000-call ceiling.
+- A failing model provider was retried on every scan until the day's whole call allowance was gone: roughly 1000 provider errors in three hours consumed the entire budget. Three consecutive failed rounds now open a channel breaker that stops escalation until a round succeeds again.
+
+### Security
+- The reviewed committee thresholds had been released (confidence floor `0.55` to `0`, analyst quorum `2` to `0`, the risk role's veto switched off, position cap `0.25` to `0.95`). They are restored, and `DisciplineSettings` now refuses any value looser than the reviewed numbers, so AGENTS 8.6 "risk values may only be tightened" is enforced by the loader instead of by convention. Tightening remains allowed.
+- `escalate_on_flat` is off again: a day without a strategy signal spends zero model calls.
+
 ## [1.0.0-rc.5] - 2026-10-20
 
 ### Security

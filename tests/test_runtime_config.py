@@ -145,7 +145,7 @@ def test_config_is_found_from_an_unrelated_working_directory(
     assert loaded.path.name == Path(RUNTIME_CONFIG_PATH).name
     # The file's reviewed value, which differs from the dataclass default:
     # this proves the file was loaded rather than the defaults applied.
-    assert loaded.opportunity.max_rounds_per_day == 20
+    assert loaded.opportunity.max_rounds_per_day == 15
 
 
 def test_relative_path_resolves_against_the_repository_root(
@@ -208,8 +208,28 @@ def test_discipline_section_defaults_to_the_guide_values(tmp_path: Path) -> None
     assert discipline.max_position_pct == Decimal("0.25")
 
 
-def test_discipline_section_accepts_reviewed_overrides(tmp_path: Path) -> None:
-    """An operator can lower the reviewed thresholds through config."""
+def test_discipline_section_accepts_tightened_overrides(tmp_path: Path) -> None:
+    """An operator can tighten the reviewed thresholds through config."""
+    path = _write(
+        tmp_path,
+        "schema_version: 1\ntrading:\n  discipline:\n"
+        "    no_trade_below_confidence: '0.75'\n"
+        "    min_analysts_supporting_direction: 3\n"
+        "    require_min_consensus: unanimous\n"
+        "    max_position_pct: '0.10'\n",
+    )
+    discipline = load_runtime_settings(path).settings.trading.discipline
+
+    assert discipline.no_trade_below_confidence == Decimal("0.75")
+    assert discipline.min_analysts_supporting_direction == 3
+    assert discipline.require_min_consensus == "unanimous"
+    assert discipline.max_position_pct == Decimal("0.10")
+
+
+def test_discipline_section_refuses_a_released_threshold(tmp_path: Path) -> None:
+    """Releasing the numbers is an error, not a tuning choice (AGENTS 8.6)."""
+    import pydantic
+
     path = _write(
         tmp_path,
         "schema_version: 1\ntrading:\n  discipline:\n"
@@ -217,15 +237,11 @@ def test_discipline_section_accepts_reviewed_overrides(tmp_path: Path) -> None:
         "    min_analysts_supporting_direction: 0\n"
         "    require_min_consensus: no_consensus\n"
         "    honour_risk_role_veto: false\n"
-        "    max_position_pct: '1'\n",
+        "    max_position_pct: '0.95'\n",
     )
-    discipline = load_runtime_settings(path).settings.trading.discipline
 
-    assert discipline.no_trade_below_confidence == Decimal("0")
-    assert discipline.min_analysts_supporting_direction == 0
-    assert discipline.require_min_consensus == "no_consensus"
-    assert discipline.honour_risk_role_veto is False
-    assert discipline.max_position_pct == Decimal("1")
+    with pytest.raises(pydantic.ValidationError):
+        load_runtime_settings(path)
 
 
 def test_discipline_rejects_a_float_threshold(tmp_path: Path) -> None:
@@ -247,3 +263,77 @@ def test_discipline_rejects_an_unknown_consensus_level(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError):
         load_runtime_settings(path)
+
+
+def _discipline(**overrides: object) -> object:
+    from typing import Any, cast
+
+    from alphabrief_core.runtime_config import DisciplineSettings
+
+    return DisciplineSettings(**cast("dict[str, Any]", overrides))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("no_trade_below_confidence", "0"),
+        ("no_trade_below_confidence", "0.549"),
+        ("min_analysts_supporting_direction", 0),
+        ("min_analysts_supporting_direction", 1),
+        ("honour_risk_role_veto", False),
+        ("max_position_pct", "0.95"),
+        ("require_min_consensus", "no_consensus"),
+    ],
+)
+def test_committee_thresholds_cannot_be_released(
+    field: str, value: object
+) -> None:
+    """AGENTS 8.6: section 5.7 risk values may only be tightened.
+
+    The relaxation that ran in the soak released the confidence floor, the
+    analyst quorum and the risk veto at once. A comment cannot prevent that;
+    loading must refuse it.
+    """
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        _discipline(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("no_trade_below_confidence", "0.70"),
+        ("min_analysts_supporting_direction", 3),
+        ("max_position_pct", "0.10"),
+        ("require_min_consensus", "unanimous"),
+    ],
+)
+def test_committee_thresholds_may_be_tightened(
+    field: str, value: object
+) -> None:
+    """Tightening stays possible: the constraint is one-directional."""
+    settings = _discipline(**{field: value})
+
+    # Loading succeeded, which is what "tightening stays possible" means.
+    assert settings is not None
+
+
+def test_the_reviewed_configuration_loads_with_the_guide_values() -> None:
+    """The shipped file must state the reviewed numbers, not relaxed ones."""
+    from alphabrief_core import load_runtime_settings
+
+    discipline = load_runtime_settings().settings.trading.discipline
+
+    assert str(discipline.no_trade_below_confidence) == "0.55"
+    assert discipline.min_analysts_supporting_direction == 2
+    assert discipline.honour_risk_role_veto is True
+    assert str(discipline.max_position_pct) == "0.25"
+    assert discipline.require_min_consensus == "split"
+
+
+def test_flat_escalation_is_off_in_the_reviewed_configuration() -> None:
+    """A day with no signal must cost zero model calls."""
+    from alphabrief_core import load_runtime_settings
+
+    assert load_runtime_settings().opportunity.escalate_on_flat is False
