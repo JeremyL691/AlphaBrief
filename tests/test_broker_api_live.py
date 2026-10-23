@@ -125,7 +125,8 @@ def test_account_returns_live_snapshot(
         response = live_client.get("/api/v1/broker/account")
         assert response.status_code == 200
         account = response.json()["account"]
-        assert account["account_id"] == "101-004-1234567-001"
+        # Invariant 8: the route returns the masked form, never the id.
+        assert account["account_id"] == "101-***-***-001"
         assert account["cash"] == "99123.45"
         assert account["equity"] == "100000.00"
         assert account["buying_power"] == "90000.00"
@@ -176,7 +177,8 @@ def test_no_credentials_returns_null_shapes(
     account = client.get("/api/v1/broker/account")
     assert account.status_code == 200
     body = account.json()["account"]
-    assert body["account_id"] == "null-adapter"
+    # A non-numeric id is masked too; only the masked form leaves the API.
+    assert body["account_id"] == "nul***ter"
     assert body["cash"] == "0"
 
 

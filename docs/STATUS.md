@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行（0 / 14 合格日；rc.8 待部署后从新 Day 0 起算）** |
-| 状态 | `IN_PROGRESS` |
-| 下一项任务 | 构建并冒烟 1.0.0-rc.8，`service install` 部署，确认一轮委员会能成功产出 decision、`ai_daily_cycle` 保持 180 秒节拍、模型调用全部 succeeded 且成本 0；然后 `soak reset` + `soak start` 从 Day 0 起算 |
-| 最近更新 | 2026-10-23 05:50 UTC rc.7 的 Day 0 首个委员会轮失败，根因是换用的免费模型在完整尺寸提示词上撑不住结构化契约：schema 校验失败反复触发修复，把整轮共享的修复额度耗尽（`repair_exhausted` / `symbol_repair_limit`），最终记成 `skipped_model_budget` 且没有产出决策。用真实契约做探针重选模型，选定 `poolside/laguna-s-2.1:free`（六字段 JSON 齐全、证据 id 为给定集合的合法子集、单次约 5 秒、成本 0），另外三个免费模型被同一组探针否决。已升 rc.8，全量 3746 passed。下一步部署后从新 Day 0 起算。 |
+| 当前阶段 | **S10 14 天试运行（0 / 14 合格日；run 4 需重置，账户内有 1 笔待平仓位）** |
+| 状态 | `BLOCKED` |
+| 下一项任务 | ① 用官方路径平掉 practice 空头（trade 35，EUR_USD short 44581，TP 1.11847 / SL 1.12210）并记录盈亏；② `soak reset` + `soak start` 起算新 Day 0；③ 复核对账在持仓跨对账周期时保持 clean（rc.9 已修符号约定） |
+| 最近更新 | 2026-10-23 06:50 UTC 试运行 run 4 暴露出三处问题并已修复（rc.9）：① 对账把券商空头负值与本地正值直接相减（44582 − (−44582)），任何持仓跨对账周期都报 CRITICAL 并冻结，已在券商边界统一为量值；② `/api/v1/broker/account` 原样返回完整账户 ID，已改为脱敏；③ **我自己的操作失误**：执行 `pytest -k recon` 时未加 `-m "not practice"`，`test_controlled_practice_restart_scenario` 因此对真实 practice 账户下了 +1 unit 单（transaction 38/39，clientOrderID `cycle-m07-w07-restart:intent-42`），把空头从 −44582 改成 −44581，正是持续冻结的直接来源。该测试未加 practice 标记属既有缺陷：只要进程加载过 `.env`，默认门禁每跑一次就会真实下单，现已补标记，默认门禁不再触网交易（14 deselected）。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -848,6 +848,38 @@ rc.6 部署后连续暴露两个"会让每天都被判失败、但与交易正�
 - Day 0 起算后模型调用全部 `succeeded`（9 次），无 `provider_error`。
 - `soak status` 显示 run 3 `active`、`qualified_days 0 / 14`。
 
+### S10 试运行 run 4（rc.8，2026-10-23 起）
+
+**Day 0 起始：2026-10-23T05:53:07Z，run_index 4。代码即 `v1.0.0-rc.8`（`git diff v1.0.0-rc.8 --stat` 为空，`/health` 报 1.0.0-rc.8）。**
+
+rc.7 的 Day 0 首个委员会轮以 `skipped_model_budget` 结束，逐层排查后确认根因不是预算：
+
+1. 预算判定实际为 `allowed: True`（69/1000），排除额度耗尽。
+2. 该轮摘要显示 `repair_exhausted` 与 `model_budget:symbol_repair_limit`：换用的 `recursive/flint-v1.0:free` 在完整尺寸提示词上撑不住结构化契约，schema 校验反复失败，把整轮共享的修复额度耗尽，最终没有任何决策产出。
+3. 改用真实契约做选型探针（要求六字段 JSON 齐全，且 `evidence_ids` 必须是给定集合的合法子集），选定 `poolside/laguna-s-2.1:free`：单次约 5 秒、成本 0、两个探针均通过。同一组探针否决 `nemotron-3.5-lightning`（返回空内容）、`inkling`（403，需 agentic harness）、`flint`（只能应付简单提示词）。
+
+**run 4 首个委员会轮**成功调用 7 次后，第 8 次返回 429（`classification=rate_limit`）。按 GUIDE 5.13 与第 580 行，收到 429 即当天停用该通道，因此 `openrouter_free` 被关闭至下一个 UTC 零点，后续调用记为 `NO_TRADE_MODEL_UNAVAILABLE`。
+
+期间曾把「任意 rate_limit 即关闭一整天」改成「仅显式配额度才关闭」，理由是免费通道按分钟限流会锁死 18 小时。该改动被既有契约测试 `test_provider_errors_no_post_retry_or_fallback[429-rate_limit]` 与 GUIDE 第 580 行否决——**规格要求 429 当天停用**，属安全侧保守行为，按 AGENTS 8.6 不得放宽。已完整回退（`git diff v1.0.0-rc.8` 为空即证），未留下任何放宽安全控制的改动。
+
+**当天是否仍能合格**：评估器只把「漏轮」与「轮次失败」记为延长（`extension_reasons`），重置条件是停机超时、订单无决策、对账不干净等；而存活证据来自周期任务 `ai_daily_cycle` 的运行记录，通道关闭不影响它继续按 180 秒写入。因此通道当日停用的结果是"当天没有委员会决策"，不是"当天不合格"。
+
+### S10 run 4 事故与修复（rc.9，2026-10-23 UTC）
+
+**账户现状**：practice 账户有 1 笔真实空头在仓——trade 35，EUR_USD short 44581，TP 1.11847 / SL 1.12210（券商侧保护单已在）。该仓来自 2026-10-23T05:54:48Z 的一轮真实委员会决策（order 34，绑定 RiskDecision `risk_ae4fa095c7b2414fa391a07f7d7bbd05`），不是凑数交易。
+
+**三处问题**：
+
+1. **对账符号约定不一致（真缺陷，已修 `6939ef2`）**：OANDA 以负值表示空头 `short.units`，本地投影按字段语义存成量值。对账器直接相减得 `44582 − (−44582) = 89164`，超过容差，因此每个周期都报 CRITICAL `quantity_diff` 并冻结新开仓（累计 47 次冻结）。这是"持仓第一次跨对账周期"才暴露的缺陷，正是 14 天试运行该抓到的东西。修复放在券商边界：`normalize_position_units` 归一为量值。
+2. **不变量 8 遗漏（已修 `e3bd0b3` / `6939ef2`）**：`/api/v1/broker/account` 原样返回完整账户 ID，而看板正是读它。已改为 `101-***-***-001`；非数字形态同样脱敏。
+3. **我的操作失误（已记录并修复根因）**：核对对账时我执行了 `pytest -q -k recon`，**漏掉 `-m "not practice"`**，导致 `test_controlled_practice_restart_scenario` 对真实 practice 账户提交了 +1 unit 订单（transaction 38 MARKET_ORDER、39 ORDER_FILL，clientOrderID `cycle-m07-w07-restart:intent-42`），把空头从 44582 改成 44581。这一单位漂移正是"券商与本地差 1 单位"以及 `unknown client identity` 冻结的直接来源。
+
+   该测试**原本没有 `practice` 标记**，属既有缺陷：任何加载过 `.env` 的进程都带 `ALPHABRIEF_OANDA_TOKEN`，于是默认门禁每跑一次全量测试就会在真实账户下真实下单。已按 GUIDE 补上 `@pytest.mark.practice`，并验证默认门禁的收集结果里不再包含它（14 deselected），且修复后跑全量期间账户持仓未发生变化。
+
+**处置**：rc.9 已部署（`/health` = 1.0.0-rc.9），后台保持运行但新开仓仍受冻结保护（安全侧）。run 4 不能作为合格日：既未走完，又存在测试导致的一单位漂移。需先平掉该仓、`soak reset` 后重新起算 Day 0。
+
+**未做**：未平仓。平仓是真实交易动作，需在单独的、可仔细核对盈亏与对账的作业里完成，不在长会话末尾仓促执行。
+
 ### S11 发布
 - [ ] S11-1 试运行报告
 - [ ] S11-2 发布代码与最后一个 RC 的运行时代码一致
@@ -873,6 +905,9 @@ rc.6 部署后连续暴露两个"会让每天都被判失败、但与交易正�
 - （可选）申请免费的 `FRED_API_KEY` 以启用宏观日历；没有也能运行（会用新闻冲击过滤代替）。
 
 ## 决策记录
+
+- 2026-10-23 UTC / 对账在持仓跨周期时误报并为每周期冻结 / 在券商边界把多空单位归一为量值，本地不必改 / 两边各自自洽（券商负值表示空头、本地按字段存量值），错在边界未统一；把归一放在边界可让 reconcile 内部只有一种约定，且不改变任何风控语义。
+- 2026-10-23 UTC / 会真实下单的 e2e 测试没有 practice 标记 / 补 `@pytest.mark.practice` / 进程只要加载过 `.env` 就带 token，默认门禁会真实下单，已造成一单位漂移；GUIDE 要求触网测试必须打标记。
 
 - 2026-10-22 UTC / 委员会门槛被放开且无授权证据 / 按 AGENTS 8.6"只能收紧不能放宽"恢复评审值（0.55 / 2 位 / risk veto 生效 / 仓位上限 0.25 / split），并把该约束实现为 `DisciplineSettings` 的加载期校验：低于评审值的配置直接加载失败，收紧仍允许 / AGENTS 8.2 规定不向用户提问、未覆盖情况选更安全方案（不交易、失败即停）；风控数值只能收紧是硬约束，本轮没有任何 operator 授权证据，放宽状态下产生的成交不能作为合格证据。
 - 2026-10-22 UTC / 模型通道连续失败没有熔断 / 连续 3 轮 `provider_error` 后停止升级，出现一轮成功即恢复 / 实测 2026-10-21 18:00-20:59 UTC 三小时约 1000 次 `provider_error` 把当日额度耗尽才停；不调用已故障的通道属于"失败即停"，且 `no_trade` 是健康结果。

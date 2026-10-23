@@ -116,7 +116,8 @@ def test_broker_account_returns_zero_snapshot_without_credentials(
     response = client.get("/api/v1/broker/account")
     assert response.status_code == 200
     account = response.json()["account"]
-    assert account["account_id"] == "null-adapter"
+    # Invariant 8: only the masked form leaves the API.
+    assert account["account_id"] == "nul***ter"
     assert account["cash"] == "0"
     assert account["equity"] == "0"
     assert account["buying_power"] == "0"
