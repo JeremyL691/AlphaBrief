@@ -445,10 +445,15 @@ def _trade_ids(row: dict[str, Any]) -> tuple[str, ...]:
     that link to keep trades and positions in step.
     """
     ids: list[str] = []
-    opened = row.get("tradeOpened")
-    if isinstance(opened, dict) and opened.get("tradeID"):
-        ids.append(str(opened["tradeID"]))
-    for key in ("tradesClosed", "tradesReduced"):
+    # Singular shapes: one object per key. ``tradeReduced`` is what a partial
+    # reduction produces, and it is the shape that made the projection drop the
+    # fill entirely, leaving the local position permanently behind the broker.
+    for key in ("tradeOpened", "tradeClosed", "tradeReduced"):
+        entry = row.get(key)
+        if isinstance(entry, dict) and entry.get("tradeID"):
+            ids.append(str(entry["tradeID"]))
+    # Plural shapes: an array of affected trades.
+    for key in ("tradesClosed", "tradesReduced", "tradesOpened"):
         entries = row.get(key)
         if isinstance(entries, list):
             for entry in entries:

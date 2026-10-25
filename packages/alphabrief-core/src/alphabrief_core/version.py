@@ -7,6 +7,6 @@ refuses to build when they diverge.
 
 from __future__ import annotations
 
-__version__ = "1.0.0-rc.9"
+__version__ = "1.0.0-rc.10"
 
 __all__ = ["__version__"]

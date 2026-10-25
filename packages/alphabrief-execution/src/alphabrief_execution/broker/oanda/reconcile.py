@@ -92,7 +92,10 @@ class RemoteAccountView(BaseModel):
     balance: Decimal = Decimal("0")
     nav: Decimal = Decimal("0")
     margin_used: Decimal = Decimal("0")
-    financing_total: Decimal = Decimal("0")
+    #: ``None`` means the broker did not report a cumulative financing
+    #: figure. Treating that as zero made every account with accrued
+    #: financing report a permanent CRITICAL money diff.
+    financing_total: Decimal | None = None
     remote_fill_count: int = 0
     last_transaction_id: str = "0"
 
@@ -464,13 +467,25 @@ class Reconciler:
             tolerance,
             diffs,
         )
-        self._money_pass(
-            local.financing_total,
-            remote.financing_total,
-            "financing",
-            tolerance,
-            diffs,
-        )
+        if remote.financing_total is None:
+            # The broker summary carries no cumulative financing figure, so a
+            # local total cannot be contradicted by it. Record the local
+            # number as evidence instead of inventing a mismatch against zero.
+            self._informational_money_pass(
+                local.financing_total,
+                Decimal("0"),
+                "financing (broker does not report a total)",
+                tolerance,
+                diffs,
+            )
+        else:
+            self._money_pass(
+                local.financing_total,
+                remote.financing_total,
+                "financing",
+                tolerance,
+                diffs,
+            )
 
     def _informational_money_pass(
         self,
@@ -610,6 +625,24 @@ class Reconciler:
         if ledger is not None and ledger.reservation(client_order_id) is not None:
             # The client identity maps to our own ledger: matched.
             return
+        if ledger is not None:
+            adoption = ledger.adoption(client_order_id)
+            if adoption is not None:
+                # An operator recorded why this order exists. It stays visible
+                # as evidence, and the account is not made tradable by it: the
+                # freeze is lifted separately.
+                diffs.append(
+                    DiffRecord(
+                        kind=kind,
+                        source_id=source_id,
+                        severity="INFO",
+                        detail=(
+                            f"{detail} (adopted: {adoption.get('reason', '')})"
+                        ),
+                        remote_value=client_order_id,
+                    )
+                )
+                return
         diffs.append(
             DiffRecord(
                 kind=kind,

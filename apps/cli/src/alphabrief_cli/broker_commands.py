@@ -348,19 +348,87 @@ def freeze_cmd(
     print(f"raised_at: {event.raised_at}")
 
 
+def _clear_all_freezes(*, reason: str) -> None:
+    """Clear every open freeze, but only on a clean reconciliation."""
+    if not reason.strip():
+        typer.echo("error: --all requires a written --reason.", err=True)
+        raise typer.Exit(code=2)
+
+    store = _open_store()
+    try:
+        # The newest pass is the one that matters; preferring a scope would
+        # let a stale clean snapshot authorise clearing a fresh difference.
+        candidates = [
+            snapshot
+            for scope in ("startup", "cycle", "eod")
+            if (snapshot := store.latest_snapshot(scope=scope)) is not None
+        ]
+        latest = (
+            max(candidates, key=lambda s: s.captured_at) if candidates else None
+        )
+        if latest is None or not latest.all_match:
+            typer.echo(
+                "error: refusing to clear freezes while reconciliation is not "
+                "clean; resolve the difference first.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        opened = store.list_freezes(only_open=True)
+        cleared = 0
+        for event in opened:
+            store.clear_freeze(
+                event_id=event.event_id,
+                reason=f"bulk: {reason.strip()}",
+                source="operator-bulk",
+            )
+            cleared += 1
+    finally:
+        store.close()
+    typer.echo(
+        json.dumps(
+            {
+                "cleared": cleared,
+                "reason": reason.strip(),
+                "guard": "reconciliation snapshot was clean",
+                "note": (
+                    "Clearing a freeze does not change any risk threshold; "
+                    "RiskGate still approves every order."
+                ),
+            },
+            indent=2,
+        )
+    )
+
 @broker_app.command("unfreeze")
 def unfreeze_cmd(
     event_id: str = typer.Argument(  # noqa: B008
-        ...,
-        help="Identifier of the freeze event to clear.",
+        "",
+        help="Identifier of the freeze event to clear. Omit with --all.",
     ),
     reason: str = typer.Option(  # noqa: B008
         "manual unfreeze",
         "--reason",
         help="Human-readable reason for the unfreeze.",
     ),
+    all_open: bool = typer.Option(  # noqa: B008
+        False,
+        "--all",
+        help="Clear every open freeze. Refused unless reconciliation is clean.",
+    ),
 ) -> None:
-    """Clear an open freeze by id."""
+    """Clear an open freeze by id, or every open freeze with --all.
+
+    ``--all`` exists because one systematic defect can raise thousands of
+    freezes (one per cycle) and clearing them one by one is not an operator
+    workflow. It refuses unless the most recent reconciliation snapshot is
+    clean, so a real unexplained difference still blocks trading.
+    """
+    if all_open:
+        _clear_all_freezes(reason=reason)
+        return
+    if not event_id:
+        typer.echo("error: provide an event id, or --all.", err=True)
+        raise typer.Exit(code=2)
     if is_api_running():
         import urllib.request
 
@@ -400,3 +468,118 @@ def unfreeze_cmd(
 
 
 __all__ = ["broker_app"]
+
+
+@broker_app.command("adopt")
+def adopt_cmd(
+    order_id: str = typer.Option(  # noqa: B008
+        ...,
+        "--order-id",
+        help="Broker order id that this system never issued.",
+    ),
+    reason: str = typer.Option(  # noqa: B008
+        ...,
+        "--reason",
+        help="Why this order exists. Recorded verbatim as evidence.",
+    ),
+) -> None:
+    """Record an explanation for a broker order this system never issued.
+
+    Reconciliation treats an order with an unknown client identity as CRITICAL
+    and freezes new exposure. That is correct, but without a way to record an
+    explanation the account stayed frozen forever after any out-of-band order.
+    Adoption only records the explanation: it lifts no freeze, changes no risk
+    threshold, and a later reconciliation still has to come back clean.
+    """
+    from alphabrief_execution.broker.oanda.order_ledger import OrderLedger
+    from alphabrief_execution.broker.runtime import build_oanda_paper_client
+
+    if is_api_running():
+        typer.echo(
+            "error: the backend is running; 'broker adopt' writes the ledger "
+            "directly. Stop it first (`alphabrief service stop`).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    if not reason.strip():
+        typer.echo("error: a written reason is required.", err=True)
+        raise typer.Exit(code=2)
+
+    client = build_oanda_paper_client()
+    # The listing includes historical orders, so membership alone says nothing
+    # about whether the order can still execute. Only a live state blocks
+    # adoption: an order that can still fill is not history yet.
+    live_states = {"PENDING", "NEW", "TRIGGER_PENDING", "OPEN"}
+    still_live = any(
+        str(order.broker_order_id) == order_id
+        and str(getattr(order, "state", "")).upper() in live_states
+        for order in _list_orders(client).orders
+    )
+    if still_live:
+        typer.echo(
+            "error: that order is still live at the broker; adoption only "
+            "explains terminal orders. Close or cancel it first.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    identity = _order_client_identity(order_id)
+    if identity is None:
+        typer.echo(
+            f"error: no client identity recorded for broker order {order_id}.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    ledger = OrderLedger()
+    try:
+        record = ledger.adopt_external_order(
+            client_order_id=identity,
+            broker_order_id=order_id,
+            reason=reason.strip(),
+        )
+    finally:
+        ledger.close()
+    typer.echo(
+        json.dumps(
+            {
+                "adopted": True,
+                "broker_order_id": record.get("broker_order_id"),
+                "client_order_id": record.get("client_order_id"),
+                "reason": record.get("reason"),
+                "note": (
+                    "No freeze was lifted and no risk threshold changed; run "
+                    "'alphabrief broker reconcile' and review before unfreezing."
+                ),
+            },
+            indent=2,
+        )
+    )
+
+
+def _list_orders(client: Any) -> Any:
+    from alphabrief_execution.broker.oanda.order_ops import OrderOpsClient
+
+    return OrderOpsClient(client).list_orders()
+
+
+def _order_client_identity(order_id: str) -> str | None:
+    """The client identity reconciliation reported for ``order_id``.
+
+    The reconciler has already computed this: it is the ``remote_value`` of a
+    CRITICAL ``order_diff``. Reusing that keeps adoption anchored to a reviewed
+    report instead of re-deriving identities from transaction shapes.
+    """
+    store = _open_store()
+    try:
+        result = _run_live_reconcile(store, scope="startup")
+    finally:
+        store.close()
+    for diff in result.report.diffs:
+        if diff.kind != "order_diff" or str(diff.source_id) != order_id:
+            continue
+        if diff.severity != "CRITICAL" or not diff.remote_value:
+            continue
+        return str(diff.remote_value)
+    return None

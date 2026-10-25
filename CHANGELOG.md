@@ -4,6 +4,16 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.10] - 2026-10-25
+
+### Fixed
+- A fill that partially reduces a trade lost its trade link. OANDA reports the affected trade in `tradeReduced` (a singular object) while the parser only read `tradeOpened`, `tradesClosed` and `tradesReduced`. The projection then received the fill with no trade id and dropped it, so the local position stayed permanently one step behind the broker and every cycle reported a CRITICAL `quantity_diff`. Any partial close would have done this.
+- Reconciliation compared a locally-derived cumulative financing total against a remote value that is hardcoded to zero because the account summary does not expose one. Any accrued financing therefore produced a permanent CRITICAL `money_diff`. The remote financing figure is now explicitly unknown, and the comparison is informational in that case.
+
+### Added
+- `alphabrief broker adopt --order-id --reason` records why a broker order this system never issued is explainable, turning its diff into evidence. It is deliberately narrow: no freeze is lifted, no threshold changes, and a later reconciliation still has to come back clean.
+- `alphabrief broker unfreeze --all --reason` clears a systematic batch of freezes (one defect can raise thousands, one per cycle) and refuses unless the newest reconciliation snapshot is clean.
+
 ## [1.0.0-rc.9] - 2026-10-23
 
 ### Fixed

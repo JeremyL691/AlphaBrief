@@ -333,7 +333,9 @@ class LiveReconciler:
                 balance=account.balance,
                 nav=account.nav,
                 margin_used=account.margin_used,
-                financing_total=Decimal("0"),
+                # The account summary exposes no cumulative financing
+                # total, so the remote value is unknown rather than zero.
+                financing_total=None,
                 remote_fill_count=self._remote_fill_count(
                     account.last_transaction_id
                 ),
