@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS order_ledger_events (
 );
 CREATE INDEX IF NOT EXISTS order_ledger_events_submit ON
     order_ledger_events (submit_id);
+CREATE TABLE IF NOT EXISTS order_ledger_adoptions (
+    client_order_id TEXT PRIMARY KEY,
+    broker_order_id TEXT NOT NULL,
+    reason          TEXT NOT NULL,
+    adopted_at      TIMESTAMPTZ NOT NULL
+);
 """
 
 #: Columns added after the first release; applied to existing databases.
@@ -99,6 +105,73 @@ class OrderLedger:
         self._conn.execute(_CREATE_TABLES)
         for statement in _MIGRATIONS:
             self._conn.execute(statement)
+
+    # ------------------------------------------------------------------
+    # Adoption of an externally-originated order
+    # ------------------------------------------------------------------
+
+    def adopt_external_order(
+        self,
+        *,
+        client_order_id: str,
+        broker_order_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Record why a broker order this system never issued is explainable.
+
+        Reconciliation treats an order carrying a client identity we do not
+        know as CRITICAL and freezes new exposure - correct, but it left no
+        recovery path at all: once an out-of-band order reached the account
+        (manual intervention, an external tool, a test that polluted the
+        account) the account stayed frozen forever.
+
+        Adoption is deliberately narrow. It only records an explanation; it
+        does not clear freezes, change any risk threshold, or make the account
+        tradable. A later full reconciliation still has to come back clean, and
+        an operator still has to unfreeze explicitly.
+        """
+        identity = client_order_id.strip()
+        broker_id = broker_order_id.strip()
+        text = reason.strip()
+        if not identity:
+            raise ValueError("client_order_id is required")
+        if not broker_id:
+            raise ValueError("broker_order_id is required")
+        if not text:
+            raise ValueError("a written reason is required to adopt an order")
+
+        existing = self.adoption(identity)
+        if existing is not None:
+            return existing
+
+        now = datetime.now(UTC)
+        self._conn.execute(
+            """
+            INSERT INTO order_ledger_adoptions (
+                client_order_id, broker_order_id, reason, adopted_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            [identity, broker_id, text, now],
+        )
+        return self.adoption(identity) or {}
+
+    def adoption(self, client_order_id: str) -> dict[str, Any] | None:
+        """Return the recorded adoption for ``client_order_id``, if any."""
+        row = self._conn.execute(
+            """
+            SELECT client_order_id, broker_order_id, reason, adopted_at
+            FROM order_ledger_adoptions WHERE client_order_id = ?
+            """,
+            [client_order_id],
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "client_order_id": row[0],
+            "broker_order_id": row[1],
+            "reason": row[2],
+            "adopted_at": row[3],
+        }
 
     # ------------------------------------------------------------------
     # Reservation
