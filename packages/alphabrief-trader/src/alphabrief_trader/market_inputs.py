@@ -23,6 +23,27 @@ def candle_end(start: datetime, timeframe: str) -> datetime:
     return start + timedelta(minutes=minutes)
 
 
+def _latest_completed_h1_end(h1: Sequence[Bar]) -> datetime | None:
+    """End of the newest *completed* H1 bar, or ``None`` when there is none.
+
+    The newest stored bar is often the candle still forming, so its end is in
+    the future. Reporting that end made every freshness check fail with
+    ``H1_stale_or_future`` during the first part of each hour: the window
+    requires ``0 <= age <= max_age``, and a future instant is rejected outright.
+    That is what blocked every committee round between 00:00 and 01:00 UTC each
+    day - the only window in which the runtime tried to escalate.
+
+    A bar whose end is still ahead of now cannot be evidence that the data is
+    current, so it is skipped rather than counted.
+    """
+    now = datetime.now(UTC)
+    for bar in reversed(h1):
+        end = candle_end(bar.timestamp, "H1")
+        if end <= now:
+            return end
+    return None
+
+
 @dataclass(frozen=True)
 class MarketInputs:
     series: dict[str, list[Bar]]
@@ -73,7 +94,7 @@ def build_market_inputs(
         evidence=MarketInputEvidence(
             counts={tf: len(bars) for tf, bars in windows.items()},
             series_hashes=hashes,
-            latest_h1_end=None if not h1 else candle_end(h1[-1].timestamp, "H1"),
+            latest_h1_end=_latest_completed_h1_end(h1),
         ),
         atr=atr_from_bars(
             [b.high for b in h1], [b.low for b in h1], [b.close for b in h1]

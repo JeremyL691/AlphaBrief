@@ -4,6 +4,11 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.11] - 2026-10-29
+
+### Fixed
+- Data freshness used the newest stored H1 bar even when it was still forming, so its computed end lay in the future and the freshness window (`0 <= age <= max_age`) rejected it outright with `H1_stale_or_future`. Every committee round between 00:00 and 01:00 UTC was therefore skipped as stale, and that hour is exactly where the runtime escalated after the UTC-day reset, so no round ever reached a decision. The reported end now comes from the newest *completed* bar; a bar that has not closed yet is not evidence that the data is current.
+
 ## [1.0.0-rc.10] - 2026-10-25
 
 ### Fixed
