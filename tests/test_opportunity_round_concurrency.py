@@ -130,3 +130,55 @@ def _escalate(*args: Any, **kwargs: Any) -> Any:
         symbols=[],
         rounds_today=0,
     )
+
+
+class _FailingRound:
+    """A round that raises, as a real one does when broker facts are down."""
+
+    def __init__(self) -> None:
+        self.started = 0
+
+    async def __call__(self, cycle_key: str) -> None:
+        del cycle_key
+        self.started += 1
+        raise RuntimeError("broker facts unavailable")
+
+
+def test_a_failed_round_is_logged_instead_of_swallowed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A silent background failure hides that no decision is being made.
+
+    A round that raised inside its own task left no cycle record and no log
+    line, so the runtime looked busy (escalating every few minutes) while
+    producing nothing at all.
+    """
+    round_fn = _FailingRound()
+    runtime = _runtime(tmp_path, monkeypatch, round_fn)
+
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            runtime, "_opportunity_inputs", lambda: ([], True), raising=False
+        )
+        monkeypatch.setattr(
+            runtime, "_opportunity_facts", lambda: (0, None), raising=False
+        )
+        monkeypatch.setattr(runtime, "_provider_available", lambda: True, raising=False)
+        monkeypatch.setattr(runtime, "_opportunity_limits", lambda: _limits())
+        monkeypatch.setattr(
+            "alphabrief_trader.opportunity.scan_opportunities", _escalate
+        )
+        with caplog.at_level("ERROR"):
+            await runtime._run_opportunity_check()
+            await asyncio.sleep(0)
+            assert runtime._round_task is not None
+            await asyncio.gather(runtime._round_task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+    assert round_fn.started == 1
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "committee round" in messages, "the failure was swallowed"
+    assert "broker facts unavailable" in messages

@@ -620,11 +620,31 @@ class Runtime:
         )
         result = self._decision_round(cycle_key)
         if asyncio.iscoroutine(result):
-            self._round_task = asyncio.create_task(
+            task = asyncio.create_task(
                 result, name=f"committee-round-{cycle_key}"
             )
+            # A background task that raises is otherwise silent: the round
+            # never records a cycle and nothing explains why the runtime kept
+            # escalating every few minutes with no calls and no decisions.
+            task.add_done_callback(self._log_round_failure)
+            self._round_task = task
         else:
             _LOGGER.info("runtime: committee round %s completed inline", cycle_key)
+
+    def _log_round_failure(self, task: asyncio.Task[Any]) -> None:
+        """Surface a committee round that died, instead of swallowing it."""
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is None:
+            return
+        _LOGGER.error(
+            "runtime: committee round %s failed: %s: %s",
+            task.get_name(),
+            type(error).__name__,
+            error,
+            exc_info=error,
+        )
 
     def _opportunity_limits(self) -> Any:
         """The reviewed opportunity guards from the configuration file."""
