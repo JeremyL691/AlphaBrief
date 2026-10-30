@@ -4,6 +4,11 @@ All notable changes to AlphaBrief are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.12] - 2026-10-30
+
+### Fixed
+- A committee round that raised inside its own background task was silent. The task was created without a failure path, so the exception was never retrieved: the round recorded no cycle, made no model calls, and left no log line, while the runtime kept escalating every few minutes and looked busy. Failed rounds now log the error with its traceback. This is what hid a run of `[Errno 11] Resource deadlock avoided` failures on the broker reads.
+
 ## [1.0.0-rc.11] - 2026-10-29
 
 ### Fixed
