@@ -11,7 +11,7 @@
 | 当前阶段 | **S10 14 天试运行（run 5，4 / 14 合格日；**后台因本机文件权限问题无法启动**）** |
 | 状态 | `BLOCKED` |
 | 下一项任务 | 等用户处理本机文件访问权限（见「需要用户做的事」）后重启后台；同时查清 `Errno 11` 的完整成因 |
-| 最近更新 | 2026-10-31 04:50 UTC 巡检：部署 rc.12 时**后台无法启动**——launchd 启动的进程在 importlib 读取 `.py` 文件时抛 `OSError: [Errno 11] Resource deadlock avoided`（可复现），而在用户 shell 里同样导入正常、磁盘尚有 40GB。项目位于 `~/Desktop`（macOS TCC 保护目录），符合"前台进程有权限、后台代理没有"的模式。为避免崩溃循环已 `service uninstall`。此前该后台已连续运行数日，说明权限是后来丢失或被重置的。试运行因此暂停，后台当前停止。 |
+| 最近更新 | 2026-11-01 04:40 UTC 巡检：后台**仍无法启动**，同一错误 `OSError: [Errno 11] Resource deadlock avoided`（importlib 读源文件失败）。本轮新增一条排除性证据：用最小环境（`env -i`）以同一 venv 导入 `alphabrief_cli.main` **成功**，说明问题不是环境变量、也不是文件本身不可读，而是**只在 launchd 启动的进程中出现**——即 macOS 权限（TCC）。已再次 `service uninstall` 避免崩溃循环。试运行仍暂停在 4 / 14 合格日，账户无持仓。**需用户授权后才能继续。** |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -987,6 +987,8 @@ OSError: [Errno 11] Resource deadlock avoided
 **最可能的原因**：项目位于 `~/Desktop/Projects/AlphaBrief`，属于 macOS TCC 保护目录。后台由 launchd 启动，若该进程没有相应授权（Full Disk Access 或"桌面文件夹"访问），读文件会被系统拒绝。此前后台能连续运行数日，说明权限是**后来丢失或被重置**的（例如系统更新、或反复 install/uninstall 触发重新授权）。
 
 **已采取的处置**：`service uninstall`，避免崩溃循环不断重启并刷日志。账户无持仓（此前空头已被止损平掉），不存在无人看管的风险敞口。
+
+**2026-11-01 UTC 复核**：错误完全相同。新增排除项——最小环境（`env -i HOME=... PATH=...`）下同一 venv 导入正常，因此排除"环境变量差异"与"文件不可读"；问题只出现在 launchd 启动的进程里，指向 macOS TCC 权限。处置同上：`service uninstall`，避免崩溃循环。
 
 **这也是 ERROR 11 的真正根因线索**：之前我把 `[Errno 11] Resource deadlock avoided` 当作"本地资源耗尽"，据此推测过并发问题；实际是文件读取被拒。这一判断修正已记录在此，避免后续按错误方向排查。
 
