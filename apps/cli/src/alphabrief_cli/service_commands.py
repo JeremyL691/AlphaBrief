@@ -101,6 +101,10 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+#: Open-file limit granted to the background service.
+SERVICE_FILE_LIMIT = 8192
+
+
 def _service_loaded() -> tuple[bool, int | None]:
     """Check if the service is loaded in launchctl and return (loaded, pid)."""
     proc = _launchctl("list")
@@ -221,6 +225,15 @@ def install_cmd(
         "StandardErrorPath": stderr_path,
         "WorkingDirectory": str(_paths.data_dir()),
         "EnvironmentVariables": env_vars,
+        # launchd starts agents with a small open-file limit. Importing the
+        # web stack opens enough files to exhaust it, and macOS reports that
+        # as ``OSError: [Errno 11] Resource deadlock avoided`` from
+        # ``importlib`` rather than a plain "too many open files" - which made
+        # the backend crash on startup with a message that points at nothing.
+        # The limit has to be raised in the plist because it is inherited, not
+        # settable from inside the process.
+        "SoftResourceLimits": {"NumberOfFiles": SERVICE_FILE_LIMIT},
+        "HardResourceLimits": {"NumberOfFiles": SERVICE_FILE_LIMIT},
     }
 
     # If previously loaded, unload first
