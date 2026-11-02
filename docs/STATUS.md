@@ -8,10 +8,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 当前阶段 | **S10 14 天试运行（run 5，4 / 14 合格日；**后台因本机文件权限问题无法启动**）** |
+| 当前阶段 | **S10 14 天试运行（run 5，4 / 14 合格日；后台启动问题已定位并修了一半）** |
 | 状态 | `BLOCKED` |
-| 下一项任务 | 等用户处理本机文件访问权限（见「需要用户做的事」）后重启后台；同时查清 `Errno 11` 的完整成因 |
-| 最近更新 | 2026-11-01 04:40 UTC 巡检：后台**仍无法启动**，同一错误 `OSError: [Errno 11] Resource deadlock avoided`（importlib 读源文件失败）。本轮新增一条排除性证据：用最小环境（`env -i`）以同一 venv 导入 `alphabrief_cli.main` **成功**，说明问题不是环境变量、也不是文件本身不可读，而是**只在 launchd 启动的进程中出现**——即 macOS 权限（TCC）。已再次 `service uninstall` 避免崩溃循环。试运行仍暂停在 4 / 14 合格日，账户无持仓。**需用户授权后才能继续。** |
+| 下一项任务 | ① 查清启动后 API 不就绪（无新日志，疑为残留锁）的原因；② 补一条自动化断言固定 plist 的 `ResourceLimits` 字段；③ 后台恢复后验证委员会轮能否产出 cycle |
+| 最近更新 | 2026-11-02 05:15 UTC 巡检：**查清并修掉了后台无法启动的根因**——launchd 默认文件句柄上限过低，导入 Web 栈时耗尽，macOS 报 `OSError: [Errno 11]`（EDEADLK）而非 EMFILE，错误信息指向文件系统从而掩盖真相。用 launchd 探针确证：探针下 `import uvicorn` 必失败，加上 `NumberOfFiles=8192` 后成功。已把 Soft/HardResourceLimits 写进生成的 plist 并提交。修复后进程能启动并开始抓 K 线（此前在 import 阶段即崩溃），但 API 仍未就绪、无新日志，疑为残留锁，需下次排查。**此前关于 macOS TCC 的判断是错的，已更正。** |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -996,6 +996,22 @@ OSError: [Errno 11] Resource deadlock avoided
 
 1. **给后台进程授予文件访问权限**：项目在 `~/Desktop/Projects/AlphaBrief`，macOS 会限制后台进程访问桌面目录。请在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」中，为 `/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app`（后台所用的解释器）授予完全磁盘访问；或把项目移出桌面目录（如 `~/Projects/AlphaBrief`）后重新 `service install`。授权后我会重新部署并继续试运行。
 2. **决定模型通道方案**：免费通道几乎每天在 01:02 UTC 左右被 429 停用到当日结束（GUIDE 5.13 要求 429 即当日停用，不得放宽）。若确认免费额度无法支撑一轮 21–31 次调用，需要选择更换/升级通道，或接受"试运行无决策"的结论。
+
+### 已定位：后台启动失败的真正根因（2026-11-02 UTC）
+
+**根因**：launchd 给后台进程的默认文件句柄上限过低。导入 Web 栈（uvicorn 及其依赖）时句柄耗尽，macOS 返回 **EDEADLK**，Python 报成 `OSError: [Errno 11] Resource deadlock avoided`，并落在 importlib 读取源文件的调用栈里——于是错误看起来像文件系统/权限问题，实际是句柄耗尽。
+
+**如何确证**（三步 launchd 探针，用完即删）：
+
+1. 最小探针读项目文件 → **成功**，推翻了我此前"macOS TCC 权限"的判断。
+2. 探针依次导入三个模块 → `alphabrief_cli.main`、`alphabrief_api.main` 均 OK，**只有 `import uvicorn` 失败**，说明问题与"打开文件较多的导入"相关，而非某个目录不可读。
+3. 给同一探针加 `SoftResourceLimits/HardResourceLimits NumberOfFiles=8192` → `import uvicorn` **成功**。
+
+对照：我的 shell 句柄上限是 1048575，所以从 shell 里永远看不出问题；这也解释了为什么它能连续运行数日后突然开始崩溃——随着依赖与数据增长，导入所需句柄越过了阈值。
+
+**已修复**：生成的 plist 现在写入 Soft/HardResourceLimits（8192）。修复后进程能启动并开始抓取 K 线（此前在 import 阶段即崩溃）。
+
+**遗留**：启动后 API 未就绪、日志停在部署前，疑为上一轮失败进程残留的锁；下次巡检需先彻底清理残留进程再启动。另外自动化断言尚未补上（试过两版测试未能对上 install 的注入点，已回退，不留失败测试），该修复目前靠上述探针实证。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
