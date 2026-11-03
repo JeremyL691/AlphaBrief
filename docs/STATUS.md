@@ -11,7 +11,7 @@
 | 当前阶段 | **S10 14 天试运行（run 5，4 / 14 合格日；后台启动问题已定位并修了一半）** |
 | 状态 | `BLOCKED` |
 | 下一项任务 | ① 查清启动后 API 不就绪（无新日志，疑为残留锁）的原因；② 补一条自动化断言固定 plist 的 `ResourceLimits` 字段；③ 后台恢复后验证委员会轮能否产出 cycle |
-| 最近更新 | 2026-11-02 05:15 UTC 巡检：**查清并修掉了后台无法启动的根因**——launchd 默认文件句柄上限过低，导入 Web 栈时耗尽，macOS 报 `OSError: [Errno 11]`（EDEADLK）而非 EMFILE，错误信息指向文件系统从而掩盖真相。用 launchd 探针确证：探针下 `import uvicorn` 必失败，加上 `NumberOfFiles=8192` 后成功。已把 Soft/HardResourceLimits 写进生成的 plist 并提交。修复后进程能启动并开始抓 K 线（此前在 import 阶段即崩溃），但 API 仍未就绪、无新日志，疑为残留锁，需下次排查。**此前关于 macOS TCC 的判断是错的，已更正。** |
+| 最近更新 | 2026-11-03 04:45 UTC 巡检：**FD 上限修复已生效**——清理陈旧 `runtime.lock`（指向已消失的 PID 62331）后，后台进程能越过 import 阶段并开始工作。但仍有一个**独立的** `[Errno 11] Resource deadlock avoided`：OANDA 的 candles/pricing 请求全部失败（每次重试 4 次后放弃），导致 90 分钟补跑永远无法完成、`/health` 始终不就绪。已在停止后台后清理锁文件。两层原因不同，不能混为一谈。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -1008,6 +1008,17 @@ OSError: [Errno 11] Resource deadlock avoided
 3. 给同一探针加 `SoftResourceLimits/HardResourceLimits NumberOfFiles=8192` → `import uvicorn` **成功**。
 
 对照：我的 shell 句柄上限是 1048575，所以从 shell 里永远看不出问题；这也解释了为什么它能连续运行数日后突然开始崩溃——随着依赖与数据增长，导入所需句柄越过了阈值。
+
+**2026-11-03 UTC 续查**：FD 上限修复确认生效。清理陈旧 `runtime.lock` 后进程可正常越过导入阶段（此前在 import 即崩溃）。但 OANDA 请求仍全部失败于同一 `[Errno 11]`，说明这是**另一个独立原因**，与文件句柄无关（进程仅 50 余个句柄，上限 8192）：
+
+```
+oanda transient error on GET /v3/accounts/101-***-***-001/instruments/GBP_USD/candles
+attempt=4/4 after retries, giving up: oanda transport error: [Errno 11] Resource deadlock avoided
+```
+
+因为 candles 拉取全失败，90 分钟补跑无法完成，API 也就永不绑定端口，`/health` 一直不通。
+
+**下一步诊断（已明确、未做）**：用 launchd 探针直接对 OANDA 发一次 HTTPS GET，区分"launchd 会话下的网络/TLS 问题"与"应用代码问题"；同时检查该会话下的线程数与 `pthread_create` 是否受限（EDEADLK 也可能来自线程创建）。在此之前不再反复重启后台，避免持续刷失败日志。
 
 **已修复**：生成的 plist 现在写入 Soft/HardResourceLimits（8192）。修复后进程能启动并开始抓取 K 线（此前在 import 阶段即崩溃）。
 
