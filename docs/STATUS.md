@@ -11,7 +11,7 @@
 | 当前阶段 | **S10 14 天试运行（run 5，4 / 14 合格日；后台启动问题已定位并修了一半）** |
 | 状态 | `BLOCKED` |
 | 下一项任务 | ① 查清启动后 API 不就绪（无新日志，疑为残留锁）的原因；② 补一条自动化断言固定 plist 的 `ResourceLimits` 字段；③ 后台恢复后验证委员会轮能否产出 cycle |
-| 最近更新 | 2026-11-03 04:45 UTC 巡检：**FD 上限修复已生效**——清理陈旧 `runtime.lock`（指向已消失的 PID 62331）后，后台进程能越过 import 阶段并开始工作。但仍有一个**独立的** `[Errno 11] Resource deadlock avoided`：OANDA 的 candles/pricing 请求全部失败（每次重试 4 次后放弃），导致 90 分钟补跑永远无法完成、`/health` 始终不就绪。已在停止后台后清理锁文件。两层原因不同，不能混为一谈。 |
+| 最近更新 | 2026-11-03 04:55 UTC 巡检：定位到试运行无法继续的**真正外部原因**——launchd 启动的进程**无法建立任何出站 TLS 连接**。用 launchd 探针直接请求 `https://example.com` 与 OANDA，两者均失败于同一 `[Errno 11] Resource deadlock avoided`；而在用户 shell 中用同一 venv、同一代码请求 `https://example.com` 成功。因此这不是 OANDA、不是项目代码、也不是文件句柄问题，而是**本机对后台进程的网络限制**。按 AGENTS 8.4 第 3 条记为外部前提，8.5 禁止 Agent 修改防火墙等系统设置，故交由用户处理。后台已停止、agent 已卸载、锁文件已清理，账户无持仓。 |
 
 可选状态：`READY | IN_PROGRESS | WAITING_OWNER_LOGIN | BLOCKED | SOAKING | RELEASED`
 
@@ -994,35 +994,32 @@ OSError: [Errno 11] Resource deadlock avoided
 
 ### 需要用户做的事
 
-1. **给后台进程授予文件访问权限**：项目在 `~/Desktop/Projects/AlphaBrief`，macOS 会限制后台进程访问桌面目录。请在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」中，为 `/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app`（后台所用的解释器）授予完全磁盘访问；或把项目移出桌面目录（如 `~/Projects/AlphaBrief`）后重新 `service install`。授权后我会重新部署并继续试运行。
-2. **决定模型通道方案**：免费通道几乎每天在 01:02 UTC 左右被 429 停用到当日结束（GUIDE 5.13 要求 429 即当日停用，不得放宽）。若确认免费额度无法支撑一轮 21–31 次调用，需要选择更换/升级通道，或接受"试运行无决策"的结论。
+**1（当务之急）恢复后台进程的出站网络访问。**
 
-### 已定位：后台启动失败的真正根因（2026-11-02 UTC）
+证据：由 launchd 启动的探针请求 `https://example.com` 与 `https://api-fxpractice.oanda.com` 全部失败于 `OSError: [Errno 11] Resource deadlock avoided`；同一 venv、同一机器，在终端里请求 `https://example.com` 成功。即后台进程被拦在出站网络上，与 OANDA、项目代码、文件句柄都无关。
 
-**根因**：launchd 给后台进程的默认文件句柄上限过低。导入 Web 栈（uvicorn 及其依赖）时句柄耗尽，macOS 返回 **EDEADLK**，Python 报成 `OSError: [Errno 11] Resource deadlock avoided`，并落在 importlib 读取源文件的调用栈里——于是错误看起来像文件系统/权限问题，实际是句柄耗尽。
+请检查以下任一处是否拦截了后台/`launchd` 进程，并放行：
+- 第三方出站防火墙（Little Snitch、LuLu、Murus 等）中针对 `ai.alphabrief.backend` 或 `/Library/Frameworks/Python.framework/.../Python.app` 的规则；
+- `系统设置 → 网络 → 防火墙` 以及任何 VPN / 代理工具的"按应用分流"规则；
+- `系统设置 → 隐私与安全性 → 本地网络`。
 
-**如何确证**（三步 launchd 探针，用完即删）：
+注：后台在 10-29 之前能正常访问网络并连续运行数日，说明该拦截是**之后新增或被重置**的（可能是安全软件更新、规则被清除或系统升级）。
 
-1. 最小探针读项目文件 → **成功**，推翻了我此前"macOS TCC 权限"的判断。
-2. 探针依次导入三个模块 → `alphabrief_cli.main`、`alphabrief_api.main` 均 OK，**只有 `import uvicorn` 失败**，说明问题与"打开文件较多的导入"相关，而非某个目录不可读。
-3. 给同一探针加 `SoftResourceLimits/HardResourceLimits NumberOfFiles=8192` → `import uvicorn` **成功**。
+处理完成后无需额外操作，次日巡检会先尝试启动并自检。
 
-对照：我的 shell 句柄上限是 1048575，所以从 shell 里永远看不出问题；这也解释了为什么它能连续运行数日后突然开始崩溃——随着依赖与数据增长，导入所需句柄越过了阈值。
+**2 决定模型通道方案。** 免费通道几乎每天在 01:02 UTC 左右被 429 停用到当日结束（GUIDE 5.13 要求 429 即当日停用，不得放宽）。若确认免费额度无法支撑一轮 21–31 次调用，需要在"更换/升级通道"与"接受试运行无决策"之间选择。此项不阻塞后台恢复，但在决策路径跑通前不应发布 v1.0.0。
 
-**2026-11-03 UTC 续查**：FD 上限修复确认生效。清理陈旧 `runtime.lock` 后进程可正常越过导入阶段（此前在 import 即崩溃）。但 OANDA 请求仍全部失败于同一 `[Errno 11]`，说明这是**另一个独立原因**，与文件句柄无关（进程仅 50 余个句柄，上限 8192）：
+### 已定位：后台无法出站（2026-11-03 UTC，真正的外部阻塞）
 
-```
-oanda transient error on GET /v3/accounts/101-***-***-001/instruments/GBP_USD/candles
-attempt=4/4 after retries, giving up: oanda transport error: [Errno 11] Resource deadlock avoided
-```
+按顺序排除后得到的结论：
 
-因为 candles 拉取全失败，90 分钟补跑无法完成，API 也就永不绑定端口，`/health` 一直不通。
+1. **FD 上限**（已修，rc.13 前的同一次修复）：launchd 默认句柄太少导致 `import uvicorn` 失败；plist 写入 `NumberOfFiles=8192` 后导入正常、进程能启动。清理陈旧 `runtime.lock` 后进程可正常工作到网络阶段。
+2. **文件权限/TCC**（已排除）：launchd 探针能正常读取 `~/Desktop` 下的项目文件。
+3. **出站网络**（当前阻塞）：launchd 探针请求 `https://example.com` 与 OANDA 均失败于 `OSError: [Errno 11] Resource deadlock avoided`；**控制组**——终端里同一 venv 请求 `https://example.com` **成功**。
 
-**下一步诊断（已明确、未做）**：用 launchd 探针直接对 OANDA 发一次 HTTPS GET，区分"launchd 会话下的网络/TLS 问题"与"应用代码问题"；同时检查该会话下的线程数与 `pthread_create` 是否受限（EDEADLK 也可能来自线程创建）。在此之前不再反复重启后台，避免持续刷失败日志。
+因此 `Errno 11` 在本机同时表现为"句柄耗尽"（导入阶段，已修）和"出站连接被拒"（网络阶段，待用户处理），两者症状相同但原因不同，不能混为一谈。由于 candles 全部拉取失败，90 分钟补跑无法完成，API 永不绑定端口，`/health` 因此不通。
 
-**已修复**：生成的 plist 现在写入 Soft/HardResourceLimits（8192）。修复后进程能启动并开始抓取 K 线（此前在 import 阶段即崩溃）。
-
-**遗留**：启动后 API 未就绪、日志停在部署前，疑为上一轮失败进程残留的锁；下次巡检需先彻底清理残留进程再启动。另外自动化断言尚未补上（试过两版测试未能对上 install 的注入点，已回退，不留失败测试），该修复目前靠上述探针实证。
+已停止后台、卸载 agent、清理锁文件；账户无持仓，无敞口。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
