@@ -197,3 +197,58 @@ def test_service_install_units_and_executable_plist_args(
         for token in args:
             if token.startswith("--"):
                 assert token in accepted, f"{token} not accepted by run run"
+
+
+def test_service_plist_grants_enough_open_files(
+    mock_launch_agents_dir: Path,
+) -> None:
+    """The plist must raise the open-file limit for the background service.
+
+    launchd starts agents with a small limit. Importing the web stack exhausts
+    it, and macOS reports that as ``OSError: [Errno 11] Resource deadlock
+    avoided`` from ``importlib`` - which reads like a filesystem failure and
+    hid the real cause. The limit is inherited, so only the plist can set it.
+    """
+    import plistlib
+
+    from alphabrief_cli.service_commands import SERVICE_FILE_LIMIT
+
+    packaged = mock_launch_agents_dir.parent / "packaged-backend"
+    packaged.write_bytes(b"stub")
+
+    with (
+        patch("platform.system", return_value="Darwin"),
+        patch(
+            "alphabrief_cli.service_commands._launchctl",
+            MagicMock(
+                return_value=subprocess.CompletedProcess(
+                    args=["launchctl"], returncode=0, stdout="", stderr=""
+                )
+            ),
+        ),
+        patch(
+            "alphabrief_cli.service_commands._service_loaded",
+            return_value=(False, None),
+        ),
+    ):
+        res = runner.invoke(
+            app,
+            [
+                "service",
+                "install",
+                "--trading-mode",
+                "on",
+                "--executable",
+                str(packaged),
+                "--compact",
+            ],
+        )
+        assert res.exit_code == 0, res.output
+
+        plist = plistlib.loads(
+            (mock_launch_agents_dir / "ai.alphabrief.backend.plist").read_bytes()
+        )
+
+    assert plist["SoftResourceLimits"]["NumberOfFiles"] == SERVICE_FILE_LIMIT
+    assert plist["HardResourceLimits"]["NumberOfFiles"] == SERVICE_FILE_LIMIT
+    assert SERVICE_FILE_LIMIT >= 4096
