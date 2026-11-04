@@ -1029,7 +1029,9 @@ OSError: [Errno 11] Resource deadlock avoided
 - 已尝试并排除：plist 资源上限（已写入，时好时坏）、文件权限/TCC（探针可读文件）、环境变量（最小环境可导入）、磁盘空间（充足）、进程内存与句柄数（正常）、应用代码（终端内同一 venv 一切正常）。
 - 结论：属 AGENTS 8.4 第 3 类外部前提。8.5 禁止 Agent 修改防火墙等系统设置，故不再尝试自行修复。
 
-**后续可做的独立任务**（不依赖后台）：发布材料（README 对外表述、截图、CHANGELOG 维护、`alphabrief report soak` 生成器自检）、以及为 plist 资源上限补一条自动化断言（此前两版未对上注入点）。这些不改变上面的阻塞结论。
+**已完成（11-04）**：为 plist 资源上限补了自动化断言 `test_service_plist_grants_enough_open_files`，复用 `mock_launch_agents_dir` 注入点断言 Soft/HardResourceLimits 等于 `SERVICE_FILE_LIMIT`，文件内 5 passed。此前该修复只有探针实证，现已由测试固定。
+
+**后续可做的独立任务**（不依赖后台）：发布材料（README 对外表述、截图、CHANGELOG 维护、`alphabrief report soak` 生成器自检）、以及为 plist 资源上限补一条自动化断言（**已完成**，见下）。这些不改变上面的阻塞结论。
 
 ### S11 发布
 - [ ] S11-1 试运行报告
