@@ -443,7 +443,32 @@ class LiveReconciler:
         # key (cursor, projection): a misconfigured account id must not
         # silently reconcile against a different account's state.
         account_id = summary.account_id
-        self._ensure_seeded(summary)
+        try:
+            self._ensure_seeded(summary)
+        except TransactionOperationError as exc:
+            if exc.kind != "incomplete_history":
+                raise
+            report = ReconciliationReport(
+                account_id=account_id,
+                tolerance_version="n/a",
+                diffs=(
+                    DiffRecord(
+                        kind="cursor_diff",
+                        source_id=account_id,
+                        severity="CRITICAL",
+                        detail="bootstrap history incomplete",
+                    ),
+                ),
+                compared_at=datetime.now(UTC),
+            )
+            return self._record_result(
+                scope=scope,
+                report=report,
+                cursor=self._cursor_store.cursor(account_id),
+                facts_applied=0,
+                gap_count=1,
+                warnings=(),
+            )
         cursor, facts_applied, gap_count, warnings = self.sync(account_id)
         remote, account = self.remote_view(summary)
         local = self._projection_store.snapshot(remote.account_id)
@@ -469,6 +494,25 @@ class LiveReconciler:
                 }
             )
 
+        return self._record_result(
+            scope=scope,
+            report=report,
+            cursor=cursor,
+            facts_applied=facts_applied,
+            gap_count=gap_count,
+            warnings=warnings,
+        )
+
+    def _record_result(
+        self,
+        *,
+        scope: str,
+        report: ReconciliationReport,
+        cursor: str | None,
+        facts_applied: int,
+        gap_count: int,
+        warnings: tuple[str, ...],
+    ) -> LiveReconcileResult:
         snapshot = self._store.record_snapshot(
             scope=scope,
             orders_match=report.clean,

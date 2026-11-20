@@ -232,7 +232,9 @@ def test_overlapping_syncs_apply_the_same_window_once(
         return original_apply(*args, **kwargs)
 
     try:
-        monkeypatch.setattr(second._projection_store, "apply_changes", overlapping_apply)
+        monkeypatch.setattr(
+            second._projection_store, "apply_changes", overlapping_apply
+        )
         second.sync(ACCOUNT)
         second.sync(ACCOUNT)
         snapshot = first._projection_store.snapshot(ACCOUNT)
@@ -472,6 +474,65 @@ def test_first_boot_incomplete_history_is_not_published(
         snapshot = reconciler._projection_store.snapshot(ACCOUNT)
         assert snapshot is not None
         assert snapshot.balance == summary.balance
+    finally:
+        reconciler.close()
+
+
+@pytest.mark.parametrize("scope", ["startup", "cycle", "eod"])
+def test_bootstrap_history_gap_records_verdict_and_obeys_freeze_policy(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scope: str,
+) -> None:
+    client = _client()
+    reconciler = _reconciler(store, tmp_path, client=client)
+    window = TransactionOpsClient(client).transaction_range("1", "10")
+    incomplete = window.model_copy(
+        update={"gaps": (TransactionGap(gap_from="1", gap_to="1"),)}
+    )
+
+    def incomplete_range(*args: Any, **kwargs: Any) -> Any:
+        return incomplete
+
+    monkeypatch.setattr(TransactionOpsClient, "transaction_range", incomplete_range)
+    try:
+        result = reconciler.reconcile(scope=scope)
+        assert not result.clean
+        assert result.facts_applied == 0
+        assert result.gap_count == 1
+        assert result.freeze_raised is (scope != "eod")
+        assert store.has_open_freeze() is (scope != "eod")
+        diff = result.report.diffs[0]
+        assert diff.kind == "cursor_diff"
+        assert diff.severity == "CRITICAL"
+        assert diff.detail == "bootstrap history incomplete"
+        snapshots = store.list_snapshots()
+        assert len(snapshots) == 1
+        assert not snapshots[0].all_match
+        assert snapshots[0].scope == scope
+        assert reconciler._projection_store.snapshot(ACCOUNT) is None
+        assert reconciler._cursor_store.cursor(ACCOUNT) is None
+    finally:
+        reconciler.close()
+
+
+def test_bootstrap_other_transaction_errors_propagate(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reconciler = _reconciler(store, tmp_path, client=_client())
+
+    def failed_range(*args: Any, **kwargs: Any) -> Any:
+        raise TransactionOperationError("protocol_error", "invalid response")
+
+    monkeypatch.setattr(TransactionOpsClient, "transaction_range", failed_range)
+    try:
+        with pytest.raises(TransactionOperationError, match="protocol_error"):
+            reconciler.reconcile()
+        assert store.list_snapshots() == []
+        assert reconciler._projection_store.snapshot(ACCOUNT) is None
     finally:
         reconciler.close()
 
