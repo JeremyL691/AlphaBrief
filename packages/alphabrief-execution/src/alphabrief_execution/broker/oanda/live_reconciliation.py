@@ -23,11 +23,18 @@ The pipeline is:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import hashlib
+import math
+import re
+import time
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
+
+from alphabrief_core.runtime_lock import RuntimeLock, RuntimeLockError
 
 from alphabrief_execution.broker.oanda.account_ops import (
     AccountOpsClient,
@@ -65,6 +72,10 @@ from alphabrief_execution.broker.recon_store import BrokerReconStore
 
 #: Allowed reconciliation scope names. Anything else is rejected.
 ALLOWED_SCOPES: frozenset[str] = frozenset({"startup", "cycle", "eod"})
+
+
+class ReconcileBusyError(RuntimeError):
+    """Raised when another reconciliation holds the account lock too long."""
 
 
 @dataclass
@@ -276,7 +287,10 @@ class LiveReconciler:
         order_ledger: OrderLedger | None = None,
         clock: Callable[[], datetime] | None = None,
         config: ReconcilerConfig | None = None,
+        lock_timeout_seconds: float = 20.0,
     ) -> None:
+        if not math.isfinite(lock_timeout_seconds) or lock_timeout_seconds < 0:
+            raise ValueError("lock_timeout_seconds must be finite and non-negative")
         self._client = client
         self._store = store
         self._cursor_store = cursor_store or TransactionCursorStore()
@@ -285,6 +299,7 @@ class LiveReconciler:
         self._order_ledger = order_ledger
         self._clock = clock or (lambda: datetime.now(UTC))
         self._config = config or ReconcilerConfig()
+        self._lock_timeout_seconds = lock_timeout_seconds
 
     # ------------------------------------------------------------------
     # Remote view
@@ -439,6 +454,36 @@ class LiveReconciler:
         if scope not in ALLOWED_SCOPES:
             raise ValueError(f"unknown reconciliation scope: {scope!r}")
         summary = self.account_summary()
+        with self._account_lock(summary.account_id):
+            return self._reconcile_account(summary, scope=scope)
+
+    @contextmanager
+    def _account_lock(self, account_id: str) -> Iterator[None]:
+        safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", account_id)[:64]
+        digest = hashlib.sha256(account_id.encode()).hexdigest()[:16]
+        lock = RuntimeLock(
+            self._cursor_store.db_path.parent / f"reconcile-{safe_id}-{digest}.lock"
+        )
+        deadline = time.monotonic() + self._lock_timeout_seconds
+        while True:
+            try:
+                lock.acquire()
+                break
+            except RuntimeLockError as exc:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ReconcileBusyError(
+                        "Reconciliation is busy for this broker account; retry later."
+                    ) from exc
+                time.sleep(min(0.05, remaining))
+        try:
+            yield
+        finally:
+            lock.release()
+
+    def _reconcile_account(
+        self, summary: AccountSummaryResult, *, scope: str
+    ) -> LiveReconcileResult:
         # The broker-reported account id is the authority for every local
         # key (cursor, projection): a misconfigured account id must not
         # silently reconcile against a different account's state.
@@ -627,6 +672,7 @@ __all__ = [
     "LiveReconcileResult",
     "LiveReconciler",
     "ReconcilerConfig",
+    "ReconcileBusyError",
     "explainable_facts",
     "facts_from_transactions",
     "record_broker_not_configured",

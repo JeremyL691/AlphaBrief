@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -99,6 +100,41 @@ def test_reconcile_cmd_fails_closed_offline_without_credentials(
         assert store.has_open_freeze() is True
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("api_running", [False, True])
+def test_reconcile_cmd_reports_busy_and_exits_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    api_running: bool,
+) -> None:
+    from urllib.error import HTTPError
+
+    from alphabrief_cli import broker_commands
+    from alphabrief_execution.broker.oanda.live_reconciliation import ReconcileBusyError
+
+    def busy(store: object, *, scope: str) -> None:
+        raise ReconcileBusyError("Reconciliation is busy; retry later.")
+
+    def api_busy(request: object, *, timeout: float) -> None:
+        assert timeout > 20
+        raise HTTPError("http://localhost/reconcile", 409, "Conflict", Message(), None)
+
+    monkeypatch.setenv("ALPHABRIEF_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(broker_commands, "is_api_running", lambda: api_running)
+    monkeypatch.setattr(
+        "alphabrief_cli.api_client.is_api_running", lambda: api_running
+    )
+    monkeypatch.setattr(broker_commands, "_run_live_reconcile", busy)
+    monkeypatch.setattr("urllib.request.urlopen", api_busy)
+    with pytest.raises(SystemExit) as exc:
+        broker_commands.reconcile_cmd(scope="cycle", pretty=False)
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "busy" in captured.err
+    assert "retry later" in captured.err
+    assert "credentials" not in captured.err
 
 
 def test_reconcile_cmd_rejects_invalid_scope(

@@ -11,10 +11,16 @@ These tests cover:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alphabrief_api.broker_adapter import _reset_broker_adapter
 from alphabrief_api.main import create_app
+from alphabrief_api.routes import broker
+from alphabrief_execution.broker.oanda.live_reconciliation import (
+    LiveReconciler,
+    ReconcileBusyError,
+)
 from fastapi.testclient import TestClient
 
 
@@ -63,6 +69,23 @@ def test_broker_reconcile_rejects_invalid_scope(client: TestClient) -> None:
     response = client.post("/api/v1/broker/reconcile?scope=invalid")
     assert response.status_code == 400
     assert "scope must be one of" in response.json()["detail"]
+
+
+def test_broker_reconcile_returns_conflict_when_busy(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def busy(*args: Any, **kwargs: Any) -> Any:
+        raise ReconcileBusyError("Reconciliation is busy; retry later.")
+
+    monkeypatch.setattr(broker, "has_live_broker", lambda: True)
+    monkeypatch.setattr(broker, "build_oanda_paper_client", lambda: None)
+    monkeypatch.setattr(LiveReconciler, "reconcile", busy)
+    response = client.post("/api/v1/broker/reconcile")
+    assert response.status_code == 409
+    assert "busy" in response.json()["detail"]
+    status = client.get("/api/v1/broker/status").json()
+    assert status["latest_snapshot"] is None
+    assert status["open_freezes"] == []
 
 
 def test_broker_freeze_and_unfreeze_round_trip(client: TestClient) -> None:

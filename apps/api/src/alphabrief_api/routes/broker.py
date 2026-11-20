@@ -34,6 +34,7 @@ from alphabrief_execution.broker.oanda.client import mask_account_id
 from alphabrief_execution.broker.oanda.live_reconciliation import (
     ALLOWED_SCOPES,
     LiveReconciler,
+    ReconcileBusyError,
     record_broker_not_configured,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -217,6 +218,8 @@ def broker_reconcile(scope: str = Query("cycle")) -> dict[str, Any]:
             )
             try:
                 result = reconciler.reconcile(scope=scope)
+            except ReconcileBusyError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             except BrokerAdapterError as exc:
                 raise HTTPException(
                     status_code=503,

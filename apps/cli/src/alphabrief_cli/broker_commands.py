@@ -31,12 +31,14 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 
 import typer
 from alphabrief_core import paths as _paths
 from alphabrief_execution.broker.oanda.live_reconciliation import (
     ALLOWED_SCOPES,
     LiveReconciler,
+    ReconcileBusyError,
     record_broker_not_configured,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
@@ -152,8 +154,6 @@ def reconcile_cmd(
     """
     from alphabrief_cli.api_client import require_local_write
 
-    require_local_write("broker reconcile")
-
     if scope not in ALLOWED_SCOPES:
         print(
             f"error: --scope must be one of {sorted(ALLOWED_SCOPES)}",
@@ -168,9 +168,16 @@ def reconcile_cmd(
         url = f"{base}/api/v1/broker/reconcile?scope={scope}"
         try:
             req = urllib.request.Request(url, method="POST")
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, HTTPError) and exc.code == 409:
+                print(
+                    "error: reconciliation is busy for this broker account; "
+                    "retry later.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             print(
                 f"error: failed to reach broker reconcile endpoint: {exc}",
                 file=sys.stderr,
@@ -186,10 +193,14 @@ def reconcile_cmd(
         _dump(payload, pretty=pretty, default=True)
         return
 
+    require_local_write("broker reconcile")
     store = _open_store()
     try:
         result = _run_live_reconcile(store, scope=scope)
         snapshot = store.latest_snapshot(scope=scope)
+    except ReconcileBusyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
     finally:
         store.close()
     payload = {

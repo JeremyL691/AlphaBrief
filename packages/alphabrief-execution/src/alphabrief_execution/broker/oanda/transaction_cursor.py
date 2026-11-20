@@ -120,6 +120,10 @@ class TransactionCursorStore:
     # Advance
     # ------------------------------------------------------------------
 
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
+
     def advance(
         self,
         account_id: str,

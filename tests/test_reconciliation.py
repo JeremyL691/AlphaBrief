@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from threading import Event
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request
@@ -31,6 +33,7 @@ from alphabrief_execution.broker.oanda.config import OandaPaperConfig
 from alphabrief_execution.broker.oanda.live_reconciliation import (
     ALLOWED_SCOPES,
     LiveReconciler,
+    ReconcileBusyError,
     ReconcilerConfig,
     record_broker_not_configured,
 )
@@ -63,6 +66,7 @@ def _reconciler(
     tmp_path: Path,
     *,
     client: OandaHttpClient,
+    lock_timeout_seconds: float = 20.0,
 ) -> LiveReconciler:
     """Build a reconciler whose stores are all inside the test directory.
 
@@ -76,6 +80,7 @@ def _reconciler(
         cursor_store=TransactionCursorStore(db_path=database),
         projection_store=AccountProjectionStore(db_path=database),
         order_ledger=OrderLedger(db_path=database),
+        lock_timeout_seconds=lock_timeout_seconds,
     )
 
 
@@ -195,6 +200,133 @@ def _client(
     return OandaHttpClient(
         config=_config(), http_send=send, token="test-token", account_id=ACCOUNT
     )
+
+
+def test_reconcile_serializes_threads_for_the_same_account(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(transactions=[_fill(transaction_id="1")], last_transaction_id="1")
+    first = _reconciler(store, tmp_path, client=client)
+    second = _reconciler(store, tmp_path, client=client)
+    holder_entered, release, second_resolved, second_entered = (
+        Event(), Event(), Event(), Event()
+    )
+    original_record = first._record_result
+    original_summary = second.account_summary
+    original_pass = second._reconcile_account
+
+    def hold_after_record(**kwargs: Any) -> Any:
+        result = original_record(**kwargs)
+        holder_entered.set()
+        assert release.wait(5)
+        return result
+
+    def resolve_second() -> Any:
+        summary = original_summary()
+        second_resolved.set()
+        return summary
+
+    def enter_second(*args: Any, **kwargs: Any) -> Any:
+        second_entered.set()
+        return original_pass(*args, **kwargs)
+
+    monkeypatch.setattr(first, "_record_result", hold_after_record)
+    monkeypatch.setattr(second, "account_summary", resolve_second)
+    monkeypatch.setattr(second, "_reconcile_account", enter_second)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            holder = pool.submit(first.reconcile, scope="eod")
+            try:
+                assert holder_entered.wait(5)
+                waiter = pool.submit(second.reconcile, scope="eod")
+                assert second_resolved.wait(5)
+                assert not second_entered.wait(0.1)
+                assert not waiter.done()
+            finally:
+                release.set()
+            holder.result(timeout=5)
+            waiter.result(timeout=5)
+        assert len(store.list_snapshots()) == 2
+        snapshot = second._projection_store.snapshot(ACCOUNT)
+        assert snapshot is not None
+        assert len(snapshot.fills) == 1
+        assert snapshot.balance == Decimal("100000")
+    finally:
+        first.close()
+        second.close()
+
+
+def test_reconcile_lock_timeout_does_not_publish_state(
+    store: BrokerReconStore,
+    tmp_path: Path,
+) -> None:
+    first = _reconciler(store, tmp_path, client=_client())
+    second = _reconciler(
+        store, tmp_path, client=_client(), lock_timeout_seconds=0.05
+    )
+    try:
+        with first._account_lock(ACCOUNT):
+            with pytest.raises(ReconcileBusyError, match="busy.*retry later"):
+                second.reconcile()
+        assert store.list_snapshots() == []
+        assert not store.has_open_freeze()
+        assert second._projection_store.snapshot(ACCOUNT) is None
+        assert second._cursor_store.cursor(ACCOUNT) is None
+        second.reconcile(scope="eod")
+        assert len(store.list_snapshots()) == 1
+    finally:
+        first.close()
+        second.close()
+
+
+def test_reconcile_different_accounts_do_not_contend(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _reconciler(store, tmp_path, client=_client())
+    second = _reconciler(
+        store, tmp_path, client=_client(), lock_timeout_seconds=0
+    )
+    summary = second.account_summary().model_copy(update={"account_id": "account?a"})
+    monkeypatch.setattr(second, "account_summary", lambda: summary)
+    try:
+        with first._account_lock("account/a"):
+            result = second.reconcile(scope="eod")
+        assert result.report.account_id == "account?a"
+        assert len(store.list_snapshots()) == 1
+        locks = list(tmp_path.glob("reconcile-*.lock"))
+        assert len(locks) == 2
+        assert all("/" not in path.name and "?" not in path.name for path in locks)
+    finally:
+        first.close()
+        second.close()
+
+
+def test_reconcile_lock_releases_after_pass_error(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _reconciler(store, tmp_path, client=_client())
+    second = _reconciler(
+        store, tmp_path, client=_client(), lock_timeout_seconds=0
+    )
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("pass failed")
+
+    monkeypatch.setattr(first, "_reconcile_account", fail)
+    try:
+        with pytest.raises(RuntimeError, match="pass failed"):
+            first.reconcile()
+        second.reconcile(scope="eod")
+        assert len(store.list_snapshots()) == 1
+    finally:
+        first.close()
+        second.close()
 
 
 def test_overlapping_syncs_apply_the_same_window_once(
