@@ -912,6 +912,9 @@ def run_cmd(
         ),
     ),
     pretty: bool = typer.Option(True, "--pretty/--compact"),  # noqa: B008
+    probe_network: bool = typer.Option(  # noqa: B008
+        False, "--probe-network", help="Log LaunchAgent HTTPS connectivity at startup."
+    ),
 ) -> None:
     """Start the API and the scheduler in one locked process."""
     from alphabrief_cli.scheduler_commands import (
@@ -962,6 +965,10 @@ def run_cmd(
     universe = _ai_scheduler_universe()
     ownership, lock = _acquire_runtime_ownership()
     with ownership:
+        if probe_network:
+            from alphabrief_cli.network_probe import probe_launchd_network
+
+            probe_launchd_network()
         runtime = Runtime(
             host=host,
             port=port,

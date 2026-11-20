@@ -171,6 +171,7 @@ def test_service_install_units_and_executable_plist_args(
         plist_file = mock_launch_agents_dir / "ai.alphabrief.backend.plist"
         plist = plistlib.loads(plist_file.read_bytes())
         args = plist["ProgramArguments"]
+        assert "--probe-network" in args
         assert args[-2:] == ["--units", "1000"]
         assert "--trading-mode" in args and "on" in args
         assert str(packaged) in args

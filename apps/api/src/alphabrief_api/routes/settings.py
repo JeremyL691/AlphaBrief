@@ -191,7 +191,14 @@ def update_credentials(body: CredentialsUpdateRequest) -> dict[str, Any]:
 @router.post("/service/install")
 def install_service(trading_mode: str = "off") -> dict[str, Any]:
     """Install and load the background LaunchAgent service."""
-    cmd = [*_find_alphabrief_executable(), "run", "run", "--trading-mode", trading_mode]
+    cmd = [
+        *_find_alphabrief_executable(),
+        "run",
+        "run",
+        "--probe-network",
+        "--trading-mode",
+        trading_mode,
+    ]
     plist_data = {
         "Label": SERVICE_LABEL,
         "ProgramArguments": cmd,

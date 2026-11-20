@@ -126,6 +126,15 @@ AlphaBrief provides a unified command-line tool `alphabrief`:
 .venv/bin/alphabrief report daily
 ```
 
+If the macOS service does not start, look for `LaunchAgent startup network probe`
+in the data directory's `logs/backend.err.log` (CLI install) or
+`logs/backend.stderr.log` (dashboard install). Reinstall an existing LaunchAgent
+with its current options to enable the probe. It checks HTTPS to OANDA practice
+and `example.com` without broker credentials, reports DNS/TLS/socket errors, and
+lets startup continue. An HTTP error response still confirms network reachability,
+not broker health. If both checks fail but work from Terminal, check firewall,
+VPN, or proxy rules for the LaunchAgent.
+
 ---
 
 ## Safety Invariants
