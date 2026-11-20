@@ -27,6 +27,7 @@ from urllib.request import Request
 
 import pytest
 from alphabrief_core.paths import account_runtime_lock_path
+from alphabrief_execution.broker.errors import BrokerProtocolError
 from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
 from alphabrief_execution.broker.oanda.account_projection import AccountProjectionStore
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -257,6 +258,101 @@ def test_reconcile_serializes_threads_for_the_same_account(
     finally:
         first.close()
         second.close()
+
+
+def test_reconcile_refreshes_summary_after_waiting_for_account_lock(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(
+        transactions=[
+            {"id": "11", "type": "CREATE"},
+            {
+                **_fill(transaction_id="12", transaction_type="DAILY_FINANCING"),
+                "financing": "-10",
+            },
+        ],
+        last_transaction_id="12",
+        since_queries=[],
+    )
+    holder = _reconciler(store, tmp_path, client=client)
+    waiter = _reconciler(store, tmp_path, client=client)
+    waiter._projection_store.rebuild(ACCOUNT, [], initial_balance=Decimal("100000"))
+    waiter._projection_store.advance_cursor(ACCOUNT, "10")
+    waiter._cursor_store.advance(
+        ACCOUNT,
+        [
+            TransactionResult(
+                transaction_id="10", transaction_type="CREATE", request_id="test"
+            )
+        ],
+        owner="reconciler",
+    )
+    old_summary = waiter.account_summary().model_copy(
+        update={"last_transaction_id": "10"}
+    )
+    fresh_summary = old_summary.model_copy(
+        update={
+            "last_transaction_id": "12",
+            "balance": Decimal("99990"),
+            "nav": Decimal("99990"),
+            "margin_available": Decimal("99990"),
+        }
+    )
+    resolved, refreshed = Event(), Event()
+
+    def summary() -> Any:
+        if not resolved.is_set():
+            resolved.set()
+            return old_summary
+        refreshed.set()
+        return fresh_summary
+
+    monkeypatch.setattr(waiter, "account_summary", summary)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with holder._account_lock(ACCOUNT):
+                future = pool.submit(waiter.reconcile)
+                assert resolved.wait(5)
+                assert not refreshed.wait(0.1)
+                assert not future.done()
+            result = future.result(timeout=5)
+        assert refreshed.is_set()
+        assert result.clean
+        assert not result.freeze_raised
+        assert not store.has_open_freeze()
+        snapshot = waiter._projection_store.snapshot(ACCOUNT)
+        assert snapshot is not None
+        assert snapshot.last_transaction_id == "12"
+        assert snapshot.balance == Decimal("99990")
+    finally:
+        holder.close()
+        waiter.close()
+
+
+def test_reconcile_account_change_after_lock_does_not_publish_state(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reconciler = _reconciler(store, tmp_path, client=_client())
+    original = reconciler.account_summary()
+    changed = original.model_copy(update={"account_id": "another-account"})
+    summaries = iter([original, changed])
+    monkeypatch.setattr(reconciler, "account_summary", lambda: next(summaries))
+    try:
+        with pytest.raises(BrokerProtocolError, match="account changed"):
+            reconciler.reconcile()
+        assert store.list_snapshots() == []
+        assert not store.has_open_freeze()
+        for account_id in (ACCOUNT, "another-account"):
+            assert reconciler._projection_store.snapshot(account_id) is None
+            assert reconciler._cursor_store.cursor(account_id) is None
+        with reconciler._account_lock(ACCOUNT):
+            pass
+    finally:
+        reconciler.close()
 
 
 def test_reconcile_lock_timeout_does_not_publish_state(

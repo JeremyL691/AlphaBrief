@@ -245,26 +245,27 @@ def test_broker_reconcile_runs_real_pass_with_live_adapter(
             status=200,
             body={"positions": []},
         )
-        server.on(
-            "GET",
-            "/v3/accounts/test-account/summary",
-            status=200,
-            body={
-                "account": {
-                    "id": "101-004-1234567-001",
-                    "balance": "1000.00",
-                    "NAV": "1000.00",
-                    "unrealizedPL": "0.00",
-                    "marginUsed": "0.00",
-                    "marginAvailable": "1000.00",
-                    "openOrderCount": 1,
-                    "openTradeCount": 0,
-                    "openPositionCount": 0,
-                    "currency": "USD",
-                    "lastTransactionID": "11",
+        for _ in range(2):
+            server.on(
+                "GET",
+                "/v3/accounts/test-account/summary",
+                status=200,
+                body={
+                    "account": {
+                        "id": "101-004-1234567-001",
+                        "balance": "1000.00",
+                        "NAV": "1000.00",
+                        "unrealizedPL": "0.00",
+                        "marginUsed": "0.00",
+                        "marginAvailable": "1000.00",
+                        "openOrderCount": 1,
+                        "openTradeCount": 0,
+                        "openPositionCount": 0,
+                        "currency": "USD",
+                        "lastTransactionID": "11",
+                    }
                 }
-            },
-        )
+            )
         server.on(
             "GET",
             "/v3/accounts/test-account/trades?state=ALL&count=50",

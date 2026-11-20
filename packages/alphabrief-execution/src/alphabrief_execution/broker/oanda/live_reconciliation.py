@@ -35,6 +35,7 @@ from typing import Any, cast
 
 from alphabrief_core.runtime_lock import RuntimeLock, RuntimeLockError
 
+from alphabrief_execution.broker.errors import BrokerProtocolError
 from alphabrief_execution.broker.oanda.account_ops import (
     AccountOpsClient,
     AccountSummaryResult,
@@ -305,7 +306,7 @@ class LiveReconciler:
     # ------------------------------------------------------------------
 
     def account_summary(self) -> Any:
-        """Fetch the account summary once per pass."""
+        """Fetch the current broker account summary."""
         return AccountOpsClient(self._client).account_summary(
             request_id="reconcile-summary"
         )
@@ -454,7 +455,12 @@ class LiveReconciler:
             raise ValueError(f"unknown reconciliation scope: {scope!r}")
         summary = self.account_summary()
         with self._account_lock(summary.account_id):
-            return self._reconcile_account(summary, scope=scope)
+            fresh_summary = self.account_summary()
+            if fresh_summary.account_id != summary.account_id:
+                raise BrokerProtocolError(
+                    "Broker account changed while waiting for reconciliation lock"
+                )
+            return self._reconcile_account(fresh_summary, scope=scope)
 
     @contextmanager
     def _account_lock(self, account_id: str) -> Iterator[None]:
