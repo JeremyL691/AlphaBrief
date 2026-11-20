@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request
 
 import pytest
+from alphabrief_core.paths import account_runtime_lock_path
 from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
 from alphabrief_execution.broker.oanda.account_projection import AccountProjectionStore
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
@@ -299,7 +300,11 @@ def test_reconcile_different_accounts_do_not_contend(
         assert len(store.list_snapshots()) == 1
         locks = list(tmp_path.glob("reconcile-*.lock"))
         assert len(locks) == 2
-        assert all("/" not in path.name and "?" not in path.name for path in locks)
+        assert {path.name for path in locks} == {
+            f"reconcile-{account_runtime_lock_path(account_id).name}"
+            for account_id in ("account/a", "account?a")
+        }
+        assert all("account" not in path.name for path in locks)
     finally:
         first.close()
         second.close()

@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import re
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -459,10 +458,9 @@ class LiveReconciler:
 
     @contextmanager
     def _account_lock(self, account_id: str) -> Iterator[None]:
-        safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", account_id)[:64]
-        digest = hashlib.sha256(account_id.encode()).hexdigest()[:16]
+        digest = hashlib.sha256(account_id.strip().encode("utf-8")).hexdigest()
         lock = RuntimeLock(
-            self._cursor_store.db_path.parent / f"reconcile-{safe_id}-{digest}.lock"
+            self._cursor_store.db_path.parent / f"reconcile-{digest}.lock"
         )
         deadline = time.monotonic() + self._lock_timeout_seconds
         while True:
