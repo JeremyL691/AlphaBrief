@@ -7,9 +7,11 @@ real fill happened.
 
 The pipeline is:
 
-1. fetch the transaction window strictly after the durable cursor and
+1. fetch after the earlier of the durable cursor and projection checkpoint and
    advance the cursor atomically (``TransactionCursorStore``);
-2. fold those broker facts into the persisted account projection so the
+2. fold contiguous, unapplied broker facts into the persisted account projection;
+   its transaction-ID checkpoint is persisted with the account state so retries
+   replay missing facts without applying a transaction twice. Thus the
    local side of the comparison is derived from broker facts, never from
    process memory;
 3. compare the projection with a fresh remote view through the typed
@@ -27,12 +29,16 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
 
-from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
+from alphabrief_execution.broker.oanda.account_ops import (
+    AccountOpsClient,
+    AccountSummaryResult,
+)
 from alphabrief_execution.broker.oanda.account_projection import (
     AccountProjectionStore,
     AccountSnapshot,
     FactKind,
     ProjectionFact,
+    fold_facts,
 )
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
 from alphabrief_execution.broker.oanda.order_ledger import OrderLedger
@@ -51,7 +57,10 @@ from alphabrief_execution.broker.oanda.trade_ops import TradeOpsClient
 from alphabrief_execution.broker.oanda.transaction_cursor import (
     TransactionCursorStore,
 )
-from alphabrief_execution.broker.oanda.transaction_ops import TransactionOpsClient
+from alphabrief_execution.broker.oanda.transaction_ops import (
+    TransactionOperationError,
+    TransactionOpsClient,
+)
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 
 #: Allowed reconciliation scope names. Anything else is rejected.
@@ -208,26 +217,26 @@ def rebuild_projection(
     client: OandaHttpClient,
     *,
     projection_store: AccountProjectionStore,
+    summary: AccountSummaryResult | None = None,
 ) -> AccountSnapshot:
     """Rebuild the local projection from the account's full history.
 
-    The seed is the *opening* balance: the current balance minus every
-    realised P&L and financing amount in the history. Seeding with the
-    current balance would double-count that history. Used when the
+    The seed is the *opening* balance: the current balance minus historical
+    balance movements, including deposits and withdrawals. Seeding with
+    the current balance would double-count that history. Used when the
     projection must be replayed (for example after a parser fix), because
     the projection is derived data and the broker is the authority.
     """
-    summary = AccountOpsClient(client).account_summary(request_id="rebuild")
+    summary = summary or AccountOpsClient(client).account_summary(request_id="rebuild")
     window = TransactionOpsClient(client).transaction_range(
         from_id="1",
         to_id=summary.last_transaction_id,
         request_id="rebuild",
     )
+    if window.gaps:
+        raise TransactionOperationError("incomplete_history", "cannot seed across gaps")
     facts, _unprojected = facts_from_transactions(window.transactions)
-    movement = sum(
-        (fact.realized_pl + fact.financing for fact in facts),
-        Decimal("0"),
-    )
+    movement = fold_facts(summary.account_id, facts).balance
     opening_balance = summary.balance - movement
     return projection_store.rebuild(
         summary.account_id,
@@ -361,19 +370,14 @@ class LiveReconciler:
             ),
         )
 
-    def _ensure_seeded(self, account_id: str, balance: Decimal) -> None:
-        """Seed the projection from the live balance on the first pass.
-
-        Without this the first comparison would see a zero-balance local
-        projection against a funded account and report a spurious money
-        difference.
-        """
-        if self._projection_store.snapshot(account_id) is not None:
+    def _ensure_seeded(self, summary: AccountSummaryResult) -> None:
+        """Replay history from an opening balance on the first pass."""
+        if self._projection_store.snapshot(summary.account_id) is not None:
             return
-        self._projection_store.rebuild(
-            account_id,
-            facts=[],
-            initial_balance=balance,
+        rebuild_projection(
+            self._client,
+            projection_store=self._projection_store,
+            summary=summary,
         )
 
     def _remote_fill_count(self, last_transaction_id: str) -> int:
@@ -393,11 +397,11 @@ class LiveReconciler:
     # Sync
     # ------------------------------------------------------------------
 
-    def sync(
-        self, account_id: str
-    ) -> tuple[str | None, int, int, tuple[str, ...]]:
+    def sync(self, account_id: str) -> tuple[str | None, int, int, tuple[str, ...]]:
         """Advance the cursor and fold new facts into the projection."""
-        cursor = self._cursor_store.cursor(account_id) or "0"
+        snapshot = self._projection_store.snapshot(account_id)
+        checkpoint = int(snapshot.last_transaction_id) if snapshot is not None else 0
+        cursor = str(min(int(self._cursor_store.cursor(account_id) or "0"), checkpoint))
         window = TransactionOpsClient(self._client).transactions_since(
             cursor, request_id="reconcile-sync"
         )
@@ -406,14 +410,25 @@ class LiveReconciler:
             list(window.transactions),
             owner="reconciler",
         )
-        facts, unprojected = facts_from_transactions(window.transactions)
+        frontier = int(advance.cursor or "0")
+        replay_gaps = {gap for gap in window.gaps if int(gap.gap_to) > checkpoint}
+        for gap in replay_gaps:
+            frontier = min(frontier, int(gap.gap_from) - 1)
+        pending = {
+            transaction.transaction_id: transaction
+            for transaction in window.transactions
+            if checkpoint < int(transaction.transaction_id) <= frontier
+        }
+        facts, _ = facts_from_transactions(list(pending.values()))
+        _, unprojected = facts_from_transactions(window.transactions)
         if facts:
             self._projection_store.apply_changes(account_id, facts)
         if advance.cursor is not None:
-            self._projection_store.advance_cursor(account_id, advance.cursor)
+            self._projection_store.advance_cursor(account_id, str(frontier))
         seen = explainable_facts(window.transactions)
         warnings = tuple(sorted({*seen, *unprojected}))
-        return advance.cursor, len(facts), len(advance.gaps), warnings
+        gaps = {*advance.gaps, *replay_gaps}
+        return advance.cursor, len(facts), len(gaps), warnings
 
     # ------------------------------------------------------------------
     # Reconcile
@@ -428,7 +443,7 @@ class LiveReconciler:
         # key (cursor, projection): a misconfigured account id must not
         # silently reconcile against a different account's state.
         account_id = summary.account_id
-        self._ensure_seeded(account_id, summary.balance)
+        self._ensure_seeded(summary)
         cursor, facts_applied, gap_count, warnings = self.sync(account_id)
         remote, account = self.remote_view(summary)
         local = self._projection_store.snapshot(remote.account_id)

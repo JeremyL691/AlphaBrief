@@ -277,12 +277,19 @@ def test_broker_reconcile_runs_real_pass_with_live_adapter(
             status=200,
             body={"transactions": [], "lastTransactionID": "11"},
         )
-        server.on(
-            "GET",
-            "/v3/accounts/test-account/transactions/idrange?from=1&to=11&pageSize=100",
-            status=200,
-            body={"transactions": [], "lastTransactionID": "11"},
-        )
+        for _ in range(2):
+            server.on(
+                "GET",
+                "/v3/accounts/test-account/transactions/idrange?from=1&to=11&pageSize=100",
+                status=200,
+                body={
+                    "transactions": [
+                        {"id": str(transaction_id), "type": "CREATE"}
+                        for transaction_id in range(1, 12)
+                    ],
+                    "lastTransactionID": "11",
+                },
+            )
 
         response = live_client.post("/api/v1/broker/reconcile?scope=eod")
         assert response.status_code == 200

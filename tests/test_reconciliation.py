@@ -20,9 +20,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request
 
 import pytest
+from alphabrief_execution.broker.oanda.account_ops import AccountOpsClient
 from alphabrief_execution.broker.oanda.account_projection import AccountProjectionStore
 from alphabrief_execution.broker.oanda.client import OandaHttpClient
 from alphabrief_execution.broker.oanda.config import OandaPaperConfig
@@ -35,6 +37,12 @@ from alphabrief_execution.broker.oanda.live_reconciliation import (
 from alphabrief_execution.broker.oanda.order_ledger import OrderLedger
 from alphabrief_execution.broker.oanda.transaction_cursor import (
     TransactionCursorStore,
+)
+from alphabrief_execution.broker.oanda.transaction_ops import (
+    TransactionGap,
+    TransactionOperationError,
+    TransactionOpsClient,
+    TransactionResult,
 )
 from alphabrief_execution.broker.recon_store import BrokerReconStore
 
@@ -146,6 +154,7 @@ def _client(
     trades: list[dict[str, Any]] | None = None,
     transactions: list[dict[str, Any]] | None = None,
     last_transaction_id: str = "10",
+    since_queries: list[str] | None = None,
 ) -> OandaHttpClient:
     """Client double: summary, orders, positions, trades, transactions."""
 
@@ -164,6 +173,17 @@ def _client(
             return json.dumps({"orders": orders or []}).encode()
         if "/transactions/sinceid" in url or "/transactions/idrange" in url:
             rows = transactions or []
+            if "/transactions/sinceid" in url and since_queries is not None:
+                since = parse_qs(urlsplit(url).query)["id"][0]
+                since_queries.append(since)
+                rows = [row for row in rows if int(row["id"]) > int(since)]
+            if "/transactions/idrange" in url:
+                query = parse_qs(urlsplit(url).query)
+                by_id = {int(row["id"]): row for row in rows}
+                rows = [
+                    by_id.get(tx_id, {"id": str(tx_id), "type": "CREATE"})
+                    for tx_id in range(int(query["from"][0]), int(query["to"][0]) + 1)
+                ]
             return json.dumps(
                 {
                     "transactions": rows,
@@ -175,6 +195,235 @@ def _client(
     return OandaHttpClient(
         config=_config(), http_send=send, token="test-token", account_id=ACCOUNT
     )
+
+
+@pytest.mark.parametrize("failure_stage", ["cursor", "before_apply", "after_apply"])
+@pytest.mark.parametrize("separate_stores", [False, True])
+def test_sync_recovers_after_interruption_exactly_once(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+    separate_stores: bool,
+) -> None:
+    cursor_path = tmp_path / "cursor.db"
+    projection_path = tmp_path / "projection.db" if separate_stores else cursor_path
+    cursors = TransactionCursorStore(cursor_path)
+    projections = AccountProjectionStore(projection_path)
+    projections.rebuild(ACCOUNT, [], initial_balance=Decimal("1000"))
+    projections.advance_cursor(ACCOUNT, "10")
+    cursors.advance(
+        ACCOUNT,
+        [
+            TransactionResult(
+                transaction_id="10",
+                transaction_type="CREATE",
+                request_id="test",
+            )
+        ],
+        owner="reconciler",
+    )
+    rows = [
+        {
+            **_fill(transaction_id="11", transaction_type="DAILY_FINANCING"),
+            "financing": "-10",
+        },
+        {"id": "12", "type": "CLIENT_CONFIGURE"},
+    ]
+    queries: list[str] = []
+    client = _client(transactions=rows, since_queries=queries)
+    reconciler = LiveReconciler(
+        client=client,
+        store=store,
+        cursor_store=cursors,
+        projection_store=projections,
+    )
+    original_apply = projections.apply_changes
+
+    def interrupted_apply(*args: Any, **kwargs: Any) -> Any:
+        if failure_stage == "after_apply":
+            original_apply(*args, **kwargs)
+        raise RuntimeError("interrupted")
+
+    def interrupted_cursor(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("interrupted")
+
+    try:
+        with monkeypatch.context() as patch:
+            if failure_stage == "cursor":
+                patch.setattr(cursors, "_insert_projection", interrupted_cursor)
+            else:
+                patch.setattr(projections, "apply_changes", interrupted_apply)
+            with pytest.raises(RuntimeError, match="interrupted"):
+                reconciler.sync(ACCOUNT)
+    finally:
+        reconciler.close()
+
+    cursors = TransactionCursorStore(cursor_path)
+    projections = AccountProjectionStore(projection_path)
+    restarted = LiveReconciler(
+        client=client,
+        store=store,
+        cursor_store=cursors,
+        projection_store=projections,
+    )
+    try:
+        result = restarted.sync(ACCOUNT)
+        assert result[1] == (0 if failure_stage == "after_apply" else 1)
+        for _ in range(3):
+            assert restarted.sync(ACCOUNT)[1] == 0
+        snapshot = projections.snapshot(ACCOUNT)
+        assert snapshot is not None
+        assert snapshot.balance == Decimal("990")
+        assert snapshot.financing_total == Decimal("-10")
+        assert snapshot.last_transaction_id == cursors.cursor(ACCOUNT) == "12"
+        assert queries[:2] == ["10", "11" if failure_stage == "after_apply" else "10"]
+    finally:
+        restarted.close()
+
+
+@pytest.mark.parametrize("cursor_ahead", [False, True])
+def test_sync_waits_for_gap_before_projecting_later_facts(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    cursor_ahead: bool,
+) -> None:
+    rows = [
+        {
+            **_fill(transaction_id="12", transaction_type="DAILY_FINANCING"),
+            "financing": "-10",
+        }
+    ]
+    reconciler = _reconciler(
+        store,
+        tmp_path,
+        client=_client(transactions=rows, since_queries=[]),
+    )
+    projections = reconciler._projection_store
+    cursors = reconciler._cursor_store
+    projections.rebuild(ACCOUNT, [], initial_balance=Decimal("1000"))
+    projections.advance_cursor(ACCOUNT, "10")
+    cursors.advance(
+        ACCOUNT,
+        [
+            TransactionResult(
+                transaction_id="10",
+                transaction_type="CREATE",
+                request_id="test",
+            )
+        ],
+        owner="reconciler",
+    )
+    if cursor_ahead:
+        cursors.advance(
+            ACCOUNT,
+            [
+                TransactionResult(
+                    transaction_id=str(transaction_id),
+                    transaction_type="CREATE",
+                    request_id="test",
+                )
+                for transaction_id in (11, 12)
+            ],
+            owner="reconciler",
+        )
+    try:
+        assert reconciler.sync(ACCOUNT)[1:3] == (0, 1)
+        rows.insert(
+            0,
+            {
+                **_fill(transaction_id="11", transaction_type="DAILY_FINANCING"),
+                "financing": "-5",
+            },
+        )
+        assert reconciler.sync(ACCOUNT)[1:3] == (2, 0)
+        assert reconciler.sync(ACCOUNT)[1] == 0
+        snapshot = projections.snapshot(ACCOUNT)
+        assert snapshot is not None
+        assert snapshot.balance == Decimal("985")
+    finally:
+        reconciler.close()
+
+
+def test_first_boot_replays_history_without_double_counting_balance(
+    store: BrokerReconStore,
+    tmp_path: Path,
+) -> None:
+    rows = [
+        {**_fill(transaction_id="1", transaction_type="DEPOSIT"), "units": "100"},
+        {**_fill(transaction_id="2", transaction_type="WITHDRAWAL"), "units": "20"},
+        {
+            **_fill(transaction_id="3", transaction_type="DAILY_FINANCING"),
+            "financing": "-10",
+        },
+        {**_fill(transaction_id="4", units="0"), "pl": "5"},
+    ]
+    client = _client(transactions=rows, last_transaction_id="4", since_queries=[])
+    reconciler = _reconciler(store, tmp_path, client=client)
+    summary = AccountOpsClient(client).account_summary()
+    try:
+        reconciler._ensure_seeded(summary)
+        for _ in range(3):
+            assert reconciler.sync(ACCOUNT)[1] == 0
+        snapshot = reconciler._projection_store.snapshot(ACCOUNT)
+        assert snapshot is not None
+        assert snapshot.balance == summary.balance
+        assert snapshot.realized_pl == Decimal("5")
+        assert snapshot.financing_total == Decimal("-10")
+        assert len(snapshot.fills) == 1
+        assert snapshot.last_transaction_id == "4"
+    finally:
+        reconciler.close()
+
+
+def test_first_boot_empty_history_preserves_balance(
+    store: BrokerReconStore,
+    tmp_path: Path,
+) -> None:
+    client = _client(since_queries=[])
+    reconciler = _reconciler(store, tmp_path, client=client)
+    try:
+        for _ in range(3):
+            reconciler.reconcile()
+        snapshot = reconciler._projection_store.snapshot(ACCOUNT)
+        assert snapshot is not None
+        assert snapshot.balance == Decimal("100000")
+        assert snapshot.fills == ()
+    finally:
+        reconciler.close()
+
+
+def test_first_boot_incomplete_history_is_not_published(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client()
+    reconciler = _reconciler(store, tmp_path, client=client)
+    summary = AccountOpsClient(client).account_summary()
+    window = TransactionOpsClient(client).transaction_range("1", "10")
+    incomplete = window.model_copy(
+        update={
+            "gaps": (TransactionGap(gap_from="1", gap_to="1"),),
+        }
+    )
+
+    def incomplete_range(*args: Any, **kwargs: Any) -> Any:
+        return incomplete
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(TransactionOpsClient, "transaction_range", incomplete_range)
+            with pytest.raises(TransactionOperationError, match="incomplete_history"):
+                reconciler._ensure_seeded(summary)
+        assert reconciler._projection_store.snapshot(ACCOUNT) is None
+        reconciler._ensure_seeded(summary)
+        reconciler.sync(ACCOUNT)
+        snapshot = reconciler._projection_store.snapshot(ACCOUNT)
+        assert snapshot is not None
+        assert snapshot.balance == summary.balance
+    finally:
+        reconciler.close()
 
 
 class TestOwnActivityIsExplainable:
@@ -203,9 +452,7 @@ class TestOwnActivityIsExplainable:
         finally:
             reconciler.close()
 
-        # ORDER_FILL and DAILY_FINANCING move the account and are folded;
-        # the protective-order transaction is recognised but not folded.
-        assert result.facts_applied == 2
+        assert result.facts_applied == 0
         assert set(result.warnings) >= {
             "ORDER_FILL",
             "STOP_LOSS_ORDER",
