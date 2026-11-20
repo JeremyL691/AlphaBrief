@@ -187,6 +187,7 @@ def install_cmd(
         *exec_cmd,
         "run",
         "run",
+        "--probe-network",
         "--host",
         host,
         "--port",
