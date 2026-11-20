@@ -62,7 +62,8 @@ def test_outbound_failure_logs_host_policy_hint_and_errno(
 ) -> None:
     open_https.side_effect = URLError(OSError(errno.EDEADLK, "private proxy details"))
     network_probe.probe_launchd_network()
-    assert f"EDEADLK (errno {errno.EDEADLK})" in caplog.text
+    os_name = errno.errorcode[errno.EDEADLK]
+    assert f"{os_name} (errno {errno.EDEADLK})" in caplog.text
     assert "If the same host is reachable from Terminal" in caplog.text
     assert "firewall, VPN, or proxy rules" in caplog.text
     assert "private proxy details" not in caplog.text
