@@ -345,6 +345,16 @@ no synthesized defaults, no fallback account, no review bypass.
             )
         if intent.target_position_pct is None:
             return None
+        if intent.target_position_pct == 0:
+            positions = _run_blocking(self._adapter.get_positions())
+            for position in positions:
+                if position.symbol == intent.symbol:
+                    if (intent.side == "buy" and position.quantity < 0) or (
+                        intent.side == "sell" and position.quantity > 0
+                    ):
+                        return abs(position.quantity)
+                    return Decimal("0")
+            return Decimal("0")
         if intent.side == "buy":
             account = _run_blocking(self._adapter.get_account())
             estimated = (account.buying_power * intent.target_position_pct) / (
@@ -355,12 +365,6 @@ no synthesized defaults, no fallback account, no review bypass.
                 reference_price=reference_price,
                 max_order_value=self._max_order_value,
             )
-        if intent.target_position_pct == 0:
-            positions = _run_blocking(self._adapter.get_positions())
-            for position in positions:
-                if position.symbol == intent.symbol:
-                    return abs(position.quantity)
-            return Decimal("0")
         raise ExecutionBackendError(
             "external paper sell requires an explicit quantity or flat target"
         )
@@ -406,12 +410,16 @@ no synthesized defaults, no fallback account, no review bypass.
             ),
             quantity=quantity,
             limit_price=intent.limit_price,
-            time_in_force=BrokerTimeInForce.DAY,
+            time_in_force=(
+                BrokerTimeInForce.GTC
+                if intent.order_type == "limit"
+                else BrokerTimeInForce.DAY
+            ),
             # Protective orders ride along with the entry (5.6/5.8).
             stop_loss=intent.stop_loss,
             take_profit=intent.take_profit,
             cycle_id=intent.intent_id,
-            reduce_only=intent.reduce_only,
+            reduce_only=intent.reduce_only or intent.target_position_pct == 0,
         )
 
         # The approved decision is bound to the immutable

@@ -15,6 +15,7 @@ from alphabrief_execution.broker.port import (
     BrokerHealth,
     BrokerOrderSide,
     BrokerOrderStatus,
+    BrokerTimeInForce,
     CancelResult,
     Fill,
     OrderState,
@@ -39,6 +40,7 @@ class _FakeAdapter(BrokerAdapter):
     def __init__(self) -> None:
         self.requests: list[SubmitRequest] = []
         self.client_order_ids: list[str] = []
+        self.positions: list[Position] = []
 
     async def health(self) -> BrokerHealth:
         return BrokerHealth(
@@ -74,7 +76,7 @@ class _FakeAdapter(BrokerAdapter):
         return []
 
     async def get_positions(self) -> list[Position]:
-        return []
+        return self.positions
 
     async def get_account(self) -> AccountSnapshot:
         return AccountSnapshot(
@@ -122,6 +124,76 @@ def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestExternalPaperExecutionBackend:
+    @pytest.mark.parametrize("side", ["buy", "sell"])
+    @pytest.mark.parametrize("position_quantity", ["-10", "0", "10", None])
+    def test_flat_target_sizes_only_opposing_position(
+        self, side: str, position_quantity: str | None,
+    ) -> None:
+        adapter = _FakeAdapter()
+        if position_quantity is not None:
+            adapter.positions = [Position(
+                symbol="SPY", quantity=Decimal(position_quantity),
+                average_price=Decimal("50"),
+            )]
+        backend = ExternalPaperExecutionBackend(adapter)
+        intent = _intent().model_copy(update={
+            "side": side, "target_position_pct": Decimal("0"),
+        })
+        quantity = backend.estimate_quantity(intent, reference_price=Decimal("50"))
+        expected = Decimal("10") if (
+            (side == "buy" and position_quantity == "-10")
+            or (side == "sell" and position_quantity == "10")
+        ) else Decimal("0")
+        assert quantity == expected
+
+    @pytest.mark.parametrize("order_type", ["market", "limit"])
+    def test_submit_uses_order_type_time_in_force(self, order_type: str) -> None:
+        adapter = _FakeAdapter()
+        backend = ExternalPaperExecutionBackend(adapter)
+        intent = _intent().model_copy(update={
+            "order_type": order_type,
+            "limit_price": Decimal("50") if order_type == "limit" else None,
+        })
+        backend.submit(
+            intent, _decision(), reference_price=Decimal("50"),
+            now=datetime.now(UTC), estimated_quantity=Decimal("2"),
+        )
+        assert adapter.requests[0].time_in_force == (
+            BrokerTimeInForce.GTC if order_type == "limit" else BrokerTimeInForce.DAY
+        )
+
+    def test_submit_flat_target_is_reduce_only(self) -> None:
+        adapter = _FakeAdapter()
+        backend = ExternalPaperExecutionBackend(adapter)
+        intent = _intent().model_copy(update={"target_position_pct": Decimal("0")})
+        backend.submit(
+            intent, _decision(), reference_price=Decimal("50"),
+            now=datetime.now(UTC), estimated_quantity=Decimal("2"),
+        )
+        assert adapter.requests[0].reduce_only is True
+
+    def test_flat_target_does_not_close_other_symbols(self) -> None:
+        adapter = _FakeAdapter()
+        adapter.positions = [Position(
+            symbol="EUR_USD", quantity=Decimal("-10"), average_price=Decimal("1"),
+        )]
+        backend = ExternalPaperExecutionBackend(adapter)
+        intent = _intent().model_copy(update={"target_position_pct": Decimal("0")})
+        assert backend.estimate_quantity(intent, reference_price=Decimal("50")) == 0
+
+    def test_flat_target_propagates_position_query_failure(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def failed_positions() -> list[Position]:
+            raise RuntimeError("positions unavailable")
+
+        adapter = _FakeAdapter()
+        monkeypatch.setattr(adapter, "get_positions", failed_positions)
+        backend = ExternalPaperExecutionBackend(adapter)
+        intent = _intent().model_copy(update={"target_position_pct": Decimal("0")})
+        with pytest.raises(RuntimeError, match="positions unavailable"):
+            backend.estimate_quantity(intent, reference_price=Decimal("50"))
+
     def test_estimates_quantity_from_account_buying_power(self) -> None:
         adapter = _FakeAdapter()
         backend = ExternalPaperExecutionBackend(adapter)

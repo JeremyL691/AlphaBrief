@@ -17,6 +17,8 @@ from alphabrief_execution.broker.oanda.instruments import InstrumentMetadata
 from alphabrief_execution.broker.oanda.orders import (
     DependentOrder,
     OandaOrderRequest,
+    OandaOrderType,
+    OandaTimeInForce,
     normalize_order,
     serialize_order,
 )
@@ -137,7 +139,7 @@ def test_dependent_orders_fixture() -> None:
         type="MARKET",
         instrument="EUR_USD",
         units=_buy(),
-        time_in_force="GTC",
+        time_in_force="FOK",
         take_profit=DependentOrder(kind="take_profit", price=Decimal("1.15000")),
         stop_loss=DependentOrder(kind="stop_loss", price=Decimal("1.05000")),
         trailing_stop_loss=DependentOrder(
@@ -246,3 +248,55 @@ def test_price_beyond_precision_fails_before_submission() -> None:
     )
     with pytest.raises(ValueError, match="must not be silently rounded"):
         normalize_order(request, _instrument())
+
+
+@pytest.mark.parametrize("order_type", ["LIMIT", "STOP", "MARKET_IF_TOUCHED"])
+def test_pending_orders_require_price(order_type: OandaOrderType) -> None:
+    request = OandaOrderRequest(
+        type=order_type,
+        instrument="EUR_USD",
+        units=_buy(),
+    )
+    with pytest.raises(ValueError, match="require a price"):
+        serialize_order(request, _instrument())
+
+
+@pytest.mark.parametrize("order_type", ["MARKET", "LIMIT", "STOP", "MARKET_IF_TOUCHED"])
+@pytest.mark.parametrize("tif", ["FOK", "IOC", "GTC", "GTD", "GFD"])
+def test_order_type_time_in_force_matrix(
+    order_type: OandaOrderType,
+    tif: OandaTimeInForce,
+) -> None:
+    request = OandaOrderRequest(
+        type=order_type,
+        instrument="EUR_USD",
+        units=_buy(),
+        price=None if order_type == "MARKET" else Decimal("1.10000"),
+        time_in_force=tif,
+        gtd_time=datetime(2026, 8, 20, tzinfo=UTC) if tif == "GTD" else None,
+    )
+    allowed = (
+        tif in ("FOK", "IOC")
+        if order_type == "MARKET"
+        else tif in ("GTC", "GTD", "GFD")
+        if order_type == "MARKET_IF_TOUCHED"
+        else True
+    )
+    if allowed:
+        assert serialize_order(request, _instrument())["timeInForce"] == tif
+    else:
+        with pytest.raises(ValueError, match="require time_in_force"):
+            serialize_order(request, _instrument())
+
+
+@pytest.mark.parametrize("order_type", ["MARKET", "LIMIT", "STOP", "MARKET_IF_TOUCHED"])
+def test_default_time_in_force_by_order_type(order_type: OandaOrderType) -> None:
+    request = OandaOrderRequest(
+        type=order_type,
+        instrument="EUR_USD",
+        units=_buy(),
+        price=None if order_type == "MARKET" else Decimal("1.10000"),
+    )
+    assert serialize_order(request, _instrument())["timeInForce"] == (
+        "FOK" if order_type == "MARKET" else "GTC"
+    )

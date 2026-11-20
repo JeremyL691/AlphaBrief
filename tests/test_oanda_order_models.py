@@ -7,7 +7,7 @@ metadata before request serialization.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal, localcontext
 
 import pytest
 from alphabrief_execution.broker.oanda.instruments import InstrumentMetadata
@@ -95,17 +95,38 @@ def test_float_units_are_rejected() -> None:
 
 
 def test_whole_unit_precision_normalizes_exactly_property() -> None:
-    """trade_units_precision=0 normalizes to whole units (no silent rounding)."""
+    """Whole-unit magnitudes never grow during normalization."""
     for mantissa in (1, 9, 99, 999):
-        units = Decimal(f"{mantissa}.9")
-        normalized = normalize_order(_request(units), _instrument())
-        assert normalized.units == units.to_integral_value()
+        for sign in (1, -1):
+            units = Decimal(f"{mantissa}.9") * sign
+            normalized = normalize_order(_request(units), _instrument())
+            assert normalized.units == units.to_integral_value(rounding=ROUND_DOWN)
+            assert abs(normalized.units) <= abs(units)
 
 
-def test_units_normalizing_to_zero_are_rejected() -> None:
+@pytest.mark.parametrize("precision", [0, 1, 2])
+@pytest.mark.parametrize("units", ["1.999", "-1.999", "10", "-10"])
+def test_quantity_normalization_ignores_context_rounding(
+    precision: int,
+    units: str,
+) -> None:
+    quantity = Decimal(units)
+    with localcontext() as context:
+        context.rounding = ROUND_UP
+        normalized = normalize_order(
+            _request(quantity), _instrument(trade_units_precision=precision)
+        )
+    assert normalized.units == quantity.quantize(
+        Decimal(1).scaleb(-precision), rounding=ROUND_DOWN
+    )
+    assert abs(normalized.units) <= abs(quantity)
+
+
+@pytest.mark.parametrize("units", ["0.4", "-0.9", "0.99", "-0.99"])
+def test_units_normalizing_to_zero_are_rejected(units: str) -> None:
     """A fractional unit that rounds to zero is rejected, not dropped."""
     with pytest.raises(ValueError, match="normalize to zero"):
-        normalize_order(_request(Decimal("0.4")), _instrument())
+        normalize_order(_request(Decimal(units)), _instrument())
 
 
 def test_price_beyond_instrument_precision_is_rejected() -> None:

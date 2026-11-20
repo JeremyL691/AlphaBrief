@@ -55,7 +55,7 @@ def _order_request() -> OandaOrderRequest:
         type="MARKET",
         instrument="EUR_USD",
         units=Decimal("1000"),
-        time_in_force="GTC",
+        time_in_force="FOK",
     )
 
 

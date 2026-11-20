@@ -28,7 +28,7 @@ from alphabrief_execution.broker.oanda.instruments import InstrumentMetadata
 OandaOrderType = Literal["MARKET", "LIMIT", "STOP", "MARKET_IF_TOUCHED"]
 
 #: Supported time-in-force values; DAY is intentionally not included.
-OandaTimeInForce = Literal["FOK", "IOC", "GTC", "GTD"]
+OandaTimeInForce = Literal["FOK", "IOC", "GTC", "GTD", "GFD"]
 
 #: Position-fill values.
 OandaPositionFill = Literal["OPEN_ONLY", "REDUCE_FIRST", "REDUCE_ONLY", "DEFAULT"]
@@ -84,6 +84,16 @@ class OandaOrderRequest(BaseModel):
     trailing_stop_loss: DependentOrder | None = None
     guaranteed_stop_loss: DependentOrder | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def default_time_in_force(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "time_in_force" not in value:
+            return {
+                **value,
+                "time_in_force": "FOK" if value.get("type") == "MARKET" else "GTC",
+            }
+        return value
+
     @field_validator("units", mode="before")
     @classmethod
     def units_must_not_be_float(cls, value: Any) -> Any:
@@ -122,11 +132,8 @@ def _normalize_quantity(units: Decimal, instrument: InstrumentMetadata) -> Decim
     if units == 0:
         raise ValueError("units must not be zero: positive=buy, negative=sell")
     precision = instrument.trade_units_precision
-    if precision == 0:
-        normalized = units.to_integral_value()
-    else:
-        quantum = Decimal(1).scaleb(-precision)
-        normalized = units.quantize(quantum, rounding=ROUND_DOWN)
+    quantum = Decimal(1).scaleb(-precision)
+    normalized = units.quantize(quantum, rounding=ROUND_DOWN)
     if normalized == 0:
         raise ValueError(
             "units normalize to zero at instrument precision; "
@@ -167,11 +174,22 @@ def normalize_order(
     price: Decimal | None = None
     if request.price is not None:
         price = _normalize_price(request.price, instrument, "price")
-        if request.type in ("LIMIT", "STOP") and price is None:
-            raise ValueError(f"{request.type} orders require a price")
+
+    if request.type != "MARKET" and price is None:
+        raise ValueError(f"{request.type} orders require a price")
 
     if request.type == "MARKET" and price is not None:
         raise ValueError("MARKET orders must not carry a price")
+    if request.type == "MARKET" and request.time_in_force not in ("FOK", "IOC"):
+        raise ValueError("MARKET orders require time_in_force FOK or IOC")
+    if request.type == "MARKET_IF_TOUCHED" and request.time_in_force not in (
+        "GTC",
+        "GTD",
+        "GFD",
+    ):
+        raise ValueError(
+            "MARKET_IF_TOUCHED orders require time_in_force GTC, GTD or GFD"
+        )
     if request.time_in_force == "GTD" and request.gtd_time is None:
         raise ValueError("GTD orders require gtd_time")
     if request.gtd_time is not None and request.time_in_force != "GTD":
@@ -221,8 +239,8 @@ def serialize_order(
     if normalized.price is not None:
         payload["price"] = str(normalized.price)
     if normalized.gtd_time is not None:
-        payload["gtdTime"] = normalized.gtd_time.astimezone(UTC).isoformat().replace(
-            "+00:00", "Z"
+        payload["gtdTime"] = (
+            normalized.gtd_time.astimezone(UTC).isoformat().replace("+00:00", "Z")
         )
     dependent = {
         "take_profit": "takeProfitOnFill",
