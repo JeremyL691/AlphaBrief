@@ -476,6 +476,7 @@ class AccountProjectionStore:
         fact history.
         """
         current = self.snapshot(account_id)
+        checkpoint = int(current.last_transaction_id) if current is not None else 0
         state = _ProjectionState(account_id)
         if current is not None:
             state.balance = current.balance
@@ -488,6 +489,8 @@ class AccountProjectionStore:
         for fact in sorted(
             facts, key=lambda f: int(f.fact_id) if f.fact_id.isdigit() else 0
         ):
+            if fact.fact_id.isdigit() and int(fact.fact_id) <= checkpoint:
+                continue
             state.apply(fact)
         snapshot = state.snapshot()
         self._persist(account_id, snapshot)

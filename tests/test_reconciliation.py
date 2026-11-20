@@ -197,6 +197,56 @@ def _client(
     )
 
 
+def test_overlapping_syncs_apply_the_same_window_once(
+    store: BrokerReconStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(
+        transactions=[
+            {**_fill(transaction_id="11"), "pl": "5"},
+            {
+                **_fill(transaction_id="12", transaction_type="DAILY_FINANCING"),
+                "financing": "-10",
+            },
+        ],
+        since_queries=[],
+    )
+    first = _reconciler(store, tmp_path, client=client)
+    second = _reconciler(store, tmp_path, client=client)
+    first._projection_store.rebuild(ACCOUNT, [], initial_balance=Decimal("1000"))
+    first._projection_store.advance_cursor(ACCOUNT, "10")
+    first._cursor_store.advance(
+        ACCOUNT,
+        [
+            TransactionResult(
+                transaction_id="10", transaction_type="CREATE", request_id="test"
+            )
+        ],
+        owner="reconciler",
+    )
+    original_apply = second._projection_store.apply_changes
+
+    def overlapping_apply(*args: Any, **kwargs: Any) -> Any:
+        first.sync(ACCOUNT)
+        return original_apply(*args, **kwargs)
+
+    try:
+        monkeypatch.setattr(second._projection_store, "apply_changes", overlapping_apply)
+        second.sync(ACCOUNT)
+        second.sync(ACCOUNT)
+        snapshot = first._projection_store.snapshot(ACCOUNT)
+        assert snapshot is not None
+        assert snapshot.balance == Decimal("995")
+        assert snapshot.realized_pl == Decimal("5")
+        assert snapshot.financing_total == Decimal("-10")
+        assert len(snapshot.fills) == 1
+        assert snapshot.last_transaction_id == "12"
+    finally:
+        first.close()
+        second.close()
+
+
 @pytest.mark.parametrize("failure_stage", ["cursor", "before_apply", "after_apply"])
 @pytest.mark.parametrize("separate_stores", [False, True])
 def test_sync_recovers_after_interruption_exactly_once(
